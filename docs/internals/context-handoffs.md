@@ -38,8 +38,10 @@ list, not one row per item; copies the fork owns, its own items and any position
 run status or kept body stay per item. Every reader expands ranges through one SQL fragment into
 exactly the rows they replace. If a shown item is rewritten before the fork kept its version, its
 range returns to per-item rows so the handoff can keep the old body. Per-item rows written before
-ranges existed are converted by a throttled background pass, one source per short transaction, and
-a batch that does not read back identically rolls back and stays per item.
+ranges existed are converted by a throttled background pass. It looks at each source in bounded
+pages first, then switches the whole source in one transaction that must read back row for row as
+before. A source with a row the fork's history does not hold, overlapping positions or a different
+read-back stays exactly as it was.
 
 The first command result and a repeated command's receipt use the same bounded event-read
 representation. Projection and publication still commit from the original events; lossless event

@@ -633,33 +633,50 @@ it.effect(
     ),
 );
 
-it.effect("resumes a conversion interrupted between batches", () =>
+it.effect("resumes a conversion interrupted while looking or between sources", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* forkFixture({ items: 400, running: 2 });
-    const { prepared, handoff } = yield* prepare(forkId, "fork");
-    const expected = yield* observe(forkId, [handoff]);
-    const ranged = yield* counts();
-    yield* captureAsBefore(sql, prepared);
-    // Stop after the first batch, as a restart would.
-    let batches = 0;
-    const interrupted = yield* Effect.exit(
-      convertForkHandoffHistory(
-        sql,
-        Effect.suspend(() => (++batches === 1 ? Effect.interrupt : Effect.void)),
-        50,
-      ),
+    const captured: Array<Effect.Success<ReturnType<typeof prepare>>> = [];
+    for (const tag of ["a", "b"]) captured.push(yield* prepare(forkId, tag));
+    const expected = yield* observe(
+      forkId,
+      captured.map(({ handoff }) => handoff),
     );
-    assert.isTrue(Exit.hasInterrupts(interrupted));
-    const partway = yield* counts();
-    assert.isAbove(partway.ranges, 0);
-    assert.isAbove(partway.rows, ranged.rows);
-    assert.deepStrictEqual(yield* observe(forkId, [handoff]), expected);
+    const ranged = yield* counts();
+    for (const { prepared } of captured) yield* captureAsBefore(sql, prepared);
+    const asRows = yield* counts();
+    const seen = () =>
+      observe(
+        forkId,
+        captured.map(({ handoff }) => handoff),
+      );
+    // A restart while the first source is being looked at leaves everything as it was.
+    const looking = yield* Effect.exit(convertForkHandoffHistory(sql, Effect.interrupt, 50));
+    assert.isTrue(Exit.hasInterrupts(looking));
+    assert.deepStrictEqual(yield* counts(), asRows);
+    // A restart right after the first source switched keeps that source whole.
+    const stopAfterSwitch = sql<{ readonly ranges: number }>`
+      SELECT COUNT(*) AS ranges FROM scient_handoff_history_ranges`.pipe(
+      Effect.orDie,
+      Effect.flatMap(([row]) => (row!.ranges > 0 ? Effect.interrupt : Effect.void)),
+    );
+    const partway = yield* Effect.exit(convertForkHandoffHistory(sql, stopAfterSwitch, 50));
+    assert.isTrue(Exit.hasInterrupts(partway));
+    const sources = yield* sql<{ readonly source_id: string; readonly ranged: number }>`
+      SELECT source_id, (SELECT COUNT(*) FROM scient_handoff_history_ranges AS span
+        WHERE span.source_id = history.source_id) AS ranged
+      FROM scient_handoff_history AS history GROUP BY source_id ORDER BY source_id`;
+    assert.deepStrictEqual(
+      sources.map((source) => source.ranged > 0),
+      [true, false],
+    );
+    assert.deepStrictEqual(yield* seen(), expected);
     const resumed = yield* convertForkHandoffHistory(sql, Effect.void, 50);
     assert.equal(resumed.skippedSources, 0);
-    // Batches end on whole ranges, so the result matches a capture that wrote ranges.
+    // A source converts whole, so the result matches captures that wrote ranges.
     assert.deepStrictEqual(yield* counts(), ranged);
-    assert.deepStrictEqual(yield* observe(forkId, [handoff]), expected);
+    assert.deepStrictEqual(yield* seen(), expected);
     assert.deepStrictEqual(yield* convertForkHandoffHistory(sql, Effect.void, 50), {
       ranges: 0,
       rows: 0,
@@ -668,38 +685,56 @@ it.effect("resumes a conversion interrupted between batches", () =>
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("leaves rows that do not match the fork's history or do not read back untouched", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* forkFixture({ items: 40, running: 0 });
-    const sources: Array<string> = [];
-    for (const tag of ["a", "b", "c"]) {
-      const { prepared } = yield* prepare(forkId, tag);
-      yield* captureAsBefore(sql, prepared);
-      sources.push(prepared.historySource!.id);
-    }
-    const [mismatched, overlapped, clean] = sources as [string, string, string];
-    // A row whose fork position no longer names its item never becomes part of a range.
-    yield* sql`UPDATE scient_handoff_history SET source_item_id = 'elsewhere'
+it.effect(
+  "leaves a source untouched when a row does not match, positions overlap or it reads back differently",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* forkFixture({ items: 40, running: 0 });
+      const sources: Array<string> = [];
+      for (const tag of ["a", "b", "c", "d"]) {
+        const { prepared } = yield* prepare(forkId, tag);
+        yield* captureAsBefore(sql, prepared);
+        sources.push(prepared.historySource!.id);
+      }
+      const [mismatched, overlapped, clean, rewritten] = sources as [
+        string,
+        string,
+        string,
+        string,
+      ];
+      // One row whose fork position no longer names its item keeps its whole source as rows.
+      yield* sql`UPDATE scient_handoff_history SET source_item_id = 'elsewhere'
       WHERE source_id = ${mismatched} AND position = 3`;
-    // A stray range over rows would read back twice: the whole source must stay as it is.
-    yield* sql`INSERT INTO scient_handoff_history_ranges
+      // A stray range over rows reads one position twice: the whole source must stay as it is.
+      yield* sql`INSERT INTO scient_handoff_history_ranges
       (source_id, position, item_count, view_thread_id, fork_position)
       VALUES (${overlapped}, 1, 1, ${forkId}, 1)`;
-    const snapshot = (sourceId: string) =>
-      sql`SELECT * FROM scient_handoff_history WHERE source_id = ${sourceId} ORDER BY position`;
-    const overlappedBefore = yield* snapshot(overlapped);
-    const result = yield* convertForkHandoffHistory(sql, Effect.void);
-    assert.equal(result.skippedSources, 1);
-    assert.deepStrictEqual(yield* snapshot(overlapped), overlappedBefore);
-    const remaining = yield* sql<{ readonly source_id: string; readonly count: number }>`
-      SELECT source_id, COUNT(*) AS count FROM scient_handoff_history
-      GROUP BY source_id ORDER BY source_id`;
-    const bySource = new Map(remaining.map((row) => [row.source_id, row.count]));
-    assert.equal(bySource.get(clean), 6);
-    assert.equal(bySource.get(mismatched), 7);
-    assert.equal(bySource.get(overlapped), overlappedBefore.length);
-  }).pipe(Effect.provide(TestLayer)),
+      const snapshot = (sourceId: string) =>
+        Effect.all([
+          sql`SELECT * FROM scient_handoff_history WHERE source_id = ${sourceId} ORDER BY position`,
+          sql`SELECT * FROM scient_handoff_history_ranges WHERE source_id = ${sourceId} ORDER BY position`,
+        ]);
+      // A list that changes under a switch makes it read back differently: all of it rolls back.
+      yield* sql.unsafe(`CREATE TRIGGER rewrite_under_switch AFTER INSERT ON scient_handoff_history_ranges
+      WHEN NEW.source_id = '${rewritten}' BEGIN
+        UPDATE scient_fork_history SET source_item_id = 'rewritten'
+        WHERE thread_id = NEW.view_thread_id AND position = NEW.fork_position;
+      END`);
+      const forkList = sql`SELECT * FROM scient_fork_history ORDER BY thread_id, position`;
+      const forkListBefore = yield* forkList;
+      const mismatchedBefore = yield* snapshot(mismatched);
+      const overlappedBefore = yield* snapshot(overlapped);
+      const rewrittenBefore = yield* snapshot(rewritten);
+      const result = yield* convertForkHandoffHistory(sql, Effect.void);
+      assert.equal(result.skippedSources, 3);
+      assert.deepStrictEqual(yield* snapshot(mismatched), mismatchedBefore);
+      assert.deepStrictEqual(yield* snapshot(overlapped), overlappedBefore);
+      assert.deepStrictEqual(yield* snapshot(rewritten), rewrittenBefore);
+      assert.deepStrictEqual(yield* forkList, forkListBefore);
+      const [cleanRows] = yield* snapshot(clean);
+      assert.equal(cleanRows.length, 6);
+    }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("upgrades a database with per-item fork handoff rows and converts them afterwards", () =>

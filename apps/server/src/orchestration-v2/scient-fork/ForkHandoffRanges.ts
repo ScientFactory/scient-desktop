@@ -201,9 +201,9 @@ export const expandRangesShowing = Effect.fn("ForkHandoffRanges.expandShowing")(
   }
 });
 
-class RangeReadBackMismatch extends Schema.TaggedError<RangeReadBackMismatch>()(
-  "RangeReadBackMismatch",
-  { sourceId: Schema.String, position: Schema.Number },
+class RangeSourceNotConverted extends Schema.TaggedError<RangeSourceNotConverted>()(
+  "RangeSourceNotConverted",
+  { sourceId: Schema.String, reason: Schema.String },
 ) {}
 
 const sameRow = (a: HandoffHistoryRow, b: HandoffHistoryRow | undefined) =>
@@ -217,68 +217,91 @@ const sameRow = (a: HandoffHistoryRow, b: HandoffHistoryRow | undefined) =>
   a.run_status === b.run_status &&
   a.body_id === b.body_id;
 
-const BACKFILL_BATCH = 4096;
+const BACKFILL_PAGE = 4096;
 
-const convertibleRowsSql = (sql: SqlClient.SqlClient) => sql`
+type ClassifiedRow = HandoffHistoryRow & { readonly matches: number };
+
+/** A source's per-item rows from `from` on, each marked by whether the fork's history holds it. */
+const classifiedRows = (
+  sql: SqlClient.SqlClient,
+  sourceId: string,
+  from: number,
+  limit: number | undefined,
+) => sql<ClassifiedRow>`
+  SELECT history.source_id, history.position, history.view_thread_id, history.source_thread_id,
+    history.source_item_id, history.fork_position, history.run_status, history.body_id,
+    fork.thread_id IS NOT NULL AS matches
   FROM scient_handoff_history AS history
-  JOIN scient_fork_history AS fork ON fork.thread_id = history.view_thread_id
+  LEFT JOIN scient_fork_history AS fork ON fork.thread_id = history.view_thread_id
     AND fork.position = history.fork_position
     AND fork.source_thread_id = history.source_thread_id
     AND fork.source_item_id = history.source_item_id
-  WHERE history.run_status IS NULL AND history.body_id IS NULL
-    AND history.source_thread_id <> history.view_thread_id`;
+  WHERE history.source_id = ${sourceId} AND history.position > ${from}
+  ORDER BY history.position ${limit === undefined ? sql`` : sql`LIMIT ${limit}`}`;
 
-/**
- * Background conversion of per-item rows written before ranges existed. Each batch is one short
- * transaction over one source: candidate rows must match the fork's history, and every range must
- * read back through the readers' own expansion exactly as the rows it replaces, or the batch rolls
- * back and that source stays per item until a later pass. Progress is the tables themselves.
- */
+/** A row shaped like an inherited position that the fork's history does not hold as stored. */
+const malformed = (row: ClassifiedRow) => inRange(row) && row.matches === 0;
+
+/** Converts per-item rows written before ranges. A source is read in bounded pages, then switched
+ * whole in one transaction that must read back row for row; one with a row the fork's history does
+ * not hold, overlapping positions or a different read-back stays as it is. Progress is the tables. */
 export const convertForkHandoffHistory = Effect.fn("ForkHandoffRanges.convertAll")(function* (
   sql: SqlClient.SqlClient,
   between: Effect.Effect<void>,
-  batchSize = BACKFILL_BATCH,
+  pageSize = BACKFILL_PAGE,
 ) {
   const counts = { ranges: 0, rows: 0, skippedSources: 0 };
-  let after: readonly [string, number] = ["", -1];
+  let after = "";
   while (true) {
     const next = yield* sql<{ readonly source_id: string }>`
-      SELECT history.source_id ${convertibleRowsSql(sql)}
-        AND (history.source_id, history.position) > (${after[0]}, ${after[1]})
-      ORDER BY history.source_id, history.position LIMIT 1`;
+      SELECT source_id FROM scient_handoff_history WHERE source_id > ${after}
+      ORDER BY source_id LIMIT 1`;
     if (next[0] === undefined) return counts;
     const sourceId = next[0].source_id;
-    const from = sourceId === after[0] ? after[1] : -1;
-    // Rows are read on the writer inside the transaction, so no freeze can land in between.
-    const converted = yield* Effect.gen(function* () {
-      const rows = yield* sql<HandoffHistoryRow>`
-        SELECT history.source_id, history.position, history.view_thread_id,
-          history.source_thread_id, history.source_item_id, history.fork_position,
-          history.run_status, history.body_id
-        ${convertibleRowsSql(sql)}
-          AND history.source_id = ${sourceId} AND history.position > ${from}
-        ORDER BY history.position LIMIT ${batchSize}`;
-      let { ranges } = splitHandoffHistory(rows);
-      // A full batch may cut its last range short; the next batch starts at that range instead.
-      if (rows.length === batchSize && ranges.length > 1) ranges = ranges.slice(0, -1);
-      if (ranges.length === 0) return undefined;
+    after = sourceId;
+    // Look first, in pages: most sources have nothing to convert, and none needs the writer long.
+    let candidates = 0;
+    let wellFormed = true;
+    for (let from = -1; wellFormed;) {
+      const page = yield* classifiedRows(sql, sourceId, from, pageSize);
+      for (const row of page) {
+        if (malformed(row)) wellFormed = false;
+        else if (inRange(row)) candidates++;
+      }
+      yield* between;
+      if (page.length < pageSize) break;
+      from = page.at(-1)!.position;
+    }
+    if (!wellFormed) {
+      counts.skippedSources++;
+      yield* Effect.logWarning("Fork handoff history was left as rows", {
+        sourceId,
+        reason: "a row does not match the fork's history",
+      });
+      continue;
+    }
+    if (candidates === 0) continue;
+    const switched = yield* Effect.gen(function* () {
+      const readAll = sql<HandoffHistoryRow>`
+        SELECT * FROM (${handoffHistoryRowsSql(sql, sql`${sourceId}`)}) ORDER BY position`;
+      const before = yield* readAll;
+      for (const [at, row] of before.entries())
+        if (at > 0 && row.position <= before[at - 1]!.position)
+          return yield* new RangeSourceNotConverted({ sourceId, reason: "overlapping positions" });
+      const rows = yield* classifiedRows(sql, sourceId, -1, undefined);
+      if (rows.some(malformed))
+        return yield* new RangeSourceNotConverted({ sourceId, reason: "changed while converting" });
+      const { ranges } = splitHandoffHistory(rows.filter(inRange));
+      if (ranges.length === 0) return ranges;
       yield* insertRanges(sql, ranges);
-      for (const range of ranges) {
+      for (const range of ranges)
         yield* sql`
           DELETE FROM scient_handoff_history
-          WHERE source_id = ${range.source_id}
+          WHERE source_id = ${sourceId}
             AND position BETWEEN ${range.position} AND ${range.position + range.item_count - 1}`;
-        const back = yield* sql<HandoffHistoryRow>`
-          SELECT * FROM (${handoffHistoryRowsSql(sql, sql`${range.source_id}`, [
-            range.position,
-            range.position + range.item_count - 1,
-          ])}) ORDER BY position`;
-        if (back.length !== range.rows.length)
-          return yield* new RangeReadBackMismatch({ sourceId, position: range.position });
-        for (const [at, row] of range.rows.entries())
-          if (!sameRow(row, back[at]))
-            return yield* new RangeReadBackMismatch({ sourceId, position: row.position });
-      }
+      const back = yield* readAll;
+      if (back.length !== before.length || before.some((row, at) => !sameRow(row, back[at])))
+        return yield* new RangeSourceNotConverted({ sourceId, reason: "read back differently" });
       return ranges;
     }).pipe(
       sql.withTransaction,
@@ -288,16 +311,10 @@ export const convertForkHandoffHistory = Effect.fn("ForkHandoffRanges.convertAll
         ),
       ),
     );
-    if (converted === null) {
-      counts.skippedSources++;
-      // Skip the rest of a source that did not verify; a later pass retries it.
-      after = [sourceId, Number.MAX_SAFE_INTEGER];
-    } else if (converted === undefined) {
-      after = [sourceId, Number.MAX_SAFE_INTEGER];
-    } else {
-      counts.ranges += converted.length;
-      counts.rows += converted.reduce((sum, range) => sum + range.item_count, 0);
-      after = [sourceId, converted.at(-1)!.rows.at(-1)!.position];
+    if (switched === null) counts.skippedSources++;
+    else {
+      counts.ranges += switched.length;
+      counts.rows += switched.reduce((sum, range) => sum + range.item_count, 0);
     }
     yield* between;
   }
