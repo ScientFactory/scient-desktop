@@ -42,7 +42,9 @@
     "apps/server/src/scient/extensions/brandIcons/NOTICE",
     "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts",
     "apps/web/src/scient/compute/ScientificComputingSettings.tsx",
-    "apps/web/src/scient/compute/ComputeLanguagePanel.tsx"
+    "apps/web/src/scient/compute/ComputeLanguagePanel.tsx",
+    "apps/server/src/telemetry/ExtensionAnalytics.ts",
+    "apps/server/src/telemetry/ExtensionAnalytics.test.ts"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -161,17 +163,17 @@
     {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
       "anchor": "/settings/extensions",
-      "purpose": "Link Settings → Extensions from the maintained Settings shell."
+      "purpose": "Link Settings \u2192 Extensions from the maintained Settings shell."
     },
     {
       "path": "apps/web/src/components/settings/settingsSearch.ts",
       "anchor": "/settings/extensions",
-      "purpose": "Make Settings → Extensions discoverable through Settings search."
+      "purpose": "Make Settings \u2192 Extensions discoverable through Settings search."
     },
     {
       "path": "apps/web/src/routeTree.gen.ts",
       "anchor": "SettingsExtensionsRouteImport",
-      "purpose": "Generated registration for the fork-owned Settings → Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
+      "purpose": "Generated registration for the fork-owned Settings \u2192 Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
@@ -348,7 +350,7 @@
     {
       "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
       "anchor": "\"/settings/extensions\"",
-      "purpose": "Scope Settings → Extensions to one environment, like the other per-server settings pages."
+      "purpose": "Scope Settings \u2192 Extensions to one environment, like the other per-server settings pages."
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
@@ -522,8 +524,13 @@
     },
     {
       "path": "apps/server/src/server.testkit.ts",
-      "anchor": "SCIENT-FORK:START — the real extensions owners, as the server composes them.",
+      "anchor": "SCIENT-FORK:START \u2014 the real extensions owners, as the server composes them.",
       "purpose": "Compose the real extensions owners into the shared server router test harness."
+    },
+    {
+      "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
+      "anchor": "connectorTarget",
+      "purpose": "Name the connector or plugin an Extensions action acts on in its feature.used event."
     }
   ]
 }
