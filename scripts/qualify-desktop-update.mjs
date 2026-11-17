@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
-import * as NodeHttp from "node:http";
+import * as NodeHttps from "node:https";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -12,6 +12,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 const TIMEOUT = 300_000;
+// Windows builds are unsigned until Trusted Signing has a certificate profile. "optional" accepts an
+// unsigned installer (such a build pins no publisher, so updates are not signature-checked) but
+// never a damaged signature; it is recorded in the receipt.
+let windowsSignature = "required";
+let windowsInstallerSignature = "authenticode";
 const platformManifest = {
   darwin: "latest-mac.yml",
   win32: "latest.yml",
@@ -255,15 +260,17 @@ function verifySignature(filename, platform) {
     NodeChildProcess.execFileSync("xcrun", ["stapler", "validate", filename], { stdio: "pipe" });
   } else if (platform === "win32") {
     const escaped = filename.replaceAll("'", "''");
-    NodeChildProcess.execFileSync(
+    const status = NodeChildProcess.execFileSync(
       "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `if ((Get-AuthenticodeSignature -LiteralPath '${escaped}').Status -ne 'Valid') { throw 'Installer signature is not valid' }`,
-      ],
-      { stdio: "pipe" },
+      ["-NoProfile", "-Command", `(Get-AuthenticodeSignature -LiteralPath '${escaped}').Status`],
+      { stdio: "pipe", encoding: "utf8" },
+    ).trim();
+    if (status === "Valid") return;
+    NodeAssert.ok(
+      status === "NotSigned" && windowsSignature === "optional",
+      `Installer signature is not valid (${status})`,
     );
+    windowsInstallerSignature = "unsigned";
   }
 }
 
@@ -320,8 +327,12 @@ function invalidSignatureFixture(target, root) {
   ]);
 }
 
-function serveFeed(root, port, corrupt, overrides) {
-  const server = NodeHttp.createServer((request, response) => {
+function serveFeed(root, port, corrupt, overrides, tlsDir) {
+  const tls = {
+    cert: NodeFS.readFileSync(NodePath.join(tlsDir, "feed-cert.pem")),
+    key: NodeFS.readFileSync(NodePath.join(tlsDir, "feed-key.pem")),
+  };
+  const server = NodeHttps.createServer(tls, (request, response) => {
     const name = new URL(request.url, "http://127.0.0.1").pathname.slice(1);
     if (name !== NodePath.basename(name) || !name || name.includes("%") || name.includes("\\")) {
       response.writeHead(404).end();
@@ -577,12 +588,13 @@ async function qualify(options) {
       BigInt(target.manifest.version.slice(4)) > BigInt(source.manifest.version.slice(4)),
     "Qualification requires a newer 0.0.N rehearsal target, not swapped or publishing runs",
   );
+  windowsSignature = options["windows-signature"];
   const policy = JSON.parse(NodeFS.readFileSync(policyPaths[platform], "utf8"));
   const port = Number(options.port);
   NodeAssert.ok(Number.isInteger(port) && port > 0 && port < 65536);
   NodeAssert.equal(
     policy.limits?.updates?.feedUrl,
-    `http://127.0.0.1:${port}`,
+    `https://127.0.0.1:${port}`,
     "Install the isolated loopback managed policy before launching; the native relaunch must keep it",
   );
   const root = NodeFS.mkdtempSync(NodePath.join(process.env.RUNNER_TEMP, "scient-native-upgrade-"));
@@ -592,6 +604,12 @@ async function qualify(options) {
   const sentinel = "Synthetic restart qualification. No live user data.\n";
   NodeFS.writeFileSync(NodePath.join(project, "sentinel.txt"), sentinel);
   const executable = installSource(source.filename, install, platform);
+  // Node in the app trusts the runner's feed certificate too; Chromium reads the OS store.
+  const appEnv = {
+    ...process.env,
+    NODE_EXTRA_CA_CERTS: NodePath.join(options["tls-dir"], "ca.pem"),
+    ...(platform === "linux" ? { APPIMAGE_EXTRACT_AND_RUN: "1" } : {}),
+  };
   if (platform === "win32") verifySignature(target.filename, platform);
   const corrupt = { value: options.scenario === "checksum-recovery" };
   NodeAssert.ok(options.scenario !== "preparation-recovery" || platform === "darwin");
@@ -599,7 +617,7 @@ async function qualify(options) {
     options.scenario === "preparation-recovery" ? invalidSignatureFixture(target, root) : new Map();
   const evidence = NodePath.dirname(NodePath.resolve(options.output));
   NodeFS.mkdirSync(evidence, { recursive: true });
-  const server = await serveFeed(targetRoot, port, corrupt, overrides);
+  const server = await serveFeed(targetRoot, port, corrupt, overrides, options["tls-dir"]);
   let app;
   let updatedPid;
   let receipt;
@@ -608,7 +626,7 @@ async function qualify(options) {
       executablePath: executable,
       timeout: TIMEOUT,
       recordVideo: { dir: NodePath.join(evidence, "video"), size: { width: 1280, height: 800 } },
-      env: { ...process.env, ...(platform === "linux" ? { APPIMAGE_EXTRACT_AND_RUN: "1" } : {}) },
+      env: appEnv,
     });
     NodeAssert.equal(await app.evaluate(({ app }) => app.getVersion()), source.manifest.version);
     NodeAssert.equal(
@@ -757,7 +775,7 @@ async function qualify(options) {
       app = await _electron.launch({
         executablePath: executable,
         timeout: TIMEOUT,
-        env: { ...process.env, ...(platform === "linux" ? { APPIMAGE_EXTRACT_AND_RUN: "1" } : {}) },
+        env: appEnv,
       });
       NodeAssert.equal(
         await app.evaluate(({ app }) => app.getVersion()),
@@ -852,7 +870,12 @@ async function qualify(options) {
           targetVersion: target.manifest.version,
           sourceSha512: source.file.sha512,
           targetSha512: target.file.sha512,
-          signatures: platform === "linux" ? "manifest-sha512" : "native-verified",
+          signatures:
+            platform === "linux"
+              ? "manifest-sha512"
+              : platform === "win32"
+                ? windowsInstallerSignature
+                : "native-verified",
           preparationFailureRecovered: recoveredPreparationAttempt !== undefined,
           unsavedEditPreserved: true,
           ...restoredControls,
@@ -887,11 +910,13 @@ if (
       "target-sha": { type: "string" },
       port: { type: "string", default: "3000" },
       scenario: { type: "string", default: "upgrade" },
+      "tls-dir": { type: "string" },
+      "windows-signature": { type: "string", default: "required" },
     },
   });
   NodeAssert.ok(
     values.source && values.target && values.output && values["source-sha"] && values["target-sha"],
-    "Usage: node scripts/qualify-desktop-update.mjs --source <source-release-dir> --source-sha <commit> --target <target-release-dir> --target-sha <commit> --output <receipt.json> [--scenario upgrade|ordinary-quit|checksum-recovery|preparation-recovery]",
+    "Usage: node scripts/qualify-desktop-update.mjs --source <source-release-dir> --source-sha <commit> --target <target-release-dir> --target-sha <commit> --output <receipt.json> --tls-dir <feed-certificate-dir> [--windows-signature required|optional] [--scenario upgrade|ordinary-quit|checksum-recovery|preparation-recovery]",
   );
   verifyHandoff(NodePath.resolve(values.source), values["source-sha"]);
   verifyHandoff(NodePath.resolve(values.target), values["target-sha"]);
@@ -900,5 +925,7 @@ if (
       values.scenario,
     ),
   );
+  NodeAssert.ok(values["tls-dir"], "Pass --tls-dir with the runner's loopback feed certificate");
+  NodeAssert.ok(["required", "optional"].includes(values["windows-signature"]));
   await qualify(values);
 }

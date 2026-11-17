@@ -97,6 +97,63 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y xvfb libfuse2 libasound2t64
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Scient accepts an administrator's update feed only over HTTPS. A certificate made for this
+      # run, trusted only by this disposable machine, serves the loopback feed; its signing key is
+      # deleted at once and the feed key never leaves the runner.
+      - name: Create and trust the loopback feed certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/feed-tls"
+          mkdir -p "$dir"
+          cd "$dir"
+          cat > ca.cnf <<'EOF'
+          [req]
+          prompt = no
+          distinguished_name = dn
+          x509_extensions = ca
+          [dn]
+          CN = Scient update qualification (disposable runner)
+          [ca]
+          basicConstraints = critical, CA:TRUE, pathlen:0
+          keyUsage = critical, keyCertSign, cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+          cat > feed.cnf <<'EOF'
+          [req]
+          prompt = no
+          distinguished_name = dn
+          [dn]
+          CN = 127.0.0.1
+          [feed]
+          basicConstraints = critical, CA:FALSE
+          keyUsage = critical, digitalSignature, keyEncipherment
+          extendedKeyUsage = serverAuth
+          subjectAltName = IP:127.0.0.1
+          authorityKeyIdentifier = keyid
+          EOF
+          openssl req -x509 -new -newkey rsa:2048 -nodes -days 2 -config ca.cnf -keyout ca-key.pem -out ca.pem
+          openssl req -new -newkey rsa:2048 -nodes -config feed.cnf -keyout feed-key.pem -out feed.csr
+          openssl x509 -req -in feed.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -days 2 \
+            -extfile feed.cnf -extensions feed -out feed-cert.pem
+          rm -f ca-key.pem feed.csr ca.srl
+          case "$RUNNER_OS" in
+            macOS)
+              sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.pem
+              security verify-cert -c feed-cert.pem -p ssl
+              ;;
+            Linux)
+              # Chromium on Linux reads trust from the user's NSS database.
+              sudo apt-get install -y libnss3-tools
+              mkdir -p "$HOME/.pki/nssdb"
+              [[ -e "$HOME/.pki/nssdb/cert9.db" ]] || certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
+              certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "Scient update qualification" -i ca.pem
+              ;;
+            Windows)
+              certutil.exe -addstore -f Root "$(cygpath -w "$dir/ca.pem")"
+              ;;
+          esac
+          echo "FEED_TLS_DIR=$dir" >> "$GITHUB_ENV"
       - name: Pin the disposable machine to the loopback feed
         if: runner.os != 'Windows'
         shell: bash
@@ -105,7 +162,7 @@ jobs:
           policy='/etc/scient/policy.json'
           [[ "$RUNNER_OS" != macOS ]] || policy='/Library/Application Support/Scient/policy.json'
           [[ ! -e "$policy" ]]
-          printf '%s\n' '{"schemaVersion":1,"organization":"Synthetic update qualification","limits":{"connect":false,"telemetry":false,"webhookTasks":false,"updates":{"mode":"auto","feedUrl":"http://127.0.0.1:3000","allowNightly":false}}}' > "$RUNNER_TEMP/update-policy.json"
+          printf '%s\n' '{"schemaVersion":1,"organization":"Synthetic update qualification","limits":{"connect":false,"telemetry":false,"webhookTasks":false,"updates":{"mode":"auto","feedUrl":"https://127.0.0.1:3000","allowNightly":false}}}' > "$RUNNER_TEMP/update-policy.json"
           sudo mkdir -p "$(dirname "$policy")"
           sudo cp "$RUNNER_TEMP/update-policy.json" "$policy"
       - name: Pin the disposable Windows machine to the loopback feed
@@ -115,18 +172,21 @@ jobs:
           $policy = 'C:\Program Files\Scient\policy.json'
           if (Test-Path $policy) { throw 'Refusing an existing managed policy' }
           New-Item -ItemType Directory -Force -Path (Split-Path $policy) | Out-Null
-          '{"schemaVersion":1,"organization":"Synthetic update qualification","limits":{"connect":false,"telemetry":false,"webhookTasks":false,"updates":{"mode":"auto","feedUrl":"http://127.0.0.1:3000","allowNightly":false}}}' | Set-Content -LiteralPath $policy -Encoding utf8NoBOM
+          '{"schemaVersion":1,"organization":"Synthetic update qualification","limits":{"connect":false,"telemetry":false,"webhookTasks":false,"updates":{"mode":"auto","feedUrl":"https://127.0.0.1:3000","allowNightly":false}}}' | Set-Content -LiteralPath $policy -Encoding utf8NoBOM
       - name: Exercise installed app, explicit restart, and workspace restoration
         shell: bash
         env:
           SOURCE_SHA: ${{ steps.runs.outputs.source_sha }}
           TARGET_SHA: ${{ steps.runs.outputs.target_sha }}
           SCENARIO: ${{ matrix.scenario }}
+          # Windows builds are unsigned until Trusted Signing has a certificate profile; such a
+          # build pins no publisher, so its installed app updates without a signature check.
+          WINDOWS_SIGNATURE: optional
         run: |
           set -euo pipefail
           scenario="$SCENARIO"
           [[ "$scenario" != upgrade-* ]] || scenario=upgrade
-          command=(node scripts/qualify-desktop-update.mjs --source update-source --source-sha "$SOURCE_SHA" --target update-target --target-sha "$TARGET_SHA" --scenario "$scenario" --output "update-evidence/$SCENARIO.json")
+          command=(node scripts/qualify-desktop-update.mjs --source update-source --source-sha "$SOURCE_SHA" --target update-target --target-sha "$TARGET_SHA" --scenario "$scenario" --output "update-evidence/$SCENARIO.json" --tls-dir "$FEED_TLS_DIR" --windows-signature "$WINDOWS_SIGNATURE")
           if [[ "$RUNNER_OS" == Linux ]]; then
             xvfb-run --auto-servernum "${command[@]}"
           else

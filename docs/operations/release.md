@@ -229,9 +229,16 @@ tag or release already exists.
    Attachment happens after the measured workspace-ready receipt; no debug hook
    or launch switch is added to production. The disposable Linux runner permits
    unprivileged user namespaces so Chromium's sandbox can start under AppArmor.
-   macOS additionally requires signature, Gatekeeper and stapling checks; Windows
-   requires valid Authenticode signatures. Missing signing cannot become a
-   successful unsigned native receipt.
+   macOS additionally requires signature, Gatekeeper and stapling checks. Windows
+   requires valid Authenticode signatures, except that the workflow passes
+   `--windows-signature optional` until Trusted Signing has a certificate profile:
+   an unsigned installer is then accepted (such a build pins no publisher, so its
+   updates are not signature-checked, as for users today) and the receipt records
+   `signatures: "unsigned"`; a damaged signature still fails. Scient accepts a
+   managed feed only over HTTPS, so each job creates a certificate for this run,
+   trusts it only on that disposable runner (macOS System keychain, Linux NSS
+   database, Windows Root store), deletes its signing key, and serves the
+   loopback feed with it.
    macOS also rejects a synthetically damaged code signature after a valid
    download checksum, verifies that preparation did not shut down the app,
    then downloads the genuine target and completes a fresh consented restart.
