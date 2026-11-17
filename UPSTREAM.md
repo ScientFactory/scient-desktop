@@ -160,13 +160,12 @@ marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's te
 upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
 change unless Scient wants its own drawing.
 
-Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
-`CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
-`ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
-hand. T3's invisible placeholder while a language loads (#11062), the copy button that swaps its
-icon without morphing (#33985) and the pressed wrap toggle (#13208) and the copy that leaves out the fence's closing newline (#37284) are ported. Sharing the generic implementation with
-upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
+Chat Markdown (Scient): code blocks render through T3's `chat/MarkdownCodeBlock.tsx`. Its one
+Scient seam is an optional `dir` prop (default `"ltr"`); `ChatMarkdown.tsx` passes
+`chatCodeBoxDirection(...)` so a Hebrew or Arabic plain-text box reads right to left, and Copy
+message reads the same `dir`. The loading placeholder in `ChatMarkdown.tsx` is not `aria-hidden`,
+so Copy message keeps code whose highlighting is still loading. The rich editor's code header
+keeps Scient's `CodeBlockActions.tsx` and `CodeBlockTitle.tsx`. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
 through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
 capture use the shared Pele lazy renderer in `chat/MermaidDiagram.tsx`, with Scient recovery,
@@ -219,6 +218,11 @@ call live in `apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; callers 
 callers; do not reintroduce the confirmation during alignment. A managed policy's feed stays the
 update source on every channel. Install-on-quit and early native (Squirrel.Mac) preparation stay
 off: they need native-readiness tracking and packaged-build tests first.
+Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
+`apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
+`DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
+carry only marked calls into them. The four-hour poller contains an unexpected failure per
+iteration instead of ending; keep that when aligning upstream's poller.
 The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
 and Scient-managed runtimes appear in a Scient-owned circle and card
 (`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
@@ -267,7 +271,9 @@ Stop turns into a queued message joins the held queue. A stop made so a queued m
 (a `/goal`, or Send now into a running compaction) does not hold the queue
 (`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
-`SteeringCompletion.integration.test.ts` assert Scient's rule.
+`SteeringCompletion.integration.test.ts` assert Scient's rule. Send now on a held message is
+upstream's `queued-run.start`, with its order and refusals; the same file reads an older Scient
+client's `queue.resume` with a `runId` as that command.
 Upstream's release of unattended messages after a later completed run is composed: the
 terminal fence honours it as the one release without a command, and a message queued before a
 Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
@@ -275,8 +281,8 @@ Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
 The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
 `scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
-`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
-command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+`SCIENT-FORK queue-scient-parts` sections: failed-start Retry,
+command errors and the delayed "Queuing…" status. Take
 upstream's changes to the rest of the file as they are, including its single Send now action
 without reordering; agents still reorder through `scient_queue`.
 
@@ -670,6 +676,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`e9a1e8699e0b8530a27372de4a22e57cf1ebbe70` is recorded in
+[the 2026-11-17 e9a1e8699e receipt](docs/internals/t3-upstream-sync-20261117-e9a1e8699e.md).
+Literal merge `d9ea28b9ebad988f15a57f22e1377c3dd7c4e364` has owned base
+`f2b24cb2d03e3f1df87f43ef361412e3ac4b0f69` and the frozen official target as parents, retaining
+the 105 official commits after `47f90ee2e9`. The range is fixes and small features: Claude
+requests that never answer fail after 10 minutes, retried MCP and provider calls recheck their
+limits, snapshots copy between composers, themes can carry a background image, and T3's phone
+builds move to one shared local-build action. Release remains separate.
+
+The previous committed alignment through
 `47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
 [the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
 Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
@@ -1576,12 +1592,15 @@ dismissal of pending notifications; upstream's favicon badge remains on the web.
 window lifecycle remain owned by their current systems. See
 [answer attention](docs/internals/answer-attention.md).
 
-Conversation forks keep server-owned boundary resolution, durable provisioning,
+Conversation forks are T3's `thread.fork` with Scient's `scient` boundary and workspace
+options; the Orchestrator's one dispatch mount hands every fork that is not a side chat to
+`scient-fork/ConversationForkDispatch.ts`, which uses T3's `ThreadForkService` to build the
+thread. They keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared
 selection of submitted question-answer activities and independent file ownership;
 T3's question submission path remains unchanged. Preserve the read-authorized
-`orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
-typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+`orchestration.getForkOptions` and `orchestration.awaitFork` RPCs and the `threadForkOptions`
+capability, receipt-less refusals of conversation forks, and the pre-send readiness gate.
 Running local forks skip file capture; new-worktree captures retain exact attempt/ref/OID
 ownership through rejection and restart. Checkpoint enumeration remains bounded and streamed,
 and publication transfers only new staged objects while preserving connectivity and fsync.
@@ -1941,8 +1960,7 @@ folder's New document in `FileBrowserPanel.tsx` (see "Side panel and Files bar")
 a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
-Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
-`scient/presentation`; upstream fixes must be ported by hand) mounted in
+the `dir` prop on T3's `chat/MarkdownCodeBlock.tsx`, mounted in
 `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 `MediaActions.tsx`, and in `index.css` an additive trailing block and two Markdown
@@ -2223,13 +2241,15 @@ Chromium cookies, which Scient doesn't try to bypass
 
 ## Git maintenance, untracked scans and owned processes
 
-Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
-Scient owns the fix that keeps that fetch from starting Git's automatic maintenance
-(`ScientCheckpointCapture.ts`) and the server-owned upkeep that replaces it
-(`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
-Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
-(Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
-Checkpoint packing and upkeep share one pack-memory setting (one thread, a 256 MiB delta window).
+Checkpoints are captured on T3's path (a private object directory under the repository's
+`objects`, linked in before `update-ref`), which never runs Git's automatic maintenance. Scient's
+server-owned upkeep runs it instead (`ScientCheckpointUpkeep.ts`, provided once in `server.ts`,
+requested from `GitVcsDriver.ts` after each capture), with one pack thread and a 256 MiB delta
+window. Detached maintenance escaped the app's process group, and on Git without the detached-lock
+fix (Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+`ScientCheckpointCapture.ts` keeps Scient's changed-file size limit, the 90-second whole-capture
+deadline shared with submodules, and the fork's commit witness, each a marked block in
+`GitVcsDriver.ts`.
 The server keeps a minute-by-minute memory record that outlives a crash
 (`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
 beside the upkeep).
@@ -2434,6 +2454,25 @@ predates T3's unlisted-detail path and was written when a 404 was final. Since T
 and clicks on it, to the start page until the next retry. Scient keeps one divergence here:
 `resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
 readable through fork lineage.
+
+## Repositories with nothing to branch from
+
+T3 refuses a new worktree only for a folder that is not a Git repository. A repository with no
+commit, no local branch and no remote passes its base check, then fails every worktree launch,
+and a scheduled task saved there with a worktree failed each run. Scient treats such a repository
+as a plain folder (`scient-fork/EmptyRepositoryWorkspace.ts`) unless the requested base resolves:
+the marked `isNonGitProject` entry in `ThreadLaunchService` makes task saves store a root
+strategy, and the marked `launch` normalization runs tasks already saved with a worktree at the
+root, as T3 does for Scratch. Only Git's "no remote configured" refusal counts as no remote.
+
+A message sent into a thread whose worktree setup failed waits behind T3's `worktreeSetupPending`
+hold until someone retries setup, and T3's scheduled-task wait gave up only after a day. The
+marked wait in `ScheduledTaskService.recordRunFailure` calls
+`scient/orchestration/WorktreeSetupHoldReport.ts`, which records that run as failed once it is
+stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only re-exports the
+predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
+T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
+equal change, use its version and delete the blocks, modules and tests.
 
 ## Security policy
 

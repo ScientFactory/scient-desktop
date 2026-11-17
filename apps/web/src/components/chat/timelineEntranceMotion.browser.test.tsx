@@ -564,7 +564,6 @@ function _createFixture() {
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 100,
     onIsAtEndChange: vi.fn(),
-    onManualNavigation: () => {},
   };
   const fixture = {
     listRef,

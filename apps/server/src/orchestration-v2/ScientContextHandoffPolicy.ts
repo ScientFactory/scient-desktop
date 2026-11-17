@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ThreadProjection,
   ProviderInstanceId,
+  ScientConversationFork,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -85,8 +86,9 @@ export const usesScientHandoffBudget = (input: {
 /** Fork workspace and import provenance the handoff delivery tells the provider. */
 export const scientHandoffDeliveryProvenance = (
   thread: OrchestrationV2ThreadProjection["thread"],
+  fork: Pick<ScientConversationFork, "workspaceMode"> | null,
 ) => ({
-  sharedForkWorkspace: thread.conversationFork?.workspaceMode === "local",
+  sharedForkWorkspace: fork?.workspaceMode === "local",
   sourceOmissions: (thread.conversationImport ?? thread.forkLineage?.sourceImport)?.omissions ?? [],
   ...((thread.conversationImport ?? thread.forkLineage?.sourceImport) == null
     ? {}

@@ -73,7 +73,7 @@ describe("Compute CI suite selection", () => {
         jobs: Record<
           string,
           {
-            strategy: { matrix: { runner: string } };
+            strategy: { matrix: { runner?: string; include?: string } };
             steps?: Array<{ env?: Record<string, string> }>;
           }
         >;
@@ -83,12 +83,28 @@ describe("Compute CI suite selection", () => {
     const evaluate = (expression: string, context: object) =>
       NodeVM.runInNewContext(expression.slice(3, -2), { fromJSON: JSON.parse, ...context });
     const all = ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"];
+    // A job split into legs must give every runner the whole proof: one leg that runs all of
+    // it, or one leg per part.
+    const legs: Record<string, { key: string; whole: string; parts: Array<string> }> = {
+      real_kernel: { key: "python", whole: "both", parts: ["3.10", "3.12"] },
+      real_languages: { key: "part", whole: "all", parts: ["files", "kernels", "people"] },
+    };
+    const runners = (id: string, context: object): Array<string> => {
+      const { runner, include } = jobs[id]!.strategy.matrix;
+      if (runner !== undefined) return evaluate(runner, context);
+      const entries = evaluate(include!, context) as Array<Record<string, string>>;
+      const byRunner = Map.groupBy(entries, (entry) => entry.runner!);
+      for (const [name, group] of byRunner) {
+        const parts = group.map((entry) => entry[legs[id]!.key]!).toSorted();
+        expect([[legs[id]!.whole], legs[id]!.parts], `${id} ${name}`).toContainEqual(parts);
+      }
+      return [...byRunner.keys()].toSorted((a, b) => all.indexOf(a) - all.indexOf(b));
+    };
     for (const id of ["managed_python", "real_kernel", "real_languages"]) {
-      const runner = jobs[id]!.strategy.matrix.runner;
-      expect(evaluate(runner, { inputs: { platforms: "linux" } }), id).toEqual(["ubuntu-24.04"]);
-      expect(evaluate(runner, { inputs: { platforms: "all" } }), id).toEqual(all);
+      expect(runners(id, { inputs: { platforms: "linux" } }), id).toEqual(["ubuntu-24.04"]);
+      expect(runners(id, { inputs: { platforms: "all" } }), id).toEqual(all);
       // Manual dispatch has no such input.
-      expect(evaluate(runner, { inputs: {} }), id).toEqual(all);
+      expect(runners(id, { inputs: {} }), id).toEqual(all);
     }
     const target = jobs.managed_python!.steps!.find((step) => step.env?.EXPECTED_TARGET)!.env!
       .EXPECTED_TARGET!;

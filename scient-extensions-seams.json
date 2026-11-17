@@ -297,6 +297,11 @@
       "path": "knip.jsonc",
       "anchor": "generate-claude-connectors.mjs",
       "purpose": "Register the manual refresh script for the claude.ai connectors Scient links to."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "SCIENT_MCP_INSTRUCTIONS",
+      "purpose": "Describe Scient's tool server, connectors included, to MCP clients in one instructions line."
     }
   ],
   "scientMounts": [
@@ -514,6 +519,11 @@
       "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/session.mjs",
       "anchor": "SCIENT_SIGN_IN_COOKIES",
       "purpose": "Template connector's reader of the session Scient hands a signed-in connector."
+    },
+    {
+      "path": "apps/server/src/server.testkit.ts",
+      "anchor": "SCIENT-FORK:START — the real extensions owners, as the server composes them.",
+      "purpose": "Compose the real extensions owners into the shared server router test harness."
     }
   ]
 }

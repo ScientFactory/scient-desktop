@@ -20,8 +20,10 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
-// SCIENT-FORK:START — archived handoff history moves to shared bodies in the background.
+// SCIENT-FORK:START — archived handoff history moves to shared bodies, and fork handoff
+// history to ranges, in the background.
 import { shareLegacyContextHistories } from "../orchestration-v2/scient-fork/ContextHistorySource.ts";
+import { convertForkHandoffHistory } from "../orchestration-v2/scient-fork/ForkHandoffRanges.ts";
 // SCIENT-FORK:END
 
 // Bound each reclaim pass to one minute of churn.
@@ -198,14 +200,28 @@ const make = Effect.gen(function* () {
       yield* Effect.sleep(Math.max(50, (Number(elapsed) / 1_000_000) * 9));
       sliceStarted = yield* Clock.monotonicTimeNanos;
     });
-    const result = yield* shareLegacyContextHistories(sql, between);
-    if (result.converted > 0 || result.failed > 0)
-      yield* Effect.logInfo("Shared archived context history bodies", result);
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Sharing archived context history failed", { cause }),
-    ),
-  );
+    yield* shareLegacyContextHistories(sql, between).pipe(
+      Effect.flatMap((result) =>
+        result.converted > 0 || result.failed > 0
+          ? Effect.logInfo("Shared archived context history bodies", result)
+          : Effect.void,
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Sharing archived context history failed", { cause }),
+      ),
+    );
+    // Fork handoffs written before history ranges point at the fork's own list instead.
+    yield* convertForkHandoffHistory(sql, between).pipe(
+      Effect.flatMap((ranged) =>
+        ranged.rows > 0 || ranged.skippedSources > 0
+          ? Effect.logInfo("Converted fork handoff history to ranges", ranged)
+          : Effect.void,
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Converting fork handoff history failed", { cause }),
+      ),
+    );
+  });
   yield* forkParked(
     Effect.sleep("2 minutes").pipe(
       Effect.andThen(

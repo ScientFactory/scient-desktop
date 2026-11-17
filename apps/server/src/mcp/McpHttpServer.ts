@@ -1760,12 +1760,17 @@ export const layerInProcessMcpServer = McpServer.middleware<{
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
 // SCIENT-FORK:START — Scient's server name and request-scoped tool discovery.
+/** One line clients show for this server: Codex as its namespace, Scient Agent as its catalog row. */
+const SCIENT_MCP_INSTRUCTIONS =
+  "Scient workspace tools: papers and sources, Compute, notebooks, documents and PDF builds, Overleaf, browser preview, devices, skills, connectors, accounts, projects, threads and delegation.";
+
 export const makeLayerMcpTransport =
   (toolList: ReturnType<typeof makeScientToolListLayer>) =>
   <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
     McpServer.layerHttp({
       name: "Scient",
       version: packageJson.version,
+      instructions: SCIENT_MCP_INSTRUCTIONS,
       path: MCP_HTTP_PATH,
       // The first protocol is the fallback for clients that offer an unknown version.
       protocols: [ScientMcpProtocol, ScientMcpProtocol2026],

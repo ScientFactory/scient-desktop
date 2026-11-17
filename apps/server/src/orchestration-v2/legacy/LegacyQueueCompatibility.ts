@@ -95,7 +95,7 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
           });
         } else if (action === "send") {
           yield* threads.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             commandId,
             threadId,
             runId: run.id,

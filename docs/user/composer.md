@@ -424,8 +424,8 @@ that message, and the rest of the queue continues after it in order. Sending a n
 directly also continues the held queue after that message, unless it steers a turn that is
 already running. On web or desktop, **Resume** in an empty composer continues the queue too, as
 does **Resume queue** on mobile. You can edit or remove held messages without starting them. If
-the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an empty
-composer on web or desktop to continue the thread, and the queue follows.
+the thread stopped at a usage limit, Send now says to continue the thread first: use **Resume
+thread** in an empty composer on web or desktop to continue the thread, and the queue follows.
 
 Resume and Resume thread continue a stopped run through the agent's own continuation, without
 sending a new prompt. If the agent does not support it, send a message to continue instead. If
@@ -434,7 +434,9 @@ the original request never reached the agent, Resume sends that request again.
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. While a
+turn is running, the opposite-action shortcut or a `Cmd`-click (`Ctrl`-click on Windows and Linux)
+saves the message and then steers it into that turn. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
@@ -829,8 +831,8 @@ your draft automatically. **Stash** saves it for later through the usual menu.
 Sending another ordinary message releases the queue to follow it automatically,
 one message at a time after each successful answer. Restarting work or the server
 does not release a held queue. You can also click **Send** on any waiting message:
-that message starts first and the remaining queue is released in its retained
-order, with automatic completions first. Reorder while idle to choose the order.
+that message starts first, even before a finished background task's result, and the remaining
+queue is released in its retained order. Reorder while idle to choose the order.
 
 **Retry** is for a queued message whose provider failed to start; the message stays
 queued. It cannot bypass a running answer or silently release the held tail.

@@ -24,6 +24,8 @@ import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { useArrivedPromptFollow, useResponseFollow } from "./responseFollow";
 import { useQueuedRunsInView } from "./queuedRunsInView";
+import type { TimelineViewport } from "./timelineViewport";
+import { readingNavigationReleasesFollow } from "./useReadingFollow";
 import { deriveTimelineWorking } from "./timelineWorkingState";
 import { CHAT_TIMELINE_ANCHOR_OFFSET, readTimelinePosition } from "./timelineScrollAnchoring";
 
@@ -156,13 +158,22 @@ function Chat({
   const messages = entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : []));
   const follow = useResponseFollow({ threadKey, runs, messages, loaded: true });
   const { start, join, clear } = follow;
-  const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
-  const cancelPositioning = useStableCallback(() => {
-    cancelPositionRestoreRef.current?.();
-    clear();
-  });
   const atEndRef = useRef(true);
   const readerAtEnd = useStableCallback(() => atEndRef.current);
+  // ChatView's follow lets go when the reader moves toward older content (useReadingFollow).
+  const followingResponse = follow.promptId !== null;
+  const attachViewport = useStableCallback((viewport: TimelineViewport) =>
+    viewport.subscribe((navigation) => {
+      if (
+        readingNavigationReleasesFollow(
+          navigation,
+          { contentScrollsUp: () => true, awayFromEnd: () => !readerAtEnd() },
+          followingResponse,
+        )
+      )
+        clear();
+    }),
+  );
   const followArrived = useStableCallback((promptId: MessageId) => {
     if (!follow.followable(promptId)) return;
     clear();
@@ -202,7 +213,7 @@ function Chat({
         if (atEndRef.current) start(MessageId.make(promptId));
       },
       scrollToEnd: async () => {
-        cancelPositioning();
+        clear();
         await _fixture.listRef.current?.scrollToEnd({ animated: false });
         _fixture.listRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
         join();
@@ -245,8 +256,7 @@ function Chat({
           </div>
         )
       }
-      cancelPositionRestoreRef={cancelPositionRestoreRef}
-      onManualNavigation={cancelPositioning}
+      onViewportAttach={attachViewport}
       onIsAtEndChange={(atEnd) => {
         atEndRef.current = atEnd;
       }}
@@ -1288,7 +1298,6 @@ function _createFixture(context: TestContext) {
     onAnchorReady: () => {},
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 100,
-    onManualNavigation: () => {},
   };
   const chat: {
     /** A prompt sent from this window (ChatView's frameSubmittedMessage). */

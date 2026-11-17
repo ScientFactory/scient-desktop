@@ -72,6 +72,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     runId: RunId,
     /** Newly queued starts cannot execute a later retry's active attempt. */
     expectedAttemptId: Schema.optional(RunAttemptId),
+    // SCIENT-FORK: the refused owner this start's new provider session replaces.
+    supersededProviderSessionId: Schema.optional(ProviderSessionId),
   }),
   // SCIENT-FORK:START — an accepted start may not have published its native receipt yet.
   PendingStartInterruptRequest,

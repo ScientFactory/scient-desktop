@@ -444,6 +444,7 @@ jobs:
             apps/server/src/scient/workspace/WindowsNativeFile.ts \
             apps/server/src/sourceControl \
             apps/server/src/telemetry \
+            apps/server/src/cloud/config.ts \
             apps/server/src/textGeneration \
             apps/server/src/utils \
             apps/server/src/vcs \

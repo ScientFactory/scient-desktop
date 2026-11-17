@@ -330,11 +330,6 @@ export interface ProviderManagedRuntimeProgress {
   readonly download?: ProviderRuntimeOperation["download"] | undefined;
 }
 
-export interface ProviderManagedRuntimeRunOptions {
-  /** Scient started it on its own: the download waits as long as data keeps arriving. */
-  readonly background?: boolean | undefined;
-}
-
 export interface ProviderManagedRuntimeActions {
   readonly getSummary: Effect.Effect<ProviderRuntimeSummary, ProviderConnectionActionFailure>;
   readonly plan: (
@@ -350,7 +345,6 @@ export interface ProviderManagedRuntimeActions {
     catalogRevision: string,
     report: (progress: ProviderManagedRuntimeProgress) => Effect.Effect<void>,
     awaitActivationWindow?: Effect.Effect<void, ProviderConnectionActionFailure>,
-    options?: ProviderManagedRuntimeRunOptions,
   ) => Effect.Effect<void, ProviderConnectionActionFailure>;
   /**
    * Whether a fresh check would select a different runtime than the one this

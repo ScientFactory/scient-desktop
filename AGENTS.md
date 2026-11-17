@@ -182,7 +182,10 @@ Prove flake fixes fail-before/pass-after under the same targeted slowness/probe:
 `SCIENT_TEST_CPU_THROTTLE=6 vp test run <file>` in `apps/web` (about 4 for fast-runner
 conditions, 6 for slow-runner conditions, 8 for stress; not a hardware guarantee).
 
-Prove visual fixes with before/after captures; capture the before-state before editing.
+Prove a UI change with before/after screenshots of every screen it changes, in light
+and dark, checked against the [UI checklist](docs/internals/web-ui.md#ui-checklist);
+capture the before-state before editing. The agent that opens the PR captures them,
+subagent or not.
 Verify user-visible frontend changes once after integration in a real browser or
 simulator without asking first, using synthetic state. The primary agent performs
 this pass; subagents do not launch duplicate dev servers. This does not override
@@ -199,24 +202,34 @@ are separate.
   ownership; do not automatically rebase shared history. Respect unresolved blockers;
   report conflicts rather than resolving them without the relevant authorization.
 - Use GitHub's merge queue; do not bypass checks or jump the queue except through
-  the approved admin procedure below. Queue only a merge-authorized or already
-  auto-merge-enabled PR. When its current head is reviewed, required checks are green
-  and there are no conflicts, queue that head. Non-draft/green alone is not permission;
-  do not enable auto-merge on other PRs just because they look ready.
+  the approved admin procedure below. When merge is authorized, set auto-merge on the
+  conflict-free head that had its review (see the PR template) (`gh pr merge <number> --merge --auto
+  --match-head-commit <sha>`); the queue takes it when required checks pass, so
+  nobody watches it. Without that authorization leave auto-merge off: non-draft or
+  green alone is not permission.
 - Do not merge main solely for CI reuse or repeatedly realign a queued branch:
   an update adds another PR run and can serialize work the queue runs together.
   Align for conflicts, dependencies or sensitivity to intervening changes. Before
-  correcting a queued PR, dequeue and disable auto-merge; verify and review the new
+  correcting a queued or auto-merge-enabled PR, dequeue and disable auto-merge; verify and review the new
   head before requesting delivery again. Push locally verified corrections together,
   not as a series that repeatedly restarts CI. Return PR/CI links; do not monitor
   unless asked.
+- A test failure that exactly matches an open, unexpired quarantine row in the
+  [flake register](docs/operations/ci-flakes.md) (job, failed step, test id and
+  signature) does not fail `Check`: it neither removes a PR from the queue nor fails
+  main's required check. The test still runs, its job stays red and `Check`'s summary
+  lists it with its row. Rows expire 7 days after quarantine and then block again
+  unless the cause is fixed (removing the row) or the owner extends it. Build,
+  typecheck, format/lint, documentation and provenance failures never quarantine.
+  Releases still require a CI run with no failed job.
 - After queue removal for `failed_checks` on an unchanged authorized head, inspect
-  its timeline and match every failure against open
-  [flake signatures](docs/operations/ci-flakes.md). If this is the first removal of
-  that head and it qualifies, re-add once right away. If it was removed earlier as
-  well, stop and tell the user. Never re-add a typecheck, build, provenance or unknown
-  failure. Investigate nonmatching failures and record any newly confirmed flake
-  with an owner before further delivery attempts. A row is not a failure waiver.
+  its timeline and match every failure against the register. If this is the first
+  removal of that head and every failure matches a listed but unquarantined
+  signature, re-add once right away. If it was removed earlier as well, stop and tell
+  the user. Never re-add a typecheck, build, provenance or unknown failure.
+  Investigate nonmatching failures and record any newly confirmed flake with an owner
+  before further delivery attempts. Outside an approved admin merge, only a
+  quarantine row waives a failure.
 - Admin-merge only with explicit approval for that PR's reviewed head and accepted
   failures matching open flake signatures. All checks must have finished and the
   head must contain current main. Recheck head, checks and main immediately before
@@ -254,6 +267,21 @@ paths and anything never run on a real Windows or Linux computer. Justify “una
 Shared expected behavior may use one explanation; execution evidence and unproven
 platforms must remain explicit. CI mocks do not qualify OS authenticators, installed
 browsers, live sites or installed builds.
+
+### Definition of done
+
+Report work as done only when all of these hold on the final head. Without a PR, the
+handback carries what the PR would.
+
+- focused tests and typecheck pass, plus the final checks [Verification](#verification)
+  asks for unless the task's budget narrows them; the PR then lists what did not run;
+- a UI change has its before/after screenshots in the PR, as Verification describes;
+- every link a reader can follow that the change adds (docs, UI, PR text) was fetched
+  once and works;
+- the PR states platform behavior, as above, and its review and result;
+- the delivery the task allowed is complete: the PR is open, with auto-merge set if
+  merge was authorized. Without PR authorization, the handback names the branch, head
+  and what is still owed.
 
 ## Documentation
 

@@ -3,13 +3,15 @@ import { deriveTimelineSendMotion } from "./timelineEntranceMotion";
 import { useWorkingRowExit } from "./workingRowExit";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import {
+  startFollowResume,
   timelineRowsKey,
   type ReadingHistoryPage,
   type RestingAtReadingEnd,
-  useReaderScrollInput,
+  useInteractionSettling,
   useReadingBookkeepingFrame,
   useReadingRestoreTarget,
   useSaveReadingPosition,
+  watchReaderLeavingEnd,
 } from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
@@ -26,7 +28,10 @@ import { observeLiveActivitySweep } from "./liveActivity";
 import { type ChatMessage } from "../../types";
 import { deriveTerminalAssistantMessageIds } from "./MessagesTimeline.logic";
 import { settledListThreadKey } from "../scient-fork/forkLanding";
-import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
+import type {
+  OrchestrationForkWorkspaceMode,
+  OrchestrationV2ContextTransfer,
+} from "@t3tools/contracts";
 import { ScanTextIcon } from "lucide-react";
 import type { CitationDestination } from "~/scient/chat/sideChatCitation";
 import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
@@ -158,7 +163,8 @@ import {
   McpAppTimelineRow,
 } from "./TimelineAssistantRows";
 import { V2EventTimelineRow } from "./TimelineV2EventRow";
-import { useTimelinePositionRestore } from "./useTimelinePositionRestore";
+import { startTimelinePositionRestore } from "./useTimelinePositionRestore";
+import { attachTimelineViewport, type TimelineViewport } from "./timelineViewport";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
@@ -313,8 +319,14 @@ interface MessagesTimelineProps {
   hasForkBaseline?: boolean;
   forkBaselineAssistantMessageId?: MessageId | null;
   forkOriginThreadId?: ThreadId | undefined;
-  onForkAssistantMessage?: (messageId: MessageId) => void;
-  onForkUserMessage?: (message: ChatMessage) => void;
+  onForkAssistantMessage?: (
+    messageId: MessageId,
+    workspaceMode?: OrchestrationForkWorkspaceMode,
+  ) => void;
+  onForkUserMessage?: (
+    message: ChatMessage,
+    workspaceMode?: OrchestrationForkWorkspaceMode,
+  ) => void;
   // SCIENT-FORK:END
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
@@ -342,15 +354,15 @@ interface MessagesTimelineProps {
   onReleaseUnusedAnchor?: () => void;
   // SCIENT-FORK:END
   onIsAtEndChange: (isAtEnd: boolean) => void;
-  // SCIENT-FORK:START — the unread count below; no live-follow flag: the timeline never pins
-  // to its end.
+  // SCIENT-FORK:START — the unread count below; no live-follow flag: the reading follow moves
+  // the view (chat/useBoundedAnswerFollow.ts), never the list's end pinning.
   onUnreadBelowChange?: (count: number) => void;
   // SCIENT-FORK:END
-  onManualNavigation: () => void;
+  /** Receives the list's viewport when it mounts; the returned cleanup runs when it goes away. */
+  onViewportAttach?: (viewport: TimelineViewport) => () => void;
   /** The footer's content grew, such as a new queued turn or status line. */
   onFooterGrow?: () => void;
   findOpen?: boolean;
-  cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
   // SCIENT-FORK:START — a landing fork shows once its list is in place (scient/fork/chatViewFork.tsx).
   /** The thread whose rows the loaded list has positioned and held still, else null. */
   onPositionedThreadKeyChange?: ((threadKey: string | null) => void) | undefined;
@@ -413,6 +425,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START
   contextTransfers,
   // SCIENT-FORK:END
+  findOpen = false,
   findExpanded = false,
   findQuery = "",
   activeFindMatch = null,
@@ -472,8 +485,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the unread count below.
   onUnreadBelowChange,
   // SCIENT-FORK:END
-  onManualNavigation,
-  cancelPositionRestoreRef,
+  onViewportAttach,
   // SCIENT-FORK:START
   onPositionedThreadKeyChange,
   // SCIENT-FORK:END
@@ -491,7 +503,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
-  const [listState, setListState] = useState(() => timelineListStateFor(listIdentityKey));
+  // Find open at the opening is part of the snapshot: opening find later
+  // announces its own navigation (threadFindStore's announceOpening).
+  const [listState, setListState] = useState(() => ({
+    ...timelineListStateFor(listIdentityKey),
+    findOpenAtOpening: findOpen,
+  }));
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
   );
@@ -526,12 +543,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     count: 0,
   });
   // SCIENT-FORK:END
-  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
-    listState.rememberedPosition?.atEnd === false ? null : listIdentityKey,
-  );
+  // SCIENT-FORK:START — every opening takes the restore step below (the list never opens at its
+  // end on its own; see initialScrollAtEnd), and with find open it releases follow once for find.
+  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
+  // SCIENT-FORK:END
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   // SCIENT-FORK:START — the thread whose positioning ran out of frames before it held
-  // still. No reduced-motion check and no settling identity: nothing glides to or pins the end.
+  // still (scient-fork/forkLanding.ts). No settling identity: nothing pins the end.
   const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
   // SCIENT-FORK:END
   const [playingAudioRows, setPlayingAudioRows] = useState<ReadonlyMap<HTMLAudioElement, string>>(
@@ -549,7 +567,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     : listState;
   if (identityChanged) {
     setPlayingAudioRows(new Map());
-    setListState({ identity: listIdentityKey, rememberedPosition, workGroupViewState });
+    setListState({
+      identity: listIdentityKey,
+      rememberedPosition,
+      workGroupViewState,
+      findOpenAtOpening: findOpen,
+    });
     setPositionedThreadKey(null);
     // SCIENT-FORK:START — a new thread's positioning starts over; no settling identity.
     setAbandonedPositionKey(null);
@@ -587,7 +610,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the reader's own scrolling input, held until their movement has
   // stopped: a drag, an animated wheel notch or key scroll moves for several frames.
   const readerInputRef = useRef(false);
-  const readerInputCountRef = useRef(0);
   const scrollbarHeldRef = useRef(false);
   const lastBookkeepingScrollRef = useRef<number | null>(null);
   const stillFramesRef = useRef(0);
@@ -645,8 +667,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     entryId: string | undefined;
     contentKey: string | undefined;
     ready: boolean;
-    // SCIENT-FORK: the reader input count when the row opened; only later input cancels.
-    readerInputCount?: number;
   } | null>(null);
   const disclosureRevealFrameRef = useRef<number | null>(null);
 
@@ -713,7 +733,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
         entryId: reveal.entryId,
         contentKey: reveal.contentKey,
         ready: false,
-        readerInputCount: readerInputCountRef.current, // SCIENT-FORK
       };
     }
     list.cancelScroll();
@@ -944,7 +963,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Where the reader last was, for the follow to rejoin only on arriving at the end.
   const readerEndRef = useRef<{ threadKey: string; atEnd: boolean } | null>(null);
   const onFollowFinished = responseFollow?.onFinished;
-  const onResumeFollow = responseFollow?.onResume;
   const onRevealFinished = (promptId: string) => {
     setFinishedRevealPromptId(promptId);
     // A follow that ended stays ended until the reader leaves the end and comes back.
@@ -956,9 +974,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const revealActive =
     readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
+  // The viewport the list attached, as state: the follow listens to its navigation.
+  const [attachedViewport, setAttachedViewport] = useState<TimelineViewport | null>(null);
   // The follow settles with the prompt's own run, and says what it follows.
   const followingPromptId = useBoundedAnswerFollow({
     listRef,
+    viewport: attachedViewport,
     rows,
     promptMessageId: readingFollowPromptId,
     responseSettled: responseFollow ? responseFollow.settled : !isWorking,
@@ -989,29 +1010,113 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:END
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
-  // SCIENT-FORK:START — restore by message identity, settle at the end, give up visibly, and
-  // return to a follow the reader left (chat/readerScrolling.ts).
-  useTimelinePositionRestore({
-    listRef,
-    rows,
-    listIdentityKey,
-    rememberedPosition,
-    restoringThreadPosition,
-    readingListLoaded,
-    citationRequest,
-    anchorMessageId,
+  const showsEmptyState =
+    rows.length === 0 &&
+    unmatchedPendingApprovals.length === 0 &&
+    !isWorking &&
+    parentThreadLink === null &&
+    historyControls === undefined &&
+    footer === null;
+  const viewportRef = useRef<TimelineViewport | null>(null);
+  const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
+  // SCIENT-FORK:START — the restore waits while older history pages in for its saved message.
+  const restoreReady =
+    restoringThreadPosition &&
+    rows.length > 0 &&
+    !positionHistoryLoading &&
+    !waitingForReadingHistory;
+  // SCIENT-FORK:END
+
+  // Z: syncs LegendList's scroll position with which thread it shows. The list
+  // is not keyed per thread and reports no "new data" event, and the restore
+  // must land before paint, after LegendList's own layout effects applied the
+  // new data. A citation request that arrives mid-restore takes over.
+  const { findOpenAtOpening } = identityChanged ? { findOpenAtOpening: findOpen } : listState;
+  // SCIENT-FORK:START — the reader navigating while older history loads keeps their place: the
+  // restore waiting for it is given up.
+  const awaitingRestoreHistory =
+    restoringThreadPosition && (positionHistoryLoading || waitingForReadingHistory);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for reader navigation on the attached viewport while a restore waits for history
+  useEffect(() => {
+    if (!awaitingRestoreHistory || !attachedViewport) return;
+    return attachedViewport.subscribe(() => setPositionedThreadKey(listIdentityKey));
+  }, [attachedViewport, awaitingRestoreHistory, listIdentityKey]);
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — read when the restore starts; streamed rows must not restart it.
+  const restoreInputs = {
     restoreRowIndex,
     restoreOffset,
-    waitingForReadingHistory,
-    positionHistoryLoading,
-    contentInsetEndAdjustment,
-    cancelPositionRestoreRef,
-    onManualNavigation,
-    onResumeFollow,
-    setPositionedThreadKey,
-    setAbandonedPositionKey,
+    anchorMessageId,
+    composerInset: contentInsetEndAdjustment,
+    onResumeFollow: responseFollow?.onResume,
+  };
+  const restoreInputsRef = useRef(restoreInputs);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the latest restore inputs for the restore effect below, which runs after this one
+  useLayoutEffect(() => {
+    restoreInputsRef.current = restoreInputs;
   });
   // SCIENT-FORK:END
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores LegendList's scroll position for the shown thread before paint, after the list's own layout
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const viewport = viewportRef.current;
+    if (!restoreReady || !list || !viewport) return;
+    const { restoreRowIndex, restoreOffset, anchorMessageId, composerInset, onResumeFollow } =
+      restoreInputsRef.current;
+    // SCIENT-FORK:START — positions are found by message identity (chat/readerScrollPolicy.ts).
+    // A first prompt being placed owns the view; a reader who left while following returns to
+    // where that follow is now, and it carries on (chat/liveFollowOffset.ts).
+    if (anchorMessageId !== null && !rememberedPosition) {
+      setPositionedThreadKey(listIdentityKey);
+      return;
+    }
+    const followingPromptId = rememberedPosition?.followingPromptId;
+    if (followingPromptId && citationRequest === null) {
+      return startFollowResume({
+        list,
+        viewport,
+        composerInset,
+        promptId: followingPromptId,
+        onPositioned: setPositionedThreadKey,
+        onResumed: () => onResumeFollow?.(followingPromptId),
+        listIdentityKey,
+      });
+    }
+    // The saved message is read again even when the reader was at the end: what arrived since
+    // waits below. A saved message gone for good (a revert, a deleted turn) opens at the end.
+    const found = restoreRowIndex >= 0;
+    const position = rememberedPosition && { ...rememberedPosition, atEnd: !found };
+    // SCIENT-FORK:END
+    // SCIENT-FORK: an opening that settles at the end lets the reader move away from it.
+    const stopWatchingEnd = position?.atEnd !== false ? watchReaderLeavingEnd(viewport) : null;
+    const stopRestore = startTimelinePositionRestore({
+      list,
+      viewport,
+      listIdentityKey,
+      // SCIENT-FORK: the list never opens at its end on its own (initialScrollAtEnd below).
+      listOpenedOn: null,
+      rememberedPosition: position,
+      citationPending: citationRequest !== null,
+      releaseForFind: findOpenAtOpening,
+      // SCIENT-FORK:START
+      resolveRow: () => (found ? { index: restoreRowIndex, offsetWithinRow: restoreOffset } : null),
+      onUnsettled: setAbandonedPositionKey,
+      // SCIENT-FORK:END
+      onPositioned: setPositionedThreadKey,
+    });
+    return () => {
+      stopRestore();
+      stopWatchingEnd?.();
+    };
+  }, [
+    citationRequest,
+    findOpenAtOpening,
+    listIdentityKey,
+    listRef,
+    rememberedPosition,
+    restoreReady,
+    viewportRef,
+  ]);
   // SCIENT-FORK:START — report the positioned thread to a landing fork.
   const positionedListThreadKey = settledListThreadKey({
     listThreadKey: listIdentityKey,
@@ -1028,19 +1133,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
-  // SCIENT-FORK:START — the reader's own clicks, keys and scrolling input.
-  const interactionSettling = useReaderScrollInput({
-    listRef,
-    viewport: timelineViewportElement,
-    readerInputRef,
-    scrollbarHeldRef,
-    stillFramesRef,
-    scheduleBookkeepingRef,
-    readerInputCountRef,
-  });
+  // SCIENT-FORK:START — a click or key in the timeline can open or close content; idle end
+  // keeping pauses briefly after one (chat/readerScrolling.ts).
+  const [interactionSettling, settleInteraction] = useInteractionSettling(timelineViewportElement);
   // SCIENT-FORK:END
-  // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
-  const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -1057,9 +1153,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
         })
       : null,
     viewport: timelineViewportElement,
-    onManualNavigation,
+    onManualNavigation: navigateTimeline,
   });
   const [findListReady, setFindListReady] = useState(false);
+  const handleListLoad = () => {
+    onCitationListLoad();
+    setFindListReady(true);
+    // SCIENT-FORK: saves and a landing fork wait for the loaded list (scient-fork/forkLanding.ts).
+    setReadingListLoaded(true);
+  };
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   // SCIENT-FORK:START — the followed prompt stays rendered while its response is followed.
   const followPromptIndex = readingFollowPromptId
@@ -1232,17 +1334,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (!restoringThreadPosition) scheduleMinimapRefresh();
   }, [restoringThreadPosition, scheduleMinimapRefresh]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending minimap refresh frame on unmount
-  useEffect(
-    () => () => {
-      if (minimapRefreshFrameRef.current !== null) {
-        cancelAnimationFrame(minimapRefreshFrameRef.current);
-        minimapRefreshFrameRef.current = null;
-      }
-    },
-    [],
-  );
-
   const handleScroll = () => {
     const state = listRef.current?.getState?.();
     // SCIENT-FORK:START — Scient's saver owns message identity and active-follow state; skip in-flight placements.
@@ -1324,9 +1415,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // then, keep checking every frame.
     const scrollNow = viewport?.scrollTop ?? null;
     if (readerInputRef.current) {
-      // The reader's own scrolling after the row opened ends its pending reveal.
-      if (disclosureRevealRef.current?.readerInputCount !== readerInputCountRef.current)
-        disclosureRevealRef.current = null;
       const still =
         !scrollbarHeldRef.current &&
         scrollNow !== null &&
@@ -1372,41 +1460,46 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }, [handleScrollOnNextFrame, listRef, readingListLoaded]);
   // SCIENT-FORK:END
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the timeline viewport with ResizeObserver to size the minimap gutter and hit strip
-  useEffect(() => {
-    if (!timelineViewportElement) {
-      return;
-    }
-
-    const measure = () => {
-      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      const contentWidth =
-        timelineViewportElement
-          .querySelector<HTMLElement>("[data-timeline-root]")
-          ?.getBoundingClientRect().width ?? viewportWidth;
-      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
-        viewportWidth,
-        contentWidth,
-      );
-      setMinimapHasPersistentGutter((current) =>
-        current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
-      );
-      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
-    };
-
-    const frame = requestAnimationFrame(measure);
-
-    const stopObserving = observeResize(timelineViewportElement, () => {
-      measure();
+  const measureTimelineGutter = (viewportElement: HTMLElement) => {
+    const viewportWidth = viewportElement.getBoundingClientRect().width;
+    const contentWidth =
+      viewportElement.querySelector<HTMLElement>("[data-timeline-root]")?.getBoundingClientRect()
+        .width ?? viewportWidth;
+    const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
+      viewportWidth,
+      contentWidth,
+    );
+    setMinimapHasPersistentGutter((current) =>
+      current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
+    );
+    setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+  };
+  // The content lane only changes width with the viewport or the chat width
+  // setting, never with streamed content; measuring per content frame would
+  // force a layout on every chunk.
+  const measuredLaneWidthRef = useRef<number | null>(null);
+  const observeLaneWidth = (lane: HTMLDivElement | null) => {
+    if (!lane) return;
+    return observeResize(lane, (entries) => {
+      const width = entries.at(-1)?.contentRect.width;
+      if (width === undefined || width === measuredLaneWidthRef.current) return;
+      measuredLaneWidthRef.current = width;
+      const viewportElement = lane.closest<HTMLElement>("[data-assistant-citation-viewport]");
+      if (viewportElement) measureTimelineGutter(viewportElement);
+    });
+  };
+  const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
+    setTimelineViewportElement(viewportElement);
+    if (!viewportElement) return;
+    const stopObserving = observeResize(viewportElement, () => {
+      measureTimelineGutter(viewportElement);
       scheduleMinimapRefresh();
     });
-
     return () => {
-      cancelAnimationFrame(frame);
       stopObserving();
+      setTimelineViewportElement(null);
     };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Rows and chat width resize the content without resizing the viewport.
-  }, [timelineViewportElement, rows.length, chatWidth, scheduleMinimapRefresh]);
+  };
 
   // Built from props after the last hook so the compiler can memoize the row context; a map
   // made before a hook would rebuild it, and re-render every row, on each streamed update.
@@ -1576,13 +1669,53 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
-    registerTimeline?.(list?.getScrollableNode() ?? null);
-    // SCIENT-FORK:START — Scient has no timeline viewport model, so the expanded-row reveal
-    // listens to the list's size here and stops on the reader's own scrolling.
+    const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
+    registerTimeline?.(scrollNode);
+    const viewport = scrollNode
+      ? attachTimelineViewport(scrollNode, (frame) => {
+          // SCIENT-FORK: a toggle inside a focused preview settles like a click in the timeline.
+          settleInteraction();
+          const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
+          if (rowId && list) {
+            list.cancelScroll();
+            list.anchorVisibleContent({ key: rowId });
+          }
+        })
+      : null;
+    viewportRef.current = viewport;
+    // SCIENT-FORK:START — the reading follow listens to the viewport's navigation.
+    setAttachedViewport(viewport);
+    // SCIENT-FORK:END
+    const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
+    const stopDisclosureReveal = viewport?.subscribe(() => {
+      disclosureRevealRef.current = null;
+    });
+    // SCIENT-FORK:START — the reader's own scrolling, held until it stops moving (handleScroll):
+    // idle end keeping never acts on it. A held scrollbar moves the view until release.
+    const stopReaderInput = viewport?.subscribe((navigation) => {
+      if (navigation.source === "command") return;
+      if (navigation.source === "pointer") {
+        if (!navigation.onScrollbar) return;
+        scrollbarHeldRef.current = true;
+      }
+      readerInputRef.current = true;
+      stillFramesRef.current = 0;
+      scheduleBookkeepingRef.current();
+    });
+    const ownerDocument = scrollNode?.ownerDocument;
+    const releaseScrollbar = () => {
+      scrollbarHeldRef.current = false;
+    };
+    ownerDocument?.addEventListener("pointerup", releaseScrollbar);
+    ownerDocument?.addEventListener("pointercancel", releaseScrollbar);
+    // Some engines end a scrollbar drag with mouseup and no pointerup.
+    ownerDocument?.addEventListener("mouseup", releaseScrollbar);
+    // SCIENT-FORK:END
     let contentSizeFrame: number | null = null;
-    // As in T3, one reveal per laid-out data, the next frame after LegendList settles it.
+    // LegendList lays rows out from layout effects; the next frame sees them settled.
     let scheduledData: unknown = null;
-    const stopListeningToContentSize = list?.getState().listen("totalSize", () => {
+    const scheduleContentSizeChanged = () => {
+      if (!list) return;
       const laidOutData = list.getState().data;
       if (contentSizeFrame !== null) {
         if (scheduledData === laidOutData) return;
@@ -1591,25 +1724,45 @@ const ConversationTimeline = memo(function ConversationTimeline({
       scheduledData = laidOutData;
       contentSizeFrame = requestAnimationFrame(() => {
         contentSizeFrame = null;
+        // SCIENT-FORK: the per-frame reading bookkeeping replaces the end settling.
+        handleScrollOnNextFrame();
         revealExpandedDisclosure();
       });
-    });
+    };
+    const stopListeningToContentSize = list
+      ?.getState()
+      .listen("totalSize", () => scheduleContentSizeChanged());
+    scheduleContentSizeChanged();
     return () => {
       stopListeningToContentSize?.();
+      stopDisclosureReveal?.();
+      // SCIENT-FORK:START
+      stopReaderInput?.();
+      ownerDocument?.removeEventListener("pointerup", releaseScrollbar);
+      ownerDocument?.removeEventListener("pointercancel", releaseScrollbar);
+      ownerDocument?.removeEventListener("mouseup", releaseScrollbar);
+      setAttachedViewport(null);
+      // SCIENT-FORK:END
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
       if (disclosureRevealFrameRef.current !== null) {
         cancelAnimationFrame(disclosureRevealFrameRef.current);
         disclosureRevealFrameRef.current = null;
       }
+      detachViewport?.();
+      viewport?.dispose();
+      if (viewportRef.current === viewport) viewportRef.current = null;
+      if (minimapRefreshFrameRef.current !== null) {
+        cancelAnimationFrame(minimapRefreshFrameRef.current);
+        minimapRefreshFrameRef.current = null;
+      }
       listRef.current = null;
       registerTimeline?.(null);
     };
-    // SCIENT-FORK:END
   });
 
   useThreadFindPositionReader({
     threadKey: listIdentityKey,
-    navigate: onManualNavigation,
+    navigate: navigateTimeline,
     timelineViewportElement,
     findFoldRunIds,
     timelineEntries,
@@ -1666,7 +1819,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
       >
-        <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+        <div
+          ref={observeLaneWidth}
+          className="chat-content-lane overflow-x-clip"
+          data-timeline-root="true"
+        >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
             <TimelineRowContent row={item} />
           </AudioPreviewUnmountContext>
@@ -1702,18 +1859,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (scrollNode) forwardWheelToTimeline(event, scrollNode);
   };
 
-  if (
-    rows.length === 0 &&
-    unmatchedPendingApprovals.length === 0 &&
-    !isWorking &&
-    parentThreadLink === null &&
-    historyControls === undefined &&
-    footer === null
-  ) {
-    // SCIENT-FORK:START — the inner list will remount. Block captures until its new onLoad and
-    // restoration complete, so layout at offset zero cannot overwrite the receipt.
+  if (showsEmptyState) {
+    // SCIENT-FORK:START — the inner list will remount. Saves wait for its new load and
+    // restore its latest receipt, so layout at offset zero cannot overwrite the receipt.
     if (readingListLoaded) {
       setReadingListLoaded(false);
+      setListState({ ...timelineListStateFor(listIdentityKey), findOpenAtOpening: findOpen });
       setPositionedThreadKey(null);
     }
     // SCIENT-FORK:END
@@ -1745,7 +1896,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         <TimelineRowActivityCtx value={activityState}>
           <div className="scient-reading-ui h-full min-h-0">
             <TooltipScrollDismissArea
-              ref={setTimelineViewportElement}
+              ref={attachTimelineViewportElement}
               className="relative h-full min-h-0"
               data-assistant-citation-viewport="true"
               // SCIENT-FORK:START — Legend coalesces public scroll callbacks into a later frame.
@@ -1770,35 +1921,31 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 getItemType={getItemType}
                 renderItem={renderItem}
                 estimatedItemSize={90}
-                // SCIENT-FORK:START — the restore places the list (chat/readerScrolling.ts).
+                // SCIENT-FORK:START — the restore places the list (startTimelinePositionRestore):
+                // Legend's opening end session would pin the end on every data change until the
+                // reader scrolls, pulling a row the reader just opened to the end.
                 initialScrollAtEnd={false}
                 // SCIENT-FORK:END
                 // Legend needs a data refresh to mount new pins without a scroll event.
                 dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
                 {...(alwaysRender ? { alwaysRender } : {})}
-                // SCIENT-FORK:START — the same thread can temporarily lose its loaded rows.
-                // A remounted list must restore its latest receipt, not assume the old DOM
-                // survived.
-                onLoad={() => {
-                  onCitationListLoad();
-                  setFindListReady(true);
-                  setListState(timelineListStateFor(listIdentityKey));
-                  setPositionedThreadKey(null);
-                  setReadingListLoaded(true);
-                }}
-                // SCIENT-FORK:END
+                onLoad={handleListLoad}
                 {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
                 contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-                // SCIENT-FORK:START — never pins to the end; content position is not kept during
-                // any restore; scrolls, row sizes and header/footer measurements run the
-                // same per-frame bookkeeping. A footer is metadata, never the reading end.
+                // SCIENT-FORK:START — never pins to the end: the reading follow moves the view
+                // (chat/useBoundedAnswerFollow.ts). Scrolls, row sizes and header/footer
+                // measurements run the same per-frame bookkeeping.
                 maintainScrollAtEnd={false}
+                // SCIENT-FORK:END
                 maintainVisibleContentPosition={
-                  findActive || citationPositioning || restoringThreadPosition
+                  findActive ||
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false)
                     ? false
                     : maintainVisibleContentPosition
                 }
                 maintainScrollAtEndThreshold={1}
+                // SCIENT-FORK:START
                 onScroll={handleScrollOnNextFrame}
                 onItemSizeChanged={handleScrollOnNextFrame}
                 onMetricsChange={handleScrollOnNextFrame}
@@ -1822,7 +1969,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 stripMap={minimapStripMap}
                 onWheel={forwardMinimapWheel}
                 onSelect={(item) => {
-                  onManualNavigation();
+                  navigateTimeline();
                   void listRef.current?.scrollToIndex({
                     index: item.rowIndex,
                     animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,

@@ -258,6 +258,24 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+// SCIENT-FORK:START — a fork owns its native close, checkpoint and attachment baseline.
+const layerConversationForkProvided = ConversationForkService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerProviderSessionManagerProvided,
+      ProjectionStore.layer,
+      layerEventSink,
+      layerCommandReceiptStoreProvided,
+      ProjectStore.layer,
+      ThreadCommandExecutor.layer,
+      layerLegacyV1ThreadImporterProvided,
+      ScientForkCheckpointBaselineLive.pipe(Layer.provide(VcsProcess.layer)),
+      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
+    ),
+  ),
+  Layer.provide(VcsProcess.layer),
+);
+// SCIENT-FORK:END
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -278,6 +296,8 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerProviderSwitchServiceProvided,
       layerRunExecutionServiceProvided,
       ThreadForkService.layer,
+      // SCIENT-FORK: conversation forks freeze their boundary in Scient's admission.
+      layerConversationForkProvided,
     ),
   ),
 );
@@ -377,23 +397,7 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     ),
   ),
 );
-// SCIENT-FORK:START — a fork owns its native close, checkpoint and attachment baseline.
-const layerConversationForkProvided = ConversationForkService.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      layerProviderSessionManagerProvided,
-      ProjectionStore.layer,
-      layerEventSink,
-      layerCommandReceiptStoreProvided,
-      ProjectStore.layer,
-      ThreadCommandExecutor.layer,
-      layerLegacyV1ThreadImporterProvided,
-      ScientForkCheckpointBaselineLive.pipe(Layer.provide(VcsProcess.layer)),
-      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
-    ),
-  ),
-  Layer.provide(VcsProcess.layer),
-);
+// SCIENT-FORK:START
 const layerAttachmentRollbackPruneProvided = AttachmentRollbackPruneService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(

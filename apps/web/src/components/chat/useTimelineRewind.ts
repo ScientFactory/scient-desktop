@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
@@ -15,6 +14,7 @@ import { findRevertCheckpoint } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { threadEnvironment } from "../../state/threads";
+import { openRevertConfirm, settleRevertConfirm } from "./ChatOverlayHosts";
 import { assetEnvironment } from "../../state/assets";
 import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -23,14 +23,6 @@ import { rewindToMessage } from "./chatViewSend";
 import { makeThreadErrorSetter } from "../ChatView.logic";
 interface TimelineRewindInput {
   readonly hasProjectWorkspace: boolean;
-  readonly setPendingRevert: Dispatch<
-    SetStateAction<{
-      turnCount: number;
-      messageId: MessageId;
-      routeThreadKey: string;
-      error?: string;
-    } | null>
-  >;
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
   readonly routeThreadKey: string;
@@ -74,7 +66,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     composerDraftTarget,
     setThreadError,
   } = input;
-  const { setPendingRevert, hasProjectWorkspace } = input;
+  const { hasProjectWorkspace } = input;
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -103,39 +95,37 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     if (!message || message.role !== "user") return;
 
     if (!supportsConversationRollback) {
-      setPendingRevert({
+      openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
-        routeThreadKey,
         error:
           "This provider does not support reverting conversation history. Start a new thread instead.",
       });
       return;
     }
     if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
-      setPendingRevert({
+      openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
-        routeThreadKey,
         error: `Reconnect ${activeEnvironmentUnavailableLabel} before rewinding.`,
       });
       return;
     }
     if (phase === "running" || isSendBusy) {
-      setPendingRevert({
+      openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
-        routeThreadKey,
         error: "Stop the current turn before rewinding.",
       });
       return;
     }
     if (restoreFiles === undefined) {
-      setPendingRevert({ turnCount, messageId, routeThreadKey });
+      openRevertConfirm(routeThreadKey, { turnCount, messageId });
       return;
     }
 
-    setPendingRevert({ turnCount, messageId, routeThreadKey });
+    // SCIENT-FORK: a retry clears the last failure while the dialog stays open.
+    openRevertConfirm(routeThreadKey, { turnCount, messageId });
     useComposerDraftStore.setState((store) => ({
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
@@ -161,15 +151,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return { rewindingThreadKeys: remaining };
     });
     // SCIENT-FORK:START — the rewind dialog stays open on failure and shows why; success closes it.
-    const rewindError = rewind.error;
-    setPendingRevert((current) =>
-      current?.routeThreadKey !== routeThreadKey
-        ? current
-        : rewindError === null
-          ? null
-          : { ...current, error: rewindError },
-    );
-    if (rewindError !== null) return;
+    // A failure on a thread the user has left lands in that thread's banner, as in T3.
+    if (!settleRevertConfirm(routeThreadKey, rewind.error) && rewind.error !== null) {
+      setThreadError(activeThread.id, rewind.error);
+    }
+    if (rewind.error !== null) return;
     // SCIENT-FORK:END
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       const nextPrompt = rewind.prompt;
@@ -181,12 +167,16 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     }
   };
   const onRevertToTurnCountStable = useStableCallback(onRevertToTurnCount);
+  const onConfirmRevert = (turnCount: number, messageId: MessageId, restoreFiles: boolean) => {
+    void onRevertToTurnCount(turnCount, messageId, restoreFiles);
+  };
+  const onConfirmRevertStable = useStableCallback(onConfirmRevert);
   const onRevertTimelineTurn = (targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountStable(targetTurnCount, messageId);
   };
   const onRevertTimelineTurnStable = useStableCallback(onRevertTimelineTurn);
   return {
-    onRevertToTurnCountStable,
+    onConfirmRevertStable,
     onRevertTimelineTurnStable,
   };
 }

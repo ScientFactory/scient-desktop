@@ -97,7 +97,7 @@ describe("Word export contracts", () => {
         fileName: "report.docx",
         mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         byteLength: 2_048,
-        relativeUrl: "/api/assets/signed",
+        relativeUrl: "/api/assets/token/report.docx",
         expiresAt: 10,
       },
       warnings: [{ code: "resource-unresolved", message: "Image “plot.png” was not embedded." }],

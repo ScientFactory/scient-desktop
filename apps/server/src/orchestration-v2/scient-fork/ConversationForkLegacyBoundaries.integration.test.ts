@@ -21,6 +21,7 @@ import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -86,7 +87,7 @@ const forkAt = Effect.fn("test.forkLegacyBoundary")(function* (
   target: string,
 ) {
   const targetId = ThreadId.make(target);
-  const receipt = yield* (yield* ConversationForkService).dispatch({
+  const receipt = yield* forkConversation({
     type: "thread.fork",
     commandId: CommandId.make(target),
     originThreadId: source,
@@ -151,7 +152,7 @@ it.live(
           assert.isFalse(options.available);
           assert.equal(
             (yield* Effect.result(
-              forks.dispatch({
+              forkConversation({
                 type: "thread.fork",
                 commandId: CommandId.make(target),
                 originThreadId: source,

@@ -532,6 +532,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /** Agent runs are numbered at agent_start; OMP events carry no run id. */
   let runSequence = 0;
   let openRunId: number | undefined;
+  // SCIENT-FORK: since OMP 18.21 a run paused on background work later ends with no loop of its own.
+  let pausedRunId: number | undefined;
   /** A run still open when its turn settled; nothing it sends belongs to a turn. */
   let abandonedRunId: number | undefined;
   let protocolFailed = false;
@@ -721,9 +723,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     evidence = {};
     promptSuperseded = false;
     pendingOutcomes = [];
+    // SCIENT-FORK: a paused run is unfinished too, so its final agent_end is stale here.
+    const staleRunId = openRunId ?? pausedRunId;
     yield* applySignal({
       type: "begin",
-      ...(openRunId === undefined ? {} : { staleRunId: openRunId }),
+      ...(staleRunId === undefined ? {} : { staleRunId }),
     });
     yield* publish({ type: "turn-started", turnId });
   });
@@ -1039,6 +1043,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       const followUpRun = turnIsOpen(turn) && turn.phase === "draining";
       openRunId = ++runSequence;
+      // SCIENT-FORK: a paused run that resumes starts a loop of its own.
+      pausedRunId = undefined;
       yield* applySignal({ type: "agent-start", runId: openRunId });
       if (followUpRun && turn.runId === openRunId) {
         // Only this run's ending says whether the earlier run's failure was recovered from.
@@ -1055,8 +1061,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return;
     }
     if (event.type === "agent_end") {
-      const runId = openRunId;
+      // SCIENT-FORK: the final agent_end of a paused run closes that run, not the next turn's.
+      const runId = openRunId ?? pausedRunId;
       openRunId = undefined;
+      // SCIENT-FORK: a non-terminal end leaves its run paused.
+      pausedRunId = event.isTerminal === false ? runId : undefined;
       // The tail of an aborted run carries no output for the current turn.
       const stale = runId !== undefined && runId === turn.staleRunId;
       // Yield ends the visible response even when a background result can

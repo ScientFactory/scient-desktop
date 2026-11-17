@@ -375,6 +375,11 @@
       "path": "apps/server/src/scient/extensions/connectors/LocalConnectorProcesses.ts",
       "anchor": "import { DuplexProcess } from \"../../execution/LocalDuplexProcess.ts\";",
       "purpose": "Start each local connector session as an owned process tree, stopped with it."
+    },
+    {
+      "path": "apps/server/src/server.testkit.ts",
+      "anchor": "export type ScientRpcServerTestHarness = {",
+      "purpose": "Give the registered analysis, compute and Markdown RPC tests the shared server router harness."
     }
   ]
 }

@@ -86,6 +86,31 @@ export function managedRuntimeRetryMessage(
   return `Couldn't download ${providerName} (${retry.reason}). Trying again, ${retry.retry} of ${retry.retries}.`;
 }
 
+/**
+ * Passes a progress report on when it says something new: another stage, a retry, download facts,
+ * or a move of at least 1 MiB either way (a server that ignores a range starts over from zero).
+ */
+export function makeManagedRuntimeProgressFilter(): (
+  progress: ManagedProviderRuntimeProgress,
+) => boolean {
+  let lastStage: ManagedProviderRuntimeProgress["stage"] | undefined;
+  let lastBytes = 0;
+  return (progress) => {
+    const bytes = progress.downloadedBytes ?? 0;
+    const report =
+      progress.stage !== lastStage ||
+      Math.abs(bytes - lastBytes) >= 1024 * 1024 ||
+      (progress.totalBytes !== undefined && bytes === progress.totalBytes) ||
+      progress.retry !== undefined ||
+      progress.download !== undefined;
+    if (report) {
+      lastStage = progress.stage;
+      lastBytes = bytes;
+    }
+    return report;
+  };
+}
+
 /** What `binary --version` prints when it exits 0 within five seconds. */
 export const readConfiguredRuntimeVersion = Effect.fn(
   "ManagedProviderRuntimeActions.readConfiguredRuntimeVersion",
@@ -626,7 +651,6 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     catalogRevision: Parameters<ProviderManagedRuntimeActions["run"]>[1],
     report: Parameters<ProviderManagedRuntimeActions["run"]>[2],
     awaitActivationWindow: NonNullable<Parameters<ProviderManagedRuntimeActions["run"]>[3]>,
-    options: Parameters<ProviderManagedRuntimeActions["run"]>[4],
   ) {
     const prepared = yield* prepareAction(action);
     const planned = prepared.plan;
@@ -655,34 +679,18 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     if (!actionArtifact) {
       return yield* runtimeError(`No qualified ${providerName} artifact is available.`);
     }
-    let lastStatus: ManagedProviderRuntimeProgress["stage"] | undefined;
-    let lastReportedBytes = 0;
+    const worthReporting = makeManagedRuntimeProgressFilter();
     yield* Effect.tryPromise({
       try: (signal) =>
         runtime.install({
           artifact: actionArtifact,
           signal,
-          ...(options?.background ? { downloadTimeLimitMs: null } : {}),
           ...(input.qualify ? { qualify: input.qualify } : {}),
           beforeActivate: (activationSignal) =>
             runPromise(awaitActivationWindow, { signal: activationSignal }),
           onProgress: (progress) => {
-            const stageChanged = progress.stage !== lastStatus;
-            const downloadedBytes = progress.downloadedBytes ?? 0;
-            const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
-            const downloadFinished =
-              progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
+            if (!worthReporting(progress)) return;
             const retry = progress.retry;
-            if (
-              !stageChanged &&
-              !downloadAdvanced &&
-              !downloadFinished &&
-              !retry &&
-              !progress.download
-            )
-              return;
-            lastStatus = progress.stage;
-            lastReportedBytes = downloadedBytes;
             runFork(
               report({
                 status: progress.stage,
@@ -711,8 +719,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     catalogRevision,
     report,
     awaitActivationWindow = Effect.void,
-    options,
-  ) => runEffect(action, catalogRevision, report, awaitActivationWindow, options);
+  ) => runEffect(action, catalogRevision, report, awaitActivationWindow);
 
   const summary = yield* getSummary.pipe(
     Effect.orElseSucceed(() => ({

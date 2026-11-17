@@ -8,7 +8,12 @@ import {
   roomWaitingCount,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
-import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
+import {
+  ContextHandoffId,
+  type OrchestrationV2ContextHandoff,
+  type ScientConversationFork,
+} from "@t3tools/contracts";
+import { readConversationFork } from "./scient-fork/ConversationForkRecords.ts";
 import {
   readContextHistoryCandidates,
   type ContextHistoryCandidate,
@@ -21,6 +26,7 @@ import {
   isLegacyContextHistoryReadable,
 } from "./scient-fork/ContextHistorySource.ts";
 import { handoffMetadataSql, turnItemMetadataSql } from "./scient-fork/ContextHistorySql.ts";
+import { handoffHistoryRowsSql } from "./scient-fork/ForkHandoffRanges.ts";
 import {
   readNativeHistoryEstimates,
   type NativeHistoryEstimate,
@@ -723,6 +729,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  /** Like getThread, but a missing thread is null, so an expected miss is not an error span. */
+  readonly findThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2AppThread | null, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -835,6 +845,10 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<{ readonly id: ThreadId; readonly title: string }>,
     ProjectionStoreV2Error
   >;
+  /** SCIENT-FORK: a fork's own setup state, kept in Scient's table (ConversationForkRecords.ts). */
+  readonly getConversationFork: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ScientConversationFork | null, ProjectionStoreV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -1005,6 +1019,26 @@ function checkpointScopeBindingError(
       cause: "A workspace-bound checkpoint root cannot change its captured workspace.",
     });
   }
+}
+
+/** Adapters resend whole rosters without runs, so a task keeps the run it first appeared under. */
+function attributePendingBackgroundTasks(
+  next: OrchestrationV2ProviderThread,
+  previous: Pick<OrchestrationV2ProviderThread, "pendingBackgroundTasks"> | undefined,
+  runId: OrchestrationV2DomainEvent["runId"],
+): OrchestrationV2ProviderThread {
+  const tasks = next.pendingBackgroundTasks ?? [];
+  if (tasks.every((task) => task.runId !== undefined)) return next;
+  const known = new Map(
+    (previous?.pendingBackgroundTasks ?? []).map((task) => [task.taskId, task.runId]),
+  );
+  return {
+    ...next,
+    pendingBackgroundTasks: tasks.map((task) => {
+      const owner = task.runId ?? (known.has(task.taskId) ? known.get(task.taskId) : runId);
+      return owner === undefined ? task : { ...task, runId: owner };
+    }),
+  };
 }
 
 // SCIENT-FORK: retained RunExecutionService consumer shares immutable effort ownership.
@@ -1206,7 +1240,14 @@ export function applyToProjection(
                 activeProviderThreadId: event.payload.id,
               }
             : base.thread,
-        providerThreads: upsertById(base.providerThreads, event.payload),
+        providerThreads: upsertById(
+          base.providerThreads,
+          attributePendingBackgroundTasks(
+            event.payload,
+            base.providerThreads.find((thread) => thread.id === event.payload.id),
+            event.runId,
+          ),
+        ),
       };
     case "provider-turn.updated":
       return {
@@ -2606,7 +2647,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               break;
             }
             case "provider-thread.updated": {
-              const payloadJson = yield* encodeProviderThreadPayload(event.payload);
+              const existingRows = (event.payload.pendingBackgroundTasks ?? []).some(
+                (task) => task.runId === undefined,
+              )
+                ? yield* sql<PayloadRow>`
+                    SELECT payload_json
+                    FROM orchestration_v2_projection_provider_threads
+                    WHERE provider_thread_id = ${event.payload.id}
+                    LIMIT 1
+                  `
+                : [];
+              const existing = existingRows[0];
+              const payloadJson = yield* encodeProviderThreadPayload(
+                attributePendingBackgroundTasks(
+                  event.payload,
+                  existing === undefined
+                    ? undefined
+                    : yield* decodeProviderThreadPayload(existing.payload_json),
+                  event.runId,
+                ),
+              );
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
               INSERT INTO orchestration_v2_projection_provider_threads (
@@ -5326,6 +5386,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT 1 FROM scient_handoff_shared_sources AS shared
           JOIN scient_history_bodies AS body ON body.hash = shared.summary_hash
           WHERE shared.source_id = json_extract(context.payload_json, '$.historySource.id'))`;
+        // Fork handoffs keep runs of inherited positions as ranges of the fork's history.
+        const handoffRows = handoffHistoryRowsSql(
+          sql,
+          sql`json_extract(context.payload_json, '$.historySource.id')`,
+        );
         // SCIENT-FORK:END
         // Source identity must not hide a missing body behind otherwise-decodable metadata.
         const brokenSources = yield* sql<{ readonly thread_id: string }>`
@@ -5345,14 +5410,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND (
                 json_extract(context.payload_json, '$.historySource.summaryOnly') = 1
                 OR json_extract(context.payload_json, '$.historySource.itemCount') <> (
-                  SELECT COUNT(*) FROM scient_handoff_history WHERE source_id = json_extract(context.payload_json, '$.historySource.id'))
+                  SELECT COUNT(*) FROM (${handoffRows}))
                 OR EXISTS (
-                  SELECT 1 FROM scient_handoff_history AS history
+                  SELECT 1 FROM (${handoffRows}) AS history
                   LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
                   LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
                   LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
-                  WHERE history.source_id = json_extract(context.payload_json, '$.historySource.id')
-                    AND octet_length(frozen.item_json) IS NULL AND octet_length(body.item_json) IS NULL
+                  WHERE octet_length(frozen.item_json) IS NULL AND octet_length(body.item_json) IS NULL
                     AND octet_length(item.payload_json) IS NULL
                 )
               ))
@@ -5978,26 +6042,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
       );
 
+    const selectThread = (threadId: ThreadId) =>
+      sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId}
+      `.pipe(
+        Effect.flatMap((rows) =>
+          rows[0] === undefined ? Effect.succeed(null) : decodeThreadPayload(rows[0].payload_json),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+      );
+
     const getThread: ProjectionStoreV2Shape["getThread"] = Effect.fn("ProjectionStore.getThread")(
       function* (threadId) {
-        const rows = yield* sql<PayloadRow>`
-          SELECT payload_json FROM orchestration_v2_projection_threads
-          WHERE thread_id = ${threadId}
-        `;
-        if (rows[0] === undefined) {
-          return yield* new ProjectionStoreThreadNotFoundError({ threadId });
-        }
-        return yield* decodeThreadPayload(rows[0].payload_json);
+        const thread = yield* selectThread(threadId);
+        if (thread === null) return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+        return thread;
       },
-      (effect, threadId) =>
-        effect.pipe(
-          Effect.mapError((cause) =>
-            isProjectionStoreThreadNotFoundError(cause)
-              ? cause
-              : new ProjectionStoreReadError({ threadId, cause }),
-          ),
-        ),
     );
+
+    const findThread: ProjectionStoreV2Shape["findThread"] = Effect.fn(
+      "ProjectionStore.findThread",
+    )(selectThread);
 
     const requireThread = Effect.fn("ProjectionStore.requireThread")(function* (
       threadId: ThreadId,
@@ -9903,6 +9969,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadShell: readOnReader(getThreadShell),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
+      findThread: readOnReader(findThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
@@ -9943,6 +10010,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
         ),
       getReleasableFiles,
+      getConversationFork: (threadId) =>
+        readConversationFork(sql, threadId).pipe(
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
       getProjectThreadTitles: (threadId) =>
         sql<{ readonly thread_id: string; readonly title: string }>`
           SELECT sibling.thread_id, json_extract(sibling.payload_json, '$.title') AS title

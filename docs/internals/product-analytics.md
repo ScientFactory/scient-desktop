@@ -13,7 +13,7 @@ in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
 credentials, paths and query strings are rejected. Use only synthetic state;
 never send development review traffic to the production gateway. This override
-does not set consent, change released defaults or enable generic T3 telemetry.
+does not change released defaults or enable generic T3 telemetry.
 
 This document describes the source implementation, not deployed collection or a
 privacy approval. Release/activation evidence must refer to exact desktop and
@@ -30,11 +30,13 @@ characters, finite numbers, booleans or arrays of up to 32 of those, 16 KiB in a
 key (`prompt`, `message`, `error`, `path`, `url`, `email` and the like) or value that looks like a
 path, link or email address. Revision 11 permits a validated `email` only on
 `install.account_observed`; ordinary events retain the same exclusions.
-Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
+Every event is queued at the full `diagnostic` level the gateway reads, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
 The Settings privacy section, with its switch and “Delete data” request, was
-removed, along with the server's consent and deletion routes.
+removed, along with the server's consent and deletion routes. The server and worker no longer
+carry consent levels, collection epochs or a deletion request; the status the server reports
+keeps `consent` (always `diagnostic` when available) only for clients that still read it.
 
 The notification is implemented but disabled by default at its component boundary
 pending an approved audience and timing policy. This gate does not change analytics
@@ -60,6 +62,12 @@ are not anonymous people or unlinked events and still require the consent/deleti
 protections below. Final copy and layout require human review before activation.
 
 ## Contract and delivery
+
+T3's `apps/server/src/telemetry/AnalyticsService.ts` stays exactly as T3 wrote it. Scient's
+`ScientAnalytics.ts` provides that service and Scient's availability flag, and `server.ts`
+composes it in place of T3's PostHog layer, which is never built. `server.scient.test.ts` builds
+the composed analytics with T3's PostHog settings switched on and checks that nothing reaches
+PostHog.
 
 `contract.ts` normalizes raw call-site values. `wireContract.ts` is the strict
 persisted/wire validator; the website gateway consumes its generated copy.
@@ -203,9 +211,8 @@ small-input turns dominate. Rows without `reportVersion` keep their missing
 fields unknown; a missing origin is never a person.
 
 UI export operations require a cached, positive status with an ephemeral
-`collectionContext`. The server derives that context from its current consent
-epoch and a random value; a new server/HTTP lifetime invalidates it. Consent is
-fixed for a server's lifetime, so the epoch stays 0. The UI carries it outside event properties, and the
+`collectionContext`. The server derives that context from a random value; a new
+server/HTTP lifetime invalidates it. The UI carries it outside event properties, and the
 HTTP adapter verifies and removes it before recording. It never enters the
 outbox or gateway and is not an installation identity. Old status responses
 remain compatible, but without a context the new UI-operation observers stay
@@ -220,7 +227,7 @@ failures. Missing terminal events are not automatically failures.
 
 The dedicated worker owns SQLite and remote delivery. Limits are 1,000 memory
 events, two in-flight local batches, 10,000 durable events, 50 events per upload,
-up to 10 uploads per flush, 15-second upload deadlines (10 seconds for deletion),
+up to 10 uploads per flush, 15-second upload deadlines,
 20 gateway rejections per event, and 100 metadata-only dead letters. A timeout,
 network error, 408, 429 or 5xx backs off the endpoint (30 seconds doubling to 15
 minutes, with jitter, and at least any `Retry-After` on 429/503); it never parks or
@@ -234,8 +241,7 @@ privacy check. Local raw events expire after 180 days, diagnostics after 30 days
 and dead-letter metadata after 30 days when maintenance runs. An app that is
 not running cannot execute cleanup; old events are filtered before delivery.
 
-Off makes no per-event HTTP, SQLite, or worker call. The server sets consent once,
-when the worker starts, and sends no later consent or deletion controls. The worker schedules delivery only while eligible events remain;
+Unavailable analytics makes no per-event HTTP, SQLite, or worker call. The worker schedules delivery only while eligible events remain;
 diagnostic summaries do not create an endless diagnostic-only feedback loop.
 Shutdown gets 300 ms for local persistence and does not await remote delivery.
 These are implementation bounds, not a claim of zero CPU cost or universally
@@ -273,8 +279,7 @@ billion; invalid values are omitted rather than clamped. Unknown counts are not
 zero. Cache and reasoning are already included in input/output and must not be
 added again. Private or mixed model labels become `other`; absent labels remain
 `unknown`. No transcript scan, raw usage object, cost estimate or subagent total
-is exported. Product consent must cover the observed turn interval; epoch
-changes suppress deferred totals. Missing/evicted starts emit unavailable usage
+is exported. Missing/evicted starts emit unavailable usage
 rather than attributing an unproven interval. Terminal failures/stops can consume
 tokens but usage remains Product-class, separate from Essential failures.
 
@@ -286,9 +291,7 @@ submission, not proof of provider delivery, an answer, or a human action.
 Progress updates, queued-to-steer promotions, retries, restart continuations,
 restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
 uses the canonical run event or configured instance's driver, never the instance
-name. Consent/identity changes clear the bounded observation state and never
-backfill earlier admissions. Consent is fixed for the server's lifetime, so
-the collection period set at start (epoch 0) never changes.
+name. Only events committed after the observers start are observed.
 Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
 held Droid re-delivery and queue promotion are not first admissions, even after
 local correlation state resets. Unknown legacy provenance is not counted.
@@ -309,8 +312,19 @@ count user turns.
 Scient Agent uses the existing installation observations, installed-state
 changes, lifecycle operations, submissions, terminal outcomes and token usage.
 `provider.lifecycle.*` says who started a runtime change (`trigger`: `user` or
-`background`), the background `attempt`, and for a finished download
-`resumedBucket`, `downloadSource` (`primary` is Scient's copy) and `compressed`.
+`background`) and the background `attempt`: Scient Agent's own provisioning, or Scient trying again a
+change the user asked for (from 1). For a finished download, or as far as a failed one got, it adds
+`resumedBucket`, `downloadSource` (`primary` is Scient's copy where one exists), `sourceKind`
+(`scient_mirror`, `github` or `vendor`), `downloadVariant` (`compressed` or `raw`),
+`downloadAttempts` (the downloader's own tries, not `attempt`), `progressBucket` (how much of the
+file the last try had), `throughputBucket` (bytes received per second of request time in Mbit/s
+buckets, kept bytes and waits between tries excluded), `networkKind` (how the last try's connection
+failed: `dns`, `refused`, `reset`, `unreachable`, `connect_timeout`, `stalled`, `cut_off` or
+`other`) and `compressedFailure` (why the compressed copy was given up for the raw one). Only
+`provider.lifecycle.failed` carries `failureClass`; it reports `stalled` (30 seconds without data)
+apart from `timeout`, while the operation itself still says `timeout` so older clients decode it.
+No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
+`downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
 `provider.runtime.first_pick` is sent once per installation when the user first
 picks Scient Agent in the composer: `state` is `ready`, `in_progress` (with
 `percentBucket`), `failed` or `not_started`. Its `ready` share is the headline
@@ -359,7 +373,7 @@ from the source implementation alone.
 
 `OperationAnalytics` observes these owners; it does not own work, add retries,
 change failures, or write scientific state. Optional-service hosts still work
-without analytics. Correlation maps are bounded and cleared at consent epochs.
+without analytics. Correlation maps are bounded and cleared while analytics is unavailable.
 Compute correlation includes current project/session/execution identity and
 session generation only in memory. When workspace-binding authority lands,
 include that binding in this local key; caller-chosen execution IDs are not globally
@@ -446,7 +460,7 @@ not proof that the user submitted or accepted the transcript.
 The UI binds the job to its original connection and collection context. A
 previously verified context does not expire mid-job; the server validates it on
 every voice event and strips it before queueing. Unknown/Off work is never replayed,
-and consent changes, deletion or a server restart invalidate old outcomes. A
+and a server restart invalidates old outcomes. A
 server must advertise lifecycle version 2 before the UI sends these job events.
 Essential permits failure metadata only; recording and successful-use events
 remain Product. Audio, transcripts, correction requests, document contents and
@@ -477,8 +491,7 @@ Source imports use a small optional Promise observer at the existing
 coordinator's actual item-processing seam and the agent source-add seam.
 `SourceImportAnalytics` bridges to the same `AnalyticsService`; there is no
 global listener, second operation store, import retry, or additional filesystem/
-network request. Off bypasses outcome inspection. A consent epoch change during
-an attempt suppresses its terminal event; future genuine attempts can be observed.
+network request. Unavailable analytics bypasses outcome inspection.
 
 `source-import` has **item-attempt** grain. A successful source-store return
 emits `scient.operation.completed`; duplicates/possible matches emit
@@ -504,7 +517,7 @@ kind. Its private summary and payload are never read; the failure class remains
 memory. This covers reported outcomes, not an unreported server crash.
 
 Registered operation kinds without producers are not usage evidence. Non-PDF
-document/figure exports, desktop updater,
+document/figure exports,
 migration, desktop main-process crash, and cloud/mobile coverage still require their own
 authoritative seams and proof. `client.connected`/`client.turn.requested` remain
 unregistered as described below. Failure categories not known from a safe typed
@@ -518,14 +531,9 @@ not exact percentile measurements.
 
 ## Deletion and activation gates
 
-The desktop no longer sends deletion requests. The rest of this section describes the
-analytics worker and gateway, which keep their deletion handling.
-
-When the analytics runtime is enabled, an explicit deletion can authenticate
-while consent is Off; it does not temporarily enable Essential collection.
-The globally disabled runtime remains inert, including its remote controls.
-Acknowledgement permits local cleanup and identity rotation, not a claim that
-every downstream copy is gone.
+The desktop no longer sends deletion requests, and its analytics worker no longer
+carries one. The rest of this section describes the gateway, which keeps its
+deletion handling. The globally disabled runtime remains inert.
 
 The gateway owns atomic D1 erasure, durable anti-resurrection tombstones,
 delivery leases, and downstream erasure state. Its separate
@@ -549,7 +557,7 @@ ambiguous capture. Desktop account linking remains disabled. See the gateway
 README for qualification, pending/blocked status and deployment procedures.
 
 Useful local checks include package contract/outbox/worker tests, service/UI
-consent tests, provider lifecycle and operation observer tests, the real gateway
+tests, provider lifecycle and operation observer tests, the real gateway
 SQLite migration/retention/deletion suite, whole-repository checks, and the
 packaged analytics worker. These do not prove deployed configuration, live
 PostHog queries, Windows/Linux behavior, or human privacy-UI acceptance.
@@ -766,6 +774,54 @@ item counts as failed.
 The contract reads these fields with closed lists, so free text becomes `unknown` or is dropped.
 The gateway accepts them unchanged; reference queries on the ledger live in the website's
 `workers/events/src/attributionPipeline.test.ts`.
+
+## Desktop app updates
+
+The desktop updater records two Essential events, both fully closed: their normalizers read every
+field, so nothing passes through as recorded. Versions are public release numbers or omitted;
+URLs, hosts, paths, raw errors and the updater's `message` never enter them.
+
+`app.update.outcome` records a start and one terminal outcome per check/download attempt:
+`check` and `download` (`started`, `completed`, `failed`), `install` (`handoff-attempted`,
+`failed`) and `apply` (`completed`, `not-applied`, `superseded`). `trigger`
+is `user` or `background` (startup and four-hourly checks, the background download).
+`failureClass` (failed only) comes from electron-updater's codes, HTTP statuses and Node/Chromium
+network errors: `network`, `timeout`, `certificate`, `http_4xx`, `http_5xx`, `feed` (the feed lacks
+a channel file, release or asset), `checksum`, `signature`, `disk_full`, `permission`,
+`configuration`, `cancelled`, `internal` or `unknown`; a feed error wrapping a transport cause
+reports the transport cause. `targetVersion`, `sourceKind` (`github`, `scient_mirror`,
+`administrator`), `packageKind` (`zip`, `nsis`, `appimage`, `deb`; omitted when unknown), a random
+per-attempt `attemptRef` and `durationBucket` complete it. The rejected promise, not the updater's
+matching `error` event, is a check's or download's outcome; an install records one failure
+however many paths report it. `handoff-attempted` is recorded just before the installer takes
+over; the next launch reports `apply` with the same `attemptRef`: `completed` when the target
+runs, `not-applied` when the old version runs again (once, not at every launch), `superseded`
+when another build runs. A handoff without a later outcome is unresolved, not a failure; there is
+no timer that restarts servers after the handoff.
+An `apply` outcome omits `sourceKind`: the install record does not retain the previous
+process's feed. Its `attemptRef` links to the original handoff instead of guessing from
+the new process's configured feed.
+
+`app.update.summary` is sent at launch, when the status settles somewhere new (a check in
+progress is not a change) and daily while running: `reason`, `status`, `channel`, `behind`
+(`yes` when a newer offer is known, `no` for an approved older/equal target or a
+successful check that found none, and `unknown` after a failed check even if an older
+offer remains retained), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),
+`errorContext` on errors, `progressBucket` and `sinceProgressBucket` while downloading,
+`readyAgeBucket` when downloaded, `disabledClass` when off and `droppedFactsBucket`. A ready
+update waiting for days is not a failed install.
+
+Installs run with every backend stopped and an apply outcome is known before any backend starts,
+so both events wait in a persisted journal in the desktop process
+([`DesktopUpdateFacts.ts`](../../apps/desktop/src/scient/updateOutcomes/DesktopUpdateFacts.ts):
+at most 64 facts and 14 days; drops are counted into the next summary). It records nothing while
+analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, or a managed
+policy without telemetry) and deletes what an earlier launch kept. Facts travel on the telemetry
+pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else the first ready
+one; two backends have two installation identities). That backend's `ScientRecordedAnalyticsIngest`
+queues them with their own event ids and times, through the normal shape checks, and the desktop
+forgets them only after the outbox persisted them or analytics there must never send them. A fact
+offered again stays one event: the outbox and gateway both ignore a repeated id.
 
 ## Privacy invariants
 

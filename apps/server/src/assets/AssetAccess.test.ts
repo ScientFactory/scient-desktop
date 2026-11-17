@@ -396,6 +396,30 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("serves the background image published beside an environment theme", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(environmentThemesDir, { recursive: true });
+      const imagePath = `${environmentThemesDir}/frieren.png`;
+      yield* fs.writeFile(imagePath, screenshotPng);
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "environment-theme-background", themeId: "frieren" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+      expect(asset).toMatchObject({ kind: "file", path: yield* fs.realPath(imagePath) });
+      if (asset?.kind !== "file") return;
+      const response = yield* assetFileResponse(asset);
+      expect(response.headers["content-type"]).toBe("image/png");
+
+      yield* fs.remove(imagePath);
+      expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toBeNull();
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1183,6 +1207,34 @@ describe("AssetAccess", () => {
           renewedSuffix.slice(renewedSeparator + 1),
         ),
       ).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("validates canonical preview dependency paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const page = path.join(root, "report.html");
+      yield* fs.writeFileString(page, "<!doctype html>");
+      for (const name of ["report.css", ".internal.css", "notes.txt"]) {
+        yield* fs.writeFileString(path.join(root, name), "fixture");
+      }
+      yield* fs.symlink(path.join(root, "report.css"), path.join(root, "theme.css"));
+      yield* fs.symlink(path.join(root, ".internal.css"), path.join(root, "internal.css"));
+      yield* fs.symlink(path.join(root, "notes.txt"), path.join(root, "notes.css"));
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: page },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(ASSET_ROUTE_PREFIX.length + 1);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      expect(yield* resolveAsset(token, "theme.css")).toMatchObject({
+        path: yield* fs.realPath(path.join(root, "report.css")),
+      });
+      expect(yield* resolveAsset(token, "internal.css")).toBeNull();
+      expect(yield* resolveAsset(token, "notes.css")).toBeNull();
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -2161,6 +2213,65 @@ describe("AssetAccess", () => {
       yield* TestClock.adjust("23 hours");
       expect(yield* resolveAsset(token, "interactive.html")).toBeNull();
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects HTML document aliases whose canonical target is hidden",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-html-alias-" });
+        const htmlPath = path.join(root, "report.html");
+        yield* fileSystem.writeFileString(htmlPath, "<!doctype html>");
+        yield* fileSystem.writeFileString(path.join(root, "theme.css"), "body {}");
+        yield* fileSystem.writeFileString(path.join(root, ".env"), "SECRET=value");
+        yield* fileSystem.makeDirectory(path.join(root, ".git"));
+        yield* fileSystem.writeFileString(path.join(root, ".git", "config"), "[core]");
+        yield* fileSystem.symlink(path.join(root, "theme.css"), path.join(root, "linked.css"));
+        yield* fileSystem.symlink(path.join(root, ".env"), path.join(root, "public.css"));
+        yield* fileSystem.symlink(path.join(root, ".git"), path.join(root, "vcs"));
+
+        const issued = yield* issueAssetUrl({
+          resource: {
+            _tag: "environment-file",
+            path: EnvironmentFilePath.make(htmlPath),
+            access: "html-document",
+          },
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+
+        expect(yield* resolveAsset(token, "linked.css")).toMatchObject({
+          path: yield* fileSystem.realPath(path.join(root, "theme.css")),
+        });
+        expect(yield* resolveAsset(token, "public.css")).toBeNull();
+        expect(yield* resolveAsset(token, "vcs/config")).toBeNull();
+        if (path.sep === "/") {
+          yield* fileSystem.writeFileString(path.join(root, "styles\\.min.css"), "body {}");
+          yield* fileSystem.symlink(
+            path.join(root, "styles\\.min.css"),
+            path.join(root, "min.css"),
+          );
+          expect(yield* resolveAsset(token, "min.css")).not.toBeNull();
+        }
+
+        const hiddenEntryPath = path.join(root, ".draft.html");
+        yield* fileSystem.writeFileString(hiddenEntryPath, "<!doctype html>");
+        const hiddenEntry = yield* issueAssetUrl({
+          resource: {
+            _tag: "environment-file",
+            path: EnvironmentFilePath.make(hiddenEntryPath),
+            access: "html-document",
+          },
+        });
+        const hiddenSuffix = hiddenEntry.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const hiddenToken = hiddenSuffix.slice(0, hiddenSuffix.indexOf("/"));
+        expect(yield* resolveAsset(hiddenToken, ".draft.html")).toMatchObject({
+          path: yield* fileSystem.realPath(hiddenEntryPath),
+        });
+        expect(yield* resolveAsset(hiddenToken, "public.css")).toBeNull();
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("honors a shorter internal lifetime for controlled HTML rendering", () =>

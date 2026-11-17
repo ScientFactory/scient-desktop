@@ -33,7 +33,8 @@ import {
   zoteroItem,
 } from "../scient/sources/Zotero.testkit.ts";
 import { discardLocalPdfImportMaterial } from "../scient/sources/LocalPdfSourceAdapter.ts";
-import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
+import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { makeSourceImportAnalytics } from "./SourceImportAnalytics.ts";
 
 vi.mock("../scient/sources/LocalPdfSourceAdapter.ts", async (importOriginal) => {
@@ -80,14 +81,11 @@ async function project() {
   return root;
 }
 
-function analyticsFixture(consent: AnalyticsStatus["consent"] = "product") {
+function analyticsFixture(initiallyAvailable = true) {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent };
-  let epoch = 0;
-  const changeConsent = (next: AnalyticsStatus["consent"]) => {
-    status = { available: true, consent: next };
-    epoch += 1;
-    return status;
+  const availability = { available: initiallyAvailable };
+  const setAvailable = (next: boolean) => {
+    availability.available = next;
   };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
@@ -95,13 +93,14 @@ function analyticsFixture(consent: AnalyticsStatus["consent"] = "product") {
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
     flush: Effect.void,
   });
   const observer = (trigger: "user" | "agent" = "user", provided = service) =>
-    makeSourceImportAnalytics(trigger).pipe(Effect.provideService(AnalyticsService, provided));
-  return { events, service, observer, changeConsent };
+    makeSourceImportAnalytics(trigger).pipe(
+      Effect.provideService(AnalyticsService, provided),
+      Effect.provideService(ScientAnalyticsAvailability, availability),
+    );
+  return { events, service, observer, setAvailable };
 }
 
 async function localOperation(
@@ -321,38 +320,6 @@ describe("source import outcome analytics", () => {
       }),
   );
 
-  it.effect.each(
-    (["off", "product"] as const).map((initial) => ({
-      caseTitle: `does not replay an in-progress import after ${initial} -> Off -> Product`,
-      initial,
-    })),
-  )("$caseTitle", ({ initial }) =>
-    Effect.gen(function* () {
-      const f = analyticsFixture(initial);
-      const observer = yield* f.observer();
-      yield* Effect.promise(async () => {
-        const root = await project();
-        const resetDuringAttempt: SourceImportObserver = async () => {
-          const finish = await observer?.();
-          f.changeConsent("off");
-          f.changeConsent("product");
-          return finish;
-        };
-        await localOperation(root, "before");
-        await advanceSourceImport({ root, operationId: "before" }, resetDuringAttempt);
-        expect(f.events.map((event) => event.name)).toEqual(
-          initial === "off" ? [] : ["scient.operation.started"],
-        );
-        await localOperation(root, "after", "new private content");
-        await advanceSourceImport({ root, operationId: "after" }, observer);
-        expect(f.events.slice(-2).map((event) => event.name)).toEqual([
-          "scient.operation.started",
-          "scient.operation.completed",
-        ]);
-      });
-    }),
-  );
-
   it.effect(
     "leaves actual import and duplicate behavior intact when the analytics service defects",
     () =>
@@ -360,7 +327,6 @@ describe("source import outcome analytics", () => {
         const root = yield* Effect.promise(() => project());
         const f = analyticsFixture();
         for (const service of [
-          { ...f.service, status: Effect.die("analytics status failure") },
           { ...f.service, record: () => Effect.die("analytics record failure") },
         ]) {
           const observer = yield* f.observer("agent", service);
@@ -429,10 +395,10 @@ describe("source import outcome analytics", () => {
   );
 
   it.effect(
-    "does not inspect a result while Off, or turn a classifier defect into a product error",
+    "does not inspect a result while unavailable, or turn a classifier defect into a product error",
     () =>
       Effect.gen(function* () {
-        const f = analyticsFixture("off");
+        const f = analyticsFixture(false);
         const observer = yield* f.observer();
         const result = { private: privateMarker };
         const classify = vi.fn(() => {
@@ -442,7 +408,7 @@ describe("source import outcome analytics", () => {
           yield* Effect.promise(() => observeSourceImport(observer, async () => result, classify)),
         ).toBe(result);
         expect(classify).not.toHaveBeenCalled();
-        yield* Effect.sync(() => f.changeConsent("product"));
+        yield* Effect.sync(() => f.setAvailable(true));
         expect(
           yield* Effect.promise(() => observeSourceImport(observer, async () => result, classify)),
         ).toBe(result);

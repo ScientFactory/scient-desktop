@@ -21,7 +21,6 @@
     "apps/web/src/routes/_chat.settings.skills_.external.tsx",
     "apps/web/src/routes/_chat.settings.skills.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
-    "apps/web/src/scient/threadQueue/composerSnapshot.ts",
     "packages/client-runtime/src/work-log/scientMcpToolPresentation.test.ts",
     "packages/shared/src/scientMcpToolPresentation.ts",
     "packages/contracts/src/scientSkillSelection.ts",
@@ -55,6 +54,11 @@
       "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
       "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
+    },
+    {
+      "path": "apps/web/src/components/chat/useQueuedRunEdit.ts",
+      "anchor": "selectedScientSkillNames: collectSelectedScientSkillNames(content.prompt)",
+      "purpose": "Choose an in-place queued edit's Scient skills from its edited `$skill` mentions, as a new send does, including explicit empty clearing; qualify via useQueuedRunEdit.scient.browser.test.tsx."
     },
     {
       "path": "packages/contracts/src/provider.ts",
@@ -314,11 +318,6 @@
       "purpose": "Carry preserved queued selections through resumable native admission rather than retaining stale V1 delivery authority; qualify via LegacyQueueAdmission.test.ts."
     },
     {
-      "path": "apps/web/src/scient/threadQueue/nativeQueueEditItem.ts",
-      "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
-      "purpose": "Extract a native held message into an ordinary draft with its captured selection, including explicit empty clearing; qualify via useThreadQueue.edit.browser.test.tsx."
-    },
-    {
       "path": "apps/web/src/scient/releaseNotes/catalog.ts",
       "anchor": "id: \"scient-skills\"",
       "purpose": "Retain versioned Scient Skills release copy in the release-owned catalog; this is presentation history, not execution authority."
@@ -332,11 +331,6 @@
       "path": "apps/server/src/orchestration-v2/testkit/OmpNativeConjunctions.ts",
       "anchor": "selectedScientSkillNames: []",
       "purpose": "Dispatch controlled Oh My Pi conjunction fixtures with an explicit empty skill selection."
-    },
-    {
-      "path": "apps/web/src/scient/threadQueue/submission.ts",
-      "anchor": "selectedScientSkillNames: Schema.optionalKey(Schema.Array(Schema.String))",
-      "purpose": "Retain selected Scient skills in the durable queued thread-start payload."
     },
     {
       "path": "apps/server/src/provider/ScientProviderInstance.ts",
@@ -372,6 +366,11 @@
       "path": "apps/web/src/scient/extensions/InstalledPage.tsx",
       "anchor": "<ScientSkillsLibrary",
       "purpose": "List turned-on Scient skills, every agent's skills and project skills under Extensions ▸ Installed ▸ Skills."
+    },
+    {
+      "path": "apps/server/src/provider/scient/ScientAgentToolLoading.ts",
+      "anchor": "scient_skill_load",
+      "purpose": "Keep skill discovery and loading in the Scient tool core that capable OMP runtimes load directly."
     }
   ]
 }

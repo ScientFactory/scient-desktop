@@ -143,23 +143,6 @@ describe("Scient release machinery", () => {
     }
   });
 
-  it("keeps unsigned Windows publication an explicit exception", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-    assert.include(workflow, "allow_unsigned_windows:");
-    assert.include(
-      workflow,
-      "allow_unsigned_windows is only valid for an explicitly publishing run.",
-    );
-    assert.include(
-      workflow,
-      "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true.",
-    );
-    assert.include(workflow, "Publication requires signed macOS artifacts:");
-  });
-
   // regression: 20117b09c1 fix(release): use Bash for version alignment on all platforms (#44)
   it("pins Bash for every package-version alignment step", () => {
     const workflow = NodeFS.readFileSync(

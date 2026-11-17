@@ -89,6 +89,21 @@ ignored — the filename decides. An optional `css` string adds
 
 A theme with no usable colors is not listed on that client.
 
+### Background image
+
+A published theme can have a full-size background image. Ask an agent, for example "use
+~/Pictures/wallpaper.jpg as Scient's background", or save a JPEG, PNG, or WebP file of up to
+16 MB beside the theme file: `nightfall.jpg` beside `nightfall.json`. The theme's CSS decides
+where the image shows:
+
+```css
+[data-workspace-area="conversation"] {
+  background: var(--theme-background-image) center / cover no-repeat;
+}
+```
+
+Delete the image file to remove it.
+
 Write each file atomically — write a temporary file beside it and rename — so Scient never reads
 a half-written theme. An unreadable or invalid file is simply not published; the machine's other
 themes are unaffected.

@@ -22,7 +22,6 @@ function fixturePath(): string {
 function options(overrides: Partial<AnalyticsRuntimeOptions> = {}): AnalyticsRuntimeOptions {
   return {
     enabled: true,
-    consent: "product",
     outboxPath: fixturePath(),
     appVersion: "0.0.32",
     buildChannel: "development",
@@ -31,15 +30,13 @@ function options(overrides: Partial<AnalyticsRuntimeOptions> = {}): AnalyticsRun
   };
 }
 
-async function ingestionServer(deleteAccepted = true): Promise<{
+async function ingestionServer(): Promise<{
   readonly endpoint: string;
   readonly bodies: unknown[];
   readonly installationTokens: string[];
-  readonly deletionBodies: unknown[];
 }> {
   const bodies: unknown[] = [];
   const installationTokens: string[] = [];
-  const deletionBodies: unknown[] = [];
   const server = NodeHttp.createServer((request, response) => {
     installationTokens.push(String(request.headers["x-scient-installation-token"] ?? ""));
     const chunks: Buffer[] = [];
@@ -48,12 +45,6 @@ async function ingestionServer(deleteAccepted = true): Promise<{
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
         readonly events: ReadonlyArray<unknown>;
       };
-      if (request.url === "/v1/installations/delete") {
-        deletionBodies.push(body);
-        response.writeHead(202, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ accepted: deleteAccepted }));
-        return;
-      }
       bodies.push(body);
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ accepted: body.events.length }));
@@ -67,7 +58,6 @@ async function ingestionServer(deleteAccepted = true): Promise<{
     endpoint: `http://127.0.0.1:${address.port}/v1/events`,
     bodies,
     installationTokens,
-    deletionBodies,
   };
 }
 
@@ -125,7 +115,8 @@ describe("Scient analytics background runtime", () => {
       ).toBe(true);
       expect(await runtime.pendingCount()).toBe(4);
       expect(await runtime.flush()).toBe(4);
-      expect(await runtime.pendingCount()).toBe(0);
+      // Only the delivery diagnostics event that this flush reported is left.
+      expect(await runtime.pendingCount()).toBe(1);
       const events = (server.bodies as AnalyticsBatch[]).flatMap((body) => body.events);
       expect(events).toHaveLength(4);
       for (const event of events)
@@ -158,72 +149,9 @@ describe("Scient analytics background runtime", () => {
       await runtime.close();
     }
   });
-  it("does not replay buffered batches after deletion rotates the installation", async () => {
+  it("emits bounded delivery diagnostics without creating a feedback loop", async () => {
     const server = await ingestionServer();
     const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
-    try {
-      expect(await runtime.pendingCount()).toBe(0);
-      for (let index = 0; index < 1_000; index += 1) {
-        expect(runtime.record("provider.turn.sent", { provider: "codex" })).toBe(true);
-      }
-      expect(await runtime.deleteData()).toBe(true);
-      expect(await runtime.pendingCount()).toBe(0);
-      expect(await runtime.flush()).toBe(0);
-      expect(server.bodies).toHaveLength(0);
-      runtime.record("server.boot.heartbeat");
-      expect(await runtime.flush()).toBe(1);
-      expect(server.bodies).toMatchObject([{ events: [{ name: "server.boot.heartbeat" }] }]);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("fails closed when worker startup cannot acknowledge a consent reduction", async () => {
-    // A real worker that starts later than the bounded control deadline.
-    const workerUrl = new URL(
-      `data:text/javascript,${encodeURIComponent(`
-      import { setTimeout } from 'node:timers/promises';
-      await setTimeout(5000);
-      await import(${JSON.stringify(new URL("./worker-entry.ts", import.meta.url).href)});
-    `)}`,
-    );
-    const runtime = createAnalyticsRuntime(options({ workerUrl, controlTimeoutMs: 100 }));
-    try {
-      await expect(runtime.setConsent("essential")).rejects.toThrow("not acknowledged");
-      expect(runtime.enabled).toBe(false);
-      expect(runtime.record("server.boot.heartbeat")).toBe(false);
-      expect(await runtime.flush()).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("queues a consent reduction before a delayed worker becomes ready", async () => {
-    const workerUrl = new URL(
-      `data:text/javascript,${encodeURIComponent(`
-      import { setTimeout } from 'node:timers/promises';
-      await setTimeout(50);
-      await import(${JSON.stringify(new URL("./worker-entry.ts", import.meta.url).href)});
-    `)}`,
-    );
-    const server = await ingestionServer();
-    const runtime = createAnalyticsRuntime(options({ workerUrl, endpoint: server.endpoint }));
-    try {
-      runtime.record("provider.turn.sent", { provider: "codex" });
-      expect(await runtime.setConsent("essential")).toBe(1);
-      expect(await runtime.pendingCount()).toBe(0);
-      expect(await runtime.flush()).toBe(0);
-      expect(server.bodies).toHaveLength(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("emits bounded delivery diagnostics only at Diagnostic consent without creating a feedback loop", async () => {
-    const server = await ingestionServer();
-    const runtime = createAnalyticsRuntime(
-      options({ consent: "diagnostic", endpoint: server.endpoint }),
-    );
     try {
       runtime.record("server.boot.heartbeat");
       expect(await runtime.flush()).toBe(1);
@@ -261,112 +189,6 @@ describe("Scient analytics background runtime", () => {
     expect(NodeFS.existsSync(outboxPath)).toBe(false);
   });
 
-  it("is inert with consent Off, even when collection is available", async () => {
-    const outboxPath = fixturePath();
-    const runtime = createAnalyticsRuntime(
-      options({
-        consent: "off",
-        outboxPath,
-        workerUrl: new URL("file:///nonexistent-worker.mjs"),
-        randomUUID: () => {
-          throw new Error("Must not create an identity while Off");
-        },
-      }),
-    );
-    expect(runtime.enabled).toBe(false);
-    expect(runtime.record("app.session.started")).toBe(false);
-    expect(await runtime.pendingCount()).toBe(0);
-    expect(await runtime.flush()).toBe(0);
-    expect(await runtime.deleteData()).toBe(false);
-    await runtime.close();
-    expect(NodeFS.existsSync(outboxPath)).toBe(false);
-  });
-
-  it("reconciles persisted consent before replaying an outbox after restart", async () => {
-    const outboxPath = fixturePath();
-    const first = createAnalyticsRuntime(options({ outboxPath }));
-    first.record("server.boot.heartbeat");
-    first.record("provider.turn.sent", { provider: "codex" });
-    expect(await first.pendingCount()).toBe(2);
-    await first.close();
-
-    const server = await ingestionServer();
-    const restarted = createAnalyticsRuntime(
-      options({
-        outboxPath,
-        endpoint: server.endpoint,
-        consent: "essential",
-      }),
-    );
-    expect(await restarted.pendingCount()).toBe(1);
-    expect(await restarted.flush()).toBe(1);
-    await restarted.close();
-    expect(server.bodies).toEqual([
-      expect.objectContaining({
-        events: [
-          expect.objectContaining({
-            name: "server.boot.heartbeat",
-            consent_level: "essential",
-          }),
-        ],
-      }),
-    ]);
-  });
-
-  it("authenticates deletion while Off without delivering queued behavioral events", async () => {
-    const outboxPath = fixturePath();
-    const first = createAnalyticsRuntime(options({ outboxPath }));
-    first.record("provider.turn.sent", { provider: "codex" });
-    expect(await first.pendingCount()).toBe(1);
-    await first.close();
-
-    const server = await ingestionServer();
-    const deletion = createAnalyticsRuntime(
-      options({
-        outboxPath,
-        endpoint: server.endpoint,
-        consent: "off",
-        purpose: "deletion",
-      }),
-    );
-    expect(deletion.record("server.boot.heartbeat")).toBe(false);
-    expect(await deletion.flush()).toBe(0);
-    expect(await deletion.deleteData()).toBe(true);
-    expect(await deletion.pendingCount()).toBe(0);
-    await deletion.close();
-    expect(server.bodies).toHaveLength(0);
-    expect(server.deletionBodies).toHaveLength(1);
-  });
-
-  it("aborts an in-flight upload and purges the queue when consent becomes Off", async () => {
-    const received = Promise.withResolvers<void>();
-    const disconnected = Promise.withResolvers<void>();
-    const server = NodeHttp.createServer((request, response) => {
-      request.resume();
-      request.on("end", () => received.resolve());
-      response.on("close", () => disconnected.resolve());
-    });
-    servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (address === null || typeof address === "string") throw new Error("Missing test port");
-    const runtime = createAnalyticsRuntime(
-      options({
-        endpoint: `http://127.0.0.1:${address.port}/v1/events`,
-      }),
-    );
-    runtime.record("provider.turn.sent", { provider: "codex" });
-    const flushing = runtime.flush();
-    await received.promise;
-    expect(await runtime.setConsent("off")).toBe(1);
-    await disconnected.promise;
-    expect(await flushing).toBe(0);
-    expect(await runtime.pendingCount()).toBe(0);
-    expect(runtime.record("server.boot.heartbeat")).toBe(false);
-    expect(await runtime.flush()).toBe(0);
-    await runtime.close();
-  });
-
   it("persists and delivers the normalized event with new fields but no paths", async () => {
     const server = await ingestionServer();
     const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
@@ -398,7 +220,7 @@ describe("Scient analytics background runtime", () => {
         {
           name: "provider.turn.sent",
           privacy_level: "product",
-          consent_level: "product",
+          consent_level: "diagnostic",
           properties: {
             appVersion: "0.0.32",
             buildChannel: "development",
@@ -428,17 +250,16 @@ describe("Scient analytics background runtime", () => {
     const restarted = createAnalyticsRuntime(options({ outboxPath, endpoint: server.endpoint }));
     expect(await restarted.pendingCount()).toBe(1);
     expect(await restarted.flush()).toBe(1);
-    expect(await restarted.pendingCount()).toBe(0);
+    // Only the delivery diagnostics event that this flush reported is left.
+    expect(await restarted.pendingCount()).toBe(1);
     await restarted.close();
   });
 
-  it("purges disallowed data on consent reduction and quarantines corrupt rows", async () => {
+  it("quarantines corrupt rows after restart", async () => {
     const outboxPath = fixturePath();
     const first = createAnalyticsRuntime(options({ outboxPath }));
     first.record("server.boot.heartbeat");
-    first.record("provider.turn.sent", { provider: "codex" });
-    expect(await first.pendingCount()).toBe(2);
-    expect(await first.setConsent("essential")).toBe(1);
+    expect(await first.pendingCount()).toBe(1);
     await first.close();
 
     const database = new NodeSqlite.DatabaseSync(outboxPath);
@@ -446,9 +267,7 @@ describe("Scient analytics background runtime", () => {
     database.close();
 
     const server = await ingestionServer();
-    const restarted = createAnalyticsRuntime(
-      options({ outboxPath, endpoint: server.endpoint, consent: "essential" }),
-    );
+    const restarted = createAnalyticsRuntime(options({ outboxPath, endpoint: server.endpoint }));
     expect(await restarted.flush()).toBe(0);
     expect(await restarted.pendingCount()).toBe(0);
     await restarted.close();
@@ -462,42 +281,80 @@ describe("Scient analytics background runtime", () => {
     expect(server.bodies).toHaveLength(0);
   });
 
-  it("deletes the authenticated installation and rotates its local identity", async () => {
-    const server = await ingestionServer();
-    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
-    runtime.record("server.boot.heartbeat");
-    expect(await runtime.flush()).toBe(1);
-
-    const firstBatch = server.bodies[0] as {
-      readonly events: ReadonlyArray<{ readonly distinct_id: string }>;
+  it("ingests a recorded event once, keeping its id, time and release", async () => {
+    const outboxPath = fixturePath();
+    const runtime = createAnalyticsRuntime(
+      options({ outboxPath, now: () => new Date("2026-11-16T12:00:00.000Z") }),
+    );
+    const recorded = {
+      id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a24",
+      name: "app.update.outcome",
+      occurredAt: "2026-11-16T11:00:00.000Z",
+      appVersion: "0.6.29",
+      buildChannel: "stable",
+      properties: { step: "install", outcome: "handoff-attempted", targetVersion: "0.6.30" },
+    } as const;
+    try {
+      expect(await runtime.ingest([recorded])).toBe(true);
+      // A replay after a lost acknowledgement finds the same row.
+      expect(await runtime.ingest([recorded])).toBe(true);
+      expect(await runtime.pendingCount()).toBe(1);
+    } finally {
+      await runtime.close();
+    }
+    const database = new NodeSqlite.DatabaseSync(outboxPath);
+    const row = database
+      .prepare("SELECT id, occurred_at, privacy_level, properties_json FROM analytics_outbox")
+      .get() as {
+      readonly id: string;
+      readonly occurred_at: string;
+      readonly privacy_level: string;
+      readonly properties_json: string;
     };
-    expect(await runtime.deleteData()).toBe(true);
-    expect(server.deletionBodies).toEqual([
-      { schema_version: 1, installation_id: firstBatch.events[0]?.distinct_id },
-    ]);
-
-    runtime.record("server.boot.heartbeat");
-    expect(await runtime.flush()).toBe(1);
-    await runtime.close();
-
-    const secondBatch = server.bodies[1] as {
-      readonly events: ReadonlyArray<{ readonly distinct_id: string }>;
-    };
-    expect(secondBatch.events[0]?.distinct_id).not.toBe(firstBatch.events[0]?.distinct_id);
-    expect(server.installationTokens[2]).not.toBe(server.installationTokens[0]);
+    database.close();
+    expect(row).toMatchObject({
+      id: recorded.id,
+      occurred_at: recorded.occurredAt,
+      privacy_level: "essential",
+    });
+    expect(JSON.parse(row.properties_json)).toMatchObject({
+      appVersion: "0.6.29",
+      step: "install",
+      targetVersion: "0.6.30",
+    });
   });
 
-  it("retains local events when the deletion gateway does not acknowledge erasure", async () => {
-    const server = await ingestionServer(false);
-    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
-    runtime.record("server.boot.heartbeat");
-
-    expect(await runtime.deleteData()).toBe(false);
-    expect(await runtime.pendingCount()).toBe(1);
-    expect(await runtime.flush()).toBe(1);
-    await runtime.close();
-
-    expect(server.deletionBodies).toHaveLength(1);
-    expect(server.bodies).toHaveLength(1);
+  it("settles recorded events it must not send without queueing them", async () => {
+    const runtime = createAnalyticsRuntime(
+      options({ now: () => new Date("2026-11-16T12:00:00.000Z") }),
+    );
+    const summary = {
+      name: "app.update.summary",
+      appVersion: "0.6.29",
+      buildChannel: "stable",
+      properties: { reason: "launch", status: "idle" },
+    } as const;
+    try {
+      // Too old, a malformed id, and an unknown name are never sent.
+      expect(
+        await runtime.ingest([
+          {
+            ...summary,
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a25",
+            occurredAt: "2026-10-01T00:00:00.000Z",
+          },
+          { ...summary, id: "not-a-uuid", occurredAt: "2026-11-16T11:00:00.000Z" },
+          {
+            ...summary,
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a26",
+            name: "Not An Event",
+            occurredAt: "2026-11-16T11:00:00.000Z",
+          },
+        ]),
+      ).toBe(true);
+      expect(await runtime.pendingCount()).toBe(0);
+    } finally {
+      await runtime.close();
+    }
   });
 });

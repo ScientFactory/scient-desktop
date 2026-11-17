@@ -117,7 +117,6 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     contentInsetEndAdjustment: 0,
     emptyPlaceholderInset: 0,
     onIsAtEndChange: () => {},
-    onManualNavigation: () => {},
   };
 }
 

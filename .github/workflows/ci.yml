@@ -447,26 +447,13 @@ jobs:
         # SCIENT-FORK:END
         run: vp run --filter @t3tools/desktop ensure:electron
 
-      # SCIENT-FORK:START — verify exports with the actual installed Electron runtime.
-      - name: Verify SVG and PNG exports in Chromium
-        # SCIENT-FORK:START — Scient's own runner for desktop.
-        if: ${{ matrix.part == 6 }}
-        # SCIENT-FORK:END
-        run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
-      - name: Explain Google's sign-in refusal in Electron's browser
-        # SCIENT-FORK:START — Scient's own runner for desktop.
-        if: ${{ matrix.part == 6 }}
-        # SCIENT-FORK:END
-        run: xvfb-run --auto-servernum node apps/desktop/scripts/google-sign-in-smoke.mjs
-      # SCIENT-FORK:END
-
       - name: Test preview artifact validation
         if: ${{ matrix.part == 1 }}
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test release checks
         if: ${{ matrix.part == 1 }}
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/test-delta.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/mobile-ios-preview-record.test.cjs .github/scripts/test-delta.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         # SCIENT-FORK:START — Scient's own runner for desktop.
@@ -488,6 +475,17 @@ jobs:
           for line in sys.stdin:
               sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
           '
+      # SCIENT-FORK:END
+
+      # SCIENT-FORK:START — verify exports with the actual installed Electron runtime.
+      # After the package tests, and each runs whatever the others did: a quarantined smoke
+      # failure (docs/operations/ci-flakes.md) must not skip the tests beside it.
+      - name: Verify SVG and PNG exports in Chromium
+        if: ${{ !cancelled() && matrix.part == 6 }}
+        run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
+      - name: Explain Google's sign-in refusal in Electron's browser
+        if: ${{ !cancelled() && matrix.part == 6 }}
+        run: xvfb-run --auto-servernum node apps/desktop/scripts/google-sign-in-smoke.mjs
       # SCIENT-FORK:END
 
   # SCIENT-FORK:START — one set of recent main timings for every shard of this run.
@@ -1286,37 +1284,64 @@ jobs:
     needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # SCIENT-FORK:START — the quarantine reads failed jobs' logs.
+    permissions:
+      contents: read
+      actions: read
+    # SCIENT-FORK:END
     steps:
       # SCIENT-FORK:START — validate explicit skip reasons, including reuse and native gates.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: .github/scripts
       - name: Require every job to pass
+        id: gate
         env:
           RESULTS: ${{ toJSON(needs) }}
           QUALIFYING_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
         run: node .github/scripts/ci-check.cjs
 
+      # When only test lanes failed, each failed job must be fully explained by open rows of the
+      # flake register (docs/operations/ci-flakes.md), read as the base branch has it so a change
+      # cannot quarantine its own failure. The failing jobs stay red; the summary lists them.
+      - name: Accept only quarantined failures
+        id: quarantine
+        if: steps.gate.outputs.quarantine == 'candidate'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          REGISTER_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        with:
+          script: |
+            const quarantine = require('./.github/scripts/ci-quarantine.cjs');
+            const { data } = await github.rest.repos.getContent({
+              ...context.repo, path: quarantine.REGISTER, ref: process.env.REGISTER_REF,
+              mediaType: { format: 'raw' },
+            });
+            const ok = await quarantine.run({ github, context, core, registerText: String(data) });
+            core.setOutput('ok', String(ok));
+            if (!ok) core.setFailed('A failure matches no open quarantine row; see the summary.');
+
+      # A failure accepted by the quarantine above counts as a pass for these gates.
       - name: Require applicable native qualification
         if: needs.queue_ci.outputs.reused != 'true'
         env:
-          WORKSPACE_RESULT: ${{ needs.test.result }}
+          WORKSPACE_RESULT: ${{ steps.quarantine.outputs.ok == 'true' && needs.test.result == 'failure' && 'success' || needs.test.result }}
           DETECTION_RESULT: ${{ needs.changes.result }}
           COMPUTE_CHANGED: ${{ needs.changes.outputs.compute_changed }}
-          NATIVE_RESULT: ${{ needs.compute_native.result }}
+          NATIVE_RESULT: ${{ steps.quarantine.outputs.ok == 'true' && needs.compute_native.result == 'failure' && 'success' || needs.compute_native.result }}
           WINDOWS_DETECTION_RESULT: ${{ needs.changes.result }}
           WINDOWS_CHANGED: ${{ needs.changes.outputs.windows_changed }}
-          WINDOWS_NATIVE_RESULT: ${{ needs.windows_packaging.result }}
-          REMOTE_SERVER_RESULT: ${{ needs.remote_server_packaging.result }}
+          WINDOWS_NATIVE_RESULT: ${{ steps.quarantine.outputs.ok == 'true' && needs.windows_packaging.result == 'failure' && 'success' || needs.windows_packaging.result }}
+          REMOTE_SERVER_RESULT: ${{ steps.quarantine.outputs.ok == 'true' && needs.remote_server_packaging.result == 'failure' && 'success' || needs.remote_server_packaging.result }}
           LINUX_CHANGED: ${{ needs.changes.outputs.linux_changed }}
-          LINUX_NATIVE_RESULT: ${{ needs.linux_packaging.result }}
+          LINUX_NATIVE_RESULT: ${{ steps.quarantine.outputs.ok == 'true' && needs.linux_packaging.result == 'failure' && 'success' || needs.linux_packaging.result }}
         run: |
           node .github/scripts/compute-ci-gate.mjs check
           node .github/scripts/windows-packaging-ci-gate.mjs check
 
       # thread-transfer-report.yml reads this artifact after CI, including restored queue evidence.
       - name: Require transfer measurements
-        if: needs.test_server.result == 'success' || needs.queue_ci.outputs.server_reports == 'true'
+        if: needs.test_server.result == 'success' || needs.queue_ci.outputs.server_reports == 'true' || (steps.quarantine.outputs.ok == 'true' && needs.test_server.result == 'failure')
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: thread-transfer-results

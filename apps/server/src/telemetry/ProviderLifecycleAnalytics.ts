@@ -1,4 +1,4 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 
 const MAX_INSTANCES = 1_000;
 
@@ -30,6 +30,37 @@ interface Event {
   readonly properties: Readonly<Record<string, unknown>>;
 }
 
+/** How the download went: closed values and numbers the contract buckets, never hosts or paths. */
+function downloadDetails(
+  download: NonNullable<ProviderRuntimeOperation["download"]>,
+): Readonly<Record<string, unknown>> {
+  return {
+    resumedBytes: download.resumedBytes,
+    downloadSource: download.source,
+    downloadVariant: download.compressed ? "compressed" : "raw",
+    ...(download.sourceKind === undefined ? {} : { sourceKind: download.sourceKind }),
+    ...(download.tries === undefined ? {} : { downloadAttempts: download.tries }),
+    ...(download.progressPercent === undefined
+      ? {}
+      : { progressPercent: download.progressPercent }),
+    ...(download.bytesPerSecond === undefined ? {} : { bytesPerSecond: download.bytesPerSecond }),
+    ...(download.networkKind === undefined ? {} : { networkKind: download.networkKind }),
+    ...(download.compressedFailure === undefined
+      ? {}
+      : { compressedFailure: download.compressedFailure }),
+  };
+}
+
+/** Older clients cannot decode a new operation failure class, so a stall travels as `timeout`. */
+function runtimeFailureClass(
+  failureClass: NonNullable<ProviderRuntimeOperation["failureClass"]>,
+  download: ProviderRuntimeOperation["download"],
+): string {
+  return failureClass === "timeout" && download?.networkKind === "stalled"
+    ? "stalled"
+    : failureClass;
+}
+
 function snapshot(provider: ServerProvider): Snapshot {
   const runtime = provider.connection?.runtime;
   const operation = runtime?.operation;
@@ -53,17 +84,13 @@ function snapshot(provider: ServerProvider): Snapshot {
               : operation.status === "failed" || operation.status === "cancelled"
                 ? operation.status
                 : null,
-          ...(operation.failureClass === undefined ? {} : { failureClass: operation.failureClass }),
+          ...(operation.failureClass === undefined
+            ? {}
+            : { failureClass: runtimeFailureClass(operation.failureClass, operation.download) }),
           details: {
             trigger: operation.background ? "background" : "user",
             ...(operation.attempt === undefined ? {} : { attempt: operation.attempt }),
-            ...(operation.download === undefined
-              ? {}
-              : {
-                  resumedBytes: operation.download.resumedBytes,
-                  downloadSource: operation.download.source,
-                  compressed: operation.download.compressed,
-                }),
+            ...(operation.download === undefined ? {} : downloadDetails(operation.download)),
           },
         }
       : null,
@@ -110,7 +137,7 @@ function lifecycleEvent(
   if (!next) return null;
   const sameOperation = previous?.key === next.key;
   if (sameOperation && previous.outcome !== null) return null;
-  // A terminal snapshot without an observed start may predate consent or this
+  // A terminal snapshot without an observed start may predate this
   // server session. Never replay it as a new completed operation.
   if (!sameOperation && next.outcome !== null) return null;
   if (sameOperation && next.outcome === null) return null;
@@ -126,7 +153,7 @@ function lifecycleEvent(
       durationMs,
       // The UI message is deliberately not inspected: it can contain paths,
       // credentials, provider output, or URLs. The owner sets the typed class.
-      failureClass: next.outcome === "failed" ? (next.failureClass ?? "unknown") : "unknown",
+      ...(next.outcome === "failed" ? { failureClass: next.failureClass ?? "unknown" } : {}),
       ...next.details,
     },
   };

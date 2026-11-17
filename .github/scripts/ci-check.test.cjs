@@ -232,3 +232,29 @@ test("the nightly run qualifies every lane fresh and cannot claim reuse", () => 
   f.needs.lint.result = "skipped";
   assert.ok(failures(f).includes("lint: skipped without a reason"));
 });
+
+test("only plain test-lane failures are quarantine candidates", () => {
+  const { quarantineCandidate } = require("./ci-check.cjs");
+  const f = normal("merge_group");
+  f.needs.queue_ci.outputs = { reused: "false" };
+  assert.equal(quarantineCandidate(f.needs, failures(f)), false);
+  f.needs.test_web.result = "failure";
+  f.needs.qualification.result = "failure";
+  assert.equal(quarantineCandidate(f.needs, failures(f)), true);
+  for (const [job, result] of [
+    ["build", "failure"],
+    ["lint", "failure"],
+    ["changes", "failure"],
+    ["release_notes", "failure"],
+    ["mobile_native_static_analysis", "failure"],
+    ["test_server", "cancelled"],
+  ]) {
+    const g = structuredClone(f);
+    g.needs[job].result = result;
+    assert.equal(quarantineCandidate(g.needs, failures(g)), false, `${job}: ${result}`);
+  }
+  const receiptOnly = normal("merge_group");
+  receiptOnly.needs.queue_ci.outputs = { reused: "false" };
+  receiptOnly.needs.qualification.result = "failure";
+  assert.equal(quarantineCandidate(receiptOnly.needs, failures(receiptOnly)), false);
+});

@@ -675,6 +675,26 @@ export function layerWithRegistry<Error>(
       }),
     }),
   );
+  const conversationForkProvided = ConversationForks.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerProviderSessionManagerProvided,
+        layerStores,
+        layerEventSinkProvided,
+        layerCommandReceiptStoreProvided,
+        legacyImporterProvided,
+        options.decorateForkCheckpointBaseline === undefined
+          ? ScientForkCheckpointBaselineLive
+          : Layer.effect(
+              ScientForkCheckpointBaseline,
+              Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
+            ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
+      ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
+    ),
+    Layer.provide(
+      Layer.mergeAll(layerCheckpointStore, layerServerConfig, VcsProcess.layer, layerDatabase),
+    ),
+  );
   const layerOrchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -691,6 +711,7 @@ export function layerWithRegistry<Error>(
         layerRunExecutionServiceProvided,
         layerServerSettings,
         ThreadForkService.layer,
+        conversationForkProvided,
       ),
     ),
   );
@@ -721,26 +742,6 @@ export function layerWithRegistry<Error>(
           ),
         )
       : Layer.empty;
-  const conversationForkProvided = ConversationForks.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerProviderSessionManagerProvided,
-        layerStores,
-        layerEventSinkProvided,
-        layerCommandReceiptStoreProvided,
-        legacyImporterProvided,
-        options.decorateForkCheckpointBaseline === undefined
-          ? ScientForkCheckpointBaselineLive
-          : Layer.effect(
-              ScientForkCheckpointBaseline,
-              Effect.map(ScientForkCheckpointBaseline, options.decorateForkCheckpointBaseline),
-            ).pipe(Layer.provide(ScientForkCheckpointBaselineLive)),
-      ).pipe(Layer.provideMerge(layerThreadCommandExecutor)),
-    ),
-    Layer.provide(
-      Layer.mergeAll(layerCheckpointStore, layerServerConfig, VcsProcess.layer, layerDatabase),
-    ),
-  );
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(

@@ -197,3 +197,5 @@ export const FEEDBACK_READ_RECENT_LOGS_CHANNEL = "scient:feedback:read-recent-lo
 export const FEEDBACK_SUBMIT_CHANNEL = "scient:feedback:submit";
 export const FEEDBACK_TAKE_FIXED_NOTICES_CHANNEL = "scient:feedback:take-fixed-notices";
 // SCIENT-FORK:END
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

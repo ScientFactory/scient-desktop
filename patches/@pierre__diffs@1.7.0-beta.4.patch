@@ -37,7 +37,7 @@ index 30c476c7b7e559644fd8e190f570d25cc5c94eea..edbc1d1e5f1bd5b3c76b6477c6037ccb
    /** Whether there is an undone edit to redo. */
    get canRedo(): boolean;
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index b4c280390b52434f63fbe7916d81b150d9006fb4..eba7cd1d830877d74d1fe787bb400fee51a7e43f 100644
+index b4c280390b52434f63fbe7916d81b150d9006fb4..5de158650d9de452b560a2a100a9d97b6800271e 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
 @@ -12,7 +12,7 @@ import { createSpriteElement } from "./sprite.js";
@@ -140,7 +140,15 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..eba7cd1d830877d74d1fe787bb400fee
  		const replacementFocusTargetIsContent = (event) => {
  			const target = event.composedPath()[0];
  			return target instanceof Node && this.#contentElement?.contains(target) === true;
-@@ -1296,6 +1359,14 @@ var Editor = class {
+@@ -1130,6 +1193,7 @@ var Editor = class {
+ 		this.#editorEventDisposes = [
+ 			addEventListener(contentEl, "focus", () => {
+ 				this.#contentHasFocus = true;
++				this.#retainSearchPanelFocus = false;
+ 				onFocus?.();
+ 				if (!this.#isContentMouseDown && !this.#isComposing && this.#focusRequest == null && this.#selections !== void 0 && this.#selections.length > 0) this.#setWindowSelection(this.#selections.at(-1));
+ 			}, { passive: true }),
+@@ -1296,6 +1360,14 @@ var Editor = class {
  					this.#cancelEditPrediction(true);
  					return;
  				}
@@ -155,7 +163,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..eba7cd1d830877d74d1fe787bb400fee
  				e.preventDefault();
  				this.#handleInput(e.inputType, e.data);
  			}),
-@@ -1397,6 +1468,7 @@ var Editor = class {
+@@ -1397,6 +1469,7 @@ var Editor = class {
  		this.#resizeObserver = new ResizeObserver(this.#handleLayoutResize);
  		this.#resizeObserver.observe(contentEl);
  		this.#resizeObserver.observe(contentEl.parentElement);
@@ -163,7 +171,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..eba7cd1d830877d74d1fe787bb400fee
  		this.#computeContentOffset(contentEl);
  	}
  	#handleCustomPasteEvent = async () => {
-@@ -1852,7 +1924,9 @@ var Editor = class {
+@@ -1852,7 +1925,9 @@ var Editor = class {
  		const change = textDocument.applyEdits(edits, true, selections, nextSelections, true);
  		if (change !== void 0) this.#applyChange(change, nextSelections);
  	}
@@ -174,7 +182,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..eba7cd1d830877d74d1fe787bb400fee
  		const lineAnnotations = this.#lineAnnotations?.length ?? 0;
  		const prevGutterWidth = this.#gutterWidthCache;
  		const prevContentWidth = this.#contentWidthCache;
-@@ -1860,12 +1934,12 @@ var Editor = class {
+@@ -1860,12 +1935,12 @@ var Editor = class {
  		this.#contentWidthCache = void 0;
  		const gutterWidthChanged = this.#getGutterWidth() !== prevGutterWidth;
  		const contentWidthChanged = this.#getContentWidth() !== prevContentWidth;
@@ -190,6 +198,14 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..eba7cd1d830877d74d1fe787bb400fee
  		}
  		if (this.#selections !== void 0 || this.#matches !== void 0 || this.#markerRenderer !== void 0) {
  			this.#updateSelections(this.#selections ?? []);
+@@ -3370,6 +3445,7 @@ var Editor = class {
+ 		this.#searchPanel = searchPanel;
+ 		this.#retainSearchPanelFocus = false;
+ 		searchPanel.mount();
++		searchPanel.getHostElement().dataset.searchPanelOverlay = "";
+ 	}
+ 	#searchWithNavigationTarget(textDocument, searchParams) {
+ 		const viewport = this.#getSearchViewportBounds();
 diff --git a/dist/editor/externalHistory.js b/dist/editor/externalHistory.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..d86fe62b8dbb4ec7d5ed19afaeb6d1beba5735f6

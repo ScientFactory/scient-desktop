@@ -3,9 +3,7 @@ import { NodeViewContent, NodeViewWrapper, type NodeViewProps } from "@tiptap/re
 import { languageOfInfoString, withInfoStringLanguage } from "~/composer-code-languages";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
-// SCIENT-FORK:START — composer and rendered code share Scient’s extracted frame.
-import { MarkdownCodeBlockFrame } from "~/scient/presentation/MarkdownCodeBlock";
-// SCIENT-FORK:END
+import { MarkdownCodeBlockFrame } from "./MarkdownCodeBlock";
 import { ComposerCodeBlockLanguagePicker } from "./ComposerCodeBlockLanguagePicker";
 
 export function ComposerCodeBlockNodeView({
