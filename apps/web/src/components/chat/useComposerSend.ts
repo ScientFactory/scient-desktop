@@ -173,7 +173,7 @@ import type { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjec
 import type { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import type { LocalDispatchActions } from "./useLocalDispatchState";
 import type { PendingThreadSendState } from "./usePendingThreadRequests";
-import type { useTimelineFollow } from "./useTimelineFollow";
+import type { useReadingFollow } from "./useReadingFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
 
@@ -190,7 +190,7 @@ function draftHasNonPromptContent(target: ComposerThreadTarget) {
 
 type DraftEnvironmentRouting = ReturnType<typeof useDraftEnvironmentRouting>;
 type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
-type TimelineFollow = ReturnType<typeof useTimelineFollow>;
+type TimelineFollow = ReturnType<typeof useReadingFollow>;
 
 export interface ComposerSendInput {
   readonly queueEditsReady: boolean;

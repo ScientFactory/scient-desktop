@@ -500,7 +500,7 @@ import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/Thre
 import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
-import { useTimelineFollow } from "./chat/useTimelineFollow";
+import { useReadingFollow } from "./chat/useReadingFollow";
 import { useQueuedRunsInView } from "./chat/queuedRunsInView";
 import {
   type EnvironmentUnavailableState,
@@ -2836,7 +2836,6 @@ function ChatViewContent(props: ChatViewProps) {
     setUnreadBelowCount,
     timelinePositioningPending,
     responseFollow,
-    cancelPositionRestoreRef,
     isTimelineAtLogicalEndStable,
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
@@ -2848,8 +2847,8 @@ function ChatViewContent(props: ChatViewProps) {
     captureSendReadingPosition,
     frameSubmittedMessage,
     releaseUnusedTimelineAnchor,
-    cancelTimelinePositioning,
-  } = useTimelineFollow({
+    attachTimelineViewport,
+  } = useReadingFollow({
     legendListRef,
     composerOverlayElement,
     composerTimelineInset,
@@ -2857,6 +2856,11 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadKey,
     isServerThread,
     serverProjection,
+    threadStatus,
+    activeActivityRun,
+    activeRunningTurnId,
+    timelineEntries,
+    timelineAnchorMessageId,
     timelineMessages,
     isDraftHeroState,
     hasLatestRun: activeLatestRun !== null,
@@ -4459,7 +4463,7 @@ function ChatViewContent(props: ChatViewProps) {
                   onAnchorReady={onTimelineAnchorReadyStable}
                   onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
                   contentInsetEndAdjustment={composerTimelineInset}
-                  // SCIENT-FORK:START — no live-follow flag (the timeline never pins to its end);
+                  // SCIENT-FORK:START — no live-follow flag (the reading follow moves the view);
                   // placement in flight, the send follow (chat/responseFollow.ts) and releasing
                   // unused reserved room.
                   timelinePositioningPending={timelinePositioningPending}
@@ -4471,10 +4475,7 @@ function ChatViewContent(props: ChatViewProps) {
                   // SCIENT-FORK:START — the unread count below, for the Scroll to end control.
                   onUnreadBelowChange={setUnreadBelowCount}
                   // SCIENT-FORK:END
-                  // SCIENT-FORK:START — the reader's navigation cancels placement and the follow.
-                  onManualNavigation={cancelTimelinePositioning}
-                  // SCIENT-FORK:END
-                  cancelPositionRestoreRef={cancelPositionRestoreRef}
+                  onViewportAttach={attachTimelineViewport}
                   // SCIENT-FORK:START
                   onPositionedThreadKeyChange={forkLandingReveal.onPositionedThreadKeyChange}
                   // SCIENT-FORK:END
