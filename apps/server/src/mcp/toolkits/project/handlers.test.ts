@@ -457,11 +457,10 @@ const projectLaunchHarness = (input: {
             modelSelection: launch.modelSelection,
             deletedAt: null,
           } as unknown as OrchestrationV2ThreadShell);
-        if (input.threadCaller !== true) return Effect.succeed(null);
-        return Effect.sync(() => {
-          expect(requested).toBe(sourceThreadId);
-          return caller;
-        });
+        // A retry looks up the thread its request id would have launched before launching it.
+        return Effect.succeed(
+          input.threadCaller === true && requested === sourceThreadId ? caller : null,
+        );
       },
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({

@@ -3539,7 +3539,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.provideMerge(layerSettings),
         );
         const layerTest = layerOrchestratorService.pipe(
-          Layer.provide(fullAccessCapturedPolicyLayer),
+          // SCIENT-FORK:START — the caller's captured policy is the parent's own mode, as a live
+          // session captures it at turn start; T3's retry limit then reads the same mode.
+          Layer.provide(
+            Layer.mock(ProviderSessionManagerV2)({
+              resolveMcpInvocationPolicy: () =>
+                Effect.succeedSome({
+                  runtimeMode: "approval-required" as const,
+                  interactionMode: "default" as const,
+                }),
+            }),
+          ),
+          // SCIENT-FORK:END
           Layer.provideMerge(layerThreads),
           Layer.provide(
             Layer.mergeAll(

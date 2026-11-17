@@ -778,6 +778,14 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
       });
+      // Storage cleanup removes idle worktrees but keeps their path; an optional file there is
+      // absent, with no publication to settle.
+      if (
+        input.allowMissing === true &&
+        !(yield* fileSystem.exists(input.cwd).pipe(Effect.orElseSucceed(() => true)))
+      ) {
+        return yield* readResolvedFile(input, "contained", hostPath);
+      }
     }
     return yield* (path.isAbsolute(hostPath) ? withSettledWorkspaceRead : withSettledFileRead)(
       { ...input, relativePath: hostPath },

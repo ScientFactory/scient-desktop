@@ -9963,6 +9963,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   input.status === "failed" &&
                   liveQuery !== null &&
                   !liveQuery.stopping &&
+                  // SCIENT-FORK: Scient's EOF cleanup keeps the exited query reserved until it ends.
+                  !liveQuery.streamExited &&
                   liveQuery.lastTurn === input.context;
                 if (nativeThreadId !== null) {
                   if (input.status !== "completed" && !processKeepsTasks) {

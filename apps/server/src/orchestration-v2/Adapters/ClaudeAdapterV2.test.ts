@@ -14435,14 +14435,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       );
       const turnInput = harness.turnInput("a", 1);
+      // SCIENT-FORK:START — the CLI can exit before Scient's start claims the query (the start
+      // fails) or after it (the exit settles the turn); either way the missing conversation shows.
+      const terminals =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+        >();
+      yield* harness.runtime.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
       const started = yield* harness.runtime.startTurn(turnInput).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(started));
       if (Exit.isFailure(started)) {
         assert.include(
           makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
           "could not find this conversation",
         );
+      } else {
+        const terminal = yield* Queue.take(terminals);
+        assert.equal(terminal.status, "failed");
+        assert.include(terminal.failure?.message ?? "", "could not find this conversation");
       }
+      // SCIENT-FORK:END
       // A failed resume is what sends the next turn to a fresh native session.
       const resumed = yield* harness.runtime
         .resumeThread({

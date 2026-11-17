@@ -1582,11 +1582,12 @@ describe("AcpRegistrySupport", () => {
         [resolver.inspect(settings()), resolver.inspect(settings())],
         { concurrency: "unbounded" },
       );
-      expect(concurrent).toMatchObject([{ status: "ready" }, { status: "ready" }]);
+      // SCIENT-FORK: a package agent is unprepared until Scient installs it in its tools folder.
+      expect(concurrent).toMatchObject([{ status: "unprepared" }, { status: "unprepared" }]);
       expect(requests).toBe(2);
 
       const restarted = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
-      expect(yield* restarted.inspect(settings())).toMatchObject({ status: "ready" });
+      expect(yield* restarted.inspect(settings())).toMatchObject({ status: "unprepared" });
       expect(requests).toBe(2);
     }).pipe(
       Effect.scoped,
