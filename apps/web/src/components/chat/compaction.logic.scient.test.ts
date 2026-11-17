@@ -4,7 +4,6 @@ import { shouldCompactBeforeSend } from "./compaction.logic";
 describe("resume compaction send admission", () => {
   const ordinary = {
     ordinaryServerSend: true,
-    hasCapturedQueueSubmission: false,
     multipleModels: false,
     resumeCompactionTokens: 120_000,
     keepFullHistory: false,
@@ -18,9 +17,6 @@ describe("resume compaction send admission", () => {
   it.each([
     {
       ordinaryServerSend: false,
-    },
-    {
-      hasCapturedQueueSubmission: true,
     },
     {
       multipleModels: true,
@@ -40,17 +36,14 @@ describe("resume compaction send admission", () => {
     {
       messageText: "/compact\n  tests",
     },
-  ])(
-    "preserves a special action, immutable retry, full-history choice or explicit command: %j",
-    (override) => {
-      expect(
-        shouldCompactBeforeSend({
-          ...ordinary,
-          ...override,
-        }),
-      ).toBe(false);
-    },
-  );
+  ])("preserves a special action, full-history choice or explicit command: %j", (override) => {
+    expect(
+      shouldCompactBeforeSend({
+        ...ordinary,
+        ...override,
+      }),
+    ).toBe(false);
+  });
   it("still compacts a message whose first word merely starts with compact", () => {
     expect(shouldCompactBeforeSend({ ...ordinary, messageText: "/compactfoo" })).toBe(true);
   });

@@ -130,7 +130,6 @@ export function QueuedRunsControl({
     threadId: props.threadId,
     projection,
     workflow,
-    editingRunId: props.editingRunId,
     error: props.error,
     setBusyRunId,
   });
@@ -193,7 +192,7 @@ export function QueuedRunsControl({
     const freshContext = queued.some(
       ({ run }) => run.id === queuedRunId && run.freshContext === true,
     );
-    if (!canSendRun(freshContext) || scient.sendRefused(queuedRunId)) return;
+    if (!canSendRun(freshContext)) return;
     if (workflow?.canSendNow) {
       await scient.perform(queuedRunId, () =>
         resume({
@@ -215,11 +214,9 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      // SCIENT-FORK:START queue-scient-parts
-      if (!next || !canSendRun(next.run.freshContext === true) || scient.sendRefused(next.run.id))
-        return false;
+      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      // SCIENT-FORK: one queue command at a time (useScientQueueParts).
       if (!repeat && !scient.isBusy()) void sendQueuedMessage(next.run.id);
-      // SCIENT-FORK:END queue-scient-parts
       return true;
     },
     // Leave the key to caret navigation while editing.
@@ -247,16 +244,12 @@ export function QueuedRunsControl({
     },
   }));
 
-  // SCIENT-FORK:START queue-scient-parts — notices and the detached-edit row lead the queue; the
-  // variable sizes their ComposerBanner rows outside a composer banner.
+  // SCIENT-FORK:START queue-scient-parts — notices lead the queue; the variable sizes their
+  // ComposerBanner rows outside a composer banner.
   const scientNotices =
-    scient.notice === null && !scient.detachedEdit ? null : (
+    scient.notice === null ? null : (
       <div className="flex flex-col gap-1 text-xs [--composer-banner-icon-column:--spacing(6)]">
-        <ScientQueueNotices
-          parts={scient}
-          busy={busyRunId !== null}
-          onCancelEdit={props.onCancelEdit}
-        />
+        <ScientQueueNotices parts={scient} busy={busyRunId !== null} />
       </div>
     );
   if (items.length === 0) {
@@ -304,12 +297,6 @@ export function QueuedRunsControl({
             : queuePreviewText(item.text);
           // SCIENT-FORK:END queue-scient-preview
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
-          // SCIENT-FORK:START queue-scient-parts — a refused held Send stays hidden.
-          const sendOffered =
-            canSendRun(item.freshContext) &&
-            !isEditing &&
-            !(item.runId !== null && scient.sendRefused(item.runId));
-          // SCIENT-FORK:END queue-scient-parts
           return (
             <li
               key={item.key}
@@ -329,7 +316,7 @@ export function QueuedRunsControl({
                 onOpenThread={props.onOpenThread}
                 onImageExpand={props.onImageExpand}
               >
-                {sendOffered ? (
+                {canSendRun(item.freshContext) && !isEditing ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>

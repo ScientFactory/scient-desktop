@@ -165,7 +165,12 @@ it.effect.each(
     const failure = yield* compatibility.execute(request).pipe(Effect.flip);
     assert.deepInclude(failure, {
       _tag: "OrchestratorCommandRejectedError",
-      commandType: action === "steer" ? "queued-message.promote-to-steer" : "queue.resume",
+      commandType:
+        action === "steer"
+          ? "queued-message.promote-to-steer"
+          : action === "send"
+            ? "queued-run.start"
+            : "queue.resume",
     });
     assert.deepInclude("cause" in failure ? failure.cause : null, {
       message: "The repository is still being cloned.",

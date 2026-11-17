@@ -24,7 +24,7 @@ export function sendPreparedComposerMessage(input: {
   )
     return false;
   const draft = useComposerDraftStore.getState().getComposerDraft(input.composerTarget);
-  if (composerDraftHasUserContent(draft) || draft?.extractedIntent) return false;
+  if (composerDraftHasUserContent(draft)) return false;
   if (!input.insert(input.message)) return false;
   // Stage through the composer first so ordinary send failures retain an editable request.
   input.submit();

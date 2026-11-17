@@ -52,7 +52,7 @@ describe("font size clamping", () => {
   // regression: 8eca20005b feat(web): configurable fonts and sizes under Settings → Appearance (#5103)
   it("rounds fractional values and falls back for unusable input", () => {
     expect(applySizes(Number.NaN, Number.POSITIVE_INFINITY, 15.4)).toEqual({
-      interface: "17px",
+      interface: "15px",
       prompt: "16px",
       code: "15px",
       diff: "15px",

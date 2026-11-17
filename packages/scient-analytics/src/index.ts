@@ -1,5 +1,4 @@
 export {
-  AnalyticsConsent,
   modelKey,
   type CommandCategory,
   type FailureCategory,

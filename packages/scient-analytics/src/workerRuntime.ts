@@ -5,13 +5,11 @@ import type * as NodeWorkerThreads from "node:worker_threads";
 import {
   ANALYTICS_SCHEMA_VERSION,
   ANALYTICS_SOURCE,
-  consentAllows,
   type AnalyticsBatch,
   type AnalyticsEvent,
 } from "./contract.ts";
 import { AnalyticsOutbox, type PendingAnalyticsEvent } from "./outbox.ts";
 import {
-  DELETE_DEADLINE_MS,
   FLUSH_DEADLINE_MS,
   SEND_DEADLINE_MS,
   type AnalyticsWorkerCommand,
@@ -114,7 +112,6 @@ export function startAnalyticsWorker(
 
   try {
     outbox = new AnalyticsOutbox(input.outboxPath);
-    if (input.purpose === "collection") outbox.purgeAbove(input.consent);
   } catch {
     post({ type: "fatal", errorClass: "initialization" });
     input.port.close();
@@ -145,9 +142,6 @@ export function startAnalyticsWorker(
   }
 
   let closed = false;
-  let consent = input.consent;
-  let controlsPending = 0;
-  let controlQueue: Promise<void> = Promise.resolve();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let activeFlush: Promise<number> | null = null;
   let activeAbortController: AbortController | null = null;
@@ -162,8 +156,7 @@ export function startAnalyticsWorker(
     flushTimer = null;
   };
 
-  const canDeliver = () =>
-    !closed && controlsPending === 0 && consent !== "off" && input.purpose === "collection";
+  const canDeliver = () => !closed;
 
   const scheduleFlush = () => {
     if (!canDeliver() || flushTimer !== null || outbox.size() === 0) return;
@@ -287,7 +280,6 @@ export function startAnalyticsWorker(
     const timestamp = Date.now();
     if (
       !canDeliver() ||
-      !consentAllows(consent, "diagnostic") ||
       timestamp - lastDiagnosticsAt < 60_000 ||
       // Do not report diagnostic-only delivery: that would perpetuate its own queue.
       !events.some((event) => event.name !== "app.diagnostics")
@@ -314,7 +306,7 @@ export function startAnalyticsWorker(
     const operation = (async () => {
       let delivered = 0;
       const started = Date.now();
-      // Re-check between batches so close, consent and controls take over at once, and start
+      // Re-check between batches so close takes over at once, and start
       // another upload only while its whole deadline fits in the flush's budget.
       for (
         let batches = 0;
@@ -357,44 +349,17 @@ export function startAnalyticsWorker(
     input.port.close();
   };
 
-  const control = (requestId: number, operation: () => Promise<number>) => {
-    controlsPending += 1;
-    stopScheduledFlush();
-    activeAbortController?.abort();
-    controlQueue = controlQueue
-      .then(async () => {
-        await activeFlush;
-        if (closed) return;
-        const value = await operation();
-        post({ type: "result", requestId, value });
-      })
-      .catch(failRuntime)
-      .finally(() => {
-        controlsPending -= 1;
-        scheduleFlush();
-      });
-  };
-
   input.port.on("message", (command: AnalyticsWorkerCommand) => {
     if (closed && command.type !== "close") return;
     try {
       switch (command.type) {
         case "enqueue": {
-          const allowed =
-            input.purpose === "collection"
-              ? command.events.filter((event) => consentAllows(consent, event.privacy_level))
-              : [];
-          const events: AnalyticsEvent[] = allowed.map(({ priority: _priority, ...event }) => ({
-            ...event,
-            distinct_id: installation.id,
-            consent_level:
-              consent !== "off" && !consentAllows(consent, event.consent_level)
-                ? consent
-                : event.consent_level,
-          }));
+          const events: AnalyticsEvent[] = command.events.map(
+            ({ priority: _priority, ...event }) => ({ ...event, distinct_id: installation.id }),
+          );
           const accepted = outbox.enqueueBatch(
             events,
-            allowed.map((event) => event.priority),
+            command.events.map((event) => event.priority),
           );
           post({ type: "persisted", batchId: command.batchId, accepted });
           scheduleFlush();
@@ -406,53 +371,15 @@ export function startAnalyticsWorker(
             .catch(failRuntime);
           return;
         }
-        case "set-consent": {
-          consent = command.consent;
-          control(command.requestId, async () => outbox.purgeAbove(command.consent));
-          return;
-        }
         case "pending-count": {
           post({ type: "result", requestId: command.requestId, value: outbox.size() });
-          return;
-        }
-        case "delete-data": {
-          const deletionUrl = new URL("/v1/installations/delete", input.endpoint);
-          control(command.requestId, async () => {
-            // Registered as the active request so a consent change or close can abort it.
-            const controller = new AbortController();
-            activeAbortController = controller;
-            const timeout = setTimeout(() => controller.abort(), DELETE_DEADLINE_MS);
-            timeout.unref();
-            try {
-              const response = await fetch(deletionUrl, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Scient-Installation-Token": installation.token,
-                },
-                body: JSON.stringify({ schema_version: 1, installation_id: installation.id }),
-                signal: controller.signal,
-                redirect: "error",
-              });
-              if (!response.ok) return 0;
-              if (acceptedValue(await acknowledgement(response)) !== true) return 0;
-              outbox.reset();
-              installation = ensureInstallationIdentity();
-              return 1;
-            } catch {
-              return 0;
-            } finally {
-              clearTimeout(timeout);
-              if (activeAbortController === controller) activeAbortController = null;
-            }
-          });
           return;
         }
         case "close": {
           closed = true;
           stopScheduledFlush();
           activeAbortController?.abort();
-          void Promise.all([activeFlush, controlQueue])
+          void Promise.resolve(activeFlush)
             .then(() => {
               outbox.close();
               post({ type: "result", requestId: command.requestId, value: 0 });

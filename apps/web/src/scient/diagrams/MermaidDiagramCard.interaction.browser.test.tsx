@@ -232,6 +232,13 @@ describe("Mermaid error recovery", () => {
     expect(toastManager.add).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Unable to copy the error and source." }),
     );
+    // The broken diagram's source block says so too, not only the console.
+    await act(() => button(_fixture, "Copy code").click());
+    await vi.waitFor(() =>
+      expect(toastManager.add).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Unable to copy the diagram source." }),
+      ),
+    );
     expect(_fixture.container.textContent).not.toContain("Unable to copy");
     expect(draft).toBe("An existing draft");
     expect(_fixture.container.textContent).toContain(source);
@@ -340,9 +347,9 @@ describe("Mermaid error recovery", () => {
     expect(toolbar.contains(button(_fixture, "Retry diagram"))).toBe(true);
     expect(_fixture.container.querySelector('[aria-label="More diagram actions"]')).toBeNull();
     expect(_fixture.container.querySelector('[aria-label="Diagram actions"]')).toBeNull();
-    expect(errorRow.nextElementSibling).toBe(codeBlock);
-    expect(codeBlock.classList.contains("my-0")).toBe(true);
-    expect(codeBlock.className).not.toContain("my-[0.65rem]");
+    expect(errorRow.nextElementSibling?.firstElementChild).toBe(codeBlock);
+    expect(getComputedStyle(codeBlock).marginTop).toBe("0px");
+    expect(getComputedStyle(codeBlock).marginBottom).toBe("0px");
     expect(_fixture.container.querySelector(".scient-mermaid-source")).toBeNull();
     expect(copy.textContent).toBe("");
     expect(copy.tagName).toBe("BUTTON");

@@ -13,7 +13,7 @@ import { resolveScientRichFenceKind } from "~/scient/presentation/ScientRichFenc
 
 import { getClientSettings } from "~/hooks/useSettings";
 import { mountCodeBlockHeader } from "./codeBlockActions";
-import { extractFenceTitle } from "~/scient/presentation/CodeBlockTitle";
+import { extractFenceTitle } from "~/components/chat/MarkdownCodeBlock.logic";
 
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import {

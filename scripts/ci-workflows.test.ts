@@ -142,17 +142,15 @@ function runnerCount(needs: Record<string, JobResult>) {
   const matrixSize = (job: Job, inputs: Record<string, unknown> = {}) => {
     const matrix = job.strategy?.matrix;
     if (!matrix) return 1;
-    if (matrix.include) return matrix.include.length;
-    return Object.values(matrix).reduce((count, values) => {
-      const list =
-        typeof values === "string"
-          ? (NodeVM.runInNewContext(values.slice(3, -2), {
-              inputs,
-              fromJSON: JSON.parse,
-            }) as unknown[])
-          : values;
-      return count * list.length;
-    }, 1);
+    const expand = (values: unknown[] | string) =>
+      typeof values === "string"
+        ? (NodeVM.runInNewContext(values.slice(3, -2), {
+            inputs,
+            fromJSON: JSON.parse,
+          }) as unknown[])
+        : values;
+    if (matrix.include) return expand(matrix.include).length;
+    return Object.values(matrix).reduce((count, values) => count * expand(values).length, 1);
   };
   return Object.entries(workflow.jobs).reduce((total, [id, job]) => {
     if (needs[id]!.result !== "success") return total;
@@ -210,7 +208,7 @@ describe("CI workflow decisions", () => {
     },
   );
 
-  it("has one required gate covering every job, twelve server shards and six hosted web shards", () => {
+  it("has one required gate covering every job, sixteen server shards and twelve hosted web shards", () => {
     expect(workflow.jobs.check).toMatchObject({ name: "Check", if: "${{ always() }}" });
     expect([...(workflow.jobs.check!.needs as string[])].sort()).toEqual(
       Object.keys(workflow.jobs)
@@ -220,11 +218,11 @@ describe("CI workflow decisions", () => {
     expect(workflow.jobs.lint!.name).toBe("Lint");
     expect(workflow.jobs.test_server).toMatchObject({
       "timeout-minutes": 20,
-      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } },
+      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] } },
     });
     expect(workflow.jobs.test_web).toMatchObject({
       "runs-on": "ubuntu-24.04",
-      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6] } },
+      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } },
     });
   });
 
@@ -473,25 +471,25 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 30],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 36],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 30],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 45],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 51],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 45],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 43],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 42],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 60],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 59],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      49,
+      69,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 54],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 45],
     // The probe, release notes, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 10],
-    ["main push", "docs/operations/development.md", "push", false, 53],
-    ["nightly", "docs/operations/development.md", "schedule", false, 52],
+    ["main push", "docs/operations/development.md", "push", false, 73],
+    ["nightly", "docs/operations/development.md", "schedule", false, 72],
     // Probe, release notes, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/development.md", "push", true, 10],
   ] as const)(
@@ -521,22 +519,32 @@ describe("CI workflow decisions", () => {
     const test = workflow.jobs.test!.steps!.find((step) => step.name === "Test")!;
     expect(test.env).toBeUndefined();
     expect(test.run).toContain(
-      "vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test 2>&1",
+      "vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test ${{ matrix.args }} 2>&1",
     );
     expect(test.run).not.toContain("TEST_PACKAGES");
-    // Part 1 runs everything except the server, web and root packages and what parts 2 and 3
-    // name, so the parts together run every workspace exactly once.
+    // Part 1 runs everything except the server, web and root packages and what the other parts
+    // name, so the parts together run every workspace exactly once. A package several parts
+    // name is split between them with `--shard`, each shard once.
     const parts = (
       workflow.jobs.test!.strategy!.matrix as unknown as {
-        include: Array<{ part: number; packages: string }>;
+        include: Array<{ part: number; packages: string; args?: string }>;
       }
     ).include;
-    expect(parts.map((part) => part.part)).toEqual([1, 2, 3]);
+    expect(parts.map((part) => part.part)).toEqual([1, 2, 3, 4, 5, 6]);
     const filters = (packages: string) =>
       [...packages.matchAll(/--filter '?([^' ]+)'?/g)].map((match) => match[1]!);
-    const named = parts.slice(1).flatMap((part) => filters(part.packages));
+    const named = [...new Set(parts.slice(1).flatMap((part) => filters(part.packages)))];
     expect(named.every((name) => !name.startsWith("!"))).toBe(true);
-    expect(new Set(named).size).toBe(named.length);
+    for (const name of named) {
+      const sharing = parts.filter((part) => filters(part.packages).includes(name));
+      if (sharing.length === 1) expect(sharing[0]!.args).toBeUndefined();
+      else {
+        for (const part of sharing) expect(filters(part.packages)).toEqual([name]);
+        expect(sharing.map((part) => part.args).toSorted()).toEqual(
+          sharing.map((_, i) => `--shard ${i + 1}/${sharing.length}`),
+        );
+      }
+    }
     expect(filters(parts[0]!.packages).toSorted()).toEqual(
       ["!t3", "!@t3tools/monorepo", "!@t3tools/web", ...named.map((name) => `!${name}`)].toSorted(),
     );

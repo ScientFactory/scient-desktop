@@ -15,6 +15,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ToolLifecycleItemType } from "./providerRuntime.ts";
+import { SignedAssetRelativeUrl } from "./scient/signedAssetPath.ts";
 import {
   CONVERSATION_IMPORT_MAX_NOTICES,
   OrchestrationConversationImportNotice,
@@ -817,7 +818,7 @@ export const ScientConversationExportFile = Schema.Struct({
   mediaType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   byteLength: NonNegativeInt,
   /** Signed asset path, resolved against the environment's HTTP base URL. */
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(32_768)),
+  relativeUrl: SignedAssetRelativeUrl(32_768),
   expiresAt: Schema.Number,
 });
 export type ScientConversationExportFile = typeof ScientConversationExportFile.Type;

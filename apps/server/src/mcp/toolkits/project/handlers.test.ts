@@ -457,11 +457,10 @@ const projectLaunchHarness = (input: {
             modelSelection: launch.modelSelection,
             deletedAt: null,
           } as unknown as OrchestrationV2ThreadShell);
-        if (input.threadCaller !== true) return Effect.succeed(null);
-        return Effect.sync(() => {
-          expect(requested).toBe(sourceThreadId);
-          return caller;
-        });
+        // A retry looks up the thread its request id would have launched before launching it.
+        return Effect.succeed(
+          input.threadCaller === true && requested === sourceThreadId ? caller : null,
+        );
       },
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -857,20 +856,24 @@ it.effect("a launch binds only an existing checkout that is one of the project's
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchInto = (worktreePath: string) =>
+    const launchInto = (worktreePath: string, clientRequestId?: string) =>
       toolkit
         .handle("scient_thread_launch", {
           title: "Fix",
           projectId,
           runtimeMode: "auto",
           message: "Inspect this checkout",
+          ...(clientRequestId === undefined ? {} : { clientRequestId }),
           workspaceStrategy: { type: "existing_worktree", worktreePath },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({
+    expect((yield* launchInto(worktree, "existing-checkout")).at(-1)?.result).toMatchObject({
       projectId,
       modelSelection,
+    });
+    expect((yield* launchInto(outside, "existing-checkout")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
     });
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId, modelSelection });
     for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
@@ -909,36 +912,56 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
       launched,
       threadCaller: true,
       checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
-          ? Effect.fail(
-              new ThreadLaunch.ThreadLaunchBaseRefError({
-                projectId,
-                projectTitle: "Client target",
-                workspaceRoot: "/projects/client-target",
-                baseRef: workspaceStrategy.baseRef,
-              }),
-            )
-          : Effect.void,
+        workspaceStrategy.type !== "worktree"
+          ? Effect.void
+          : workspaceStrategy.baseRef === "t3/renamed"
+            ? Effect.fail(
+                new ThreadLaunch.ThreadLaunchBaseRefError({
+                  projectId,
+                  projectTitle: "Client target",
+                  workspaceRoot: "/projects/client-target",
+                  baseRef: workspaceStrategy.baseRef,
+                }),
+              )
+            : workspaceStrategy.branch === "feature/taken"
+              ? Effect.fail(
+                  new ThreadLaunch.ThreadLaunchBranchExistsError({
+                    projectId,
+                    projectTitle: "Client target",
+                    branch: workspaceStrategy.branch,
+                  }),
+                )
+              : Effect.void,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchFrom = (baseRef: string) =>
+    const launchFrom = (baseRef: string, branch?: string) =>
       toolkit
         .handle("scient_thread_launch", {
           title: "Fix",
           projectId,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: false },
+          workspaceStrategy: {
+            type: "worktree",
+            baseRef,
+            ...(branch === undefined ? {} : { branch }),
+            startFromOrigin: false,
+          },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     const refused = (yield* launchFrom("t3/renamed")).at(-1)?.result;
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect((refused as { message: string }).message).toContain(
-      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
+      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created. Pass a branch, tag, or commit that exists there',
     );
+    expect((yield* launchFrom("main", "feature/taken")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message:
+        'Branch "feature/taken" already exists in project "Client target". No thread was created. Pass a branch name that does not exist yet, or omit branch to get a generated name.',
+    });
     expect(launched).toHaveLength(0);
 
     expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
