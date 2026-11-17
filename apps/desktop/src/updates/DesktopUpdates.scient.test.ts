@@ -106,6 +106,102 @@ describe("DesktopUpdates outcomes", () => {
     },
   );
 
+  describe("GitHub behind Scient's mirror", () => {
+    const github = { provider: "github", owner: "ScientFactory", repo: "scient-desktop" };
+    const isMirror = (feed: unknown) =>
+      typeof feed === "object" && feed !== null && "provider" in feed && feed.provider === "generic";
+    const missingFeed = newError("Cannot find channel \"latest.yml\" update info: HttpError: 404", "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND");
+    const failCheck = (cause: Error) =>
+      Effect.fail(new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({ channel: "latest", cause }));
+    const realFeeds = {
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      appUpdateYml: "provider: github\nowner: ScientFactory\nrepo: scient-desktop\n",
+    } as const;
+
+    it.effect("checks GitHub in the same check when the mirror cannot answer", () => {
+      const { harness, outcomes, layer } = recordingHarness({
+        ...realFeeds,
+        checkForUpdates: Effect.suspend(() =>
+          isMirror(harness.feedUrls().at(-1)) ? failCheck(missingFeed) : Effect.void,
+        ),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          const before = harness.checkCount();
+          yield* updates.check("menu");
+          yield* flushCallbacks;
+          assert.equal(harness.checkCount() - before, 2);
+          assert.deepEqual(harness.feedUrls().at(-1), github);
+          const checks = outcomes("check");
+          assert.deepEqual(
+            checks.map((check) => check.outcome),
+            ["started", "completed"],
+          );
+          assert.equal(checks[1]?.sourceKind, "github");
+          assert.notEqual((yield* updates.getState).status, "error");
+          // The next check tries the mirror again.
+          yield* updates.check("menu");
+          assert.isTrue(harness.feedUrls().some(isMirror));
+          assert.equal(harness.checkCount() - before, 4);
+        }),
+      ).pipe(Effect.provide(layer));
+    });
+
+    it.effect("reports GitHub's failure once when neither source answers", () => {
+      const offline = newError("net::ERR_INTERNET_DISCONNECTED", "ERR_UPDATER_LATEST_VERSION_NOT_FOUND");
+      const { harness, outcomes, layer } = recordingHarness({
+        ...realFeeds,
+        checkForUpdates: Effect.suspend(() => failCheck(offline)),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.check("menu");
+          yield* flushCallbacks;
+          const checks = outcomes("check");
+          assert.deepEqual(
+            checks.map((check) => check.outcome),
+            ["started", "failed"],
+          );
+          assert.include(checks[1], { sourceKind: "github", failureClass: "network" });
+          assert.equal((yield* updates.getState).status, "error");
+        }),
+      ).pipe(Effect.provide(layer));
+    });
+
+    it.effect("updates from GitHub for the rest of the run after a mirror download fails", () => {
+      const { harness, layer } = recordingHarness({
+        ...realFeeds,
+        downloadUpdate: Effect.fail(
+          new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+            channel: "latest",
+            cause: new Error("net::ERR_CONTENT_LENGTH_MISMATCH"),
+          }),
+        ),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          assert.isFalse((yield* updates.download).completed);
+          assert.isTrue(isMirror(harness.feedUrls().at(-1)));
+          const before = harness.checkCount();
+          yield* updates.check("menu");
+          assert.equal(harness.checkCount() - before, 1);
+          assert.deepEqual(harness.feedUrls().at(-1), github);
+          // A track switch keeps the run on GitHub.
+          yield* updates.setChannel("beta");
+          assert.deepEqual(harness.feedUrls().at(-1), { ...github, repo: "scient-desktop-beta" });
+        }),
+      ).pipe(Effect.provide(layer));
+    });
+  });
+
   it.effect("records one outcome for a check the updater reports twice", () => {
     const offline = newError(
       "Unable to find latest version on GitHub (https://github.com/x/y/releases/latest), please ensure a production release exists: Error: net::ERR_INTERNET_DISCONNECTED",
