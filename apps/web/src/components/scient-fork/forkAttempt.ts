@@ -30,8 +30,37 @@ const Attempt = Schema.Struct({
 });
 export type ForkAttempt = typeof Attempt.Type;
 const decodeAttempt = Schema.decodeUnknownSync(Schema.fromJsonString(Attempt));
-// v1 journalled Scient's former fork command; those entries are no longer read.
+const decodeAttemptValue = Schema.decodeUnknownSync(Attempt);
 const STORAGE_PREFIX = "scient:fork-attempt:v2:";
+const V1_STORAGE_PREFIX = "scient:fork-attempt:v1:";
+
+/** A v1 entry journalled Scient's former fork command; it resumes as the same fork. */
+function fromV1Attempt(value: string): ForkAttempt | null {
+  try {
+    const v1 = JSON.parse(value) as Record<string, unknown> & {
+      readonly command?: Record<string, unknown>;
+    };
+    const command = v1.command ?? {};
+    const boundary =
+      command.sourceRunningRunId !== undefined
+        ? { kind: "running-turn", runId: command.sourceRunningRunId }
+        : command.sourceUserMessageId !== undefined
+          ? { kind: "user-message", messageId: command.sourceUserMessageId }
+          : { kind: "assistant-response", messageId: command.sourceAssistantMessageId };
+    const { displayTitle: _displayTitle, command: _command, ...rest } = v1;
+    return decodeAttemptValue({
+      ...rest,
+      command: {
+        commandId: command.commandId,
+        sourceThreadId: command.originThreadId,
+        targetThreadId: command.newThreadId,
+        scient: { boundary, workspaceMode: command.workspaceMode },
+      },
+    });
+  } catch {
+    return null;
+  }
+}
 
 /** Entries survive navigation/reload until the same operation is resolved. */
 export function createForkAttemptStore(
@@ -40,7 +69,14 @@ export function createForkAttemptStore(
   return {
     get(key: string): ForkAttempt | null {
       const value = storage.getItem(STORAGE_PREFIX + key);
-      return value === null ? null : decodeAttempt(value);
+      if (value !== null) return decodeAttempt(value);
+      const v1 = storage.getItem(V1_STORAGE_PREFIX + key);
+      const migrated = v1 === null ? null : fromV1Attempt(v1);
+      if (migrated !== null) {
+        storage.setItem(STORAGE_PREFIX + key, JSON.stringify(migrated));
+        storage.removeItem(V1_STORAGE_PREFIX + key);
+      }
+      return migrated;
     },
     set(key: string, attempt: ForkAttempt) {
       storage.setItem(STORAGE_PREFIX + key, JSON.stringify(attempt));

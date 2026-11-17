@@ -156,7 +156,10 @@ export function createForkConversationCommand(input: {
     activeThreadEnvironmentId,
     requestFork,
   } = input;
-  return (options?: { readonly preserveComposerDraft?: boolean }) => {
+  return (options?: {
+    readonly preserveComposerDraft?: boolean;
+    readonly workspaceMode?: OrchestrationForkWorkspaceMode;
+  }) => {
     if (!activeThreadId || !activeThreadEnvironmentId) return;
     const latestCompletedAssistantMessageId = findLatestCompletedAssistantMessageId({
       timelineEntries: input.readTimelineEntries?.() ?? timelineEntries,
@@ -169,7 +172,7 @@ export function createForkConversationCommand(input: {
       requestFork({
         threadId: activeThreadId,
         environmentId: activeThreadEnvironmentId,
-        workspaceMode: "local",
+        workspaceMode: options?.workspaceMode ?? "local",
         kind: "running-turn",
         runId: activeRunningTurnId,
       });
@@ -178,7 +181,7 @@ export function createForkConversationCommand(input: {
     requestFork({
       threadId: activeThreadId,
       environmentId: activeThreadEnvironmentId,
-      workspaceMode: "local",
+      workspaceMode: options?.workspaceMode ?? "local",
       kind: "assistant-response",
       messageId: latestCompletedAssistantMessageId,
       latest: true,

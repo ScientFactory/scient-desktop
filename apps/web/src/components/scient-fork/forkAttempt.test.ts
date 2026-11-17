@@ -272,6 +272,43 @@ describe("durable fork attempts", () => {
   });
 });
 
+it("resumes an unresolved fork journalled before the single fork path", () => {
+  const { storage, key } = fixture();
+  storage.setItem(
+    `scient:fork-attempt:v1:${key}`,
+    JSON.stringify({
+      environmentId: "env",
+      ready: true,
+      handoffDone: false,
+      displayTitle: "Old title",
+      composerDraftFingerprint: "draft",
+      command: {
+        type: "thread.fork",
+        commandId: "client:thread-fork:old",
+        originThreadId: "origin",
+        newThreadId: "old-destination",
+        sourceUserMessageId: "user-3",
+        workspaceMode: "new-worktree",
+      },
+    }),
+  );
+  const store = createForkAttemptStore(storage);
+  const resumed = store.get(key);
+  expect(resumed?.command).toEqual({
+    commandId: "client:thread-fork:old",
+    sourceThreadId: "origin",
+    targetThreadId: "old-destination",
+    scient: {
+      boundary: { kind: "user-message", messageId: "user-3" },
+      workspaceMode: "new-worktree",
+    },
+  });
+  expect(resumed?.ready).toBe(true);
+  expect(resumed?.composerDraftFingerprint).toBe("draft");
+  expect(storage.getItem(`scient:fork-attempt:v1:${key}`)).toBeNull();
+  expect(store.get(key)?.command.targetThreadId).toBe("old-destination");
+});
+
 it("persists the server attachment receipt across reload without redispatch", async () => {
   const { attempt, store, key, storage } = fixture();
   await deliverForkAttempt({
