@@ -160,13 +160,12 @@ marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's te
 upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
 change unless Scient wants its own drawing.
 
-Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
-`CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
-`ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
-hand. T3's invisible placeholder while a language loads (#11062), the copy button that swaps its
-icon without morphing (#33985) and the pressed wrap toggle (#13208) and the copy that leaves out the fence's closing newline (#37284) are ported. Sharing the generic implementation with
-upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
+Chat Markdown (Scient): code blocks render through T3's `chat/MarkdownCodeBlock.tsx`. Its one
+Scient seam is an optional `dir` prop (default `"ltr"`); `ChatMarkdown.tsx` passes
+`chatCodeBoxDirection(...)` so a Hebrew or Arabic plain-text box reads right to left, and Copy
+message reads the same `dir`. The loading placeholder in `ChatMarkdown.tsx` is not `aria-hidden`,
+so Copy message keeps code whose highlighting is still loading. The rich editor's code header
+keeps Scient's `CodeBlockActions.tsx` and `CodeBlockTitle.tsx`. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
 through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
 capture use the shared Pele lazy renderer in `chat/MermaidDiagram.tsx`, with Scient recovery,
@@ -1943,8 +1942,7 @@ folder's New document in `FileBrowserPanel.tsx` (see "Side panel and Files bar")
 a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
-Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
-`scient/presentation`; upstream fixes must be ported by hand) mounted in
+the `dir` prop on T3's `chat/MarkdownCodeBlock.tsx`, mounted in
 `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 `MediaActions.tsx`, and in `index.css` an additive trailing block and two Markdown

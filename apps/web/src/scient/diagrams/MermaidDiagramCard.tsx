@@ -10,7 +10,7 @@ import {
   RefreshCwIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { use, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, use, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -18,7 +18,9 @@ import { AssistantCitationContext } from "~/components/chat/assistantCitationCon
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { toastManager } from "~/components/ui/toast";
-import { MarkdownCodeBlock } from "../presentation/MarkdownCodeBlock";
+import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "~/components/chat/MarkdownCodeBlock";
+import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
+import { resolveDiffThemeName } from "~/lib/diffRendering";
 import {
   RichFenceSourceMenuItem,
   RichFenceSourcePreview,
@@ -525,14 +527,18 @@ export function MermaidDiagramCard({
       ) : null}
 
       {diagramState.status === "error" && !sourceEditor ? (
-        <MarkdownCodeBlock
-          code={source}
-          language={language}
-          fenceTitle={title}
-          theme={theme}
-          className="my-0"
-          onCopyFailure={() => showActionError("Unable to copy the diagram source.")}
-        />
+        <div className="[&>.chat-markdown-codeblock]:my-0">
+          <MarkdownCodeBlock
+            code={source}
+            language={language}
+            fenceTitle={title}
+            theme={theme}
+            isStreaming={false}
+            onCopyFailure={() => showActionError("Unable to copy the diagram source.")}
+          >
+            <MermaidSourceCode source={source} language={language} theme={theme} />
+          </MarkdownCodeBlock>
+        </div>
       ) : (
         <RichFenceSourcePreview
           editor={sourceEditor}
@@ -562,5 +568,34 @@ export function MermaidDiagramCard({
         />
       ) : null}
     </div>
+  );
+}
+
+/** The failed diagram's source, highlighted as chat highlights a code fence. */
+function MermaidSourceCode({
+  source,
+  language,
+  theme,
+}: {
+  readonly source: string;
+  readonly language: string;
+  readonly theme: MermaidTheme;
+}) {
+  const plain = (
+    <pre>
+      <code className={`language-${language}`}>{source}</code>
+    </pre>
+  );
+  return (
+    <RenderErrorBoundary resetKeys={[source, language, theme]} fallback={plain}>
+      <Suspense fallback={<div className="invisible">{plain}</div>}>
+        <SuspenseShikiCodeBlock
+          className={`language-${language}`}
+          code={source}
+          themeName={resolveDiffThemeName(theme)}
+          isStreaming={false}
+        />
+      </Suspense>
+    </RenderErrorBoundary>
   );
 }

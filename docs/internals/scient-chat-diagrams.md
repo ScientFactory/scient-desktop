@@ -15,8 +15,8 @@ region of the `pre` renderer: eligible rich fences pass through
 `MermaidDiagramCard` for Mermaid. A closed Mermaid fence may render while the
 rest of the message streams. Unfinished streaming Mermaid fences stay on the
 source-code path; Plotly and Vega-Lite fences wait for the message to settle.
-Ordinary fences use Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, a copy of T3's code block).
+Ordinary fences use T3's `chat/MarkdownCodeBlock.tsx`, given Scient's code-box
+direction through its `dir` prop.
 Mounted consumer tests protect these boundaries during upstream refreshes.
 Because Markdown file previews already share `ChatMarkdown`, they receive the
 same behavior without a second viewer integration.
