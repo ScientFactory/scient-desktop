@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PROJECT_MISSING_FILE_REVISION } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -334,6 +335,37 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expect(read.contents).toBe("whitespace file");
           expect(read.relativePath).toBe(relativePath);
         }
+      }),
+    );
+
+    it.effect("reports an optional file as absent when the workspace root was removed", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = path.join(yield* makeTempDir, "removed-worktree");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "t3.json",
+          allowMissing: true,
+        });
+        // SCIENT-FORK:START — Scient's absent result carries its revision and read-only flag, and
+        // a required read fails at Scient's settled-read root check.
+        expect(result).toEqual({
+          relativePath: "t3.json",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          exists: false,
+          revision: PROJECT_MISSING_FILE_REVISION,
+          readOnly: true,
+        });
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "t3.json" })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "WorkspaceRootNotExistsError" });
+        // SCIENT-FORK:END
       }),
     );
 

@@ -19,6 +19,7 @@ import {
   uploadOpenedConversationFile,
 } from "../scient/conversationImport/openedConversationFiles.ts";
 // SCIENT-FORK:END
+import { startFileDrag } from "./methods/fileDrag.ts";
 import * as Effect from "effect/Effect";
 
 // SCIENT-FORK:START — keep the computer awake while threads work.
@@ -158,6 +159,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getHostEnvironmentId);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
+  yield* ipc.handle(startFileDrag);
   yield* ipc.handle(restartAudioService);
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);

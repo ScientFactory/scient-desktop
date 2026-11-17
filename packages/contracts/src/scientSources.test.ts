@@ -220,12 +220,12 @@ describe("Scient sources contracts", () => {
 
   it("returns a signed preview URL without a host filesystem path", () => {
     const decoded = decodeScientSourceAttachmentPreviewResult({
-      relativeUrl: "/api/assets/source-token",
+      relativeUrl: "/api/assets/source-token/abcdef.pdf",
       expiresAt: 1_786_000_000_000,
       absolutePath: "/project/.scient/sources/files/sha256/ab/abcdef.pdf",
     });
     expect(decoded).toEqual({
-      relativeUrl: "/api/assets/source-token",
+      relativeUrl: "/api/assets/source-token/abcdef.pdf",
       expiresAt: 1_786_000_000_000,
     });
     expect(decoded).not.toHaveProperty("absolutePath");
@@ -236,7 +236,7 @@ describe("Scient sources contracts", () => {
     expect(
       decodeScientSourceJournalIconResult({
         icon: {
-          relativeUrl: "/api/assets/journal-icon-token",
+          relativeUrl: "/api/assets/journal-icon-token/icon.png",
           expiresAt: 1_786_000_000_000,
           journalTitle: "PLOS Medicine",
         },

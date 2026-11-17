@@ -541,7 +541,22 @@ export const make = Effect.gen(function* () {
           operation: "realpath-workspace-root",
           cause,
         }),
-    });
+    }).pipe(
+      // Storage cleanup removes idle worktrees but keeps their path, so nothing below them exists.
+      Effect.catchIf(
+        (error) =>
+          input.allowMissing === true && (error.cause as NodeJS.ErrnoException).code === "ENOENT",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (realWorkspaceRoot === null) {
+      return {
+        relativePath: target.relativePath,
+        realTargetPath: null,
+        readOnly: false,
+        outsideWorkspace: false,
+      };
+    }
     const resolved = yield* Effect.tryPromise({
       try: () => canonicalReadTarget(target.absolutePath, input.allowMissing),
       catch: (cause) =>
@@ -763,6 +778,14 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
       });
+      // Storage cleanup removes idle worktrees but keeps their path; an optional file there is
+      // absent, with no publication to settle.
+      if (
+        input.allowMissing === true &&
+        !(yield* fileSystem.exists(input.cwd).pipe(Effect.orElseSucceed(() => true)))
+      ) {
+        return yield* readResolvedFile(input, "contained", hostPath);
+      }
     }
     return yield* (path.isAbsolute(hostPath) ? withSettledWorkspaceRead : withSettledFileRead)(
       { ...input, relativePath: hostPath },

@@ -3539,7 +3539,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.provideMerge(layerSettings),
         );
         const layerTest = layerOrchestratorService.pipe(
-          Layer.provide(fullAccessCapturedPolicyLayer),
+          // SCIENT-FORK:START — the caller's captured policy is the parent's own mode, as a live
+          // session captures it at turn start; T3's retry limit then reads the same mode.
+          Layer.provide(
+            Layer.mock(ProviderSessionManagerV2)({
+              resolveMcpInvocationPolicy: () =>
+                Effect.succeedSome({
+                  runtimeMode: "approval-required" as const,
+                  interactionMode: "default" as const,
+                }),
+            }),
+          ),
+          // SCIENT-FORK:END
           Layer.provideMerge(layerThreads),
           Layer.provide(
             Layer.mergeAll(
@@ -3571,7 +3582,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             projectId,
             title: "MCP parent",
             modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
-            runtimeMode: "full-access",
+            runtimeMode: "approval-required",
             interactionMode: "default",
             branch: null,
             worktreePath: cwd,
@@ -3615,6 +3626,23 @@ describe("OrchestratorMcpService provider resolution", () => {
             ...request,
             clientRequestId: "empty",
           });
+          const raised = yield* service.createThreads(scope, {
+            ...request,
+            clientRequestId: "raised",
+          });
+          const raisedId = raised.threads[0]!.threadId;
+          yield* orchestrator.dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make("raise-created-thread"),
+            threadId: raisedId,
+            runtimeMode: "full-access",
+          });
+          const rejected = yield* service
+            .createThreads(scope, { ...withPrompt, clientRequestId: "raised" })
+            .pipe(Effect.flip);
+          assert.equal(rejected.code, "runtime_mode_escalation_denied");
+          assert.equal((yield* orchestrator.getThreadProjection(raisedId)).runs.length, 0);
+
           const emojiAtLimit = yield* service.createThreads(scope, {
             threads: [{ ...request.threads[0]!, prompt: `${"a".repeat(76)}😀 and more work.` }],
             clientRequestId: "emoji-title",

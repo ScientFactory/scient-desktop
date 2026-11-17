@@ -230,15 +230,18 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
         effectiveEnvironment,
         makeRpcClient,
       );
-      const checkProvider = checkPiProviderStatus(
-        effectiveConfig,
-        effectiveEnvironment,
-        host.paths.cwd,
-        makeRpcClient,
-      ).pipe(
-        Effect.map(stampSnapshot),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
+      // Pi runs extensions' session_start in its cwd; the server's cwd is $HOME on packaged desktop.
+      const probeCwd = path.join(host.paths.providerStatusCacheDir, "pi-status-probe");
+      const checkProvider = fileSystem
+        .makeDirectory(probeCwd, { recursive: true })
+        .pipe(
+          Effect.ignore,
+          Effect.andThen(
+            checkPiProviderStatus(effectiveConfig, effectiveEnvironment, probeCwd, makeRpcClient),
+          ),
+          Effect.map(stampSnapshot),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
       const mapSettings = (settings: ServerSettings) => ({
         provider: effectiveConfig,
         enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
