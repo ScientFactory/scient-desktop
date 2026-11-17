@@ -1897,21 +1897,14 @@ it.live(
               creationSource: "web",
               ...start,
             });
-            if (label === "continuation") {
-              // This driver has no native resume, so Resume is refused without a prompt.
-              yield* waitFor((projection) =>
-                projection.runs.some(
-                  (run) =>
-                    run.userMessageId === MessageId.make(`${threadId}:message:${label}`) &&
-                    run.status === "failed",
-                ),
-              );
-              yield* assertHeld(`${label} refused`);
-              continue;
-            }
             const started = yield* takeOffer;
-            // The refused Resume never reached the provider, so the next prompt carries it.
-            assert.isTrue(started.input.message.text.endsWith(label), label);
+            // This driver has no native resume, so Continue asks it to continue in a prompt.
+            assert.isTrue(
+              started.input.message.text.endsWith(
+                label === "continuation" ? "Continue where you left off." : label,
+              ),
+              label,
+            );
             yield* assertHeld(`${label} started`);
             yield* started.settle("completed");
             yield* waitFor(
@@ -1923,7 +1916,7 @@ it.live(
           }
           assert.deepEqual(
             offers.map((offer) => offer.split("\n").at(-1)),
-            ["foreground", "queue-fallback", "steer-fallback"],
+            ["foreground", "Continue where you left off.", "queue-fallback", "steer-fallback"],
           );
         }),
     ),
