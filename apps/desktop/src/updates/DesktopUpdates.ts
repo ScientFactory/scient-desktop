@@ -522,6 +522,9 @@ export const make = Effect.gen(function* () {
   const scientFeedChannelRef = yield* Ref.make(Option.none<DesktopUpdateChannel>());
   // After the mirror fails a download, the rest of this run updates from GitHub.
   const mirrorSkippedRef = yield* Ref.make(false);
+  // electron-updater downloads from the feed its last answered check used, so after the mirror
+  // fails a download, GitHub must answer a check before the next download leaves the mirror.
+  const gitHubCheckOwedRef = yield* Ref.make(false);
   const useScientFeed = Effect.fn("desktop.updates.useScientFeed")(function* (
     channel: DesktopUpdateChannel,
     source: "mirror" | "github",
@@ -561,17 +564,20 @@ export const make = Effect.gen(function* () {
       if (answered) return;
     }
     yield* useScientFeed(channel.value, "github");
-    return yield* electronUpdater.checkForUpdates;
+    const result = yield* electronUpdater.checkForUpdates;
+    yield* Ref.set(gitHubCheckOwedRef, false);
+    return result;
   });
-  const lastCheckUsedSkippedMirror = Effect.gen(function* () {
-    if (Option.isNone(yield* mirrorChannel) || !(yield* Ref.get(mirrorSkippedRef))) return false;
-    return (yield* Ref.get(updateSourceKindRef)) === "scient_mirror";
+  const gitHubCheckOwed = Effect.gen(function* () {
+    if (Option.isNone(yield* mirrorChannel)) return false;
+    return yield* Ref.get(gitHubCheckOwedRef);
   });
   // A download the mirror failed leaves the next checks and downloads to GitHub.
   const skipMirrorAfterDownloadFailure = Effect.gen(function* () {
     if (Option.isNone(yield* mirrorChannel)) return;
     if ((yield* Ref.get(updateSourceKindRef)) !== "scient_mirror") return;
     yield* Ref.set(mirrorSkippedRef, true);
+    yield* Ref.set(gitHubCheckOwedRef, true);
     yield* logUpdaterWarning("update mirror download failed; using GitHub for this run");
   });
   // SCIENT-FORK:END
@@ -795,9 +801,9 @@ export const make = Effect.gen(function* () {
 
     const offered = yield* Ref.get(updateStateRef);
     let state = offered;
-    // SCIENT-FORK: electron-updater downloads from the feed its last check used, so a retry after
-    // a failed mirror download first finds the update on GitHub.
-    const refreshFromGitHub = !refresh && (yield* lastCheckUsedSkippedMirror);
+    // SCIENT-FORK: electron-updater downloads from the feed its last answered check used, so a
+    // retry after a failed mirror download first finds the update on GitHub, until GitHub answers.
+    const refreshFromGitHub = !refresh && (yield* gitHubCheckOwed);
     return yield* Effect.gen(function* () {
       if (refresh || refreshFromGitHub) {
         // electron-updater downloads what its last check found, which can be hours old.

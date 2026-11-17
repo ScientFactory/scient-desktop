@@ -253,6 +253,55 @@ describe("DesktopUpdates outcomes", () => {
         }),
       ).pipe(Effect.provide(layer));
     });
+
+    it.effect("keeps re-checking GitHub before retries until GitHub answers", () => {
+      // electron-updater keeps the feed of its last answered check when a check fails.
+      let checkedFeed: unknown;
+      let gitHubChecks = 0;
+      const { harness, layer } = recordingHarness({
+        ...realFeeds,
+        checkForUpdates: Effect.suspend(() => {
+          const feed = harness.feedUrls().at(-1);
+          if (!isMirror(feed) && ++gitHubChecks === 1) return failCheck(missingFeed);
+          checkedFeed = feed;
+          harness.emit("update-available", { version: "1.2.4" });
+          return Effect.void;
+        }),
+        downloadUpdate: Effect.suspend(() =>
+          isMirror(checkedFeed)
+            ? Effect.fail(
+                new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+                  channel: "latest",
+                  cause: new Error("net::ERR_CONTENT_LENGTH_MISMATCH"),
+                }),
+              )
+            : Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+        ),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          // The startup check finds the update on the mirror; its download fails.
+          yield* TestClock.adjust(Duration.seconds(15));
+          yield* flushCallbacks;
+          assert.equal(harness.downloadCount(), 1);
+          // The first retry's GitHub check fails, so it still downloads from the mirror.
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* flushCallbacks;
+          assert.equal(gitHubChecks, 1);
+          assert.equal(harness.downloadCount(), 2);
+          assert.isNull((yield* updates.getState).downloadedVersion);
+          // The second retry asks GitHub again, which answers, and downloads from GitHub.
+          yield* TestClock.adjust(Duration.minutes(5));
+          yield* flushCallbacks;
+          assert.equal(gitHubChecks, 2);
+          assert.deepEqual(checkedFeed, github);
+          assert.equal(harness.downloadCount(), 3);
+          assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+        }),
+      ).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("records one outcome for a check the updater reports twice", () => {
