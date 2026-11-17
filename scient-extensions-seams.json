@@ -514,6 +514,11 @@
       "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/session.mjs",
       "anchor": "SCIENT_SIGN_IN_COOKIES",
       "purpose": "Template connector's reader of the session Scient hands a signed-in connector."
+    },
+    {
+      "path": "apps/server/src/server.testkit.ts",
+      "anchor": "SCIENT-FORK:START — the real extensions owners, as the server composes them.",
+      "purpose": "Compose the real extensions owners into the shared server router test harness."
     }
   ]
 }

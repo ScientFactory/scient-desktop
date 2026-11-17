@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 
-import type { ScientRpcServerTestHarness } from "../../server.test.ts";
+import type { ScientRpcServerTestHarness } from "../../server.testkit.ts";
 
 const PNG_BYTES = Uint8Array.from(
   Buffer.from(
