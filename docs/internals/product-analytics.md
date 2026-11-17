@@ -642,7 +642,7 @@ Browser work is reported at three grains, all from the server, for tabs people a
   failures, failures a later call of the same tool got past (`recoveredFailures`), the longest
   failure streak, whether the turn ended on a failure, total/p50/p95/max call time, per-tool
   `<tool>Calls`/`<tool>Failures`/`<tool>Ms`, the sites and failed sites (most frequent first,
-  at most 32), error codes, page load errors and how often a page needed another account.
+  at most 16), error codes, page load errors and how often a page needed another account.
 
 Successful tool calls are still not recorded one by one. A failed `preview_*` call's
 `mcp.tool.invoked` also carries its `site`, its `preview_act` `action`, a snapshot timeout's

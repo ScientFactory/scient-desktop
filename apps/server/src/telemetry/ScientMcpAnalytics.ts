@@ -319,12 +319,13 @@ const SUMMARY_TOOLS: Readonly<Record<string, string>> = {
   preview_wait_for: "waitFor",
   preview_status: "status",
 };
-const MAX_SUMMARY_VALUES = 32;
+// Two lists of long host names must still fit the 16 KB event limit.
+const MAX_SUMMARY_VALUES = 16;
 
 const percentile = (sorted: ReadonlyArray<number>, share: number) =>
   sorted[Math.min(sorted.length - 1, Math.ceil(share * sorted.length) - 1)] ?? 0;
 
-/** Most frequent first, at most the gateway's array length. */
+/** Most frequent first, at most MAX_SUMMARY_VALUES. */
 const byFrequency = <A extends string | number>(values: ReadonlyArray<A>): Array<A> => {
   const counts = new Map<A, number>();
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
