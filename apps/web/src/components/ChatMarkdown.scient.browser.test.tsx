@@ -33,7 +33,7 @@ import "../index.css";
 import { useTheme } from "../hooks/useTheme";
 import { applyThemeColorPreview, getStandardThemeColors } from "../themePalette";
 import { readLocalApi } from "../localApi";
-import { toastManager } from "./ui/toast";
+import { AnchoredToastProvider, toastManager } from "./ui/toast";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -944,6 +944,43 @@ it.each([
     expect(toast).not.toHaveBeenCalled();
   },
 );
+
+describe("ChatMarkdown code block copy", () => {
+  it.each([
+    { outcome: "a failed copy explains itself beside Copy", fails: true },
+    { outcome: "a successful copy shows only Copied", fails: false },
+  ])("$outcome", async ({ fails }) => {
+    setup();
+    using write = vi.spyOn(navigator.clipboard, "writeText");
+    if (fails)
+      write.mockRejectedValue(new DOMException("Clipboard access denied", "NotAllowedError"));
+    else write.mockResolvedValue(undefined);
+    using _console = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await using screen = await render(
+      <AnchoredToastProvider timeout={0}>
+        <ChatMarkdown cwd="/tmp/project" text={"```sh\nnpm install\n```\n"} />
+      </AnchoredToastProvider>,
+    );
+    const copyButton = screen.getByRole("button", { name: "Copy code" });
+    const copy = await copyButton.findElement();
+    await copyButton.click();
+
+    const message = page.getByText("Failed to copy", { exact: true });
+    if (fails) {
+      await expect.element(message).toBeVisible();
+      expect(message.elements()).toHaveLength(1);
+      const button = copy.getBoundingClientRect();
+      const popup = message.element().closest('[data-slot="toast-popup"]')!.getBoundingClientRect();
+      const gap = Math.max(popup.top - button.bottom, button.top - popup.bottom);
+      expect(gap).toBeLessThanOrEqual(8);
+      expect(popup.left < button.right && popup.right > button.left).toBe(true);
+      expect(copy.getAttribute("aria-label")).toBe("Copy code");
+    } else {
+      await expect.element(screen.getByRole("button", { name: "Copied" })).toBeVisible();
+      expect(message.query()).toBeNull();
+    }
+  });
+});
 
 describe("ChatMarkdown math", () => {
   const renderMath = async (

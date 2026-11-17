@@ -1,6 +1,6 @@
 import { PlayIcon, WrapTextIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
-import React, { use, useEffect, useState, type ReactNode } from "react";
+import React, { use, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -154,10 +154,14 @@ export function MarkdownCodeBlock({
   diagram?: boolean;
   /** SCIENT-FORK: the code box's direction; left-to-right by default. */
   dir?: "ltr" | "rtl" | "auto";
-  /** SCIENT-FORK: lets the surrounding surface tell the user that copying failed. */
-  onCopyFailure?: ((cause: unknown) => void) | undefined;
+  /** SCIENT-FORK: lets the surrounding surface tell the user, beside Copy, that copying failed. */
+  onCopyFailure?:
+    | ((cause: Error, copyButton: RefObject<HTMLButtonElement | null>) => void)
+    | undefined;
   children: ReactNode;
 }) {
+  // SCIENT-FORK: the Copy button anchors a copy-failure message.
+  const copyButtonRef = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     timeout: 1200,
     onError: (cause) => {
@@ -169,7 +173,7 @@ export function MarkdownCodeBlock({
         },
         cause,
       );
-      onCopyFailure?.(cause);
+      onCopyFailure?.(cause, copyButtonRef);
     },
   });
   const defaultWrapped = useClientSettings((settings) => settings.wordWrap);
@@ -196,6 +200,7 @@ export function MarkdownCodeBlock({
       <TooltipTrigger
         render={
           <Button
+            ref={copyButtonRef}
             type="button"
             variant="ghost-muted"
             size="icon-xs"
