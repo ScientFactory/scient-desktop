@@ -495,7 +495,7 @@ it.effect("stores inherited runs as ranges and keeps copies and the fork's own t
 const sideId = ThreadId.make("range-side");
 
 it.effect(
-  "delivers a fork of a fork and a side chat identically after the source is edited, rewritten and deleted",
+  "delivers a fork of a fork and a side chat identically after the source is edited, rewritten and deleted, and the fork deleted",
   () =>
     sameAcrossModes((mode) =>
       Effect.gen(function* () {
@@ -554,7 +554,7 @@ it.effect(
           yield* layout(mode, prepared);
           children.push({ id, handoff });
         }
-        // After both handoffs: edit, a rewrite such as a rollback leaves, and deletion.
+        // After both handoffs: edit, a rewrite such as a rollback leaves, and deletion of the source and the fork.
         const later = items[9]!;
         assert.ok(later.type === "user_message");
         yield* write(
@@ -573,6 +573,14 @@ it.effect(
           threadId: sourceId,
           occurredAt: now,
           payload: { ...thread(sourceId, null), deletedAt: now },
+        });
+        // The children read their inherited runs through the fork's list, so delete it too.
+        yield* commit({
+          id: EventId.make("fork:deleted"),
+          type: "thread.deleted",
+          threadId: forkId,
+          occurredAt: now,
+          payload: { ...thread(forkId, sourceId), deletedAt: now },
         });
         const observeAll = Effect.gen(function* () {
           const seen = [yield* observe(forkId, [forkHandoff])];
