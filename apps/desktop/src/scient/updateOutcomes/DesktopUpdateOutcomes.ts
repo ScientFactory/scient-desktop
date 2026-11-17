@@ -309,7 +309,10 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
       yield* Effect.sleep(SUMMARY_INTERVAL).pipe(
         Effect.andThen(
           Effect.all([Ref.get(stateRef), Ref.get(timesRef)]).pipe(
-            Effect.flatMap(([state, times]) => summary("daily", state, times)),
+            // A restart's preparation is not a status analytics knows; the next day reports.
+            Effect.flatMap(([state, times]) =>
+              state.status === "preparing" ? Effect.void : summary("daily", state, times),
+            ),
           ),
         ),
         Effect.forever,

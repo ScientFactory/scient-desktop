@@ -382,6 +382,26 @@ describe("update restart flow", () => {
     expect(bridge.installUpdate).not.toHaveBeenCalled();
   });
 
+  it("with the sidebar closed, preparation is one corner toast that follows its progress", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const preparing = (message: string): DesktopUpdateState => ({
+      ...downloaded(),
+      status: "preparing",
+      message,
+    });
+    updateStore.set(preparing("Preparing update… You can keep working."));
+    await mount(_fixture, "position:fixed;left:-600px;bottom:24px;width:240px");
+
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("Preparing update"));
+    await act(() => updateStore.set(preparing("Saving your work before restarting…")));
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("Saving your work"));
+    expect(cornerNotice()?.textContent).not.toContain("Preparing update");
+    await act(() => updateStore.set(downloaded()));
+    await vi.waitFor(() => expect(cornerNotice()).toBeNull());
+  });
+
   it("a failed install releases the footer so Update can be tried again", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

@@ -211,6 +211,8 @@ export function getDesktopUpdateInstallConfirmationMessage(
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
   if (!result.accepted || result.completed) return null;
+  // SCIENT-FORK: still preparing means the installer took over; every failure leaves preparing.
+  if (result.state.status === "preparing") return null;
   if (typeof result.state.message !== "string") return null;
   const message = result.state.message.trim();
   return message.length > 0 ? message : null;

@@ -1262,6 +1262,8 @@ export const make = Effect.gen(function* () {
             return yield* Effect.die(new Error("The admitted update is no longer downloaded."));
           }
           yield* restartTiming.begin(targetVersion);
+          // SCIENT-FORK: the attempt starts at consent, so a failed native preparation counts.
+          const installAttemptRef = yield* outcomes.installStarted(targetVersion);
           yield* updateState((state) => ({
             ...state,
             status: "preparing",
@@ -1316,10 +1318,7 @@ export const make = Effect.gen(function* () {
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           // SCIENT-FORK: the install attempt starts with its record.
           if (downloadedVersion !== null) {
-            yield* writeInstallRecord(
-              downloadedVersion,
-              yield* outcomes.installStarted(downloadedVersion),
-            );
+            yield* writeInstallRecord(downloadedVersion, installAttemptRef);
           }
           // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
@@ -1355,6 +1354,8 @@ export const make = Effect.gen(function* () {
             ElectronUpdaterPrepareUpdateError: Effect.fn(
               "desktop.updates.handlePreparationFailure",
             )(function* (error) {
+              // SCIENT-FORK: one outcome per install; a paused save is not an update failure.
+              yield* outcomes.installFailed(error.cause);
               yield* recoverFailedInstall(error.message, error.retryDownload ?? false);
               yield* logUpdaterWarning(error.message, {
                 errorTag: error._tag,
@@ -1652,6 +1653,10 @@ export const make = Effect.gen(function* () {
               version: info.version,
               availableVersion: state.availableVersion,
             });
+            // A newer offer's download joined this finished one; offer it again rather than wait.
+            if (state.status === "downloading") {
+              yield* setState({ ...state, status: "available", downloadPercent: null });
+            }
             return;
           }
           // A download can finish after its track switch moved on; never offer that build.

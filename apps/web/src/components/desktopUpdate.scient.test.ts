@@ -2,6 +2,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getDesktopUpdateActionError,
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
   canCheckForUpdate,
@@ -58,4 +59,8 @@ it("native preparation blocks every update action even while the archive remains
   expect(canCheckForUpdate(preparing)).toBe(false);
   expect(isDesktopUpdateButtonDisabled(preparing)).toBe(true);
   expect(getDesktopUpdateButtonTooltip(preparing)).toBe(preparing.message);
+  // The installer took over while its progress still read "preparing"; that is not a failure.
+  expect(
+    getDesktopUpdateActionError({ accepted: true, completed: false, state: preparing }),
+  ).toBeNull();
 });

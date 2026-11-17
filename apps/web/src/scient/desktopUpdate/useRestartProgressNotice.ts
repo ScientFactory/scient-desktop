@@ -37,8 +37,14 @@ export function useRestartProgressNotice(
   const [failure, setFailure] = useState<{ title: string; description: string } | null>(null);
   // A new attempt replaces the reason the last one stopped.
   if (preparing && failure !== null) setFailure(null);
+  const mode = preparing ? "progress" : failure !== null ? "failure" : null;
+  // Whether the control is on screen; the sidebar can close or open while a notice shows.
+  const [anchorVisible, setAnchorVisible] = useState(true);
+  // With no notice there is nothing to place; the next one starts by assuming the control shows.
+  if (mode === null && !anchorVisible) setAnchorVisible(true);
   const mounted = useRef(false);
   const progressToast = useRef<string | null>(null);
+  const shownFailure = useRef(failure);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks whether this control can still show a failure; an unmounted one hands it to a toast
   useEffect(() => {
@@ -50,9 +56,33 @@ export function useRestartProgressNotice(
     };
   }, []);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors progress into one corner toast while the control is off screen, which only the DOM knows
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the failure the observer below may hand to a toast current
   useEffect(() => {
-    if (progress === null || isUpdateNoticeAnchorVisible(document.getElementById(anchorId))) {
+    shownFailure.current = failure;
+  }, [failure]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows whether the control is on screen, which only the DOM knows
+  useEffect(() => {
+    const anchor = mode === null ? null : document.getElementById(anchorId);
+    if (anchor === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.at(-1)?.isIntersecting ?? true;
+      const reason = shownFailure.current;
+      if (!visible && mode === "failure" && reason !== null) {
+        // The reason moves to the corner rather than staying hidden with the control.
+        toastInstallFailure(reason.title, reason.description);
+        setFailure(null);
+        return;
+      }
+      setAnchorVisible(visible);
+    });
+    observer.observe(anchor);
+    return () => observer.disconnect();
+  }, [mode, anchorId]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors progress into one corner toast while the control is off screen
+  useEffect(() => {
+    if (progress === null || anchorVisible) {
       if (progressToast.current !== null) toastManager.close(progressToast.current);
       progressToast.current = null;
       return;
@@ -62,7 +92,7 @@ export function useRestartProgressNotice(
     } else {
       toastManager.update(progressToast.current, { title: progress });
     }
-  }, [progress, anchorId]);
+  }, [progress, anchorVisible]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a failure's reason steps aside after a while; hover still shows the state's message
   useEffect(() => {
@@ -80,7 +110,7 @@ export function useRestartProgressNotice(
   };
 
   if (progress !== null) {
-    return { open: true, title: null, description: progress, reportFailure };
+    return { open: anchorVisible, title: null, description: progress, reportFailure };
   }
   return {
     open: failure !== null,
