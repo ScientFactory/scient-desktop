@@ -30,13 +30,36 @@ const seedPreview = Effect.gen(function* () {
   `;
 });
 
+// Scient's shipped ids up to 71 never change; Migrations.compatibility.test.ts pins the later ones.
+const shippedAfterPreview: Array<readonly [number, string]> = [
+  [53, "ProjectionThreadPullRequests"],
+  [54, "ProjectionThreadMessageContext"],
+  [55, "ProjectionThreadTitleState"],
+  [56, "PullRequestFilesViewed"],
+  [57, "ProjectionThreadsAutoSettleDisabledAt"],
+  [58, "ProjectionThreadSections"],
+  [60, "RemoveRedundantProjectionIndexes"],
+  [61, "ScheduledTaskWebhooks"],
+  [62, "WebhookRelayDeliveries"],
+  [63, "McpAppModelContext"],
+  [64, "ThreadSnapshotWindowIndexes"],
+  [65, "PullRequestReviewGuides"],
+  [66, "ThreadFailureLookupIndex"],
+  [67, "DropUnusedV1Projections"],
+  [68, "CanonicalizeThreadPullRequestLinks"],
+  [69, "CodexUsageNativeTurnIndex"],
+  [70, "RepairClientSettlementTimestamps"],
+  [71, "WebhookDedupe"],
+];
+
 // The expected lists stay exactly as T3 writes them, so T3's new migrations merge cleanly.
-// Scient's ids come from its manifest: everything after 52 runs except 59, the relabelled
-// preview schema. Every T3 migration must run, in T3's order.
+// Everything after 52 runs except 59, the relabelled preview schema, and every T3 migration
+// runs in T3's order.
 const assertRunsAfterPreview = (
   ran: ReadonlyArray<readonly [number, string]>,
   upstreamExpected: ReadonlyArray<readonly [number, string]>,
 ) => {
+  assert.deepStrictEqual(ran.slice(0, shippedAfterPreview.length), shippedAfterPreview);
   assert.deepStrictEqual(
     ran,
     migrationManifest.filter(([id]) => id > 52 && id !== 59),

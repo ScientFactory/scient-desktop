@@ -399,6 +399,26 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
   }),
 );
 
+it.effect("enqueueCommand waits for readiness and then drains queued work", () =>
+  Effect.gen(function* () {
+    const executionCount = yield* Ref.make(0);
+    const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
+
+    const queuedCommandFiber = yield* commandGate
+      .enqueueCommand(Ref.updateAndGet(executionCount, (count) => count + 1))
+      .pipe(Effect.forkScoped);
+
+    yield* Effect.yieldNow;
+    assert.equal(yield* Ref.get(executionCount), 0);
+
+    yield* commandGate.signalCommandReady;
+
+    const result = yield* Fiber.join(queuedCommandFiber);
+    assert.equal(result, 1);
+    assert.equal(yield* Ref.get(executionCount), 1);
+  }),
+);
+
 it.effect("startup heartbeat reports thread and project counts and hashed account owners", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
