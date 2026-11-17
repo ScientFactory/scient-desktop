@@ -14,6 +14,8 @@ const AttemptCommand = Schema.Struct({
   commandId: CommandId,
   sourceThreadId: ThreadId,
   targetThreadId: ThreadId,
+  /** A title the user chose; without one the server numbers the fork. */
+  title: Schema.optionalKey(Schema.String),
   scient: ScientThreadForkOptions,
 });
 export type ForkAttemptCommand = typeof AttemptCommand.Type;
@@ -24,6 +26,8 @@ const Attempt = Schema.Struct({
   ready: Schema.Boolean,
   handoffDone: Schema.Boolean,
   composerDraftFingerprint: Schema.optional(Schema.String),
+  /** The title the fork card showed, shown again when the fork is resumed. */
+  displayTitle: Schema.optional(Schema.String),
   /** Where a local fork works when that differs from the original; shown again on retry. */
   workspaceNotice: Schema.optional(Schema.String),
   attachmentIdMap: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -47,13 +51,14 @@ function fromV1Attempt(value: string): ForkAttempt | null {
         : command.sourceUserMessageId !== undefined
           ? { kind: "user-message", messageId: command.sourceUserMessageId }
           : { kind: "assistant-response", messageId: command.sourceAssistantMessageId };
-    const { displayTitle: _displayTitle, command: _command, ...rest } = v1;
+    const { command: _command, ...rest } = v1;
     return decodeAttemptValue({
       ...rest,
       command: {
         commandId: command.commandId,
         sourceThreadId: command.originThreadId,
         targetThreadId: command.newThreadId,
+        ...(typeof command.titleOverride === "string" ? { title: command.titleOverride } : {}),
         scient: { boundary, workspaceMode: command.workspaceMode },
       },
     });

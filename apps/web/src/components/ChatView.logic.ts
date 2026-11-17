@@ -122,8 +122,17 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
-// SCIENT-FORK: whether a fork attempt made its conversation.
+// SCIENT-FORK:START — fork command acceptance clears the stale fork target.
 export type ForkAcceptanceOutcome = "accepted" | "not-accepted";
+
+export function resolveForkTargetAfterAttempt<T>(
+  currentTarget: T | null,
+  attemptedTarget: T,
+  outcome: ForkAcceptanceOutcome,
+): T | null {
+  return outcome === "accepted" && currentTarget === attemptedTarget ? null : currentTarget;
+}
+// SCIENT-FORK:END
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
   desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,

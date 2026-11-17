@@ -3,7 +3,6 @@ import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { type TimelineSendMotion } from "./timelineEntranceMotion";
 import { type AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import { type ChatMessage } from "../../types";
-import type { OrchestrationForkWorkspaceMode } from "@t3tools/contracts";
 // SCIENT-FORK:END
 import type {
   ProviderApprovalDecision,
@@ -71,13 +70,9 @@ export interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   // SCIENT-FORK:START — optional so non-fork callers/tests are unaffected.
-  onForkAssistantMessage?:
-    | ((messageId: MessageId, workspaceMode?: OrchestrationForkWorkspaceMode) => void)
-    | undefined;
+  onForkAssistantMessage?: ((messageId: MessageId) => void) | undefined;
   forkOriginThreadId?: ThreadId | undefined;
-  onForkUserMessage?:
-    | ((message: ChatMessage, workspaceMode?: OrchestrationForkWorkspaceMode) => void)
-    | undefined;
+  onForkUserMessage?: ((message: ChatMessage) => void) | undefined;
   // SCIENT-FORK:END
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onSendAppMessage: ((text: string) => Promise<void>) | undefined;
