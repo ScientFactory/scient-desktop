@@ -48,7 +48,7 @@ Documentation impact:
      None — docs, or UI appearance or copy with no logic change
      Light Codex — one pass of correctness findings, each verified, then one recheck of the fixes
      Codex high and a live test — data, migrations, security, release or alignment; the changed
-     behavior run in a built app with synthetic state
+     behavior run in a built app with synthetic state; then one recheck of the fixes
      Example: Review: Light Codex — 2 findings, 1 fixed, 1 rejected (reason); recheck clean -->
 
 Review:

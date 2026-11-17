@@ -72,12 +72,18 @@ and is kept. From the PR's checkout, with the images in `$shots`:
 
 ```sh
 branch=$(git branch --show-current)
+ref="refs/heads/review-assets/$branch"
 tree=$(for f in "$shots"/*.png; do
   printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
 done | git mktree)
-commit=$(git commit-tree "$tree" -m "PR screenshots")  # later rounds: add -p <previous commit>
-git push origin "$commit:refs/heads/review-assets/$branch"
-echo "https://raw.githubusercontent.com/ScientFactory/scient-desktop/$commit/"
+prev=$(git ls-remote origin "$ref" | cut -f1)  # a later round keeps the earlier images
+if [ -n "$prev" ]; then
+  git fetch origin "$ref" && commit=$(git commit-tree "$tree" -p "$prev" -m "PR screenshots")
+else
+  commit=$(git commit-tree "$tree" -m "PR screenshots")
+fi
+git push origin "$commit:$ref"
+echo "https://raw.githubusercontent.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/$commit/"
 ```
 
 Embed each image as that printed address followed by its file name. Addresses by commit never

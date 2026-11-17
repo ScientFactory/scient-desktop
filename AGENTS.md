@@ -248,20 +248,6 @@ are separate.
   from product changes. Before changing protected Scient divergence, read
   `UPSTREAM.md`, `upstream-state.json` and its linked record. User-facing language is Scient.
 
-### Definition of done
-
-Report work as done only when all of these hold on the final head:
-
-- focused tests and typecheck pass, plus the final checks [Verification](#verification)
-  asks for;
-- a UI change has its before/after screenshots in the PR, as Verification describes;
-- every link a reader can follow that the change adds (docs, UI, PR text) was fetched
-  once and works;
-- the PR states platform behavior, as below, and its review and result;
-- the delivery the task allowed is complete: the PR is open, with auto-merge set if
-  merge was authorized. Without PR authorization, the handback names the branch, head
-  and what is still owed.
-
 Use conventional-commit titles. PRs include problem, resulting behavior, verification,
 documentation impact and model/harness attribution; follow
 [CONTRIBUTING.md](CONTRIBUTING.md) and the PR template.
@@ -271,6 +257,21 @@ paths and anything never run on a real Windows or Linux computer. Justify “una
 Shared expected behavior may use one explanation; execution evidence and unproven
 platforms must remain explicit. CI mocks do not qualify OS authenticators, installed
 browsers, live sites or installed builds.
+
+### Definition of done
+
+Report work as done only when all of these hold on the final head. Without a PR, the
+handback carries what the PR would.
+
+- focused tests and typecheck pass, plus the final checks [Verification](#verification)
+  asks for;
+- a UI change has its before/after screenshots in the PR, as Verification describes;
+- every link a reader can follow that the change adds (docs, UI, PR text) was fetched
+  once and works;
+- the PR states platform behavior, as above, and its review and result;
+- the delivery the task allowed is complete: the PR is open, with auto-merge set if
+  merge was authorized. Without PR authorization, the handback names the branch, head
+  and what is still owed.
 
 ## Documentation
 
