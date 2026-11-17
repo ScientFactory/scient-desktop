@@ -92,6 +92,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+// SCIENT-FORK: broad failures keep their specific cause for analytics.
+import { withFailureClass } from "../telemetry/ScientMcpAnalytics.ts";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -276,20 +278,30 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
       return failure("thread_not_found", error.message);
     case "ThreadManagementRunNotFoundError":
       return failure("run_not_found", error.message);
+    // SCIENT-FORK:START — analytics keep which cause made a thread unsendable.
     case "ThreadManagementThreadArchivedError":
+      return withFailureClass(failure("thread_not_sendable", error.message), "thread_archived");
     case "ThreadManagementWorktreeRestoreError":
       return failure("thread_not_sendable", error.message);
     case "ThreadManagementNoSteerableRunError":
-      return failure(
-        "thread_not_sendable",
-        `${error.message} Send with mode: "auto" or "queue" to start a new turn there.`,
+      return withFailureClass(
+        failure(
+          "thread_not_sendable",
+          `${error.message} Send with mode: "auto" or "queue" to start a new turn there.`,
+        ),
+        "no_steerable_run",
       );
+    // SCIENT-FORK:END
     case "ThreadManagementThreadNotInterruptibleError":
       return failure("thread_not_interruptible", error.message);
     case "ThreadManagementProjectionLoadError":
     case "ThreadManagementProjectThreadsListError":
     case "ThreadManagementDurableRunProjectionError":
-      return failure("orchestration_error", error.message);
+      // SCIENT-FORK: Scient's own projection reads failed.
+      return withFailureClass(
+        failure("orchestration_error", error.message),
+        "projection_load_failed",
+      );
     case "ThreadManagementProviderInstanceDisabledError":
       return failure("invalid_request", error.message);
   }
@@ -2998,9 +3010,13 @@ const make = Effect.gen(function* () {
           stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
       );
       if (taskEvent?.event.type !== "subagent.updated") {
-        return yield* failure(
-          "orchestration_error",
-          "Delegated task command did not produce a task projection.",
+        // SCIENT-FORK: an accepted command that left no task is Scient's failure.
+        return yield* withFailureClass(
+          failure(
+            "orchestration_error",
+            "Delegated task command did not produce a task projection.",
+          ),
+          "task_projection_missing",
         );
       }
       const taskId = taskEvent.event.payload.id;

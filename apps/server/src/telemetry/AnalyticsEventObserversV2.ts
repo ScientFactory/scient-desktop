@@ -26,7 +26,7 @@ import {
   browserTurnSummary,
   type BrowserToolCallLedger,
 } from "./ScientMcpAnalytics.ts";
-import { analyticsFailureCode, modelKey } from "@scientfactory/analytics";
+import { analyticsFailureClass, analyticsFailureCode, modelKey } from "@scientfactory/analytics";
 
 type Observation = {
   readonly name: string;
@@ -311,9 +311,12 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                     ...properties,
                     // A run that failed before starting without a provider failure (its
                     // workspace could not be prepared, say) is not the provider's error.
-                    failureClass:
+                    failureClass: analyticsFailureClass(
+                      correlation.provider,
                       failure?.class ??
-                      (correlation.startedAt === null ? "unknown" : "provider_error"),
+                        (correlation.startedAt === null ? "unknown" : "provider_error"),
+                      failureCode,
+                    ),
                     started: correlation.startedAt !== null,
                     ...(failureCode === undefined ? {} : { failureCode }),
                     ...(failure?.httpStatus === undefined

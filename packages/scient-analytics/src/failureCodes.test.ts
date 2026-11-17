@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { analyticsFailureCode } from "./failureCodes.ts";
+import { analyticsFailureClass, analyticsFailureCode } from "./failureCodes.ts";
 
 describe("analyticsFailureCode", () => {
   it.each([
@@ -38,5 +38,20 @@ describe("analyticsFailureCode", () => {
     ["scient", null],
   ])("drops %s's code %s", (provider, code: unknown) => {
     expect(analyticsFailureCode(provider, code)).toBeUndefined();
+  });
+});
+
+describe("analyticsFailureClass", () => {
+  it("reports a Scient Agent usage-limit code as a usage limit, and nothing else changes", () => {
+    expect(analyticsFailureClass("scient", "provider_error", "usage-limit")).toBe("usage_limit");
+    expect(analyticsFailureClass("omp", "provider_error", "usage-limit")).toBe("usage_limit");
+    expect(analyticsFailureClass("scient", "provider_error", "auth-failed")).toBe("provider_error");
+    expect(analyticsFailureClass("scient", "provider_error", undefined)).toBe("provider_error");
+    expect(analyticsFailureClass("scient", "aborted", "usage-limit")).toBe("aborted");
+    // Claude's failed compaction under a rate limit keeps its pair: queued work waits on it.
+    expect(analyticsFailureClass("claudeAgent", "usage_limit", "compaction_failed")).toBe(
+      "usage_limit",
+    );
+    expect(analyticsFailureClass("codex", "provider_error", "usage-limit")).toBe("provider_error");
   });
 });
