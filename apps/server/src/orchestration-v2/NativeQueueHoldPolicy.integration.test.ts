@@ -545,12 +545,12 @@ const withNativeQueue = <A, E, R>(
                               detail: "Synthetic external Git diff failure",
                             });
                           // Park the first real completion capture immediately before
-                          // Git imports its ref, after the actual tree/commit are built.
+                          // Git writes its ref, after the actual tree/commit are built.
                           if (
                             options.holdCheckpointCapture &&
                             !heldCapture &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) => arg.endsWith("/ordinal/1"))
                           ) {
                             heldCapture = true;

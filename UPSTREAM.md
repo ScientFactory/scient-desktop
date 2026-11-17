@@ -2225,13 +2225,15 @@ Chromium cookies, which Scient doesn't try to bypass
 
 ## Git maintenance, untracked scans and owned processes
 
-Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
-Scient owns the fix that keeps that fetch from starting Git's automatic maintenance
-(`ScientCheckpointCapture.ts`) and the server-owned upkeep that replaces it
-(`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
-Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
-(Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
-Checkpoint packing and upkeep share one pack-memory setting (one thread, a 256 MiB delta window).
+Checkpoints are captured on T3's path (a private object directory under the repository's
+`objects`, linked in before `update-ref`), which never runs Git's automatic maintenance. Scient's
+server-owned upkeep runs it instead (`ScientCheckpointUpkeep.ts`, provided once in `server.ts`,
+requested from `GitVcsDriver.ts` after each capture), with one pack thread and a 256 MiB delta
+window. Detached maintenance escaped the app's process group, and on Git without the detached-lock
+fix (Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+`ScientCheckpointCapture.ts` keeps Scient's changed-file size limit, the 90-second whole-capture
+deadline shared with submodules, and the fork's commit witness, each a marked block in
+`GitVcsDriver.ts`.
 The server keeps a minute-by-minute memory record that outlives a crash
 (`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
 beside the upkeep).

@@ -215,10 +215,11 @@ Ordinary execution baselines, completed-turn checkpoints, and running-worktree f
 same bounded capture substrate. Changed paths are consumed incrementally with backpressure:
 128 MiB of listing bytes, 250,000 records (including rename sources), and 1 MiB per record.
 The 512 MiB per-file, 1 GiB changed-byte, and 90-second whole-capture limits remain. Diagnostic
-buffer truncation is independent of enumeration completeness. Publication transfers only objects
-new to the private staging repository, preserves Git's loose/packed transfer policy and object
-format, and checks connectivity before publishing the ref. Private indexes and staging files are
-scoped resources. These limits do not make a workspace containing tens of gigabytes eligible;
+buffer truncation is independent of enumeration completeness. Capture follows T3: objects are
+written to a private object directory and linked into the repository before the ref is written,
+so an interrupted capture leaves no ref; objects it already linked are unreachable until Git's
+maintenance prunes them. Private indexes and object
+directories are scoped resources. These limits do not make a workspace containing tens of gigabytes eligible;
 workspace ignore rules and maintenance remain separate user decisions.
 
 ### Client operation identity and eligibility
