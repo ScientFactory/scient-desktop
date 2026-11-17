@@ -651,14 +651,17 @@ async function qualify(options) {
     await page.getByText("Local folder", { exact: true }).click();
     await page.getByRole("combobox").fill(project);
     await page.getByRole("combobox").press("Enter");
+    // Opening a plain folder asks whether to add Scient's project files; the synthetic project
+    // stays an ordinary folder.
+    const composer = page.locator('[contenteditable="true"]').first();
+    const openWithoutSetup = page.getByRole("button", { name: /^Open without setup/ }).first();
+    await composer.or(openWithoutSetup).first().waitFor({ state: "visible", timeout: TIMEOUT });
+    if (await openWithoutSetup.isVisible()) await openWithoutSetup.click();
     await page
       .getByText(NodePath.basename(project), { exact: true })
       .first()
       .waitFor({ state: "visible", timeout: TIMEOUT });
-    await page
-      .locator('[contenteditable="true"]')
-      .first()
-      .waitFor({ state: "visible", timeout: TIMEOUT });
+    await composer.waitFor({ state: "visible", timeout: TIMEOUT });
     await page.evaluate(() => window.desktopBridge.checkForUpdate());
     if (corrupt.value) {
       await page.waitForFunction(
