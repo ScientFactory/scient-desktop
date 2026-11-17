@@ -36,6 +36,61 @@ Build new UI the same way. Compose or extend a component instead of copying its 
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the
 shared component. A new composer banner or notice uses the `ComposerBanner` slots.
 
+## UI checklist
+
+Check each changed screen against this list, in light and dark, at a normal window size and at the
+narrowest width it supports. The PR shows before and after, light and dark, at the normal size
+([AGENTS.md](../../AGENTS.md#verification)); add the narrow width when it looks different. A new
+screen has no before. An item the change inherits and cannot fix in its scope is marked in the PR as
+inherited, with the reason.
+
+- **Made of the screen's own parts.** New states are variants of the components the screen already
+  uses. Show a proposal as a screenshot of the real app, not a drawing.
+- **Nothing clipped, covered or uneven.** No edge cut off by an overflow or scroll container, no
+  control on top of or under another, and controls in one row are the same height. A whole-window
+  screenshot hides this: check it in the running app and look at enlarged crops of toolbars and
+  edges.
+- **One focus border.** A focused control shows one thin, darker border, never a ring or halo; when
+  the change adds or restyles a control, one screenshot shows it focused. A control that shows the
+  halo gets its `data-slot` in
+  [`scient-form-focus.css`](../../apps/web/src/scient/presentation/scient-form-focus.css).
+- **No card in a card.** Items in a settings section are rows of that section (`SettingsRow`),
+  aligned with the sections around it.
+- **Say it once.** One status indicator per thing, no repeated labels or titles, silent success,
+  and no internal ids or hashes.
+- **Status on the item.** A state such as "Coming soon" or "Signed in" sits beside the item's name,
+  and the item keeps its place when the state changes.
+- **No extra steps.** No checking, loading or proof screen the action does not need. When a screen's
+  logic is wrong, remove the step instead of rewording it.
+- **Few words.** Labels are a few words. If every item needs a label to say who it is for, separate
+  the audiences by place instead.
+
+### Screenshots in a PR
+
+The repository is public, so screenshots show synthetic state only, and they are pushed only when
+opening the PR is authorized. Any real browser can take them: the dev app, `vp run dev`, or a browser
+test that renders the real component, kept uncommitted. They go on a branch of their own, which runs no CI, is never merged
+and is kept. From the PR's checkout, with the images in `$shots`:
+
+```sh
+branch=$(git branch --show-current)
+ref="refs/heads/review-assets/$branch"
+tree=$(for f in "$shots"/*.png; do
+  printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
+done | git mktree)
+prev=$(git ls-remote origin "$ref" | cut -f1)  # a later round keeps the earlier images
+if [ -n "$prev" ]; then
+  git fetch origin "$ref" && commit=$(git commit-tree "$tree" -p "$prev" -m "PR screenshots")
+else
+  commit=$(git commit-tree "$tree" -m "PR screenshots")
+fi
+git push origin "${commit}:${ref}"
+echo "https://raw.githubusercontent.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/$commit/"
+```
+
+Embed each image as that printed address followed by its file name. Addresses by commit never
+change, so a later round adds images without replacing the ones reviewers already saw.
+
 ## Handlers in large components
 
 V8 gives every closure created in one render a single shared scope. A memoized handler keeps
