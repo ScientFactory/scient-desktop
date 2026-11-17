@@ -142,17 +142,15 @@ function runnerCount(needs: Record<string, JobResult>) {
   const matrixSize = (job: Job, inputs: Record<string, unknown> = {}) => {
     const matrix = job.strategy?.matrix;
     if (!matrix) return 1;
-    if (matrix.include) return matrix.include.length;
-    return Object.values(matrix).reduce((count, values) => {
-      const list =
-        typeof values === "string"
-          ? (NodeVM.runInNewContext(values.slice(3, -2), {
-              inputs,
-              fromJSON: JSON.parse,
-            }) as unknown[])
-          : values;
-      return count * list.length;
-    }, 1);
+    const expand = (values: unknown[] | string) =>
+      typeof values === "string"
+        ? (NodeVM.runInNewContext(values.slice(3, -2), {
+            inputs,
+            fromJSON: JSON.parse,
+          }) as unknown[])
+        : values;
+    if (matrix.include) return expand(matrix.include).length;
+    return Object.values(matrix).reduce((count, values) => count * expand(values).length, 1);
   };
   return Object.entries(workflow.jobs).reduce((total, [id, job]) => {
     if (needs[id]!.result !== "success") return total;
@@ -477,21 +475,21 @@ describe("CI workflow decisions", () => {
     ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 36],
     ["docs PR", "docs/operations/development.md", "pull_request", false, 30],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 43],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 42],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 45],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 44],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      49,
+      54,
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
     // The probe, release notes, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 10],
-    ["main push", "docs/operations/development.md", "push", false, 53],
-    ["nightly", "docs/operations/development.md", "schedule", false, 52],
+    ["main push", "docs/operations/development.md", "push", false, 58],
+    ["nightly", "docs/operations/development.md", "schedule", false, 57],
     // Probe, release notes, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/development.md", "push", true, 10],
   ] as const)(
