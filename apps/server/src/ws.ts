@@ -2050,9 +2050,8 @@ export const layerWsRpc = (
               message: cause instanceof Error ? cause.message : fallbackMessage,
               cause,
             });
-      const forkRpc = makeConversationForkRpcHandlers({
+      const forkRpcHandlers = makeConversationForkRpcHandlers({
         observeRpcEffect,
-        startup,
         conversationForks,
       });
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -2306,6 +2305,7 @@ export const layerWsRpc = (
           if (
             input.resource._tag === "attachment" ||
             input.resource._tag === "native-app-icon" ||
+            input.resource._tag === "environment-theme-background" ||
             input.resource._tag === "tool-output-image" ||
             input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
           ) {
@@ -2391,7 +2391,7 @@ export const layerWsRpc = (
         }),
       });
       const handlers1 = WsConversationRpcGroup.of({
-        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             startup
@@ -2433,7 +2433,6 @@ export const layerWsRpc = (
                 : {}),
             },
           ),
-        ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
           threadManagement.forceStopThread(input),
@@ -2696,6 +2695,13 @@ export const layerWsRpc = (
                         message: cause.message,
                         cause,
                       }),
+                    ThreadLaunchBranchExistsError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
                     ThreadLaunchBranchConflictError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
@@ -2885,7 +2891,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-        ...forkRpc.handlers,
+        ...forkRpcHandlers,
       });
       const handlers2 = WsServerManagementRpcGroup.of({
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),

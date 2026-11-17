@@ -89,23 +89,18 @@ describe("DesktopUpdates", () => {
         Effect.gen(function* () {
           const updates = yield* DesktopUpdates.DesktopUpdates;
           yield* updates.configure;
-          assert.deepEqual(harness.feedUrls(), [
-            { provider: "github", owner: "ScientFactory", repo: "scient-desktop" },
-          ]);
+          const mirror = (channel: string) => ({
+            provider: "generic" as const,
+            url: `https://downloads.scientfactory.com/scient-desktop/updates/${channel}`,
+            useMultipleRangeRequest: false,
+          });
+          assert.deepEqual(harness.feedUrls(), [mirror("stable")]);
           assert.isFalse(harness.allowDowngrade());
           yield* updates.setChannel("beta");
-          assert.deepEqual(harness.feedUrls().at(-1), {
-            provider: "github",
-            owner: "ScientFactory",
-            repo: "scient-desktop-beta",
-          });
+          assert.deepEqual(harness.feedUrls().at(-1), mirror("beta"));
           assert.isFalse(harness.allowDowngrade());
           yield* updates.setChannel("latest");
-          assert.deepEqual(harness.feedUrls().at(-1), {
-            provider: "github",
-            owner: "ScientFactory",
-            repo: "scient-desktop",
-          });
+          assert.deepEqual(harness.feedUrls().at(-1), mirror("stable"));
           assert.isFalse(harness.allowDowngrade());
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

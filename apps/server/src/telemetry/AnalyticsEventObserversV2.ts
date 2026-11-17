@@ -3,10 +3,10 @@ import type {
   OrchestrationV2TurnItem,
   ProviderDriverKind,
   ServerProvider,
+  ScientConversationFork,
 } from "@t3tools/contracts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -15,17 +15,32 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
+import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
+import { createProviderExtensionAnalyticsMapper } from "./ExtensionAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 import { classifyCommand, shellCommandOf } from "./CommandCategories.ts";
-import { BrowserToolCalls, type BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
-import { analyticsFailureCode } from "@scientfactory/analytics";
+import {
+  BrowserToolCalls,
+  browserTurnSummary,
+  type BrowserToolCallLedger,
+} from "./ScientMcpAnalytics.ts";
+import { analyticsFailureCode, modelKey } from "@scientfactory/analytics";
 
 type Observation = {
   readonly name: string;
   readonly properties: Readonly<Record<string, unknown>>;
 };
-type EventContext = { readonly driver?: ProviderDriverKind; readonly refork?: boolean };
+type EventContext = {
+  readonly driver?: ProviderDriverKind;
+  readonly refork?: boolean;
+  /** SCIENT-FORK: the fork's own setup state, read when its thread event is observed. */
+  readonly conversationFork?: ScientConversationFork | null;
+  /** The provider runtime's own version, such as Scient Agent's. */
+  readonly providerVersion?: string;
+};
+
 const CAPACITY = 1_000;
 const MAX_COMMANDS_PER_RUN = 10_000;
 /** Scient's own progress rows, written as commands; they are not an agent's program. */
@@ -113,7 +128,9 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
     {
       provider: string;
       model: string;
-      startedAt: number;
+      providerVersion: string | undefined;
+      /** Null until the run starts; a run can fail while its session is still opening. */
+      startedAt: number | null;
       usedTools: boolean;
       hasAttachment: boolean;
       rootNodeId: string | null;
@@ -200,16 +217,27 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
           },
         });
       }
-      if (
-        (run.status === "running" || run.status === "waiting") &&
-        run.startedAt !== null &&
+      const live = !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+        run.status,
+      );
+      const known = runs.get(key);
+      if (known !== undefined) {
+        known.rootNodeId = run.rootNodeId;
+        if (known.startedAt === null && run.startedAt !== null)
+          known.startedAt = DateTime.toEpochMillis(run.startedAt);
+      } else if (
         driver !== undefined &&
-        !runs.has(key)
+        (entry.type === "run.created"
+          ? live
+          : (run.status === "running" || run.status === "waiting") && run.startedAt !== null)
       ) {
+        // A run seen from its creation is followed even if it never starts, so a failure to open
+        // its session is reported too. Older runs are followed from when they start running.
         remember(runs, key, {
           provider: driver,
           model: run.modelSelection.model,
-          startedAt: DateTime.toEpochMillis(run.startedAt),
+          providerVersion: context.providerVersion,
+          startedAt: run.startedAt === null ? null : DateTime.toEpochMillis(run.startedAt),
           usedTools: false,
           hasAttachment: false,
           rootNodeId: run.rootNodeId,
@@ -226,14 +254,22 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
       const browser = browserCalls?.take(entry.threadId, DateTime.toEpochMillis(entry.occurredAt));
       const correlation = runs.get(key);
       runs.delete(key);
-      // A historical/consent-boundary terminal or failed workspace preparation
-      // is not evidence of an observed provider turn.
+      // A historical terminal is not evidence of an observed provider turn.
       if (correlation === undefined) return [];
-      const elapsed = DateTime.toEpochMillis(entry.occurredAt) - correlation.startedAt;
+      // A run that never started only matters when it failed: stopping a queued run is not a turn.
+      if (correlation.startedAt === null && run.status !== "failed") return [];
+      const elapsed =
+        correlation.startedAt === null
+          ? undefined
+          : DateTime.toEpochMillis(entry.occurredAt) - correlation.startedAt;
       const properties = {
         provider: correlation.provider,
         model: correlation.model,
-        durationMs: elapsed >= 0 ? elapsed : undefined,
+        runRef: analyticsRunRef(key),
+        ...(correlation.providerVersion === undefined
+          ? {}
+          : { providerVersion: correlation.providerVersion }),
+        durationMs: elapsed !== undefined && elapsed >= 0 ? elapsed : undefined,
         ...(browser === undefined
           ? {}
           : { browserToolCalls: browser.calls, browserToolFailures: browser.failures }),
@@ -273,7 +309,12 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                   name: "provider.turn.failed",
                   properties: {
                     ...properties,
-                    failureClass: failure?.class ?? "provider_error",
+                    // A run that failed before starting without a provider failure (its
+                    // workspace could not be prepared, say) is not the provider's error.
+                    failureClass:
+                      failure?.class ??
+                      (correlation.startedAt === null ? "unknown" : "provider_error"),
+                    started: correlation.startedAt !== null,
                     ...(failureCode === undefined ? {} : { failureCode }),
                     ...(failure?.httpStatus === undefined
                       ? {}
@@ -288,7 +329,23 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                   properties: { ...properties, stopClass: run.status },
                 },
               ];
-      return [...outcome, ...commands];
+      // One summary per turn that used the browser: the turn event keeps only its two counts.
+      const browserSummary: Observation[] =
+        browser === undefined || browser.calls === 0
+          ? []
+          : [
+              {
+                name: "browser.turn.summary",
+                properties: {
+                  provider: correlation.provider,
+                  modelKey: modelKey(correlation.model),
+                  runRef: properties.runRef,
+                  turnOutcome: run.status,
+                  ...browserTurnSummary(browser.entries),
+                },
+              },
+            ];
+      return [...outcome, ...commands, ...browserSummary];
     }
     if (entry.type === "turn-item.updated") {
       const item = entry.payload;
@@ -305,8 +362,13 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
           ].includes(item.type)
         )
           run.usedTools = true;
-        if (item.type === "error" && item.nodeId === run.rootNodeId) {
-          if (run.errors.has(item.id) || run.errors.size < MAX_ERROR_ITEMS_PER_RUN)
+        if (item.type === "error") {
+          // The run's failure is its root node's; retries are counted wherever the run made them,
+          // since native retry rows sit on their own nodes.
+          if (
+            item.nodeId === run.rootNodeId &&
+            (run.errors.has(item.id) || run.errors.size < MAX_ERROR_ITEMS_PER_RUN)
+          )
             run.errors.set(item.id, item);
           if (item.retry !== undefined) countRetry(run.retries, item);
         }
@@ -323,8 +385,9 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
       if (run !== undefined) run.hasAttachment = true;
     }
     if (entry.type === "thread.created") {
-      const fork = entry.payload.conversationFork;
-      if (fork?.status === "pending")
+      const fork = context.conversationFork;
+      // A new worktree is set up after the fork commits; it completes when the setup is ready.
+      if (fork?.workspaceMode === "new-worktree")
         remember(forks, entry.threadId, {
           workspaceMode: fork.workspaceMode,
           boundaryClass: fork.checkpointRef === null ? "conversation" : "checkpoint",
@@ -334,7 +397,7 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
     if (entry.type === "thread.metadata-updated") {
       const thread = entry.payload;
       const fork = forks.get(entry.threadId);
-      if (fork !== undefined && thread.conversationFork?.status === "ready") {
+      if (fork !== undefined && context.conversationFork?.status === "ready") {
         forks.delete(entry.threadId);
         return [{ name: "thread.fork.completed", properties: fork }];
       }
@@ -378,113 +441,79 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
   return { event, clear };
 }
 
-/** Native event and lifecycle observers share one consent and deletion fence. */
+/** Native event and lifecycle observers share one availability gate. */
 export const makeV2AnalyticsObservers = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
   const mapper = createV2AnalyticsEventMapper(yield* BrowserToolCalls);
   const lifecycle = createProviderLifecycleAnalyticsMapper();
   const accounts = createProviderAccountAnalyticsMapper();
-  let epoch = yield* analytics.collectionEpoch;
-  const enabled = Effect.gen(function* () {
-    const next = yield* analytics.collectionEpoch;
-    const status = yield* analytics.status;
-    if (next !== epoch || !status.available || status.consent === "off") {
+  const extensions = createProviderExtensionAnalyticsMapper();
+  const availability = yield* ScientAnalyticsAvailability;
+  const enabled = Effect.sync(() => {
+    const { available } = availability;
+    if (!available) {
       mapper.clear();
       lifecycle.clear();
       accounts.clear();
-      epoch = next;
+      extensions.clear();
     }
-    return status.available && status.consent !== "off";
+    return available;
   });
-  const record = (observations: ReadonlyArray<Observation>, recordingEpoch: number) =>
-    Effect.forEach(
-      observations,
-      (entry) => analytics.record(entry.name, entry.properties, recordingEpoch),
-      {
-        discard: true,
-      },
-    );
+  const record = (observations: ReadonlyArray<Observation>) =>
+    Effect.forEach(observations, (entry) => analytics.record(entry.name, entry.properties), {
+      discard: true,
+    });
   const event = Effect.fn("V2AnalyticsObservers.event")(function* (
     entry: OrchestrationV2DomainEvent,
     context?: EventContext,
-    expectedEpoch?: number,
   ) {
     if (!(yield* enabled)) return;
-    const recordingEpoch = yield* analytics.collectionEpoch;
-    if (expectedEpoch !== undefined && expectedEpoch !== recordingEpoch) return;
-    yield* record(mapper.event(entry, context), recordingEpoch);
+    yield* record(mapper.event(entry, context));
   });
   const providers = Effect.fn("V2AnalyticsObservers.providers")(function* (
     snapshot: ReadonlyArray<ServerProvider>,
   ) {
     if (!(yield* enabled)) return;
-    const recordingEpoch = yield* analytics.collectionEpoch;
-    yield* record(lifecycle.observe(snapshot), recordingEpoch);
-    yield* record(accounts.observe(snapshot), recordingEpoch);
+    yield* record(lifecycle.observe(snapshot));
+    yield* record(accounts.observe(snapshot));
+    yield* record(extensions.observe(snapshot));
   });
   return { enabled, event, providers };
 });
 
 /** Disabled hosts acquire no observers; only live committed V2 events are observed. */
 export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
-  const analytics = yield* AnalyticsService;
-  if (!(yield* analytics.status).available) return;
-  if (analytics.observeCollectionBoundary === undefined) return;
+  if (!(yield* ScientAnalyticsAvailability).available) return;
   const sink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const providers = yield* ProviderRegistry;
   const instances = yield* ProviderInstanceRegistry;
   const observer = yield* makeV2AnalyticsObservers;
-  let streamEpoch = -1;
-  let afterSequence = Infinity;
-  let boundaryGeneration = 0;
-  const firstCursor = yield* Deferred.make<number>();
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  yield* Effect.acquireRelease(
-    analytics.observeCollectionBoundary(async (epoch, phase) => {
-      const generation = ++boundaryGeneration;
-      // Invalidate immediately, then acquire the new period's cutoff BEFORE
-      // consent/deletion acknowledges. A first fresh event cannot become its
-      // own cutoff, and an older queued tail cannot cross this boundary.
-      streamEpoch = -1;
-      afterSequence = Infinity;
-      // Invalidating must not delay stopping delivery or remote erasure on a
-      // database lookup. Only the ready boundary acquires the next watermark.
-      if (phase === "invalidated") return;
-      const cutoff = await runPromise(
-        sink
-          .latestSequence()
-          .pipe(
-            Effect.tapError(() =>
-              Effect.logWarning(
-                "Analytics collection watermark unavailable; observation remains fenced",
-              ),
-            ),
-          ),
-      );
-      if (!Number.isSafeInteger(cutoff) || cutoff < 0)
-        throw new Error("Invalid analytics watermark");
-      if (generation !== boundaryGeneration) return;
-      afterSequence = cutoff;
-      streamEpoch = epoch;
-      await runPromise(Deferred.succeed(firstCursor, cutoff));
-    }),
-    (unsubscribe) => Effect.sync(unsubscribe),
-  );
-  yield* observer.providers(yield* providers.getProviders);
-  yield* providers.streamChanges.pipe(Stream.runForEach(observer.providers), Effect.forkScoped);
-  // The subscription cursor is immutable. Never pass the fail-closed Infinity
-  // sentinel upstream: wait for a successful boundary, including recovery from
-  // an unavailable initial read or a superseded registration.
-  yield* Stream.unwrap(
-    Deferred.await(firstCursor).pipe(
-      Effect.map((cursor) => sink.stream({ afterSequence: cursor })),
-    ),
-  ).pipe(
+  // Only events committed after the observers start count; earlier ones are history.
+  const cutoff = yield* sink
+    .latestSequence()
+    .pipe(
+      Effect.catch(() =>
+        Effect.logWarning(
+          "Analytics collection watermark unavailable; observation remains fenced",
+        ).pipe(Effect.as(-1)),
+      ),
+    );
+  // Each instance's runtime version, so an outcome says which agent build produced it.
+  const versions = new Map<string, string>();
+  const observeProviders = (snapshot: ReadonlyArray<ServerProvider>) => {
+    versions.clear();
+    for (const provider of snapshot)
+      if (provider.version !== null) versions.set(provider.instanceId, provider.version);
+    return observer.providers(snapshot);
+  };
+  yield* observeProviders(yield* providers.getProviders);
+  yield* providers.streamChanges.pipe(Stream.runForEach(observeProviders), Effect.forkScoped);
+  if (!Number.isSafeInteger(cutoff) || cutoff < 0) return;
+  yield* sink.stream({ afterSequence: cutoff }).pipe(
     Stream.runForEach((stored) =>
       Effect.gen(function* () {
-        const expectedEpoch = yield* analytics.collectionEpoch;
-        if (expectedEpoch !== streamEpoch || stored.sequence <= afterSequence) return;
+        if (stored.sequence <= cutoff) return;
         if (!(yield* observer.enabled)) return;
         const entry = stored.event;
         const instanceId =
@@ -493,21 +522,25 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
             : entry.providerInstanceId;
         const instance =
           instanceId === undefined ? undefined : yield* instances.getInstance(instanceId);
-        const fork = entry.type === "thread.created" ? entry.payload.conversationFork : undefined;
+        const providerVersion = instanceId === undefined ? undefined : versions.get(instanceId);
+        const fork =
+          entry.type === "thread.created" || entry.type === "thread.metadata-updated"
+            ? yield* projections
+                .getConversationFork(entry.threadId)
+                .pipe(Effect.orElseSucceed(() => null))
+            : null;
         const origin =
-          fork?.status === "pending"
+          entry.type === "thread.created" && fork?.workspaceMode === "new-worktree"
             ? yield* projections
                 .getThreadShell(fork.sourceThreadId)
                 .pipe(Effect.orElseSucceed(() => null))
             : null;
-        yield* observer.event(
-          entry,
-          {
-            ...(instance === undefined ? {} : { driver: instance.driverKind }),
-            ...(origin === null ? {} : { refork: origin.forkLineage != null }),
-          },
-          expectedEpoch,
-        );
+        yield* observer.event(entry, {
+          ...(instance === undefined ? {} : { driver: instance.driverKind }),
+          ...(providerVersion === undefined ? {} : { providerVersion }),
+          ...(origin === null ? {} : { refork: origin.forkLineage != null }),
+          ...(fork === null ? {} : { conversationFork: fork }),
+        });
       }).pipe(Effect.ignoreCause({ log: true })),
     ),
     Effect.catchCause((cause) => Effect.logWarning("Native analytics observer stopped", { cause })),

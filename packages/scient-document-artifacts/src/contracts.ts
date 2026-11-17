@@ -163,6 +163,13 @@ const PdfSourceBase = {
   pageCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 } as const;
 
+/** Proven bytes. Present only when a producer recorded them; never inferred. */
+export const PdfMaterial = Schema.Struct({
+  sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+  byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type PdfMaterial = typeof PdfMaterial.Type;
+
 const WorkspacePdfLegacyLocator = Schema.Struct({
   threadId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   absolutePath: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
@@ -211,6 +218,8 @@ export const PdfSourceDescriptor = Schema.Union([
     legacyLocator: Schema.optional(WorkspacePdfLegacyLocator),
     /** The Sources item this file is attached to: provenance, never material identity. */
     origin: Schema.optional(WorkspacePdfSourceOrigin),
+    /** The bytes a content-addressed store proved this file to be; quotes record them. */
+    material: Schema.optional(PdfMaterial),
   }),
   Schema.TaggedStruct("generated-pdf", {
     ...PdfSourceBase,

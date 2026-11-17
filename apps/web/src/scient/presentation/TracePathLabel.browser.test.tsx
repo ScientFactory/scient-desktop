@@ -176,7 +176,6 @@ it.each([false, true])(
         onAnchorSizeChanged={() => {}}
         contentInsetEndAdjustment={100}
         onIsAtEndChange={() => {}}
-        onManualNavigation={() => {}}
       />,
     );
     if (!live) await page.getByRole("button", { name: /Worked for/ }).click();

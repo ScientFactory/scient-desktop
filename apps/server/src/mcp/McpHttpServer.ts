@@ -36,7 +36,11 @@ import packageJson from "../../package.json" with { type: "json" };
 import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
-import { scientOperationCatalog, scientTools } from "./ScientOperationCatalog.ts";
+import {
+  scientOperationCatalog,
+  scientTools,
+  scientToolVariants,
+} from "./ScientOperationCatalog.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
@@ -59,6 +63,7 @@ import {
   BrowserToolCalls,
   isBrowserTool,
   noteToolFailure,
+  recordBrowserCall,
   refusedDelegateTarget,
   scientMcpAnalyticsInput,
   scientToolOutcome,
@@ -109,8 +114,27 @@ import {
   PreviewToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
-import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
-import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+// SCIENT-FORK:START — PDF annotation agent tools.
+import { layer as ScientAnnotationsLive } from "../scient/annotations/ScientAnnotations.ts";
+import { ScientAnnotationsToolkitHandlersLive } from "./toolkits/annotations/handlers.ts";
+import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
+// SCIENT-FORK:END
+import {
+  ScientSourcesLibraryToolkitHandlersLive,
+  ScientSourcesToolkitHandlersLive,
+} from "./toolkits/sources/handlers.ts";
+import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientSourcesBackend } from "../scient/sources/SourcesBackend.ts";
+import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
+import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
+import {
+  ScientSystematicReviewsLibraryToolkitHandlersLive,
+  ScientSystematicReviewsToolkitHandlersLive,
+} from "./toolkits/systematicReviews/handlers.ts";
+import {
+  ScientSystematicReviewsLibraryToolkit,
+  ScientSystematicReviewsToolkit,
+} from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
@@ -986,7 +1010,10 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
     withToolAnalytics(
       Effect.gen(function* () {
         for (const tool of Object.values(toolkit.tools)) {
-          if (tool !== scientTools.find((registered) => registered.name === tool.name)) {
+          if (
+            tool !== scientTools.find((registered) => registered.name === tool.name) &&
+            !scientToolVariants.includes(tool)
+          ) {
             return yield* Effect.die(
               new Error(`Unregistered Scient tool definition: ${tool.name}`),
             );
@@ -1413,12 +1440,16 @@ const withToolAnalytics =
                     const invocation = Option.getOrUndefined(
                       yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
                     )?.thread;
+                    // SCIENT-FORK: each browser call's tool, time, outcome and site, per turn.
                     if (isBrowserTool(tool) && invocation !== undefined)
-                      browserCalls.record(
-                        invocation.threadId,
+                      recordBrowserCall(browserCalls, invocation.threadId, {
+                        tool,
+                        args: payload,
+                        result: analyticsResult,
+                        failure,
+                        startedAt,
                         endedAt,
-                        scientToolOutcome(analyticsResult, failure).outcome !== "ok",
-                      );
+                      });
                     yield* record(
                       options.tool.name,
                       payload,
@@ -1541,9 +1572,41 @@ export const layerPreviewToolkit = Layer.mergeAll(
   layerPreviewSnapshotRegistration,
 );
 
-export const ScientSourcesToolkitRegistrationLive = registerScientToolkit(
-  ScientSourcesToolkit,
-).pipe(Layer.provide(ScientSourcesToolkitHandlersLive));
+// The backend constant picks the Sources tool list; both lists share operations and handlers.
+export const ScientSourcesToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSourcesLibraryToolkit).pipe(
+          Layer.provide(ScientSourcesLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSourcesToolkit).pipe(
+          Layer.provide(ScientSourcesToolkitHandlersLive),
+        );
+  }),
+);
+
+const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientReferencesToolkit).pipe(
+  Layer.provide(ScientReferencesToolkitHandlersLive),
+);
+
+/** Library mode adds the pick between a review's versions to the same two tools. */
+const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSystematicReviewsLibraryToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSystematicReviewsToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsToolkitHandlersLive),
+        );
+  }),
+);
+
+// SCIENT-FORK:START — PDF annotation agent tools.
+export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
+  ScientAnnotationsToolkit,
+).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
+// SCIENT-FORK:END
 
 export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
@@ -1697,12 +1760,17 @@ export const layerInProcessMcpServer = McpServer.middleware<{
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
 // SCIENT-FORK:START — Scient's server name and request-scoped tool discovery.
+/** One line clients show for this server: Codex as its namespace, Scient Agent as its catalog row. */
+const SCIENT_MCP_INSTRUCTIONS =
+  "Scient workspace tools: papers and sources, Compute, notebooks, documents and PDF builds, Overleaf, browser preview, devices, skills, connectors, accounts, projects, threads and delegation.";
+
 export const makeLayerMcpTransport =
   (toolList: ReturnType<typeof makeScientToolListLayer>) =>
   <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
     McpServer.layerHttp({
       name: "Scient",
       version: packageJson.version,
+      instructions: SCIENT_MCP_INSTRUCTIONS,
       path: MCP_HTTP_PATH,
       // The first protocol is the fallback for clients that offer an unknown version.
       protocols: [ScientMcpProtocol, ScientMcpProtocol2026],
@@ -1723,6 +1791,11 @@ export const layerTools = Layer.mergeAll(
   ),
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
+  ScientReferencesToolkitRegistrationLive,
+  ScientSystematicReviewsToolkitRegistrationLive,
+  // SCIENT-FORK:START — PDF annotation agent tools.
+  ScientAnnotationsToolkitRegistrationLive,
+  // SCIENT-FORK:END
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.

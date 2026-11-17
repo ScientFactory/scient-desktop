@@ -1,6 +1,6 @@
 import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
-import { ScientConversationFork } from "./scientConversationFork.ts";
+import { ScientThreadForkOptions } from "./scientConversationFork.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -283,6 +283,9 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   promptCacheTtlMs: Schema.optional(PositiveInt),
   autoCompactThreshold: Schema.optional(PositiveInt),
   promptCacheExpiresAt: Schema.optional(Schema.String),
+  // SCIENT-FORK:START — Scient Agent's cache tier: a short entry carries no expiry, yet still expires.
+  promptCacheTier: Schema.optional(Schema.Literals(["short", "long"])),
+  // SCIENT-FORK:END
   updatedAt: Schema.String,
 });
 export type OrchestrationV2ProviderTurnTokenUsage =
@@ -601,7 +604,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
   conversationImport: Schema.optional(Schema.NullOr(OrchestrationConversationImport)),
   forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
-  conversationFork: Schema.optional(Schema.NullOr(ScientConversationFork)),
   // SCIENT-FORK:END
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -847,6 +849,8 @@ export const OrchestrationV2Run = Schema.Struct({
   sourcePlanFingerprint: Schema.optional(Schema.String),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  // SCIENT-FORK: a deferred start keeps the refused owner its new provider session replaces.
+  supersededProviderSessionId: Schema.optional(ProviderSessionId),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
 });
@@ -1153,6 +1157,8 @@ const PendingBackgroundTaskFields = {
   parentTaskId: Schema.optional(TrimmedNonEmptyString),
   /** Native id of the turn item that started this work, when it is not `taskId`. */
   nativeItemId: Schema.optional(TrimmedNonEmptyString),
+  /** The run that was executing when the work first appeared, stamped by the projection. */
+  runId: Schema.optional(RunId),
   /**
    * The agent declared it resumes when this work ends, so the thread holds like it does for a
    * subagent. Only the agent knows whether a command is a wait or a dev server it left running.
@@ -1256,6 +1262,11 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   ),
   /** SCIENT-FORK: the agent is planning and changes nothing until a plan is approved. */
   planMode: Schema.optional(Schema.Boolean),
+  // SCIENT-FORK:START — Scient Agent's warming stopped while this five-minute cache entry was warm.
+  promptCacheWarmingStopped: Schema.optional(
+    Schema.NullOr(Schema.Struct({ stoppedAt: Schema.String, expiresAt: Schema.String })),
+  ),
+  // SCIENT-FORK:END
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -3666,7 +3677,8 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("queue.resume"),
     commandId: CommandId,
     threadId: ThreadId,
-    /** Release only the idle queue head for an explicit Send; absent releases the queue. */
+    // SCIENT-FORK: Scient builds before 0.6.26 send a held message now this way; the server reads
+    // it as queued-run.start.
     runId: Schema.optional(RunId),
   }),
   Schema.Struct({
@@ -3736,6 +3748,8 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
+    // SCIENT-FORK: Scient's fork boundary and workspace choice (scientConversationFork.ts).
+    scient: Schema.optional(ScientThreadForkOptions),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.merge_back"),

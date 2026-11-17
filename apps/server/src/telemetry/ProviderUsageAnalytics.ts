@@ -28,6 +28,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 // SCIENT-FORK:START — name every model an agent reports, and a turn's main model
 import { reportedModelLabel, turnModelProperties } from "./ScientModelLabels.ts";
+import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 // SCIENT-FORK:END
 
 // Bump when a field changes meaning, so reports can split old and new rows.
@@ -354,6 +355,9 @@ export class RequestUsageLedger {
       requestKind: requestKind(entry.context?.origin),
       restartContinuation: entry.context?.restartContinuation === true ? true : undefined,
       terminalStatus: report.status,
+      // SCIENT-FORK:START — joins this report to the run's outcome event
+      runRef: analyticsRunRef(report.runId),
+      // SCIENT-FORK:END
       lifecycleObserved,
       ...selectionProperties(entry.context, label),
       ...turnModelProperties(

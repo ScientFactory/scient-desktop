@@ -151,7 +151,6 @@ export const runningForkAuthorityChanged = (
     current.thread.workspaceAuthorityRevision !== before.thread.workspaceAuthorityRevision ||
     current.thread.rollbackRequestId !== before.thread.rollbackRequestId ||
     current.thread.rollbackCompletedRequestId !== before.thread.rollbackCompletedRequestId ||
-    current.thread.conversationFork?.status !== before.thread.conversationFork?.status ||
     root?.checkpointScopeId !== priorRoot?.checkpointScopeId ||
     Option.isNone(project) ||
     project.value.workspaceRoot !== capture.workspaceRoot

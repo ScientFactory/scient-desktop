@@ -2,10 +2,13 @@ import {
   ThreadId,
   type AccountId,
   type AccountSummary,
+  type AccountTarget,
+  type AccountsSnapshot,
   type EnvironmentId,
   type PaperAsked,
   type PaperItem,
   type PaperRequest,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { publisherOf, universitiesOf, universityDetails } from "@t3tools/shared/scientPaperLinks";
 import * as Clock from "effect/Clock";
@@ -14,10 +17,17 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
-import { fetchFromPage, type FetchResult } from "./paperFetch.ts";
-import { articleAddress, lookUpPaper, openAccessPdf, type Paper } from "./paperLookup.ts";
+import { defaultPaperProfile, fetchFromPage, type FetchResult } from "./paperFetch.ts";
+import {
+  articleAddress,
+  lookUpPaper,
+  openAccessPdf,
+  type Paper,
+  type PaperVersion,
+} from "./paperLookup.ts";
 import { buttonSteps, routeSteps, type RouteStep, type WorkedRoute } from "./paperRoutes.ts";
 import { pdfVerdict, readPdfFacts } from "./pdfCheck.ts";
+import { readResearchKeys } from "../sources/researchKeys.ts";
 
 /** Longest one route of one paper may take, so a stalled publisher can't hold up the rest. */
 const ROUTE_DEADLINE = "90 seconds";
@@ -36,14 +46,17 @@ const DIRECT_FAILURE_MEMORY_MS = 60 * 60 * 1000;
 /** How often a paper's success refreshes a university's "last seen". */
 const LAST_SEEN_GAP_MS = 60 * 60 * 1000;
 
+/**
+ * Who asked for a paper. What it may use is decided as each attempt starts, never stored: a
+ * change in Settings or an approval applies to papers already waiting.
+ */
 export interface PaperRequester {
   readonly environmentId: EnvironmentId;
-  /** The conversation that asked, when an agent did. */
+  /** The conversation that asked, when an agent did; the user's own request has none. */
   readonly threadId?: ThreadId;
+  readonly projectId?: ProjectId;
   /** False for an agent the user keeps out of the browser: free copies only. */
   readonly browser: boolean;
-  /** The saved sign-ins it may use: the user's own request may use all of them. */
-  readonly accounts: "all" | ReadonlyArray<AccountId>;
 }
 
 export type Needed = Omit<PaperRequest, "count">;
@@ -56,6 +69,7 @@ export type PaperOutcome =
       readonly path?: string;
       readonly route: NonNullable<PaperItem["route"]>;
       readonly published: boolean;
+      readonly version: PaperVersion;
     }
   | { readonly state: "not-found" | "no-access"; readonly message: string; readonly paper?: Paper }
   | {
@@ -71,7 +85,8 @@ interface Lane {
   refusals: number;
   pausedUntil: number;
   directFailedAt: number;
-  check: Needed | undefined;
+  /** Human-only publisher gates, per browser profile: each profile keeps its own cookies. */
+  readonly checks: Map<string, Needed>;
   worked: WorkedRoute | undefined;
 }
 const lanes = new Map<string, Lane>();
@@ -84,7 +99,7 @@ export const laneFor = (site: string) => {
     refusals: 0,
     pausedUntil: 0,
     directFailedAt: 0,
-    check: undefined,
+    checks: new Map(),
     worked: undefined,
   };
   lanes.set(site, lane);
@@ -101,18 +116,88 @@ export const pausedPublishers = (now: number) =>
     lane.pausedUntil > now ? [{ site, until: lane.pausedUntil }] : [],
   );
 
-/** The user acted, so anything waiting for them may try again. */
-export const clearHolds = () => {
+/** The user acted, so what waited on them may try again; a sign-in releases its account only. */
+export const clearHolds = (signedIn?: AccountId) => {
+  if (signedIn !== undefined) {
+    signInHolds.delete(signedIn);
+    return;
+  }
   signInHolds.clear();
-  for (const lane of lanes.values()) lane.check = undefined;
+  for (const lane of lanes.values()) lane.checks.clear();
 };
 
-const session = (threadId: ThreadId): AccountSessionScope => ({
-  threadId,
-  projectId: undefined,
+/** Lets these requests be tried again, and no others: another project's wait stays. */
+export const releaseHolds = (needs: ReadonlyArray<Needed>) => {
+  for (const need of needs)
+    if (need.kind === "sign-in" && need.accountId) signInHolds.delete(need.accountId);
+    else if ((need.kind === "check" || need.kind === "terms") && need.site && need.profileId)
+      lanes.get(need.site)?.checks.delete(need.profileId);
+};
+
+export const PAPERS_THREAD = ThreadId.make("scient-paper-get");
+
+/** The conversation an attempt acts for; no one is there to answer a card. */
+const scopeOf = (requester: PaperRequester): AccountSessionScope => ({
+  threadId: requester.threadId ?? PAPERS_THREAD,
+  projectId: requester.projectId,
   unattended: true,
 });
-export const PAPERS_THREAD = ThreadId.make("scient-paper-get");
+
+/** How long one decision or use is reused, so a long list doesn't fill Activity. */
+const REUSE_MS = 60_000;
+const decisions = new Map<string, { readonly allowed: boolean; readonly at: number }>();
+const usesNoted = new Map<string, number>();
+
+/** The controls a decision rests on; a change there decides afresh at once. */
+const controlsOf = (snapshot: AccountsSnapshot, target: AccountTarget) => {
+  const controls =
+    target.type === "account"
+      ? snapshot.accounts.find(({ accountId }) => accountId === target.accountId)?.controls
+      : snapshot.profiles.find(({ profileId }) => profileId === target.profileId);
+  if (!controls) return `${snapshot.agentAccess}/default`;
+  const { access, scope, allowedProjects = [] } = controls;
+  const projects = scope.type === "projects" ? scope.projectIds.join(",") : "";
+  return [snapshot.agentAccess, access, scope.type, projects, allowedProjects.join(",")].join("/");
+};
+
+/**
+ * Whether this request may use an account or a browser profile now. The user's own may use any;
+ * an agent's, what its conversation may use without asking, approvals it was given included.
+ */
+const mayUse = Effect.fn("Papers.mayUse")(function* (
+  requester: PaperRequester,
+  target: AccountTarget,
+  action: "sign-in" | "open-profile",
+) {
+  if (requester.threadId === undefined) return true;
+  const accounts = yield* AccountsService;
+  const id = target.type === "account" ? target.accountId : target.profileId;
+  const controls = controlsOf(yield* accounts.snapshot, target);
+  const key = [requester.threadId, requester.projectId, id, action, controls].join("|");
+  const now = yield* Clock.currentTimeMillis;
+  const known = decisions.get(key);
+  if (known && now - known.at < REUSE_MS) return known.allowed;
+  const allowed = yield* accounts.authorize(scopeOf(requester), target, action).pipe(
+    Effect.map(({ decision }) => decision === "allowed"),
+    Effect.orElseSucceed(() => false),
+  );
+  decisions.set(key, { allowed, at: now });
+  return allowed;
+});
+
+/** Whether this use is the first of its kind this minute, so a long list adds one Activity row. */
+const firstUseIn = Effect.fn("Papers.firstUseIn")(function* (
+  account: AccountSummary,
+  ok: boolean,
+  requester: PaperRequester,
+) {
+  const key = [requester.threadId, account.accountId, ok].join("|");
+  const now = yield* Clock.currentTimeMillis;
+  const last = usesNoted.get(key);
+  if (last !== undefined && now - last < REUSE_MS) return false;
+  usesNoted.set(key, now);
+  return true;
+});
 
 /** One page at a time per publisher, at a reader's pace; publishers run side by side. */
 const inLane = Effect.fn("Papers.inLane")(function* <A, E, R>(
@@ -148,7 +233,7 @@ export const noteRefusal = (lane: Lane, now: number) => {
 const firstPdf = Effect.fn("Papers.firstPdf")(function* (copies: Paper["openAccess"]) {
   for (const copy of copies) {
     const bytes = yield* openAccessPdf(copy);
-    if (bytes) return bytes;
+    if (bytes) return { bytes, version: copy.version };
   }
   return undefined;
 });
@@ -178,22 +263,58 @@ const noteSession = Effect.fn("Papers.noteSession")(function* (
   yield* accounts.recordCheck(account.accountId, { state }).pipe(Effect.ignore);
 });
 
-/** Every route the account allows, in the order most likely to work. */
+/** Every route this request may use now, in the order most likely to work. */
 const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
   paper: Paper,
   requester: PaperRequester,
+  resume?: Needed,
 ) {
   const accounts = yield* AccountsService;
   const { accounts: known } = yield* accounts.snapshot;
-  const allowed = requester.accounts;
-  const saved =
-    allowed === "all" ? known : known.filter((account) => allowed.includes(account.accountId));
-  const universities = universitiesOf(saved);
+  const connected = universitiesOf(known);
   const article = paper.articleUrl ?? paper.landingUrl;
   const site = publisherOf(article);
   const lane = laneFor(site);
-  const steps = [...routeSteps(paper, universities, lane.worked)];
+  const fallback = yield* defaultPaperProfile;
+  const resumeProfile = resume?.kind === "terms" ? resume.profileId : undefined;
+  const profileFor = (account: AccountSummary) => profileOf(account) ?? fallback;
+  const opens = (profileId: string) =>
+    mayUse(requester, { type: "profile", profileId }, "open-profile");
+  const usable = new Map<AccountId, boolean>();
+  const through = Effect.fn("Papers.through")(function* (account: AccountSummary) {
+    const decided = usable.get(account.accountId);
+    if (decided !== undefined) return decided;
+    const allowed =
+      (yield* mayUse(requester, { type: "account", accountId: account.accountId }, "sign-in")) &&
+      (yield* opens(profileFor(account)));
+    usable.set(account.accountId, allowed);
+    return allowed;
+  });
+  // A campus session lives in a university's profile: the publisher opens in the first one allowed.
+  let publisherProfile: Option.Option<string | undefined> = Option.none();
+  const forPublisher = Effect.gen(function* () {
+    if (Option.isSome(publisherProfile)) return publisherProfile.value;
+    if (resumeProfile !== undefined) {
+      const allowed = yield* opens(resumeProfile);
+      const chosen = allowed ? resumeProfile : undefined;
+      publisherProfile = Option.some(chosen);
+      return chosen;
+    }
+    let chosen: string | undefined;
+    for (const account of connected)
+      if (yield* opens(profileFor(account))) {
+        chosen = profileFor(account);
+        break;
+      }
+    if (chosen === undefined && (yield* opens(fallback))) chosen = fallback;
+    publisherProfile = Option.some(chosen);
+    return chosen;
+  });
+  const holdOn = (step: RouteStep, profileId: string) =>
+    (step.account && signInHolds.get(step.account.accountId)) ?? lane.checks.get(profileId);
+  const steps = [...routeSteps(paper, connected, lane.worked)];
   const missed: Reached[] = [];
+  let checked: Needed | undefined;
   for (const step of steps) {
     const now = yield* Clock.currentTimeMillis;
     const skipDirect =
@@ -201,56 +322,118 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       steps.length > 1 &&
       now - lane.directFailedAt < DIRECT_FAILURE_MEMORY_MS;
     if (skipDirect) continue;
-    if (step.account && signInHolds.has(step.account.accountId)) continue;
-    if (lane.check) continue;
-    const profileId = profileOf(step.account ?? universities[0]);
-    const attempt = yield* inLane(
+    if (step.account && !(yield* through(step.account))) continue;
+    const profileId = step.account ? profileFor(step.account) : yield* forPublisher;
+    if (profileId === undefined) continue;
+    if (resumeProfile !== undefined && profileId !== resumeProfile) continue;
+    const heldBefore = holdOn(step, profileId);
+    if (heldBefore) {
+      if (heldBefore.kind === "check" || heldBefore.kind === "terms") checked = heldBefore;
+      continue;
+    }
+    // Checked again on its turn, which can come much later: another paper may have met a sign-in
+    // or a check meanwhile, and the user may have changed what this conversation may use.
+    const turn = yield* inLane(
       lane,
-      fetchFromPage({
-        url: step.url,
-        profileId,
-        caller: {
-          kind: "paper",
-          scope: session(requester.threadId ?? PAPERS_THREAD),
-          requester,
-        },
-        accept: (bytes) => isThePaper(paper, bytes),
-      }).pipe(Effect.timeoutOption(ROUTE_DEADLINE)),
+      Effect.gen(function* () {
+        const held = holdOn(step, profileId);
+        if (held) return { held } as const;
+        const allowed = step.account
+          ? (yield* mayUse(
+              requester,
+              { type: "account", accountId: step.account.accountId },
+              "sign-in",
+            )) && (yield* opens(profileId))
+          : yield* opens(profileId);
+        if (!allowed) return { withdrawn: true } as const;
+        const fetched = yield* fetchFromPage({
+          url: step.url,
+          profileId,
+          caller: { kind: "paper", scope: scopeOf(requester), requester },
+          accept: (bytes) => isThePaper(paper, bytes),
+          ...(resume?.kind === "terms" && resume.profileId === profileId && resume.tabId
+            ? { termsTabId: resume.tabId }
+            : {}),
+        }).pipe(Effect.timeoutOption(ROUTE_DEADLINE));
+        // Held before the lane is let go, so the next paper doesn't meet the same wall.
+        if (Option.isSome(fetched) && fetched.value.status !== "saved") {
+          const met = fetched.value;
+          const signInTo =
+            step.account ?? known.find(({ accountId }) => accountId === met.signInAccountId);
+          if (met.reason === "sign-in" && signInTo)
+            signInHolds.set(signInTo.accountId, {
+              kind: "sign-in",
+              site: signInTo.name,
+              accountId: signInTo.accountId,
+            });
+          if (met.reason === "bot-check" || met.reason === "terms")
+            lane.checks.set(profileId, {
+              kind: met.reason === "terms" ? "terms" : "check",
+              site,
+              openUrl: met.openUrl,
+              profileId,
+              ...(met.tabId ? { tabId: met.tabId } : {}),
+            });
+        }
+        return { fetched } as const;
+      }),
     );
-    if (Option.isNone(attempt)) {
-      yield* Effect.logInfo("paper route timed out", { publisher: site, route: step.route });
-      missed.push({
-        ...step,
-        result: {
+    if ("held" in turn) {
+      if (turn.held.kind === "check" || turn.held.kind === "terms") checked = turn.held;
+      continue;
+    }
+    if ("withdrawn" in turn) {
+      if (step.account) usable.set(step.account.accountId, false);
+      continue;
+    }
+    const result: FetchResult = Option.isSome(turn.fetched)
+      ? turn.fetched.value
+      : {
           status: "no-access",
           reason: "timed-out",
           message: `${site} took too long to answer.`,
           openUrl: step.url,
-          profileId: profileId ?? "",
-        },
-      });
-      continue;
-    }
-    const result = attempt.value;
+          profileId,
+        };
     yield* Effect.logInfo("paper route", {
       publisher: site,
       route: step.route,
       status: result.status,
       ...(result.status === "saved" ? {} : { reason: result.reason }),
     });
+    if (
+      step.account &&
+      requester.threadId !== undefined &&
+      (yield* firstUseIn(step.account, result.status === "saved", requester))
+    )
+      yield* accounts.recordUse({
+        target: { type: "account", accountId: step.account.accountId },
+        action: "sign-in",
+        threadId: requester.threadId,
+        ...(requester.projectId === undefined ? {} : { projectId: requester.projectId }),
+        outcome: result.status === "saved" ? "ok" : "error",
+      });
     if (result.status === "saved") {
       lane.refusals = 0;
       if (step.route === "publisher") lane.directFailedAt = 0;
       lane.worked = { route: step.route, accountId: step.account?.accountId };
       yield* noteSession(step.account, "signed-in");
-      return { saved: result, route: step.route, missed, universities, site, lane };
+      return { saved: result, route: step.route };
+    }
+    if (result.reason === "timed-out") {
+      missed.push({ ...step, result });
+      continue;
     }
     if (result.reason === "sign-in") yield* noteSession(step.account, "signed-out");
     // A journal no rule knows still shows its own way in, and the university goes next.
     if (result.institutionUrl)
-      steps.push(...buttonSteps(result.institutionUrl, article, universities, steps));
+      steps.push(...buttonSteps(result.institutionUrl, article, connected, steps));
     if (result.reason === "refused") noteRefusal(lane, yield* Clock.currentTimeMillis);
-    else if (step.route === "publisher" && result.reason !== "bot-check")
+    else if (
+      step.route === "publisher" &&
+      result.reason !== "bot-check" &&
+      result.reason !== "terms"
+    )
       lane.directFailedAt = yield* Clock.currentTimeMillis;
     const signedInTo = known.find((account) => account.accountId === result.signInAccountId);
     missed.push({
@@ -259,21 +442,60 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       result,
     });
   }
-  return { saved: undefined, route: undefined, missed, universities, site, lane };
+  return {
+    saved: undefined,
+    route: undefined,
+    tried: {
+      missed,
+      universities: connected.filter(({ accountId }) => usable.get(accountId) === true),
+      withheld: connected.filter(({ accountId }) => usable.get(accountId) === false),
+      checked,
+      site,
+      lane,
+    } satisfies Tried,
+  };
 });
 
 interface Tried {
   readonly missed: ReadonlyArray<Reached>;
+  /** The universities this request could go through. */
   readonly universities: ReadonlyArray<AccountSummary>;
+  /** Connected universities this conversation may not use now. */
+  readonly withheld: ReadonlyArray<AccountSummary>;
+  /** A human-only gate another paper met in the profile this one would use. */
+  readonly checked: Needed | undefined;
   readonly site: string;
   readonly lane: Lane;
 }
 
+/** What the person is asked; it tells an agent the paper goes on by itself. */
+const waitsFor = (paper: Paper, needed: Needed, why: string) =>
+  ({
+    state: "needs-you",
+    paper,
+    needed,
+    message: `${why} The paper goes on by itself once they do: tell them, and don't fetch it in the browser yourself.`,
+  }) as const;
+
 /** Why no route reached the paper, as the one thing that could change that. */
 export const nextMove = (
   paper: Paper,
-  { missed, universities, site, lane }: Tried,
+  { missed, universities, withheld, checked, site, lane }: Tried,
 ): Exclude<PaperOutcome, { state: "saved" }> => {
+  const terms = missed.find(({ result }) => result.reason === "terms");
+  if (terms || checked?.kind === "terms") {
+    const needed: Needed = terms
+      ? {
+          kind: "terms",
+          site,
+          openUrl: terms.result.openUrl,
+          profileId: terms.result.profileId,
+          ...(terms.result.tabId ? { tabId: terms.result.tabId } : {}),
+        }
+      : checked!;
+    if (terms) lane.checks.set(terms.result.profileId, needed);
+    return waitsFor(paper, needed, `${site} needs the user to review and accept its terms.`);
+  }
   const signIn = missed.find(({ account, result }) => account && result.reason === "sign-in");
   const held = universities.flatMap(({ accountId }) => signInHolds.get(accountId) ?? [])[0];
   if (signIn?.account || held) {
@@ -283,28 +505,15 @@ export const nextMove = (
       accountId: signIn?.account?.accountId,
     };
     if (signIn?.account) signInHolds.set(signIn.account.accountId, needed);
-    return {
-      state: "needs-you",
-      paper,
-      needed,
-      message: `Waiting for you to sign in to ${needed.site}.`,
-    };
+    return waitsFor(paper, needed, `Waiting for the user to sign in to ${needed.site}.`);
   }
   const check = missed.find(({ result }) => result.reason === "bot-check");
-  if (check || lane.check) {
-    const needed: Needed = lane.check ?? {
-      kind: "check",
-      site,
-      openUrl: check?.result.openUrl,
-      profileId: check?.result.profileId,
-    };
-    lane.check = needed;
-    return {
-      state: "needs-you",
-      paper,
-      needed,
-      message: `${site} wants a person to pass its check once.`,
-    };
+  const needed: Needed | undefined = check
+    ? { kind: "check", site, openUrl: check.result.openUrl, profileId: check.result.profileId }
+    : checked;
+  if (needed) {
+    if (check) lane.checks.set(check.result.profileId, needed);
+    return waitsFor(paper, needed, `${site} wants a person to pass its check once.`);
   }
   if (missed.length > 0 && missed.every(({ result }) => result.reason === "timed-out"))
     return {
@@ -312,13 +521,20 @@ export const nextMove = (
       paper,
       message: `${site} took too long to answer. Try this paper again later.`,
     };
-  if (universities.length === 0)
-    return {
-      state: "needs-you",
-      paper,
-      needed: { kind: "university" },
-      message: "No free copy. Connect your university to get it through your library.",
-    };
+  if (universities.length === 0) {
+    const kept = withheld[0];
+    return kept
+      ? waitsFor(
+          paper,
+          { kind: "access", site: kept.name, accountId: kept.accountId },
+          `No free copy. ${kept.name} is connected, but this conversation may not use it; the user can allow it in Settings → Accounts & secrets.`,
+        )
+      : waitsFor(
+          paper,
+          { kind: "university" },
+          "No free copy. Waiting for the user to connect their university.",
+        );
+  }
   const reached = missed.find(({ account, result }) => account && result.reason !== "timed-out");
   return {
     state: "no-access" as const,
@@ -334,12 +550,14 @@ export const nextMove = (
  * user's access, then any other free copy (an accepted manuscript or preprint).
  */
 export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
-  asked: PaperAsked,
+  asked: PaperAsked & { readonly needed?: Needed | undefined },
   requester: PaperRequester,
-  savedBefore: (paper: Paper) => Effect.Effect<string | undefined>,
+  savedBefore: (
+    paper: Paper,
+  ) => Effect.Effect<{ readonly path: string; readonly version: PaperVersion } | undefined>,
 ) {
   const found = yield* Effect.gen(function* () {
-    const paper = yield* lookUpPaper(asked);
+    const paper = yield* lookUpPaper(asked, yield* readResearchKeys());
     if (!paper?.doi || asked.url) return paper;
     const articleUrl = yield* articleAddress(paper.doi);
     return articleUrl ? { ...paper, articleUrl } : paper;
@@ -350,27 +568,29 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
       message: "This paper has no DOI or link to find it by.",
     } satisfies PaperOutcome;
   const paper: Paper = found;
-  const path = yield* savedBefore(paper);
-  if (path)
+  const before = yield* savedBefore(paper);
+  if (before)
     return {
       state: "saved" as const,
       paper,
-      path,
+      path: before.path,
       route: "saved-before" as const,
-      published: true,
+      published: before.version === "published",
+      version: before.version,
     } satisfies PaperOutcome;
-  const free = yield* firstPdf(paper.openAccess.filter((copy) => copy.published)).pipe(
-    lookups.withPermits(1),
-  );
+  const free = yield* firstPdf(
+    paper.openAccess.filter((copy) => copy.version === "published"),
+  ).pipe(lookups.withPermits(1));
   if (free)
     return {
       state: "saved" as const,
       paper,
-      bytes: free,
+      bytes: free.bytes,
       route: "open-access" as const,
       published: true,
+      version: "published",
     } satisfies PaperOutcome;
-  const reached = requester.browser ? yield* tryRoutes(paper, requester) : undefined;
+  const reached = requester.browser ? yield* tryRoutes(paper, requester, asked.needed) : undefined;
   if (reached?.saved)
     return {
       state: "saved" as const,
@@ -378,20 +598,22 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
       bytes: reached.saved.bytes,
       route: reached.route,
       published: true,
+      version: "published",
     } satisfies PaperOutcome;
-  const other = yield* firstPdf(paper.openAccess.filter((copy) => !copy.published)).pipe(
-    lookups.withPermits(1),
-  );
+  const other = yield* firstPdf(
+    paper.openAccess.filter((copy) => copy.version !== "published"),
+  ).pipe(lookups.withPermits(1));
   if (other)
     return {
       state: "saved" as const,
       paper,
-      bytes: other,
+      bytes: other.bytes,
       route: "open-access" as const,
       published: false,
+      version: other.version,
     } satisfies PaperOutcome;
   return reached
-    ? nextMove(paper, reached)
+    ? nextMove(paper, reached.tried)
     : ({
         state: "no-access" as const,
         paper,

@@ -91,6 +91,10 @@ import { CustomModelsSettings } from "./customModels.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 // SCIENT-FORK: conversation-fork preferences.
 import { ScientForkSettings, ScientForkSettingsPatch } from "./scientForkSettings.ts";
+import { ScientSourcesSettings, ScientSourcesSettingsPatch } from "./scient/sourcesSettings.ts";
+// SCIENT-FORK:START — Scient Agent's own idle compaction default.
+import { scientAgentIdleCompactionDefault } from "./scient/idleCompaction.ts";
+// SCIENT-FORK:END
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -208,7 +212,7 @@ export const InterfaceFontSize = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_INTERFACE_FONT_SIZE, maximum: MAX_INTERFACE_FONT_SIZE }),
 );
 export type InterfaceFontSize = typeof InterfaceFontSize.Type;
-export const DEFAULT_INTERFACE_FONT_SIZE: InterfaceFontSize = 17;
+export const DEFAULT_INTERFACE_FONT_SIZE: InterfaceFontSize = 15;
 
 export const InterfaceFontWeight = Schema.Literals([300, 400, 500]);
 export type InterfaceFontWeight = typeof InterfaceFontWeight.Type;
@@ -228,7 +232,7 @@ export const CodeFontSize = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_CODE_FONT_SIZE, maximum: MAX_CODE_FONT_SIZE }),
 );
 export type CodeFontSize = typeof CodeFontSize.Type;
-export const DEFAULT_CODE_FONT_SIZE: CodeFontSize = 15;
+export const DEFAULT_CODE_FONT_SIZE: CodeFontSize = 14;
 
 export const MIN_TERMINAL_FONT_SIZE = 8;
 export const MAX_TERMINAL_FONT_SIZE = 20;
@@ -657,6 +661,7 @@ export const ClientSettingsSchema = Schema.Struct({
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechSilenceFiltering: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  speechStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechPostProcessingPrompt: SpeechPostProcessingPromptSettings.pipe(
     Schema.withDecodingDefault(
@@ -1700,6 +1705,8 @@ export const ServerSettings = Schema.Struct({
   scientificComputing: ScientificComputingSettings,
   // SCIENT-FORK: portable context handoff size for forks.
   scientFork: ScientForkSettings,
+  // SCIENT-FORK: Library registry contact.
+  scientSources: ScientSourcesSettings,
   reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -1880,6 +1887,13 @@ export const resolveIdleCompaction = (
   const instance = Object.hasOwn(settings.providerInstances, instanceId)
     ? settings.providerInstances[instanceId]
     : undefined;
+  // SCIENT-FORK:START — an unset Scient Agent instance compacts before the cache expires.
+  const scientDefault = scientAgentIdleCompactionDefault(
+    instance?.driver ?? instanceId,
+    instance?.config,
+  );
+  if (scientDefault !== undefined) return scientDefault;
+  // SCIENT-FORK:END
   const override = decodeClaudeSettings(instance?.config ?? {}).pipe(
     Option.map((config) => config.idleCompaction),
     Option.getOrElse(() => "default" as const),
@@ -2143,6 +2157,8 @@ export const ServerSettingsPatch = Schema.Struct({
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   // SCIENT-FORK: portable context handoff size for forks.
   scientFork: Schema.optionalKey(ScientForkSettingsPatch),
+  // SCIENT-FORK: Library registry contact.
+  scientSources: Schema.optionalKey(ScientSourcesSettingsPatch),
   scientificComputing: Schema.optionalKey(ScientificComputingSettingsPatch),
   reviewGuidesEnabled: Schema.optionalKey(Schema.Boolean),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -2352,6 +2368,7 @@ export const ClientSettingsPatch = Schema.Struct({
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechSilenceFiltering: Schema.optionalKey(Schema.Boolean),
+  speechStreaming: Schema.optionalKey(Schema.Boolean),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
   speechPostProcessingPrompt: Schema.optionalKey(SpeechPostProcessingPromptSettings),
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),

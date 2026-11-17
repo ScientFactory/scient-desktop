@@ -162,9 +162,11 @@ spend limit to continue sooner.
 
 ## Send feedback to OpenAI
 
-In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
-issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
-and share with OpenAI employees.
+In an existing Codex thread, send `/feedback-openai` or `/feedback-openai` followed by a
+description of the issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID
+that you can copy and share with OpenAI employees. In the desktop app, `/feedback` sends
+[feedback to the Scient team](./feedback.md) instead; in the web app, Codex's command keeps the
+name `/feedback`.
 
 ## Answer questions while Codex works
 

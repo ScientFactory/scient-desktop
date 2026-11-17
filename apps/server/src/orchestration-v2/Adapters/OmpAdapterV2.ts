@@ -55,6 +55,9 @@ import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
 import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:START — a five-minute cache compacts when the agent's warming stops on it.
+import { ompWarmingStopped } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK: /goal drives Scient Agent's goal command.
 import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
 // SCIENT-FORK: /plan drives Scient Agent's plan mode.
@@ -488,6 +491,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           catalogCurrent = true;
           return available;
         });
+        // A turn that needs the catalog asks again once after a timeout; the late first reply is ignored.
+        const refreshCatalogForTurn = () =>
+          refreshCatalog().pipe(
+            Effect.retry({
+              times: 1,
+              while: (cause) => cause._tag === "OmpRpcCommandError" && cause.code === "timeout",
+            }),
+          );
 
         const home = expandHomePath(
           options.homePath?.trim() ||
@@ -912,6 +923,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   ...(request === undefined ? {} : { request }),
                 });
               }
+              // SCIENT-FORK:START — warming stopped: the five-minute entry it left times idle compaction.
+              if (event.type === "cache_warming_stopped")
+                return onUpdate({
+                  type: "usage",
+                  promptCacheWarmingStopped: ompWarmingStopped(event),
+                });
+              // SCIENT-FORK:END
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);
               // SCIENT-FORK: the thread's goal row follows the agent's goal.
@@ -1648,7 +1666,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   model.input !== undefined,
               )
             )
-              yield* refreshCatalog().pipe(
+              yield* refreshCatalogForTurn().pipe(
                 Effect.mapError(
                   () =>
                     new NativeSessionOperationError({
@@ -1968,7 +1986,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     breaksSession: false,
                   });
                 if (level !== undefined) {
-                  const available = yield* refreshCatalog();
+                  const available = yield* refreshCatalogForTurn();
                   const selectedModel = available.models.find(
                     (candidate) =>
                       candidate.provider === model.provider && candidate.id === model.modelId,
@@ -2246,6 +2264,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           // SCIENT-FORK: a spoken conversation through Scient Agent's ChatGPT sign-in.
           ...(target.driverKind === "scient" ? { liveVoice: liveVoice.runtime } : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
+          // The RPC has no message-less continue, so Continue after a limit or Stop asks for one.
+          continuationPrompt: "Continue where you left off.",
           resume,
           rewindBefore: Effect.fn("OmpAdapterV2.rewindBefore")(
             function* (entryId: string) {

@@ -202,6 +202,7 @@ function startWithMissingWorktree(
             Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getConversationFork: () => Effect.succeed(null),
           getThreadRecords: () => {
             projectionReadCount += 1;
             return Effect.succeed(projection);
@@ -1357,6 +1358,7 @@ function makeLocalCommandHarness(input: {
             } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getConversationFork: () => Effect.succeed(null),
           getThreadRecords,
           getTurnStartContext,
           getRuntimeRecoveryProjection,
@@ -1495,7 +1497,9 @@ function layerStartEffectWorker(
         Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
         Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getConversationFork: () => Effect.succeed(null),
+        }),
         // SCIENT-FORK: the executor also runs Scient's cleanup and fork effects.
         Layer.mock(ResourceCleanup.ResourceCleanupService)({}),
         Layer.mock(ConversationForkService)({}),
@@ -2345,6 +2349,29 @@ effectIt.effect.each([
     }),
 );
 
+effectIt.effect("fails the start when the owner its replacement supersedes is still closing", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue after the failure",
+      openFailure: "The prior native close is still pending.",
+    });
+    const supersededProviderSessionId = ProviderSessionId.make("superseded-provider-session");
+    yield* Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+        threadId: harness.threadId,
+        runId: harness.runId,
+        supersededProviderSessionId,
+      });
+    }).pipe(Effect.provide(harness.layer));
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ supersededProviderSessionId }),
+    );
+    expect(harness.projection().runs.find((run) => run.id === harness.runId)?.status).toBe(
+      "failed",
+    );
+  }),
+);
+
 effectIt.effect.each([
   { nativeForkFrom: "idle", forks: true, transferStatus: "consumed", handoffIds: [] },
   {
@@ -3180,7 +3207,9 @@ effectIt.effect("a stale outbox start cannot execute the newer retry attempt", (
           Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(ConversationForkService)({}),
-          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getConversationFork: () => Effect.succeed(null),
+          }),
           ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
             Layer.provide(NodeServices.layer),
           ),

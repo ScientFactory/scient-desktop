@@ -15,6 +15,8 @@ import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnecti
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderActivity from "./providerLifecycle/ProviderActivity.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
+import * as ProviderRuntimeRecovery from "./providerLifecycle/ProviderRuntimeRecovery.ts";
+import * as ProviderRuntimeRequests from "./providerLifecycle/ProviderRuntimeRequests.ts";
 import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
 import * as ScientAgentBackgroundRuntime from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
@@ -39,6 +41,8 @@ import * as LatexTexDirectory from "./latex/latexTexDirectory.ts";
 import * as LatexSyncTex from "./latex/LatexSyncTex.ts";
 import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
+import * as RegistryContact from "./sources/RegistryContact.ts";
+import { scientReferencesHttpApiLayer } from "./references/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
 import { scientPdfHttpApiLayer } from "./pdf/http.ts";
@@ -89,7 +93,10 @@ export const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.
 );
 
 /** Connection, runtime and catalog managers over one lifecycle coordinator. */
-export const ScientProviderLifecycleLive = ScientAgentBackgroundRuntime.layer.pipe(
+export const ScientProviderLifecycleLive = Layer.mergeAll(
+  ScientAgentBackgroundRuntime.layer,
+  ProviderRuntimeRecovery.layer,
+).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       ProviderConnectionManager.layer,
@@ -97,6 +104,7 @@ export const ScientProviderLifecycleLive = ScientAgentBackgroundRuntime.layer.pi
       ManagedRuntimeCatalogReconciler.layer,
     ),
   ),
+  Layer.provideMerge(ProviderRuntimeRequests.layer),
   Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   Layer.provideMerge(ProviderActivity.layer),
 );
@@ -141,6 +149,7 @@ export function makeScientRouteServices<
       ConversationImporterLive.layer.pipe(Layer.provide(ConversationImportCommit.layer)),
     ),
   );
+  const RegistryContactLive = RegistryContact.layer.pipe(Layer.provide(ServerSettingsLayerLive));
   // Scient Cloud: the copy worker, share building and take-over import over one state file. The
   // state layer is the same instance turn admission reads (see server.ts), by memoization.
   const ConversationSnapshotServiceLive = ConversationSnapshotService.layer.pipe(
@@ -222,6 +231,7 @@ export function makeScientRouteServices<
       Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(scientOverleafHttpApiLayer),
+      Layer.provide(scientReferencesHttpApiLayer),
       Layer.provide(scientCloudHttpApiLayer),
     );
 
@@ -240,6 +250,7 @@ export function makeScientRouteServices<
       Layer.provide(DataTables.layer),
       Layer.provide(NotebookStore.layer),
       Layer.provide(ScientificRuntimePreferencesLive),
+      Layer.provide(RegistryContactLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),
       // The Overleaf service saves a folder's editors through the editor-save request.

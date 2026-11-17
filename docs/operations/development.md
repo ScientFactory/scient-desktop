@@ -376,8 +376,9 @@ node .github/scripts/verify-ci-shards.mjs
 
 The importer normalizes runner roots and takes per-file medians across multiple runs.
 It rejects failed reports, malformed paths, duplicates within a report, and invalid
-durations. Server weights include elapsed gaps between serial file results to capture
-imports/setup; overlapping web projects use individual file durations.
+durations. Weights are each file's own duration: CI runs server files four at a time, so gaps
+between results mean nothing. The server sequencer adds about 2.2 s of start cost per file,
+and the web sequencer about 2.5 s of module loading per browser file.
 The verifier loads the actual Vitest configurations, discovers every test specification,
 and checks that the configured partitions cover each exactly once, independent of
 discovery order. Vitest's `list --filesOnly --shard` does not apply the sequencer.

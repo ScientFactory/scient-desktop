@@ -46,6 +46,7 @@ import {
 import {
   detectTargetSafely,
   isManagedRuntimeDowngrade,
+  makeManagedRuntimeProgressFilter,
   managedRuntimeDowngradeMessage,
   managedRuntimeInstallationFailureMessage,
   managedRuntimeRetryMessage,
@@ -105,6 +106,7 @@ function mapProgress(progress: ManagedCodexRuntimeProgress): ProviderManagedRunt
       ? {}
       : { downloadedBytes: progress.downloadedBytes }),
     ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+    ...(progress.download ? { download: progress.download } : {}),
   };
 }
 
@@ -773,8 +775,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       if (!actionArtifact) {
         return yield* runtimeError("No qualified Codex artifact is available.");
       }
-      let lastStatus: ManagedCodexRuntimeProgress["stage"] | undefined;
-      let lastReportedBytes = 0;
+      const worthReporting = makeManagedRuntimeProgressFilter();
       yield* Effect.tryPromise({
         try: (signal) =>
           runtime.install({
@@ -806,16 +807,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
               }
             },
             onProgress: (progress) => {
-              const stageChanged = progress.stage !== lastStatus;
-              const downloadedBytes = progress.downloadedBytes ?? 0;
-              const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
-              const downloadFinished =
-                progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-              if (!stageChanged && !downloadAdvanced && !downloadFinished && !progress.retry)
-                return;
-              lastStatus = progress.stage;
-              lastReportedBytes = downloadedBytes;
-              runFork(report(mapProgress(progress)));
+              if (worthReporting(progress)) runFork(report(mapProgress(progress)));
             },
           }),
         catch: (cause) =>

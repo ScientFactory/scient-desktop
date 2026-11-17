@@ -3,7 +3,9 @@ import { it as effectIt } from "@effect/vitest";
 import {
   EnvironmentId,
   ExtensionsError,
+  PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
+  PreviewAutomationInvalidSelectorError,
   PreviewAutomationTimeoutError,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -20,8 +22,10 @@ import { toAccountsError } from "../scient/accounts/agent/connectorAuthoring.ts"
 
 import {
   BrowserToolCallLedger,
+  browserTurnSummary,
   closedErrorCode,
   noteToolFailure,
+  recordBrowserCall,
   refusedDelegateTarget,
   scientMcpAnalyticsInput,
   scientToolOutcome,
@@ -182,6 +186,40 @@ describe("Scient MCP analytics input", () => {
           failureClass: "host_overrun",
           failureOwner: "scient",
         });
+        expect(
+          yield* recorded(
+            new PreviewAutomationTimeoutError({
+              ...request,
+              operation: "snapshot",
+              pendingStages: ["page state"],
+            }),
+          ),
+        ).toMatchObject({ failureClass: "host_overrun", pendingStage: "page_state" });
+        // A tab a person took over is not the agent's fault; a stale element ref is its input.
+        expect(
+          yield* recorded(
+            new PreviewAutomationControlInterruptedError({
+              ...request,
+              ...answered,
+              operation: "click",
+              reason: "humanControl",
+            }),
+          ),
+        ).toMatchObject({ failureClass: "control_human_control", failureOwner: "external" });
+        expect(
+          yield* recorded(
+            new PreviewAutomationInvalidSelectorError({
+              ...request,
+              ...answered,
+              operation: "click",
+              staleRef: true,
+            }),
+          ),
+        ).toMatchObject({
+          errorCode: "invalid_selector",
+          failureClass: "stale_ref",
+          failureOwner: "input",
+        });
         // A script that threw and a browser call that failed reach analytics with the same tag.
         const evaluated = (send: () => Promise<unknown>) =>
           Effect.promise(() =>
@@ -243,14 +281,100 @@ describe("Scient MCP analytics input", () => {
 
   it("counts a thread's browser calls up to its turn's end and keeps later ones for the next", () => {
     const ledger = new BrowserToolCallLedger();
-    ledger.record("thread-a", 10, false);
-    ledger.record("thread-a", 20, true);
-    ledger.record("thread-b", 15, true);
-    ledger.record("thread-a", 40, false);
-    expect(ledger.take("thread-a", 30)).toEqual({ calls: 2, failures: 1 });
-    expect(ledger.take("thread-a", 50)).toEqual({ calls: 1, failures: 0 });
-    expect(ledger.take("thread-a", 50)).toEqual({ calls: 0, failures: 0 });
-    expect(ledger.take("thread-b", 50)).toEqual({ calls: 1, failures: 1 });
+    const call = (at: number, failed: boolean) => ({
+      at,
+      tool: "preview_act",
+      durationMs: 1,
+      failed,
+    });
+    ledger.record("thread-a", call(10, false));
+    ledger.record("thread-a", call(20, true));
+    ledger.record("thread-b", call(15, true));
+    ledger.record("thread-a", call(40, false));
+    expect(ledger.take("thread-a", 30)).toMatchObject({ calls: 2, failures: 1 });
+    expect(ledger.take("thread-a", 50)).toMatchObject({ calls: 1, failures: 0 });
+    expect(ledger.take("thread-a", 50)).toMatchObject({ calls: 0, failures: 0 });
+    expect(ledger.take("thread-b", 50)).toMatchObject({ calls: 1, failures: 1 });
+  });
+
+  it("summarizes a turn's browser work: tools, times, recovered failures and sites, hosts only", () => {
+    const ledger = new BrowserToolCallLedger();
+    const call = (
+      tool: string,
+      at: number,
+      args: object,
+      result: McpSchema.CallToolResult | undefined,
+      failure: ToolFailureFacts = {},
+    ) => {
+      recordBrowserCall(ledger, "thread", {
+        tool,
+        args,
+        result,
+        failure,
+        startedAt: at - 100 * (at / 10),
+        endedAt: at,
+      });
+      return failure;
+    };
+    const ok = (structuredContent: object) =>
+      new McpSchema.CallToolResult({ structuredContent, content: [] });
+    const timedOut = new McpSchema.CallToolResult({
+      isError: true,
+      content: [{ type: "text", text: "timed out" }],
+    });
+    call(
+      "preview_open",
+      10,
+      { url: "https://Example.org/private/path?q=1" },
+      ok({
+        url: "https://example.org/private/path?q=1",
+      }),
+    );
+    const failed = call("preview_act", 20, { action: "click" }, timedOut, {
+      tag: "PreviewAutomationTimeoutError",
+    });
+    call(
+      "preview_act",
+      30,
+      { action: "click" },
+      ok({ toolIcon: { pageUrl: "https://example.org/a" } }),
+    );
+    call(
+      "preview_navigate",
+      40,
+      { url: "http://localhost:5173/" },
+      ok({
+        url: "http://localhost:5173/",
+        loadError: { url: "http://localhost:5173/", code: -102, description: "refused" },
+        accountsNote: "Sign in to continue.",
+      }),
+    );
+    // The failure is reported with the site and action it worked on.
+    expect(scientToolOutcome(timedOut, failed)).toMatchObject({
+      errorCode: "timeout",
+      site: "example.org",
+      action: "click",
+    });
+    const summary = browserTurnSummary(ledger.take("thread", 50).entries);
+    expect(summary).toMatchObject({
+      calls: 4,
+      failures: 1,
+      recoveredFailures: 1,
+      longestFailureStreak: 1,
+      endedOnFailure: false,
+      openCalls: 1,
+      actCalls: 2,
+      actFailures: 1,
+      navigateCalls: 1,
+      sites: ["example.org", "local"],
+      failedSites: ["example.org"],
+      errorCodes: ["timeout"],
+      loadErrors: 1,
+      loadErrorCodes: [-102],
+      accountNotes: 1,
+      maxMs: 400,
+    });
+    expect(JSON.stringify(summary)).not.toContain("private");
   });
 
   it("reports a refused delegation's target as a driver and a reviewed model name only", () => {

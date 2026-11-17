@@ -52,6 +52,7 @@ import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
+import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -125,12 +126,9 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
     emptyPlaceholderInset: 0,
-    // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+    // SCIENT-FORK:START — no live-follow flag: the reading follow moves the view.
     // SCIENT-FORK:END
     onIsAtEndChange: () => {},
-    // SCIENT-FORK:START — the reader's navigation cancels placement (chat/useTimelineFollow.ts).
-    onManualNavigation: () => {},
-    // SCIENT-FORK:END
   };
 }
 
@@ -1004,7 +1002,7 @@ describe("MessagesTimeline messages", () => {
     if (mode === "grouped-end") screen.container.style.height = "648px";
     await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
     const viewport = props.listRef.current!.getScrollableNode()!;
-    // SCIENT-FORK: Scient keeps a freshly opened thread at its end until the reader acts; a
+    // SCIENT-FORK: Scient settles a freshly opened thread at its end until the reader acts; a
     // press stands for the reader's first action, so the scrolling below is not pulled back.
     await act(() => viewport.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
     if (mode === "grouped-delayed") {
@@ -1245,6 +1243,21 @@ describe("MessagesTimeline citations", () => {
         "the cited answer",
       ),
     );
+  });
+
+  it("moves focus to the cited response so screen readers follow it", async () => {
+    await using _screen = await renderTimeline(
+      [
+        message("A question", {}, "question"),
+        message("the cited answer", { role: "assistant" }, "cited"),
+      ],
+      { citationRequest: CITATION_REQUEST, citationHistory: { _tag: "found" } },
+    );
+    await vi.waitFor(() => {
+      const cited = document.querySelector("[data-citation-highlighted]");
+      expect(cited?.textContent).toContain("the cited answer");
+      expect(cited?.contains(document.activeElement)).toBe(true);
+    });
   });
 
   it("opens the superseded attempt that folds the cited response", async () => {
@@ -1773,10 +1786,48 @@ describe("MessagesTimeline attachments", () => {
 });
 
 describe("MessagesTimeline thread find", () => {
-  // SCIENT-FORK:START — Scient has no live follow and no viewport navigation signal:
-  // opening find cancels placement through threadFindStore's navigate
-  // (threadFindStore.test.ts), and a thread shown with find open restores first.
-  // SCIENT-FORK:END
+  // Opening find is navigation; on a list already showing the thread the open
+  // action navigates, so the list itself releases follow only when it starts
+  // showing a thread whose find is already open.
+  function renderObserved() {
+    const navigations: TimelineNavigation[] = [];
+    const base = baseProps();
+    const element = (next: Partial<TimelineProps>) => (
+      <MessagesTimeline
+        {...base}
+        timelineEntries={[message("Where is the sidebar fix?")]}
+        onViewportAttach={(viewport) =>
+          viewport.subscribe((navigation) => navigations.push(navigation))
+        }
+        {...next}
+      />
+    );
+    return { navigations, element };
+  }
+  const released = { source: "command", releasesFollow: true };
+
+  it("releases follow once when it starts showing a thread whose find is open", async () => {
+    setup();
+    const { navigations, element } = renderObserved();
+    await using screen = await renderElement(element({}));
+    expect(navigations).toEqual([]);
+
+    const other = "environment-local:thread-find-open";
+    await screen.rerender(element({ routeThreadKey: other, findOpen: true }));
+    expect(navigations).toEqual([released]);
+    await screen.rerender(element({ routeThreadKey: other, findOpen: false }));
+    await screen.rerender(element({ routeThreadKey: other, findOpen: true }));
+    expect(navigations).toEqual([released]);
+  });
+
+  it("releases follow once when it mounts on a thread whose find is open", async () => {
+    setup();
+    const { navigations, element } = renderObserved();
+    await using screen = await renderElement(element({ findOpen: true }));
+    await screen.rerender(element({ findOpen: true }));
+    expect(navigations).toEqual([released]);
+  });
+
   it("still restores the position of a thread it switches to whose find is open", async () => {
     setup();
     const base = baseProps();
@@ -2033,7 +2084,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+        name: "Auto-compacted before cache expiry 899K → 19K tokens",
       }),
     )
     .toBeVisible();

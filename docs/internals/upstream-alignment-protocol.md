@@ -144,10 +144,11 @@ Classify each overlap before resolving it:
 - **Scient-owned policy:** retain the existing Scient decision and its guard.
   Distinguish an approved product decision from an implementation limitation or an earlier agent's
   assumption; existing code or a historical receipt alone does not establish user intent.
-  `AGENTS.md` is Scient-owned policy. Review upstream changes to it even when Git
-  merges them without conflicts. Incorporate applicable technical guidance without
-  restoring upstream team authority, contradictory instructions, or duplicated
-  procedures.
+  `AGENTS.md` and Scient policy in linked guides are Scient-owned. Review upstream
+  changes to those policies even when Git merges them without conflicts; moving
+  a rule into a guide does not transfer policy authority to upstream. Incorporate
+  applicable technical guidance without restoring upstream team authority,
+  contradictory instructions or duplicated procedures.
 - **Composition:** preserve both behaviors at the narrowest stable seam.
 - **Incompatible rollout:** keep the underlying compatible machinery when useful, but gate the
   capability and command path until every required surface is safe.
@@ -491,7 +492,9 @@ git diff --check
 ```
 
 `pnpm alignment:gates` runs this list without the desktop host's live-profile variables,
-continues past failures and prints the receipt table. Its typecheck includes workspace Vite
+continues past failures and prints the receipt table. Its test gate runs every package even
+when one fails and runs the server files in parallel, then reruns a few failed server files
+alone as a diagnostic. Full runs from different worktrees queue behind one lock. Its typecheck includes workspace Vite
 tasks, but a failed aggregate can leave packages unscheduled; record task coverage and qualify
 missing packages separately ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
 where the repository-wide aggregate is not yet a supported local lane, record the test row as

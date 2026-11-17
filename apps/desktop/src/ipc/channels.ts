@@ -149,6 +149,9 @@ export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
+// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
+export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
 // SCIENT-FORK:END
@@ -193,3 +196,13 @@ export const REPORT_WORKSPACE_READY_CHANNEL = "scient:restart:workspace-ready";
 export const PREPARE_UPDATE_SAVE_CHANNEL = "scient:update:prepare-save";
 export const COMPLETE_UPDATE_SAVE_CHANNEL = "scient:update:complete-save";
 export const RELEASE_UPDATE_SAVE_CHANNEL = "scient:update:release-save";
+
+// SCIENT-FORK:START — feedback reports to the Scient team (scient/feedback).
+export const FEEDBACK_PREPARE_CHANNEL = "scient:feedback:prepare";
+export const FEEDBACK_CAPTURE_SCREENSHOT_CHANNEL = "scient:feedback:capture-screenshot";
+export const FEEDBACK_READ_RECENT_LOGS_CHANNEL = "scient:feedback:read-recent-logs";
+export const FEEDBACK_SUBMIT_CHANNEL = "scient:feedback:submit";
+export const FEEDBACK_TAKE_FIXED_NOTICES_CHANNEL = "scient:feedback:take-fixed-notices";
+// SCIENT-FORK:END
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

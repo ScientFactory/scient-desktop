@@ -1,5 +1,4 @@
 export {
-  AnalyticsConsent,
   modelKey,
   type CommandCategory,
   type FailureCategory,
@@ -15,5 +14,6 @@ export {
   createAnalyticsRuntime,
   type AnalyticsRuntime,
   type AnalyticsRuntimeOptions,
+  type RecordedAnalyticsEvent,
 } from "./runtime.ts";
 export type { AnalyticsWorkerInput } from "./workerProtocol.ts";

@@ -15,7 +15,7 @@ const university = {
 const universities = [university];
 const missed = (
   route: "publisher" | "university",
-  reason: "sign-in" | "bot-check" | "paywall",
+  reason: "sign-in" | "bot-check" | "terms" | "paywall",
 ) => ({
   route,
   ...(route === "university" ? { account: university } : {}),
@@ -32,9 +32,12 @@ const tried = (
   rest: {
     missed: Parameters<typeof nextMove>[1]["missed"];
     universities?: ReadonlyArray<AccountSummary>;
+    withheld?: ReadonlyArray<AccountSummary>;
   },
 ) => ({
   universities: [],
+  withheld: [],
+  checked: undefined,
   site,
   lane: laneFor(site),
   ...rest,
@@ -58,20 +61,44 @@ it("asks for a sign-in once, so every paper behind it waits on the same request"
   });
 });
 
-it("reads a bot check as needing a person at that publisher, not as no access", () => {
+it("reads a bot check as needing a person at that publisher, in that profile only", () => {
   expect(
     nextMove(paper, tried("c.org", { missed: [missed("publisher", "bot-check")], universities })),
   ).toMatchObject({
-    needed: { kind: "check", site: "c.org" },
+    needed: { kind: "check", site: "c.org", profileId: "main" },
   });
+  expect([...laneFor("c.org").checks.keys()]).toEqual(["main"]);
 });
 
-it("asks for the university only when none is connected", () => {
+it("holds terms for the affected profile and releases them for a later retry", () => {
+  const outcome = nextMove(
+    paper,
+    tried("ai.nejm.org", { missed: [missed("university", "terms")], universities }),
+  );
+  expect(outcome).toMatchObject({
+    state: "needs-you",
+    needed: { kind: "terms", site: "ai.nejm.org", profileId: "main" },
+  });
+  expect(laneFor("ai.nejm.org").checks.get("main")?.kind).toBe("terms");
+  clearHolds();
+  expect(laneFor("ai.nejm.org").checks.get("main")).toBeUndefined();
+});
+
+it("asks for a university when none is connected, and for access when one is held back", () => {
   expect(
     nextMove(paper, tried("d.org", { missed: [missed("publisher", "paywall")] })),
   ).toMatchObject({
     state: "needs-you",
     needed: { kind: "university" },
+  });
+  expect(
+    nextMove(
+      paper,
+      tried("d.org", { missed: [missed("publisher", "paywall")], withheld: universities }),
+    ),
+  ).toMatchObject({
+    state: "needs-you",
+    needed: { kind: "access", site: "Hebrew University", accountId: university.accountId },
   });
 });
 

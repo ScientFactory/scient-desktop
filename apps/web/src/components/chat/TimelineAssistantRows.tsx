@@ -250,7 +250,10 @@ function AssistantMessageMeta({
       />
       {/* SCIENT-FORK:START — Scient fork V2 replaces upstream's "Fork from this response". */}
       {canForkConversation === true && ctx.onForkAssistantMessage ? (
-        <ScientForkMessageButton onFork={() => ctx.onForkAssistantMessage?.(message.id)} />
+        <ScientForkMessageButton
+          onFork={() => ctx.onForkAssistantMessage?.(message.id)}
+          onForkNewWorktree={() => ctx.onForkAssistantMessage?.(message.id, "new-worktree")}
+        />
       ) : null}
       {/* SCIENT-FORK:END */}
       {!message.streaming && projectedItem ? (

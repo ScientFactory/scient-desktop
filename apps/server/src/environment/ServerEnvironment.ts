@@ -240,9 +240,6 @@ export const make = Effect.gen(function* () {
       inlineMessageContext: true,
       threadQueueMessageContext: true,
       threadQueueExplicitSend: true,
-      // SCIENT-FORK:START
-      queuedRunStart: true,
-      // SCIENT-FORK:END
       requiredWorktreeBootstrap: true,
       threadSettlement: true,
       threadAutoSettlement: true,
@@ -279,6 +276,7 @@ export const make = Effect.gen(function* () {
       threadTitleRegeneration: true,
       threadForkTitleOverride: true,
       threadForkRecovery: true,
+      threadForkOptions: true,
       commandOutputStreaming: true,
       threadVisitedTracking: true,
       threadPullRequests: true,
@@ -318,6 +316,7 @@ export const make = Effect.gen(function* () {
       mcpModeLimitHeader: true,
       linkFence: true,
       mcpApprovalCodes: true,
+      peerLinkPairingCodes: true,
       mcpHostedApproval: true,
       shellThreadFamilies: true,
       shellOlderSettled: true,

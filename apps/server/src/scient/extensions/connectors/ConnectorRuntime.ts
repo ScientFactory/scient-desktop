@@ -125,6 +125,12 @@ import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
 import { makeConnectorLogs } from "./ConnectorLogs.ts";
 import { observeFeature } from "./observedFeature.ts";
+import {
+  connectorChangeEvents,
+  connectorFacts,
+  connectorInventoryEvents,
+  type ExtensionEvent,
+} from "../../../telemetry/ExtensionAnalytics.ts";
 import { callTools, makeLocalConnectorAuthoring } from "./LocalConnectorAuthoring.ts";
 import { type LocalSignInHandler, makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
 import { makeLocalConnectors } from "./LocalConnectors.ts";
@@ -557,7 +563,38 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   >();
   const eligibility = yield* PluginConnectorEligibility;
   const projects = yield* ProjectStoreV2;
-  const store = yield* makeConnectorStateStore(options.stateDir);
+  const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
+  const recordExtensionEvents = (events: ReadonlyArray<ExtensionEvent>) =>
+    analytics === undefined || events.length === 0
+      ? Effect.void
+      : Effect.forEach(
+          events,
+          (event) => analytics.record(event.name, event.properties).pipe(Effect.ignoreCause()),
+          { discard: true },
+        );
+  const savedStore = yield* makeConnectorStateStore(options.stateDir);
+  // Every saved change, from any path (Extensions, agents, plugins, sign-in), says what it did.
+  const store: typeof savedStore = {
+    read: savedStore.read,
+    // The saved before and after travel with the result, so each run reports its own change.
+    update: (transform) =>
+      savedStore
+        .update((current) =>
+          Effect.map(transform(current), ([result, next]) => {
+            const change =
+              next === current ? undefined : ([current.connectors, next.connectors] as const);
+            return [[result, change] as const, next] as const;
+          }),
+        )
+        .pipe(
+          Effect.flatMap(([result, change]) =>
+            change === undefined
+              ? Effect.succeed(result)
+              : recordExtensionEvents(connectorChangeEvents(...change)).pipe(Effect.as(result)),
+          ),
+        ),
+  };
+  yield* recordExtensionEvents(connectorInventoryEvents((yield* store.read).connectors));
   const clock = yield* Clock.Clock;
   const random = yield* SecureRandom.SecureRandom;
   const now = () => clock.currentTimeMillisUnsafe();
@@ -705,7 +742,6 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     if (changed) yield* publishChange;
   });
 
-  const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
   const observed = observeFeature(analytics);
   const logs = yield* makeConnectorLogs(options.stateDir);
   const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
@@ -1992,7 +2028,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     refusedSignIns.delete(connectorId);
   });
 
-  const startSignIn: ConnectorRuntimeShape["startSignIn"] = Effect.fn(
+  const startSignInSteps: ConnectorRuntimeShape["startSignIn"] = Effect.fn(
     "ConnectorRuntime.startSignIn",
   )(function* (input) {
     const callbackOrigin = normalizeCallbackOrigin(input.callbackOrigin);
@@ -2057,13 +2093,32 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     };
   });
 
-  const signInFailed = (displayName: string | undefined, message: string) => ({
-    outcome: "failed" as const,
-    displayName,
-    message,
-  });
+  // OAuth 2.0 authorization error codes (RFC 6749 §4.1.2.1, OIDC); any other is "service_error".
+  const OAUTH_ERROR_CODES = new Set([
+    "invalid_request",
+    "unauthorized_client",
+    "unsupported_response_type",
+    "invalid_scope",
+    "server_error",
+    "temporarily_unavailable",
+    "login_required",
+    "consent_required",
+    "interaction_required",
+  ]);
+  // How each sign-in ended, kept beside its result for the analytics wrapper below.
+  const signInEnds = new WeakMap<object, { record?: ConnectorRecord; reason: string }>();
+  const signInFailed = (
+    displayName: string | undefined,
+    message: string,
+    reason: string,
+    record?: ConnectorRecord,
+  ) => {
+    const result = { outcome: "failed" as const, displayName, message };
+    signInEnds.set(result, { reason, ...(record === undefined ? {} : { record }) });
+    return result;
+  };
 
-  const completeSignIn: ConnectorRuntimeShape["completeSignIn"] = Effect.fn(
+  const completeSignInSteps: ConnectorRuntimeShape["completeSignIn"] = Effect.fn(
     "ConnectorRuntime.completeSignIn",
   )(function* (query) {
     const claimed = query.state === undefined ? undefined : flows.claim(query.state);
@@ -2071,16 +2126,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       return signInFailed(
         undefined,
         "This sign-in link is invalid or has expired. Start sign-in again from Scient.",
+        "expired_link",
       );
     }
     const removedMessage = "This connected service was removed before sign-in finished.";
     const record = yield* findRecord(claimed.connectorId);
     if (record === undefined || record.auth.type !== "oauth" || !isLive(record.connectorId)) {
-      return signInFailed(undefined, removedMessage);
+      return signInFailed(undefined, removedMessage, "removed");
     }
-    const fail = (message: string) =>
+    const fail = (message: string, reason: string) =>
       markStatus(record, record.status, message).pipe(
-        Effect.as(signInFailed(record.displayName, message)),
+        Effect.as(signInFailed(record.displayName, message, reason, record)),
       );
     if (query.error !== undefined) {
       const code = query.error.replace(/[^\w.-]/g, "").slice(0, 64);
@@ -2088,10 +2144,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         code === "access_denied"
           ? "Sign-in was cancelled or denied."
           : `The service could not complete sign-in${code ? ` (${code})` : ""}.`,
+        code === "access_denied"
+          ? "denied"
+          : OAUTH_ERROR_CODES.has(code)
+            ? `service_${code}`
+            : "service_error",
       );
     }
     if (query.code === undefined || query.code.length === 0) {
-      return yield* fail("The service did not return an authorization code.");
+      return yield* fail("The service did not return an authorization code.", "no_code");
     }
     const code = query.code;
     const exchanged = yield* Effect.tryPromise({
@@ -2100,9 +2161,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         isConnectorOAuthError(error) ? error.message : "Sign-in could not be completed.",
     }).pipe(Effect.exit);
     if (Exit.isFailure(exchanged)) {
-      if (!isLive(record.connectorId)) return signInFailed(undefined, removedMessage);
+      if (!isLive(record.connectorId)) return signInFailed(undefined, removedMessage, "removed");
       return yield* fail(
         Option.getOrElse(Exit.findErrorOption(exchanged), () => "Sign-in could not be completed."),
+        "exchange_failed",
       );
     }
     const result = exchanged.value;
@@ -2111,7 +2173,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       // needs a new sign-in whatever its previous status, and the grant is revoked.
       yield* revokeLater(record, result.session);
       yield* markStatus(record, "needs-auth", UNPROTECTABLE_GRANT);
-      return signInFailed(record.displayName, UNPROTECTABLE_GRANT);
+      return signInFailed(record.displayName, UNPROTECTABLE_GRANT, "unprotectable", record);
     }
     // Commit under the lifecycle lock, so a refresh of the previous grant or a
     // disconnect cannot interleave; anything that loses the race is revoked.
@@ -2120,7 +2182,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const current = yield* findRecord(record.connectorId);
         if (current === undefined || current.auth.type !== "oauth" || !isLive(record.connectorId)) {
           yield* revokeLater(record, result.session);
-          return signInFailed(undefined, removedMessage);
+          return signInFailed(undefined, removedMessage, "removed");
         }
         const previousRef = current.auth.credentialRef;
         const stored = yield* readStoredOAuth(current).pipe(Effect.orElseSucceed(() => undefined));
@@ -2146,7 +2208,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }).pipe(Effect.exit);
         if (Exit.isFailure(saved)) {
           yield* revokeLater(record, result.session);
-          return yield* fail("The sign-in could not be saved.");
+          return yield* fail("The sign-in could not be saved.", "save_failed");
         }
         const session = result.session;
         const scopes = session.scope?.split(/\s+/).filter((scope) => scope.length > 0);
@@ -2172,21 +2234,76 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           if (saved.value.ref !== previousRef) {
             yield* credentials.remove(saved.value.ref).pipe(Effect.ignore);
           }
-          return signInFailed(record.displayName, "The sign-in could not be saved.");
+          return signInFailed(
+            record.displayName,
+            "The sign-in could not be saved.",
+            "save_failed",
+            record,
+          );
         }
         if (previousRef !== undefined && previousRef !== saved.value.ref) {
           // The previous entry could not be read, so a new one replaced it.
           yield* credentials.remove(previousRef).pipe(Effect.ignore);
         }
         publishOAuth(record.connectorId, { material, version: saved.value.version });
-        return {
+        const connected = {
           outcome: "connected" as const,
           displayName: record.displayName,
           message: `${record.displayName} is connected. You can close this tab and return to Scient.`,
         };
+        signInEnds.set(connected, { reason: "connected", record });
+        return connected;
       }),
     );
   });
+
+  /** Sign-ins people start, and how each one ended: connected, or why it did not. */
+  const startSignIn: ConnectorRuntimeShape["startSignIn"] = (input) =>
+    findRecord(input.connectorId).pipe(
+      Effect.flatMap((record) =>
+        startSignInSteps(input).pipe(
+          Effect.onExit((exit) =>
+            record === undefined
+              ? Effect.void
+              : recordExtensionEvents([
+                  {
+                    name: "extension.sign_in.started",
+                    properties: {
+                      owner: "scient",
+                      ...connectorFacts(record),
+                      outcome: Exit.isSuccess(exit) ? "ok" : "error",
+                      ...(Exit.isSuccess(exit)
+                        ? {}
+                        : {
+                            failureClass: Option.match(Exit.findErrorOption(exit), {
+                              onNone: () => "unknown",
+                              onSome: (error) => error.reason,
+                            }),
+                          }),
+                    },
+                  },
+                ]),
+          ),
+        ),
+      ),
+    );
+  const completeSignIn: ConnectorRuntimeShape["completeSignIn"] = (query) =>
+    completeSignInSteps(query).pipe(
+      Effect.tap((result) => {
+        const end = signInEnds.get(result);
+        return recordExtensionEvents([
+          {
+            name: "extension.sign_in.finished",
+            properties: {
+              owner: "scient",
+              ...(end?.record === undefined ? {} : connectorFacts(end.record)),
+              outcome: result.outcome === "connected" ? "ok" : "error",
+              reason: (end?.reason ?? "unknown").replace(/[^\w.-]/g, "").slice(0, 64),
+            },
+          },
+        ]);
+      }),
+    );
 
   const test: ConnectorRuntimeShape["test"] = Effect.fn("ConnectorRuntime.test")(function* (input) {
     const record = yield* requireRecord(input.connectorId);
@@ -2506,6 +2623,29 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
               correlationId,
             })
           : Effect.void;
+      // Which connector agents actually use: one event per tool call, with what the agent got.
+      const recordToolCall = (
+        outcome: "ok" | "error" | "denied",
+        detail: { readonly failureClass?: string; readonly httpStatus?: number } = {},
+      ) =>
+        record !== undefined && rpc.method === "tools/call" && rpc.toolName !== undefined
+          ? recordExtensionEvents([
+              {
+                name: "extension.tool.called",
+                properties: {
+                  owner: "scient",
+                  ...connectorFacts(record),
+                  tool: rpc.toolName.slice(0, 128),
+                  outcome,
+                  status: record.status,
+                  ...(request.scope.thread === undefined
+                    ? {}
+                    : { callerProviderInstance: request.scope.thread.providerInstanceId }),
+                  ...detail,
+                },
+              },
+            ])
+          : Effect.void;
       const usable =
         record !== undefined &&
         isLive(record.connectorId) &&
@@ -2513,6 +2653,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         (yield* isPluginEligible(record));
       if (!usable || record.status !== "connected") {
         yield* recordToolUse("denied");
+        yield* recordToolCall("denied", {
+          failureClass: usable
+            ? record.status
+            : record?.enabled === false
+              ? "disabled"
+              : "unavailable",
+        });
         // A sign-in the service refused stays the person's to fix: discovery keeps failing.
         const refused = usable ? standingRefusal(record) : undefined;
         if (refused !== undefined) return credentialRefusal(request, refused);
@@ -2533,11 +2680,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       let upstreamSessionId: string | undefined;
       if (proxySessionId !== undefined) {
         upstreamSessionId = sessions.resolve(proxySessionId, record.connectorId, providerSessionId);
-        if (upstreamSessionId === undefined) return yield* sessionGone(record, request);
+        if (upstreamSessionId === undefined) {
+          yield* recordToolCall("error", { failureClass: "session_gone" });
+          return yield* sessionGone(record, request);
+        }
       }
 
       const permits = semaphoreFor(inFlight, record.connectorId, MAX_IN_FLIGHT_PER_CONNECTOR);
       if (!(yield* Semaphore.takeIfAvailable(permits, 1))) {
+        yield* recordToolCall("error", { failureClass: "busy" });
         return refusal(
           request,
           `${record.displayName} has too many requests in progress. Retry shortly.`,
@@ -2592,6 +2743,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           });
         }
         yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error");
+        yield* recordToolCall("error", { failureClass: outcome.type });
         // A refused key, Source Control token or sign-in is the user's to fix, so the agent's
         // session hears it fail; a connector that is gone or a failed transport meets the empty
         // server.
@@ -2601,6 +2753,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       const response = outcome.response;
       yield* recordToolUse("allowed", response.ok ? "ok" : "error");
+      // A 200 that is not an MCP answer reaches the agent as an error (below), so it is one here.
+      const answerType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      const mcpAnswer =
+        answerType.includes("text/event-stream") || answerType.includes("application/json");
+      yield* recordToolCall(
+        response.ok && mcpAnswer ? "ok" : "error",
+        response.ok
+          ? mcpAnswer
+            ? {}
+            : { failureClass: "not_mcp" }
+          : { failureClass: "http", httpStatus: response.status },
+      );
       const settle = (result: ConnectorForwardResponse) =>
         cancelBody(response).pipe(Effect.andThen(release), Effect.as(result));
 

@@ -31,6 +31,10 @@
       "types": "./src/scientPaperLinks.ts",
       "import": "./src/scientPaperLinks.ts"
     },
+    "./scientJournalIdentity": {
+      "types": "./src/scientJournalIdentity.ts",
+      "import": "./src/scientJournalIdentity.ts"
+    },
     "./scientSignInPage": {
       "types": "./src/scientSignInPage.ts",
       "import": "./src/scientSignInPage.ts"
@@ -506,10 +510,6 @@
     "./scientRelease": {
       "types": "./src/scientRelease.ts",
       "import": "./src/scientRelease.ts"
-    },
-    "./scientQueuedRunSend": {
-      "types": "./src/scientQueuedRunSend.ts",
-      "import": "./src/scientQueuedRunSend.ts"
     },
     "./usageMerge": {
       "types": "./src/usageMerge.ts",

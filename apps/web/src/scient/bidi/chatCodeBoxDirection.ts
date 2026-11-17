@@ -1,4 +1,4 @@
-import { extractFenceTitle } from "../presentation/CodeBlockTitle";
+import { extractFenceTitle } from "~/components/chat/MarkdownCodeBlock.logic";
 import {
   resolveFenceDirection,
   resolvePlainTextBoxDirection,

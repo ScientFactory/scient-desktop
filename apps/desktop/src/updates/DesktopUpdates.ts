@@ -39,6 +39,10 @@ import * as DesktopUpdateSave from "../app/DesktopUpdateSave.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
+// SCIENT-FORK:START — update outcomes and summaries for product analytics.
+import * as DesktopUpdateFacts from "../scient/updateOutcomes/DesktopUpdateFacts.ts";
+import * as DesktopUpdateOutcomes from "../scient/updateOutcomes/DesktopUpdateOutcomes.ts";
+// SCIENT-FORK:END
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
@@ -47,7 +51,10 @@ import {
   releaseNotesOfOfferedVersion,
 } from "./releaseNotes.ts";
 import { isEmptyBetaFeedError, resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
-import { scientDesktopUpdateFeed } from "@t3tools/shared/scientRelease";
+import {
+  scientDesktopRuntimeUpdateFeed,
+  scientDesktopUpdateFeed,
+} from "@t3tools/shared/scientRelease";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -110,8 +117,12 @@ const DesktopUpdateInstallRecord = Schema.fromJsonString(
   Schema.Struct({
     fromVersion: Schema.String,
     targetVersion: Schema.String,
-    // SCIENT-FORK: when the install began, so the next launch can report how long it took.
+    // SCIENT-FORK:START — when the install began, so the next launch can report how long it
+    // took; which attempt it was, and whether that launch's outcome was already recorded.
     startedAt: Schema.optionalKey(Schema.Number),
+    attemptRef: Schema.optionalKey(Schema.String),
+    outcomeReported: Schema.optionalKey(Schema.Boolean),
+    // SCIENT-FORK:END
   }),
 );
 const decodeInstallRecord = Schema.decodeUnknownEffect(DesktopUpdateInstallRecord);
@@ -495,6 +506,87 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
+  // SCIENT-FORK:START — update outcomes and summaries for product analytics.
+  const updateSourceKindRef = yield* Ref.make<DesktopUpdateOutcomes.UpdateSourceKind | undefined>(
+    policy.feedUrl === undefined ? undefined : "administrator",
+  );
+  const outcomes = yield* DesktopUpdateOutcomes.make({
+    facts: yield* Effect.serviceOption(DesktopUpdateFacts.DesktopUpdateFacts),
+    packageKind: DesktopUpdateOutcomes.updatePackageKind({
+      platform: environment.platform,
+      appImage: Option.isSome(config.appImagePath),
+      debPackage: isDebPackage,
+    }),
+    sourceKind: Ref.get(updateSourceKindRef),
+    policyOff: policy.mode === "off",
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient's mirror with GitHub, where every release is published, behind it.
+  // The channel whose Scient feed is selected; none while an administrator's feed or mocks decide.
+  const scientFeedChannelRef = yield* Ref.make(Option.none<DesktopUpdateChannel>());
+  // After the mirror fails a download, the rest of this run updates from GitHub.
+  const mirrorSkippedRef = yield* Ref.make(false);
+  // electron-updater downloads from the feed its last answered check used, so after the mirror
+  // fails a download, GitHub must answer a check before the next download leaves the mirror.
+  const gitHubCheckOwedRef = yield* Ref.make(false);
+  const useScientFeed = Effect.fn("desktop.updates.useScientFeed")(function* (
+    channel: DesktopUpdateChannel,
+    source: "mirror" | "github",
+  ) {
+    const feed =
+      source === "mirror"
+        ? scientDesktopRuntimeUpdateFeed(channel)
+        : scientDesktopUpdateFeed(channel);
+    yield* electronUpdater.setFeedURL(feed);
+    // Outcomes read the feed actually selected, including after a track switch or a fallback.
+    yield* Ref.set(
+      updateSourceKindRef,
+      DesktopUpdateOutcomes.updateSourceKind({
+        administratorFeed: false,
+        defaultProvider: feed.provider,
+      }),
+    );
+  });
+  const mirrorChannel = Effect.map(Ref.get(scientFeedChannelRef), (channel) =>
+    Option.filter(channel, (value) => scientDesktopRuntimeUpdateFeed(value).provider === "generic"),
+  );
+  // One check: the mirror first, then GitHub when the mirror fails or was skipped.
+  const checkWithGitHubFallback = Effect.gen(function* () {
+    const channel = yield* mirrorChannel;
+    if (Option.isNone(channel)) return yield* electronUpdater.checkForUpdates;
+    if (!(yield* Ref.get(mirrorSkippedRef))) {
+      yield* useScientFeed(channel.value, "mirror");
+      const answered = yield* electronUpdater.checkForUpdates.pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          ElectronUpdaterCheckForUpdatesError: (error) =>
+            logUpdaterWarning("update mirror check failed; checking GitHub", {
+              cause: describeUpdateErrorCause(error.cause),
+            }).pipe(Effect.as(false)),
+        }),
+      );
+      if (answered) return;
+    }
+    yield* useScientFeed(channel.value, "github");
+    const result = yield* electronUpdater.checkForUpdates;
+    yield* Ref.set(gitHubCheckOwedRef, false);
+    return result;
+  });
+  const gitHubCheckOwed = Effect.gen(function* () {
+    if (Option.isNone(yield* mirrorChannel)) return false;
+    return yield* Ref.get(gitHubCheckOwedRef);
+  });
+  // A download the mirror failed leaves the next checks and downloads to GitHub.
+  const skipMirrorAfterDownloadFailure = Effect.gen(function* () {
+    if (Option.isNone(yield* mirrorChannel)) return;
+    if ((yield* Ref.get(updateSourceKindRef)) !== "scient_mirror") return;
+    yield* Ref.set(mirrorSkippedRef, true);
+    yield* Ref.set(gitHubCheckOwedRef, true);
+    yield* logUpdaterWarning("update mirror download failed; using GitHub for this run");
+  });
+  // SCIENT-FORK:END
+
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
     Effect.map(
       (appUpdateYmlConfig) =>
@@ -588,9 +680,10 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "beta";
-    // SCIENT-FORK: an administrator's mirror stays the update source on every channel.
+    // SCIENT-FORK: Stable/Beta use Scient's mirror; an administrator's feed wins on every channel.
     if (!config.mockUpdates && policy.feedUrl === undefined) {
-      yield* electronUpdater.setFeedURL(scientDesktopUpdateFeed(channel));
+      yield* Ref.set(scientFeedChannelRef, Option.some(channel));
+      yield* useScientFeed(channel, (yield* Ref.get(mirrorSkippedRef)) ? "github" : "mirror");
     }
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
@@ -611,7 +704,8 @@ export const make = Effect.gen(function* () {
   ) {
     const restoreDowngrade = yield* electronUpdater.allowDowngrade;
     if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
-    return yield* electronUpdater.checkForUpdates.pipe(
+    // SCIENT-FORK: a mirror that cannot answer leaves the check to GitHub.
+    return yield* checkWithGitHubFallback.pipe(
       Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
     );
   });
@@ -645,9 +739,13 @@ export const make = Effect.gen(function* () {
         yield* setState(reduceDesktopUpdateStateOnCheckStart(state, yield* currentIsoTimestamp));
       }
       yield* logUpdaterInfo("checking for updates", { reason });
+      // SCIENT-FORK: one outcome per check.
+      yield* outcomes.checkStarted(reason);
 
       return yield* runUpdaterCheck(allowDowngrade).pipe(
         Effect.as(true),
+        // SCIENT-FORK: the updater's events applied the check's result before it resolved.
+        Effect.tap(() => Ref.get(updateStateRef).pipe(Effect.flatMap(outcomes.checkFinished))),
         Effect.catchTags({
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
             "desktop.updates.handleCheckForUpdatesFailure",
@@ -658,12 +756,16 @@ export const make = Effect.gen(function* () {
                 reduceDesktopUpdateStateOnNoUpdate(current, checkedAt),
               );
               yield* logUpdaterInfo("no beta releases published yet");
+              // SCIENT-FORK: an empty Beta feed is a completed check.
+              yield* outcomes.checkFinished(yield* Ref.get(updateStateRef));
               return true;
             }
             const failedAt = yield* currentIsoTimestamp;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnCheckFailure(current, error.message, failedAt),
             );
+            // SCIENT-FORK: the rejected check, not the updater's matching error event, is its outcome.
+            yield* outcomes.checkFailed(error.cause);
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               cause: describeUpdateErrorCause(error.cause),
@@ -712,8 +814,11 @@ export const make = Effect.gen(function* () {
 
     const offered = yield* Ref.get(updateStateRef);
     let state = offered;
+    // SCIENT-FORK: electron-updater downloads from the feed its last answered check used, so a
+    // retry after a failed mirror download first finds the update on GitHub, until GitHub answers.
+    const refreshFromGitHub = !refresh && (yield* gitHubCheckOwed);
     return yield* Effect.gen(function* () {
-      if (refresh) {
+      if (refresh || refreshFromGitHub) {
         // electron-updater downloads what its last check found, which can be hours old.
         yield* logUpdaterInfo("checking for updates", { reason: "download" });
         // SCIENT-FORK: Scient's channels (with Beta) come from its own version parser.
@@ -733,11 +838,15 @@ export const make = Effect.gen(function* () {
         return { accepted: true, completed: false };
       }
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
+      // SCIENT-FORK: a download that never ends still counts as started.
+      yield* outcomes.downloadStarted(state.availableVersion);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
       yield* logUpdaterInfo("downloading update");
       yield* electronUpdater.downloadUpdate;
+      // SCIENT-FORK: one outcome per download.
+      yield* outcomes.downloadCompleted;
       return { accepted: true, completed: true };
     }).pipe(
       Effect.catchTags({
@@ -747,6 +856,10 @@ export const make = Effect.gen(function* () {
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(current, `${error.message} ${cause}`),
             );
+            // SCIENT-FORK: one outcome per download.
+            yield* outcomes.downloadFailed(error.cause);
+            // SCIENT-FORK: the next attempt downloads from GitHub.
+            yield* skipMirrorAfterDownloadFailure;
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               cause,
@@ -770,6 +883,8 @@ export const make = Effect.gen(function* () {
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
           );
+          // SCIENT-FORK: one outcome per download.
+          yield* outcomes.downloadFailed(error);
           yield* logUpdaterError(error.message, {
             errorTag: error._tag,
             cause: describeUpdateErrorCause(error.cause),
@@ -818,7 +933,9 @@ export const make = Effect.gen(function* () {
           continue;
         }
         // A retry refreshes the feed before trusting a cached archive again.
-        const result = yield* downloadAvailableUpdate(Option.isSome(backoff));
+        const result = yield* downloadAvailableUpdate(Option.isSome(backoff)).pipe(
+          Effect.provideService(DesktopUpdateOutcomes.CurrentUpdateTrigger, "background"),
+        );
         if (result.completed) {
           yield* Ref.set(autoDownloadBackoffRef, Option.none());
           return;
@@ -928,16 +1045,26 @@ export const make = Effect.gen(function* () {
     updateRestartMarkerDir,
     DESKTOP_UPDATE_INSTALL_RECORD_FILE,
   );
-  const writeInstallRecord = (targetVersion: string) =>
-    Clock.currentTimeMillis.pipe(
-      Effect.flatMap((startedAt) =>
-        encodeInstallRecord({ fromVersion: environment.appVersion, targetVersion, startedAt }),
-      ),
+  // SCIENT-FORK:START — the record also names the install attempt.
+  const saveInstallRecord = (record: typeof DesktopUpdateInstallRecord.Type) =>
+    encodeInstallRecord(record).pipe(
       Effect.flatMap((text) => fileSystem.writeFileString(installRecordPath, text)),
       Effect.catch((error) =>
         logUpdaterWarning("Could not record the update install.", { errorTag: error._tag }),
       ),
     );
+  const writeInstallRecord = (targetVersion: string, attemptRef: string | undefined) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((startedAt) =>
+        saveInstallRecord({
+          fromVersion: environment.appVersion,
+          targetVersion,
+          startedAt,
+          ...(attemptRef === undefined ? {} : { attemptRef }),
+        }),
+      ),
+    );
+  // SCIENT-FORK:END
   const removeInstallRecord = fileSystem
     .remove(installRecordPath, { force: true })
     .pipe(Effect.ignore);
@@ -960,12 +1087,31 @@ export const make = Effect.gen(function* () {
           ),
         )
       : Effect.void;
+  // A record that did not apply stays for the next launch's notice, so it is reported once.
+  const reportInstall = (record: typeof DesktopUpdateInstallRecord.Type) =>
+    logAppliedInstall(record).pipe(
+      Effect.andThen(
+        record.outcomeReported === true
+          ? Effect.void
+          : outcomes
+              .applied(record, environment.appVersion)
+              .pipe(
+                Effect.andThen(
+                  DesktopUpdateOutcomes.applyOutcome(record, environment.appVersion) ===
+                    "not-applied"
+                    ? saveInstallRecord({ ...record, outcomeReported: true })
+                    : Effect.void,
+                ),
+              ),
+      ),
+    );
   // SCIENT-FORK:END
 
   const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
     Effect.flatMap(decodeInstallRecord),
     Effect.option,
-    Effect.tap((record) => (Option.isSome(record) ? logAppliedInstall(record.value) : Effect.void)),
+    // SCIENT-FORK: the outcome of the install a previous run handed over.
+    Effect.tap((record) => (Option.isSome(record) ? reportInstall(record.value) : Effect.void)),
     Effect.map((record) =>
       Option.flatMap(record, (value) =>
         Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
@@ -1169,7 +1315,13 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
-          if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
+          // SCIENT-FORK: the install attempt starts with its record.
+          if (downloadedVersion !== null) {
+            yield* writeInstallRecord(
+              downloadedVersion,
+              yield* outcomes.installStarted(downloadedVersion),
+            );
+          }
           // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
@@ -1191,6 +1343,8 @@ export const make = Effect.gen(function* () {
             { concurrency: "unbounded" },
           );
           yield* restartTiming.nativeHandoff;
+          // SCIENT-FORK: the installer may end this process before anything else is recorded.
+          yield* outcomes.installHandoff;
           yield* electronUpdater.quitAndInstall({
             expectedVersion: targetVersion,
             isSilent: true,
@@ -1211,6 +1365,8 @@ export const make = Effect.gen(function* () {
             }),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
+                // SCIENT-FORK: one outcome per install, however many paths report its failure.
+                yield* outcomes.installFailed(error.cause);
                 yield* recoverFailedInstall(error.message);
                 yield* logUpdaterError(error.message, {
                   errorTag: error._tag,
@@ -1230,6 +1386,8 @@ export const make = Effect.gen(function* () {
                 return yield* Effect.failCause(cause);
               }
               const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
+              // SCIENT-FORK: one outcome per install, however many paths report its failure.
+              yield* outcomes.installFailed(error);
               yield* recoverFailedInstall(error.message);
               yield* logUpdaterError(error.message, {
                 errorTag: error._tag,
@@ -1313,10 +1471,10 @@ export const make = Effect.gen(function* () {
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
       Effect.andThen(checkForUpdates("poll")),
-      Effect.forever,
+      // SCIENT-FORK:START — an unexpected failure ends one poll, not polling.
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.void;
+          return Effect.failCause(cause);
         }
         const error = new DesktopUpdatePollerError({ poller: "poll", cause });
         return logUpdaterError(error.message, {
@@ -1325,6 +1483,8 @@ export const make = Effect.gen(function* () {
           poller: error.poller,
         });
       }),
+      Effect.forever,
+      // SCIENT-FORK:END
       Effect.forkScoped,
     );
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
@@ -1416,6 +1576,8 @@ export const make = Effect.gen(function* () {
     // The awaited preparation owns its error and recovery; a duplicate native event cannot release its lease.
     if (yield* Ref.get(nativePreparingRef)) return;
     if (Option.isSome(activeAction) && activeAction.value === "install") {
+      // SCIENT-FORK: installers report failure here; one outcome per install.
+      yield* outcomes.installFailed(cause);
       yield* recoverFailedInstall(error.message);
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
@@ -1552,6 +1714,19 @@ export const make = Effect.gen(function* () {
 
       const appUpdateYmlConfig = yield* readAppUpdateYml;
       yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+      // SCIENT-FORK: before runtime selection, the packaged feed is the active default.
+      const packagedProvider = Option.isSome(appUpdateYmlConfig)
+        ? appUpdateYmlConfig.value.provider
+        : undefined;
+      if (!mockUpdates && policy.feedUrl === undefined && packagedProvider !== undefined) {
+        yield* Ref.set(
+          updateSourceKindRef,
+          DesktopUpdateOutcomes.updateSourceKind({
+            administratorFeed: false,
+            defaultProvider: packagedProvider,
+          }),
+        );
+      }
 
       const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);
@@ -1588,6 +1763,12 @@ export const make = Effect.gen(function* () {
           Option.orElse(disabledReason, () => channelBlockedReason(settings.updateChannel)),
         ),
       );
+      // SCIENT-FORK:START — summaries for the app's lifetime, also when updates are off.
+      const summaryChanges = yield* PubSub.subscribe(stateChanges);
+      yield* outcomes
+        .summaries(yield* Ref.get(updateStateRef), Stream.fromSubscription(summaryChanges))
+        .pipe(Effect.forkScoped);
+      // SCIENT-FORK:END
       if (Option.isSome(disabledReason)) {
         return;
       }

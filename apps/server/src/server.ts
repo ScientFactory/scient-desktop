@@ -70,6 +70,9 @@ import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewG
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { launchV2AnalyticsEventObservers } from "./telemetry/AnalyticsEventObserversV2.ts";
+// SCIENT-FORK: page loads in the built-in browser.
+import * as BrowserPageAnalytics from "./telemetry/BrowserPageAnalytics.ts";
+import * as ScientAnalytics from "./telemetry/ScientAnalytics.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderUsageAnalytics from "./telemetry/ProviderUsageAnalytics.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -239,7 +242,7 @@ import * as RunFinalizationService from "./orchestration-v2/RunFinalizationServi
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
-import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
+import { closeNonPrivateNetworkConnections, loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -259,6 +262,10 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
+import { libraryIndexWarmLayer } from "./scient/sources/LibraryIndexWarm.ts";
+import { paperQueueRecoveryLayer } from "./scient/papers/PaperQueueRecovery.ts";
+import { libraryMovePassLayer } from "./scient/sources/LibraryMovePass.ts";
+import { finishLibraryRestoreAtStart } from "./scient/sources/LibraryRestoreRuns.ts";
 // SCIENT-FORK:START — generated-image temp files a crash left behind.
 import { generatedImageTempSweepLayer } from "./generatedImageAttachments.ts";
 // SCIENT-FORK:END
@@ -416,17 +423,14 @@ const layerHttpServer = Layer.unwrap(
       privateNetworkOnly: config.privateNetworkOnly,
     });
     yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
           keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
         );
         if (config.privateNetworkOnly) {
-          server.on("connection", (socket) => {
-            if (!acceptsPrivateNetworkConnection(socket)) {
-              socket.destroy();
-            }
-          });
+          runSync(closeNonPrivateNetworkConnections(server));
         }
         return server;
       },
@@ -891,16 +895,25 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
+// SCIENT-FORK:START — Scient's first-party analytics replaces T3's PostHog layer
+/** The analytics the server composes; T3's PostHog layer is never built. */
+export const layerAnalytics = ScientAnalytics.layer satisfies Layer.Layer<
+  AnalyticsService.AnalyticsService,
+  unknown,
+  unknown
+>;
+// SCIENT-FORK:END
+
 const layerRuntimeBaseDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
-  // Scient's first-party analytics runtime is disabled by default. Activation
-  // remains a separately reviewed product/privacy decision.
   // Layers memoize by reference, so this is the same policy the settings layer reads.
-  Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),
+  // SCIENT-FORK:START — Scient's first-party analytics replaces T3's PostHog layer
+  Layer.provideMerge(layerAnalytics.pipe(Layer.provide(ManagedPolicy.layer))),
+  // SCIENT-FORK:END
   Layer.provideMerge(GeneratedDocumentStore.layer.pipe(Layer.provide(layerServerEnvironment))),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
@@ -918,6 +931,8 @@ const layerRuntimeDependencies = Layer.mergeAll(
   Layer.effectDiscard(launchV2AnalyticsEventObservers).pipe(
     Layer.provide(layerRuntimeBaseDependencies),
   ),
+  // SCIENT-FORK: page loads in the built-in browser, for people and agents.
+  BrowserPageAnalytics.layer.pipe(Layer.provide(layerRuntimeBaseDependencies)),
 );
 
 const layerCommandReadiness = HttpRouter.middleware(
@@ -968,6 +983,9 @@ export const layerMakeRoutes = Layer.mergeAll(
     wordDiagramRequestBodyLayer,
     scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
+    libraryMovePassLayer,
+    libraryIndexWarmLayer,
+    paperQueueRecoveryLayer,
     // SCIENT-FORK:START — generated-image temp files a crash left behind.
     generatedImageTempSweepLayer,
     // SCIENT-FORK:END
@@ -1030,6 +1048,9 @@ const layerMakeServer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     // Before anything opens the database: one server per T3 home.
     const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
+    // SCIENT-FORK:START — a Library backup that waits to be restored takes the Library's place now, while nothing else can touch it.
+    yield* finishLibraryRestoreAtStart(config.stateDir);
+    // SCIENT-FORK:END
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);

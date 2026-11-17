@@ -94,6 +94,7 @@ export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 const isTurnStartError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
+const OPENCODE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 
 const makeOpenCodeMessageId = Effect.fnUntraced(function* (
   clock: Ref.Ref<{ readonly epochMillis: number; readonly counter: number }>,
@@ -2926,7 +2927,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // Native aborts target the whole session, so replacement admission waits for all cleanup.
         const cleanupSessionWork = Effect.fn("OpencodeAdapter.cleanupSessionWork")(function* (
           state: OpenCodeThreadState,
-          rootAbort: Effect.Effect<unknown, Effect.Error<ReturnType<typeof abortRootSession>>>,
+          rootAbort: Effect.Effect<
+            unknown,
+            | Effect.Error<ReturnType<typeof abortRootSession>>
+            | ProviderAdapter.ProviderAdapterInterruptTimeoutError
+          >,
         ) {
           const root = yield* rootAbort.pipe(Effect.result);
           const descendants = yield* abortDescendants(state.nativeSessionId).pipe(Effect.result);
@@ -3739,6 +3744,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             sessionID: string;
           },
           abortController: AbortController,
+          messageText: string,
         ) {
           const { variant, ...payloadWithoutVariant } = inputPayload;
           const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
@@ -3752,12 +3758,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...payloadWithoutVariant,
             ...(selectedVariant === undefined ? {} : { variant: selectedVariant }),
           };
-          const text = payload.parts
-            ?.filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n")
-            .trim();
-          const match = text?.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
+          const match = messageText.trim().match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
           const command = match
             ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
                 Effect.timeout("10 seconds"),
@@ -4206,6 +4207,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                turnInput.message.text,
               ).pipe(
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
@@ -4359,6 +4361,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                steerInput.message.text,
               ).pipe(
                 Effect.tapError((error) => {
                   if (!promptAdmissionIsCurrent(state, turn, generation)) return Effect.void;
@@ -4452,7 +4455,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
                       client.session.abort({ sessionID: sessionId }, { signal }),
                     ).pipe(
-                      Effect.timeout("10 seconds"),
+                      Effect.timeoutOrElse({
+                        duration: OPENCODE_STOP_CONFIRM_TIMEOUT_MS,
+                        orElse: () =>
+                          Effect.fail(
+                            new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                              driver: OPENCODE_PROVIDER,
+                              providerThreadId: interruptInput.providerThread.id,
+                              providerTurnId: interruptInput.providerTurnId,
+                              timeoutMs: OPENCODE_STOP_CONFIRM_TIMEOUT_MS,
+                            }),
+                          ),
+                      }),
                       Effect.catch((cause) =>
                         turn.finalized
                           ? Effect.void
@@ -4468,14 +4482,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             },
             (effect, interruptInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterInterruptError({
-                      driver: OPENCODE_PROVIDER,
-                      providerThreadId: interruptInput.providerThread.id,
-                      providerTurnId: interruptInput.providerTurnId,
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterInterruptTimeoutError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterInterruptError({
+                        driver: OPENCODE_PROVIDER,
+                        providerThreadId: interruptInput.providerThread.id,
+                        providerTurnId: interruptInput.providerTurnId,
+                        cause,
+                      }),
                 ),
               ),
           ),

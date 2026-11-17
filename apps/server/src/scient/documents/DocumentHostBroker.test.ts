@@ -75,7 +75,7 @@ it.effect.each(
     const render = documents.invoke({
       scope,
       operation: "documentPdfRender",
-      input: { assetRelativeUrl: "/api/document-source/test" },
+      input: { assetRelativeUrl: "/api/assets/token/index.html" },
     });
     if (order === "browser-first") {
       yield* browse;

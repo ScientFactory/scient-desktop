@@ -34,6 +34,7 @@ import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite
 import { ServerConfig } from "../../config.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -327,7 +328,7 @@ it.effect(
       assert.deepEqual(yield* forks.getOptions(command), available);
       yield* assertNoDestination;
       yield* fs.writeFile(sourcePath!, evidenceBytes);
-      const receipt = yield* forks.dispatch(command);
+      const receipt = yield* forkConversation(command);
       const target = yield* orchestrator.getThreadProjection(command.newThreadId);
       assert.equal(target.thread.forkLineage?.originThreadId, threadId);
       assert.equal(
@@ -352,7 +353,7 @@ it.effect(
       assert.equal(target.thread.sectionId, ThreadSectionId.make("section:research"));
       // A guest invited to the source must never resolve to the fork.
       assert.isNull(target.thread.guestShare);
-      assert.equal(target.thread.conversationFork?.status, "ready");
+      assert.equal((yield* conversationForkOf(target.thread.id))?.status, "ready");
       assert.equal(target.thread.forkedFrom, null);
       assert.equal(target.runs.length, 0);
       assert.equal(target.providerThreads.length, 0);
@@ -408,7 +409,7 @@ it.effect(
       );
       assert.equal(anchored.items[0]?.visibility, "inherited");
 
-      assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+      assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
 
       // Native rollback hides only fork-local runs. The inherited prefix is
       // owned by the fork and must survive returning to zero local turns.
@@ -522,7 +523,7 @@ it.effect(
       assert.ok(archivedShells.archivedThreads.some((thread) => thread.id === command.newThreadId));
 
       const runningTarget = ThreadId.make("thread:running-fork");
-      yield* forks.dispatch({
+      yield* forkConversation({
         ...command,
         commandId: CommandId.make("running-fork-command"),
         newThreadId: runningTarget,
@@ -545,7 +546,7 @@ it.effect(
       );
 
       const userTarget = ThreadId.make("thread:user-fork");
-      yield* forks.dispatch({
+      yield* forkConversation({
         ...command,
         commandId: CommandId.make("user-fork-command"),
         newThreadId: userTarget,
@@ -570,7 +571,7 @@ it.effect(
       )?.item;
       assert.ok(inheritedAssistant?.type === "assistant_message");
       const descendant = ThreadId.make("thread:fork-of-fork");
-      yield* forks.dispatch({
+      yield* forkConversation({
         ...command,
         originThreadId: command.newThreadId,
         newThreadId: descendant,
@@ -598,7 +599,7 @@ it.effect(
       )?.item;
       assert.ok(unsectionedAnswer?.type === "assistant_message");
       const unsectionedTarget = ThreadId.make("thread:unsectioned-fork");
-      yield* forks.dispatch({
+      yield* forkConversation({
         ...command,
         originThreadId: userTarget,
         newThreadId: unsectionedTarget,
@@ -635,7 +636,7 @@ it.effect(
         (yield* orchestrator.getThreadProjection(command.newThreadId)).messages[1]?.text,
         "Answer",
       );
-      assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+      assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
       const afterDelete = yield* store.getTimelinePage(command.newThreadId, {
         itemId: boundary.item.id,
         limit: 1,
@@ -677,6 +678,6 @@ it.effect(
       assert.ok(rebuiltShell);
       assert.deepEqual(rebuiltShell.forkLineage, originalLineage);
       yield* assertForkShellCounts;
-      assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+      assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
     }).pipe(Effect.provide(layer)),
 );

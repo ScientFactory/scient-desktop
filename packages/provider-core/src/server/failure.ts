@@ -116,10 +116,17 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         // A refused native turn left the session intact, and its adapter wrote and redacted the reason.
-        case "NativeSessionOperationError":
+        case "NativeSessionOperationError": {
           if ((cause as Record<string, unknown>).breaksSession === false)
             return { known: stringField(cause, "message"), category: categoryMessage() };
+          // Beneath the generic open wrapper, the adapter's redacted reason names what failed.
+          const detail = stringField(cause, "message")?.replace(/[\s.]+$/u, "");
+          if (category === PROVIDER_FAILURE_CATEGORIES.ProviderAdapterOpenSessionError && detail) {
+            reason = detail;
+            return { known: categoryMessage(), category: categoryMessage() };
+          }
           break;
+        }
         // SCIENT-FORK:END
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
@@ -135,6 +142,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
         case "ClaudeCodeRootRefusalError":
+        case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":
@@ -170,6 +178,14 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         }
+        // ACP reserves -32000 for auth_required; the agent's own text is not shown.
+        case "AcpRequestError":
+          if ((cause as Record<string, unknown>).code !== -32000) break;
+          return {
+            known:
+              "The provider needs you to sign in. Sign in from its provider settings or with its own CLI or app, then retry the turn.",
+            category: categoryMessage(),
+          };
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:

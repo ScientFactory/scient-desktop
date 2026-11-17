@@ -14,24 +14,9 @@ import {
   queueSubmissionId,
   acknowledgeQueueSubmission,
   composerSubmissionMatchesDraft,
-  consumeExtractedSubmission,
-  type ExtractedSubmissionPacket,
 } from "../../scient/threadQueue/submission";
-import {
-  beginExtractedSubmission,
-  extractedIntentActionErrors,
-  prepareAndBindExtractedSubmission,
-  retireAcknowledgedExtractedDraft,
-} from "../../scient/threadQueue/extractedIntentSend";
-import type { ExtractedIntentRecord } from "../../scient/threadQueue/editJournal";
-import {
-  finishQueueEdit,
-  flushQueueEdit,
-  useQueueEditSessions,
-  prepareExtractedDraftIntent,
-} from "../../scient/threadQueue/editSession";
 import { composerTargetKey } from "../../composerDraftStore";
-import { CommandId, PlanId } from "@t3tools/contracts";
+import { CommandId } from "@t3tools/contracts";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { isStandaloneForkSlashCommand } from "../../composer-logic";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -45,8 +30,6 @@ import { flushComposerDraftPersistence } from "../../composerDraftStore";
 // SCIENT-FORK: thread rooms.
 import { useRoomComposerPost } from "../../scient/room/roomComposer";
 import { composerSendIsForPeople } from "../../scient/room/roomComposerRouting";
-
-import { assertQueueEditSelectionProvenance } from "../../scient/threadQueue/composerSnapshot";
 
 import {
   mergeDirectPreviewAnnotation,
@@ -85,6 +68,14 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+// SCIENT-FORK:START — `/feedback` sends feedback to the Scient team.
+import { feedbackAvailable } from "../../scient/feedback/FeedbackDialog";
+import { requestFeedback } from "../../scient/feedback/feedbackStore";
+import {
+  codexOpenAiFeedbackText,
+  parseScientFeedbackCommand,
+} from "../../scient/feedback/feedbackSlashCommand";
+// SCIENT-FORK:END
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useLayoutEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -173,7 +164,8 @@ import type { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjec
 import type { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import type { LocalDispatchActions } from "./useLocalDispatchState";
 import type { PendingThreadSendState } from "./usePendingThreadRequests";
-import type { useTimelineFollow } from "./useTimelineFollow";
+import type { useQueuedRunEdit } from "./useQueuedRunEdit";
+import type { useReadingFollow } from "./useReadingFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
 
@@ -190,11 +182,9 @@ function draftHasNonPromptContent(target: ComposerThreadTarget) {
 
 type DraftEnvironmentRouting = ReturnType<typeof useDraftEnvironmentRouting>;
 type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
-type TimelineFollow = ReturnType<typeof useTimelineFollow>;
+type TimelineFollow = ReturnType<typeof useReadingFollow>;
 
 export interface ComposerSendInput {
-  readonly queueEditsReady: boolean;
-  readonly queueContextKeyRef: { readonly current: string | null };
   readonly serverProjection: ThreadStructure | null;
   readonly hasHeldQueuedRuns: boolean;
   readonly onForkConversation: () => void;
@@ -229,6 +219,7 @@ export interface ComposerSendInput {
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly promptRef: { current: string };
   readonly feedbackUploadsInFlightRef: { readonly current: Set<string> };
+  readonly queuedRunEdit: ReturnType<typeof useQueuedRunEdit>;
   readonly isRevertingCheckpoint: boolean;
   readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
@@ -291,8 +282,8 @@ export interface ComposerSendInput {
 }
 
 /**
- * Recovery may yield or replace the draft. A send keeps its captured context and
- * only consumes that draft after an admission receipt.
+ * A send captures its context before it yields. The draft clears when its optimistic message
+ * shows and comes back if the send fails.
  */
 export function useComposerSend(input: ComposerSendInput) {
   const {
@@ -321,6 +312,7 @@ export function useComposerSend(input: ComposerSendInput) {
     composerDraftTarget,
     promptRef,
     feedbackUploadsInFlightRef,
+    queuedRunEdit,
     isRevertingCheckpoint,
     threadDetailLoading,
     activeEnvironmentUnavailable,
@@ -364,8 +356,6 @@ export function useComposerSend(input: ComposerSendInput) {
     linkCheckoutPullRequest,
   } = input;
   const {
-    queueEditsReady,
-    queueContextKeyRef,
     serverProjection,
     hasHeldQueuedRuns,
     onForkConversation,
@@ -485,8 +475,6 @@ export function useComposerSend(input: ComposerSendInput) {
   };
   // SCIENT-FORK:END
 
-  // A follow-up returns its durable admission identity so only an accepted send
-  // retires a queue edit and clears its matching draft.
   const onSend = useStableCallback(
     async (
       e?: { preventDefault: () => void },
@@ -505,17 +493,13 @@ export function useComposerSend(input: ComposerSendInput) {
       const pendingApprovalIdsAtSend = pendingApprovalsRef.current.map(
         (approval) => approval.requestId,
       );
-      // SCIENT-FORK:START — the composer's queue edit, reading position and direct prompt are
-      // captured before any await.
+      // SCIENT-FORK:START — the reading position and direct prompt are captured before any await.
       const directPrompt = options?.directPrompt?.trim() || null;
-      let queueEdit =
-        directPrompt === null
-          ? useQueueEditSessions.getState().sessions[composerTargetKey(composerDraftTarget)]
-          : undefined;
       const readingPositionAtSend = captureSendReadingPosition();
       // SCIENT-FORK:END
+      // A direct prompt sends only its own text, so it never saves the queued message being edited.
+      const savesQueuedEdit = queuedRunEdit.isEditing && directPrompt === null;
       if (
-        !useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.extractedIntent &&
         usageLimitsOffered &&
         usageLimitsKey !== null &&
         !directAnnotation &&
@@ -536,23 +520,9 @@ export function useComposerSend(input: ComposerSendInput) {
       const sendCtx = composerRef.current?.getSendContext();
       // `/side` beats an open question and a plan follow-up, which would send the text to main.
       const sideChatCommand =
-        sendCtx && !directAnnotation && directPrompt === null && !queueEdit
+        sendCtx && !directAnnotation && directPrompt === null && !queuedRunEdit.isEditing
           ? parseSideChatCommand(promptAtSend)
           : null;
-      // SCIENT-FORK:START — a queue edit keeps its message in this thread, so `/side` would
-      // send it to main.
-      if (queueEdit && sendCtx && !directAnnotation && parseSideChatCommand(promptAtSend)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Queued message not updated",
-            description:
-              "A queued message can't move to a side chat. Remove /side or /btw to save it.",
-          }),
-        );
-        return;
-      }
-      // SCIENT-FORK:END
       const answeringQuestion =
         Boolean(activePendingUserInput) && sendCtx?.answeringPendingUserInput !== false;
       const startsSideChat =
@@ -579,7 +549,6 @@ export function useComposerSend(input: ComposerSendInput) {
       if (
         !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
         !activeThread ||
-        !queueEditsReady ||
         isRevertingCheckpoint ||
         !clientSettingsHydrated ||
         threadDetailLoading ||
@@ -679,58 +648,9 @@ export function useComposerSend(input: ComposerSendInput) {
       const steerRequested =
         options?.steer === true ||
         (dispatchMode === "steer" && (sendCtx?.shownPendingApprovalIds.length ?? 0) > 0);
-      // SCIENT-FORK:START — an extracted queue intent is retried or bound before this send, and a
-      // queue edit is flushed; both settle before the send continues.
       sendInFlightRef.current = true;
       await (async () => {
         try {
-          const intakeResult = await settlePromise(() =>
-            beginExtractedSubmission({
-              target: composerDraftTarget,
-              queueEdit,
-              hasSeparateAction: () => Boolean(steerRequested || directAnnotation || directPrompt),
-              dispatch: startThreadTurn,
-              onDraftCleared: () => {
-                if (currentRouteThreadKeyRef.current === routeThreadKey) {
-                  promptRef.current = "";
-                  composerRef.current?.resetCursorState();
-                }
-              },
-            }),
-          );
-          if (intakeResult._tag === "Failure") {
-            setThreadError(
-              activeThread.id,
-              chatActionErrorMessage(squashAtomCommandFailure(intakeResult)),
-            );
-            return;
-          }
-          let extractedIntent: ExtractedIntentRecord | undefined = intakeResult.value.intent;
-          const retryResult = intakeResult.value.retryResult;
-          if (retryResult) {
-            if (retryResult._tag === "Failure") {
-              setThreadError(
-                activeThread.id,
-                chatActionErrorMessage(squashAtomCommandFailure(retryResult)),
-              );
-            }
-            return;
-          }
-          if (!isCurrentDraft()) return;
-          if (queueEdit && !queueEdit.transferred) {
-            const editToFlush = queueEdit;
-            const flushResult = await settlePromise(() => flushQueueEdit(editToFlush));
-            if (flushResult._tag === "Failure") {
-              setThreadError(
-                activeThread.id,
-                chatActionErrorMessage(squashAtomCommandFailure(flushResult)),
-              );
-              return;
-            }
-            queueEdit = flushResult.value;
-          }
-          // SCIENT-FORK:END
-          if (!isCurrentDraft()) return;
           if (needsLoadBalancing) {
             toastManager.add({
               type: "warning",
@@ -772,10 +692,6 @@ export function useComposerSend(input: ComposerSendInput) {
           }
           const multipleModelSelections =
             directPrompt === null ? sendCtx.multipleModelSelections : null;
-          if (extractedIntent && multipleModelSelections !== null) {
-            setThreadError(activeThread.id, extractedIntentActionErrors.multipleModels);
-            return;
-          }
           const multipleModelBlock =
             multipleModelSelections === null
               ? null
@@ -873,6 +789,38 @@ export function useComposerSend(input: ComposerSendInput) {
             );
             return;
           }
+          if (savesQueuedEdit) {
+            // A queued message stays in its thread, so saving `/side` would send it to main.
+            if (!directAnnotation && parseSideChatCommand(promptAtSend)) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "warning",
+                  title: "Queued message not updated",
+                  description:
+                    "A queued message can't move to a side chat. Remove /side or /btw to save it.",
+                }),
+              );
+              return;
+            }
+            // Edit mode repurposes the composer: sending saves the queued message
+            // in place instead of dispatching a new turn.
+            await queuedRunEdit.saveEdit(
+              {
+                prompt: promptForSend,
+                images: composerImages,
+                files: effectiveComposerFiles,
+                terminalContexts: effectiveComposerTerminalContexts,
+                reviewComments: effectiveReviewComments,
+                previewAnnotations: composerPreviewAnnotations,
+                threadContexts: composerThreadContexts,
+                environmentContexts: composerEnvironmentContexts,
+                replyTo,
+              },
+              setThreadError,
+              { dispatchMode, submissionIntent },
+            );
+            return;
+          }
           const {
             trimmedPrompt: trimmed,
             sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -896,10 +844,6 @@ export function useComposerSend(input: ComposerSendInput) {
             composerPreviewAnnotations.length === 0 &&
             effectiveReviewComments.length === 0 &&
             isStandaloneForkSlashCommand(trimmed);
-          if (standaloneForkCommand && extractedIntent) {
-            setThreadError(activeThread.id, extractedIntentActionErrors.fork);
-            return;
-          }
           if (standaloneForkCommand) {
             promptRef.current = "";
             clearComposerDraftContent(composerDraftTarget);
@@ -912,8 +856,6 @@ export function useComposerSend(input: ComposerSendInput) {
             freshSessionAvailable &&
             !directAnnotation &&
             directPrompt === null &&
-            !extractedIntent &&
-            !queueEdit &&
             composerImages.length === 0 &&
             effectiveComposerFiles.length === 0 &&
             sendableComposerTerminalContexts.length === 0 &&
@@ -928,6 +870,49 @@ export function useComposerSend(input: ComposerSendInput) {
             composerRef.current?.resetCursorState();
             return;
           }
+          // SCIENT-FORK:START — `/feedback [words]` opens "Send feedback to Scient" with the words
+          // as the message; Codex's own command is `/feedback-openai` here.
+          const scientFeedbackAvailable = feedbackAvailable();
+          const scientFeedbackCommand =
+            scientFeedbackAvailable && !directAnnotation && directPrompt === null
+              ? parseScientFeedbackCommand(trimmed)
+              : null;
+          if (
+            scientFeedbackCommand &&
+            (composerImages.length > 0 ||
+              effectiveComposerFiles.length > 0 ||
+              sendableComposerTerminalContexts.length > 0 ||
+              composerPreviewAnnotations.length > 0 ||
+              effectiveReviewComments.length > 0)
+          ) {
+            // Never let feedback meant for the Scient team reach the model as a prompt.
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Remove the attachments to send feedback",
+                description:
+                  "/feedback opens Send feedback to Scient, where you can add a screenshot or logs.",
+              }),
+            );
+            return;
+          }
+          if (scientFeedbackCommand) {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+            requestFeedback({
+              source: "slash-command",
+              ...(isServerThread
+                ? { threadRef: scopeThreadRef(activeThread.environmentId, activeThread.id) }
+                : {}),
+              ...(scientFeedbackCommand.message ? { message: scientFeedbackCommand.message } : {}),
+            });
+            return;
+          }
+          const codexFeedbackText = scientFeedbackAvailable
+            ? codexOpenAiFeedbackText(trimmed)
+            : trimmed;
+          // SCIENT-FORK:END
           // Read once: an arm made while this send is in flight belongs to the next message.
           const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
           const feedbackCommand =
@@ -937,13 +922,10 @@ export function useComposerSend(input: ComposerSendInput) {
             effectiveComposerFiles.length === 0 &&
             sendableComposerTerminalContexts.length === 0 &&
             composerPreviewAnnotations.length === 0 &&
-            effectiveReviewComments.length === 0
-              ? parseCodexFeedbackCommand(trimmed)
+            effectiveReviewComments.length === 0 &&
+            codexFeedbackText !== null
+              ? parseCodexFeedbackCommand(codexFeedbackText)
               : null;
-          if (feedbackCommand && extractedIntent) {
-            setThreadError(activeThread.id, extractedIntentActionErrors.feedback);
-            return;
-          }
           if (feedbackCommand && multipleModelSelections === null) {
             if (!isServerThread || activeThread.activeProviderThreadId === null) {
               toastManager.add(
@@ -1054,14 +1036,13 @@ export function useComposerSend(input: ComposerSendInput) {
             scopeThreadRef(environmentId, threadIdForSend),
           );
           const selectedScientSkillNames = collectSelectedScientSkillNames(promptForSend);
-          // Explicit actions and captured queue records retain their own admission and retry payload.
+          // Explicit actions (steer, annotations, direct prompts) keep their own admission payload.
           // A fresh session drops the old conversation, so it never compacts it first.
           const compactBeforeSend =
             freshArm === undefined &&
             shouldCompactBeforeSend({
               ordinaryServerSend:
                 isServerThread && !steerRequested && !directAnnotation && directPrompt === null,
-              hasCapturedQueueSubmission: Boolean(queueEdit || extractedIntent),
               multipleModels: multipleModelSelections !== null,
               resumeCompactionTokens,
               keepFullHistory,
@@ -1092,17 +1073,6 @@ export function useComposerSend(input: ComposerSendInput) {
             return;
           }
 
-          if (queueEdit) {
-            try {
-              assertQueueEditSelectionProvenance(queueEdit.composerSeparated, promptForSend);
-            } catch (cause) {
-              setThreadError(
-                threadIdForSend,
-                cause instanceof Error ? cause.message : String(cause),
-              );
-              return;
-            }
-          }
           // Records bind attachments by the id each side knows: the local id for the optimistic
           // row, the upload id (or local id on the data-URL path) on the wire; the server
           // rebinds them to the persisted id.
@@ -1197,9 +1167,8 @@ export function useComposerSend(input: ComposerSendInput) {
           }
 
           // Feedback declines the shown request for good, so it runs only after local commands and
-          // every rejection above have accepted the send. A captured queue record is not feedback:
-          // it keeps its own redirect, declining shown approvals and dispatching as recorded.
-          if (approvalFeedbackTarget !== undefined && !queueEdit && !extractedIntent) {
+          // every rejection above have accepted the send.
+          if (approvalFeedbackTarget !== undefined) {
             if (
               composerImages.length > 0 ||
               effectiveComposerFiles.length > 0 ||
@@ -1258,10 +1227,6 @@ export function useComposerSend(input: ComposerSendInput) {
           // SCIENT-FORK:START — the attempt runs as one settled unit: anything thrown fails it, and the
           // release below still runs, like the finally it replaces.
           const sendAttempt = await settlePromise(async () => {
-            assertCurrentDraft();
-            if (extractedIntent)
-              extractedIntent = await prepareExtractedDraftIntent(extractedIntent.intentId);
-            if (queueEdit) await flushQueueEdit(queueEdit);
             assertCurrentDraft();
             // SCIENT-FORK:END
             const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
@@ -1389,16 +1354,10 @@ export function useComposerSend(input: ComposerSendInput) {
             // SCIENT-FORK:START — an ordinary send has a durable queue submission identity, so an
             // ambiguous response cannot submit twice.
             const submissionIdentityResult = await settlePromise(async () => {
-              if (
-                steerRequested ||
-                directAnnotation ||
-                extractedIntent ||
-                multipleModelSelections !== null
-              )
+              if (steerRequested || directAnnotation || multipleModelSelections !== null)
                 return undefined;
               return queueSubmissionId(submissionTargetKey, {
                 threadId: threadIdForSend,
-                sourceProposedPlan: queueEdit?.extractedItem?.sourceProposedPlan,
                 text: outgoingMessageText,
                 context: outgoingMessageContext,
                 modelSelection: ctxSelectedModelSelection,
@@ -1490,9 +1449,8 @@ export function useComposerSend(input: ComposerSendInput) {
             };
             setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
             setThreadError(threadIdForSend, null);
-            // SCIENT-FORK:START — the draft clears as the message shows, like upstream. A captured
-            // queue edit or extracted intent keeps it until admission: it binds their recovery journal.
-            if (directPrompt === null && !queueEdit && !extractedIntent) {
+            // SCIENT-FORK:START — the draft clears as the message shows, like upstream.
+            if (directPrompt === null) {
               optimisticBlobPreviews.track(optimisticMessage);
               promptRef.current = "";
               clearComposerDraftContent(composerDraftTarget);
@@ -1714,29 +1672,15 @@ export function useComposerSend(input: ComposerSendInput) {
               if (backgroundThreadRef) {
                 beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
               }
-              // SCIENT-FORK:START — the turn packet carries the extracted intent's durable command id,
-              // its source plan and the selected Scient skills.
-              const extractedSourcePlan =
-                extractedIntent?.sourceProposedPlan ?? queueEdit?.extractedItem?.sourceProposedPlan;
-              const preparedPacket: ExtractedSubmissionPacket = {
+              // SCIENT-FORK:START — the turn packet carries the submission's durable command id and
+              // the selected Scient skills.
+              const preparedPacket: Parameters<typeof startThreadTurn>[0] = {
                 environmentId,
                 input: {
                   commandId: CommandId.make(
-                    extractedIntent
-                      ? `extracted-intent:${extractedIntent.intentId}`
-                      : submissionId
-                        ? `composer-submission:${submissionId}`
-                        : randomUUID(),
+                    submissionId ? `composer-submission:${submissionId}` : randomUUID(),
                   ),
                   threadId: threadIdForSend,
-                  ...(extractedSourcePlan
-                    ? {
-                        sourceProposedPlan: {
-                          ...extractedSourcePlan,
-                          planId: PlanId.make(extractedSourcePlan.planId),
-                        },
-                      }
-                    : {}),
                   selectedScientSkillNames,
                   message: {
                     messageId: messageIdForSend,
@@ -1762,13 +1706,6 @@ export function useComposerSend(input: ComposerSendInput) {
                   createdAt: messageCreatedAt,
                 },
               };
-              if (extractedIntent) {
-                extractedIntent = await prepareAndBindExtractedSubmission(
-                  extractedIntent,
-                  preparedPacket,
-                  draftSnapshotForSend,
-                );
-              }
               assertCurrentDraft();
               // Read the live session, not the render snapshot: the draft is finalized away once
               // the thread exists.
@@ -1819,56 +1756,12 @@ export function useComposerSend(input: ComposerSendInput) {
                 }
                 setKeepFullHistory(routeThreadKey, false);
                 if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
-                // SCIENT-FORK:START — an admitted send retires its extracted intent and queue edit, then
-                // clears a draft still held for admission (only if the draft is unchanged since).
+                // SCIENT-FORK:START — an admitted send persists its cleared draft and releases its
+                // submission identity.
                 requestAccepted = true;
-                if (extractedIntent) await consumeExtractedSubmission(extractedIntent);
                 const queued = "queued" in startResult.value && startResult.value.queued === true;
-                let canAcknowledge = true;
-                const editToFinish = queueEdit;
-                if (editToFinish) {
-                  const finishedQueueEdit = await settlePromise(() =>
-                    finishQueueEdit(editToFinish, draftSnapshotForSend),
-                  );
-                  if (finishedQueueEdit._tag === "Failure") {
-                    canAcknowledge = false;
-                    setThreadError(
-                      threadIdForSend,
-                      chatActionErrorMessage(squashAtomCommandFailure(finishedQueueEdit)),
-                    );
-                  }
-                }
-                if (draftClearedForSend) {
-                  flushComposerDraftPersistence();
-                } else if (
-                  canAcknowledge &&
-                  directPrompt === null &&
-                  composerSubmissionMatchesDraft(
-                    draftSnapshotForSend,
-                    useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                  )
-                ) {
-                  clearComposerDraftContent(composerDraftTarget);
-                  flushComposerDraftPersistence();
-                  // The draft owns its blob previews until it is cleared here.
-                  if (currentRouteThreadKeyRef.current === routeThreadKey) {
-                    optimisticBlobPreviews.track(optimisticMessage);
-                  } else {
-                    optimisticBlobPreviews.release(optimisticMessage);
-                  }
-                  if (queueContextKeyRef.current === activeThreadKey) {
-                    promptRef.current = "";
-                    composerRef.current?.resetCursorState();
-                  }
-                }
-                if (extractedIntent) {
-                  await retireAcknowledgedExtractedDraft(
-                    composerDraftTarget,
-                    extractedIntent,
-                    draftSnapshotForSend,
-                  );
-                }
-                if (submissionId && canAcknowledge) {
+                if (draftClearedForSend) flushComposerDraftPersistence();
+                if (submissionId) {
                   try {
                     acknowledgeQueueSubmission(submissionTargetKey, submissionId);
                   } catch (cause) {
@@ -1886,7 +1779,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   clearUsageLimitsFor(routeThreadKey);
                   acknowledgeActiveThreadWoke();
                 }
-                if (turnUsesAttachmentUploads && canAcknowledge) {
+                if (turnUsesAttachmentUploads) {
                   releaseDraftAttachments(composerAttachmentsSnapshot);
                 }
                 // SCIENT-FORK:END
@@ -2059,11 +1952,7 @@ export function useComposerSend(input: ComposerSendInput) {
           (modifierClick && args[1] !== undefined && args[1] !== "auto"),
         directPrompt: args[4]?.directPrompt !== undefined,
         annotation: args[3] !== undefined,
-        queueEdit:
-          useQueueEditSessions.getState().sessions[composerTargetKey(composerDraftTarget)] !==
-            undefined ||
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
-            ?.extractedIntent !== undefined,
+        queueEdit: queuedRunEdit.isEditing,
         answering:
           (Boolean(activePendingUserInput) && roomSendCtx?.answeringPendingUserInput !== false) ||
           (roomSendCtx?.shownPendingApprovalIds.length ?? 0) > 0,

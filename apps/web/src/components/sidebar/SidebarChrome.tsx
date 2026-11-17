@@ -57,6 +57,11 @@ import { requestConversationImport } from "../../scient/conversationImport/reque
 // SCIENT-FORK:START — Scient Cloud conversations.
 import { useCloudConversationsAvailable } from "../../scient/cloud/cloudConversationsAvailable";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Send feedback to Scient.
+import { FeedbackIcon } from "../../scient/feedback/FeedbackCoordinator";
+import { feedbackAvailable } from "../../scient/feedback/FeedbackDialog";
+import { requestFeedback } from "../../scient/feedback/feedbackStore";
+// SCIENT-FORK:END
 import { ScientSymbol } from "../ScientSymbol";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
@@ -288,6 +293,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/cloud" });
   };
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Send feedback to Scient.
+  const canSendFeedback = feedbackAvailable();
+  const handleFeedbackClick = () => {
+    closeMobileSidebar();
+    requestFeedback({ source: "sidebar" });
+  };
+  // SCIENT-FORK:END
 
   const handleUsageClick = () => {
     if (isMobile) {
@@ -348,6 +360,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               />
             ) : null}
             {/* SCIENT-FORK:END */}
+            {/* SCIENT-FORK:START — Send feedback to Scient. */}
+            {canSendFeedback ? (
+              <SidebarUtilityItem
+                icon={<FeedbackIcon />}
+                label="Send feedback"
+                onClick={handleFeedbackClick}
+                secondary
+              />
+            ) : null}
+            {/* SCIENT-FORK:END */}
             <SidebarMenuItem className="hidden shrink-0" data-sidebar-utility="overflow">
               <Menu>
                 <MenuTrigger
@@ -369,6 +391,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                     <MenuItem onClick={handleCloudClick}>
                       <CloudIcon />
                       Cloud conversations
+                    </MenuItem>
+                  ) : null}
+                  {/* SCIENT-FORK:END */}
+                  {/* SCIENT-FORK:START — Send feedback to Scient. */}
+                  {canSendFeedback ? (
+                    <MenuItem onClick={handleFeedbackClick}>
+                      <FeedbackIcon />
+                      Send feedback
                     </MenuItem>
                   ) : null}
                   {/* SCIENT-FORK:END */}

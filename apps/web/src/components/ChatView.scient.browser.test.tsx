@@ -29,7 +29,6 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { SidebarProvider } from "./ui/sidebar";
 import ChatView from "./ChatView";
 import "../index.css";
-import * as journal from "../scient/threadQueue/editJournal";
 
 const lab = await vi.hoisted(async () => {
   const { Atom, AtomRegistry, AsyncResult } = await import("effect/reactivity");
@@ -66,7 +65,6 @@ vi.mock("../rpc/atomRegistry", () => ({
 vi.mock("../state/entities", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/environments", { spy: true });
-vi.mock("../scient/threadQueue/editJournal", { spy: true });
 vi.mock("../localEnvironment", () => ({ isLocalEnvironmentDisabled: () => true }));
 vi.mock("../state/use-orchestration-command", () => ({
   useOrchestrationCommand: () => lab.command,
@@ -112,7 +110,6 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
       storage.delete(key);
     },
   });
-  using _journals = vi.spyOn(journal, "readQueueEditJournals").mockResolvedValue([]);
   const drafts = useComposerDraftStore.getState();
   cleanup.defer(() => {
     useComposerDraftStore.setState(drafts, true);
@@ -250,7 +247,6 @@ it("does not replay a pending question the shell already showed once the thread 
       storage.delete(key);
     },
   });
-  using _journals = vi.spyOn(journal, "readQueueEditJournals").mockResolvedValue([]);
   const drafts = useComposerDraftStore.getState();
   cleanup.defer(() => {
     useComposerDraftStore.setState(drafts, true);

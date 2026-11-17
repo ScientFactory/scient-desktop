@@ -152,6 +152,13 @@ export function classifyReachability(
       restart,
     );
   }
+  if (status === 530 && cloudflareError === "1016") {
+    return fail(
+      "dns_failed",
+      "The Scient Connect address no longer points to this machine's tunnel (Cloudflare error 1016). Scient Connect may have removed this environment.",
+      "Link this environment again. Turn Scient Connect off and on in Settings > Connections, or run `scient connect link` and then restart Scient.",
+    );
+  }
   if (status !== null) {
     const code = cloudflareError === undefined ? "" : ` (Cloudflare error ${cloudflareError})`;
     return fail(

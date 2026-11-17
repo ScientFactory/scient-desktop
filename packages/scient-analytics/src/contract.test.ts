@@ -209,6 +209,44 @@ describe("Scient analytics contract", () => {
         failureClass: "unknown",
       },
     });
+    // The run's hash and the agent build pass; anything shaped otherwise is dropped.
+    const run = (runRef: string, providerVersion: string) =>
+      normalizeInheritedEvent(
+        "provider.turn.failed",
+        { provider: "scient", runRef, providerVersion, started: false },
+        context,
+      )?.properties;
+    expect(run("0123456789abcdef", "0.1.11")).toMatchObject({
+      runRef: "0123456789abcdef",
+      providerVersion: "0.1.11",
+      started: false,
+    });
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("runRef");
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("providerVersion");
+  });
+
+  it("keeps an extension's public identity: hosts, registry and plugin names", () => {
+    const properties = {
+      owner: "scient",
+      extensionKind: "connector",
+      connector: "io.github.acme/search",
+      connectorHost: "mcp.notion.com",
+      extensionName: "Notion",
+      plugin: "gmail",
+      marketplace: "openai-curated",
+      tool: "search_pages",
+      outcome: "ok",
+    };
+    const event = normalizeInheritedEvent("extension.tool.called", properties, context);
+    expect(event?.properties).toMatchObject(properties);
+    expect(
+      eventContractViolation({
+        name: "extension.tool.called",
+        privacyLevel: "product",
+        consentLevel: "product",
+        properties: event?.properties ?? {},
+      }),
+    ).toBeNull();
   });
 
   it("records events and fields without a Scient normalizer, as T3 does", () => {

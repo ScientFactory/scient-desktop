@@ -18,6 +18,9 @@ the current project, or use a project's own new-thread action. A new thread carr
 your model and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
+A worktree needs a commit to start from. In a Git repository with no commits, no
+branches and no remote, a thread or scheduled task set to use a new worktree works
+in the project folder instead, as it would in a folder that is not a Git repository.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
@@ -228,7 +231,7 @@ project**. It appears when the current environment offers scratch conversations.
 to a real project without losing the draft. The sidebar row and Add project flow stay the same.
 
 Scient creates one internal scratch project per machine and a separate plain folder for
-each conversation under its data directory. Files, Sources, Documents, and Compute use
+each conversation under its data directory. Files, Library, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
 conversation and its files into another existing project is not yet supported.

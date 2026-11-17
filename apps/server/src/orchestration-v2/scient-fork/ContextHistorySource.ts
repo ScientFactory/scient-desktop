@@ -32,6 +32,13 @@ import {
   readSharedSource,
   shareHandoffItemSummary,
 } from "./SharedHistoryBodies.ts";
+import {
+  expandRangesShowing,
+  handoffHistoryRowsSql,
+  hasHandoffHistory,
+  writeHandoffHistory,
+  type HandoffHistoryRow,
+} from "./ForkHandoffRanges.ts";
 
 const decodeHandoff = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
@@ -255,30 +262,34 @@ export const shareLegacyContextHistories = Effect.fn("ContextHistory.shareLegacy
   }
 });
 
-/** Initial membership is committed with the handoff event; status updates carry only its ID. */
+/** Initial membership is committed with the handoff event; status updates carry only its ID.
+ * Membership is written once: a replayed or repeated capture of the same source keeps it. */
 const captureContextHistory = Effect.fn("ContextHistory.capture")(function* (
   sql: SqlClient.SqlClient,
   handoff: OrchestrationV2ContextHandoff,
 ) {
   const source = handoff.historySource;
   if (source?.entries === undefined) return;
-  yield* sql`
-    INSERT OR IGNORE INTO scient_handoff_history
-      (source_id, position, view_thread_id, source_thread_id, source_item_id, fork_position,
-        run_status, body_id)
-    SELECT ${source.id}, CAST(entry.key AS INTEGER), json_extract(entry.value, '$.threadId'),
-      COALESCE(history.source_thread_id, json_extract(entry.value, '$.threadId')),
-      json_extract(entry.value, '$.itemId'), history.position,
-      json_extract(entry.value, '$.runStatus'), NULL
-    FROM json_each(${encodeJson(source.entries)}) AS entry
-    LEFT JOIN scient_fork_history AS history
-      ON history.thread_id = json_extract(entry.value, '$.threadId')
-      AND history.source_item_id = json_extract(entry.value, '$.itemId')
-      AND history.position = COALESCE(json_extract(entry.value, '$.forkPosition'), (
-        SELECT MIN(position) FROM scient_fork_history
-        WHERE thread_id = json_extract(entry.value, '$.threadId')
-          AND source_item_id = json_extract(entry.value, '$.itemId')))
-  `;
+  yield* Effect.gen(function* () {
+    if (yield* hasHandoffHistory(sql, source.id)) return;
+    const rows = yield* sql<HandoffHistoryRow>`
+      SELECT ${source.id} AS source_id, CAST(entry.key AS INTEGER) AS position,
+        json_extract(entry.value, '$.threadId') AS view_thread_id,
+        COALESCE(history.source_thread_id, json_extract(entry.value, '$.threadId')) AS source_thread_id,
+        json_extract(entry.value, '$.itemId') AS source_item_id, history.position AS fork_position,
+        json_extract(entry.value, '$.runStatus') AS run_status, NULL AS body_id
+      FROM json_each(${encodeJson(source.entries)}) AS entry
+      LEFT JOIN scient_fork_history AS history
+        ON history.thread_id = json_extract(entry.value, '$.threadId')
+        AND history.source_item_id = json_extract(entry.value, '$.itemId')
+        AND history.position = COALESCE(json_extract(entry.value, '$.forkPosition'), (
+          SELECT MIN(position) FROM scient_fork_history
+          WHERE thread_id = json_extract(entry.value, '$.threadId')
+            AND source_item_id = json_extract(entry.value, '$.itemId')))
+      ORDER BY CAST(entry.key AS INTEGER)
+    `;
+    yield* writeHandoffHistory(sql, rows);
+  }).pipe(sql.withTransaction);
 });
 
 export const recordContextHistory = Effect.fn("ContextHistory.record")(function* (
@@ -321,6 +332,7 @@ export const freezeContextHistory = Effect.fn("ContextHistory.freeze")(function*
   event: OrchestrationV2DomainEvent,
 ) {
   if (event.type !== "turn-item.updated") return;
+  yield* expandRangesShowing(sql, event.threadId, event.payload.id);
   const bodyId = `before:${event.id}`;
   yield* sql`
     INSERT OR IGNORE INTO scient_handoff_frozen_items (body_id, item_json)
@@ -443,13 +455,13 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
         WHEN 'user_message' THEN 'user' WHEN 'user_input_request' THEN 'user'
         ELSE 'assistant' END AS role,
       octet_length(${contextItemSql(sql, sql`COALESCE(frozen.item_json, body.item_json, item.payload_json)`)}) AS bytes
-    FROM scient_handoff_history AS history
+    FROM (${handoffHistoryRowsSql(sql, sql`${source.id}`)}) AS history
     LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
     LEFT JOIN scient_fork_frozen_items AS frozen
       ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
     LEFT JOIN orchestration_v2_projection_turn_items AS item
       ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
-    WHERE history.source_id = ${source.id} ORDER BY history.position
+    ORDER BY history.position
   `;
   if (index.length !== source.itemCount || index.some((row) => row.bytes === null))
     return yield* new ContextHistoryReadError({
@@ -466,13 +478,12 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
       if (row.bytes! > readLimit) return null;
       const body = yield* sql<{ readonly payload_json: string }>`
         SELECT ${contextItemSql(sql, sql`COALESCE(frozen.item_json, body.item_json, item.payload_json)`)} AS payload_json
-        FROM scient_handoff_history AS history
+        FROM (${handoffHistoryRowsSql(sql, sql`${source.id}`, [row.position, row.position])}) AS history
         LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
-    LEFT JOIN scient_fork_frozen_items AS frozen
-      ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
-    LEFT JOIN orchestration_v2_projection_turn_items AS item
+        LEFT JOIN scient_fork_frozen_items AS frozen
+          ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
+        LEFT JOIN orchestration_v2_projection_turn_items AS item
           ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
-        WHERE history.source_id = ${source.id} AND history.position = ${row.position}
       `;
       const original = yield* decodeTurnItemRow(body[0]!.payload_json);
       const item =
@@ -657,9 +668,7 @@ export const selectContextHistory = Effect.fn("ContextHistory.select")(function*
   for (const handoff of input.handoffs) {
     const source = handoff.historySource;
     if (source?.entries === undefined || source.entries.length === 0) continue;
-    const captured = yield* sql`
-      SELECT 1 FROM scient_handoff_history WHERE source_id = ${source.id} LIMIT 1`;
-    if (captured.length === 0) uncommitted.push(handoff);
+    if (!(yield* hasHandoffHistory(sql, source.id))) uncommitted.push(handoff);
   }
   if (uncommitted.length === 0) return yield* selectCapturedContextHistory(sql, input);
   return yield* Effect.gen(function* () {

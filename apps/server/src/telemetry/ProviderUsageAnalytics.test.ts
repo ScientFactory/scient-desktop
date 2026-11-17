@@ -154,6 +154,9 @@ describe("provider usage reporting", () => {
           provider: "codex",
           requestKind: "user",
           terminalStatus: "completed",
+          // SCIENT-FORK:START — a one-way hash joins the report to the run's outcome
+          runRef: expect.stringMatching(/^[0-9a-f]{16}$/u),
+          // SCIENT-FORK:END
           lifecycleObserved: true,
           model: "gpt-6-sol",
           mainModel: "gpt-6-sol",

@@ -1,9 +1,9 @@
-// SCIENT-FORK:START — Scient's code block and inline-colour code (scient/**). Kept first so the
+// SCIENT-FORK:START — Scient's inline-colour code (scient/**). Kept first so the
 // stylesheets they bring keep their place in the cascade.
-import { MarkdownCodeBlock as ScientMarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
 import { resolveInlineCssColor } from "~/scient/markdown/inlineCssColor";
 import { ScientInlineColorCode } from "~/scient/markdown/ScientInlineColorCode";
 // SCIENT-FORK:END
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
@@ -89,6 +89,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
+  Suspense,
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
   use,
@@ -254,9 +255,11 @@ import {
   useChatFileLinkOpening,
 } from "../scient/fileOpening/useChatFileLinkOpening";
 import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
+import { showAnchoredCopyErrorToast } from "./ui/anchoredCopyToast";
 // SCIENT-FORK:END
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
 import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MarkdownTable } from "./chat/MarkdownTable";
@@ -1128,6 +1131,9 @@ function useChatMarkdownState({
                     markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
                   )
               : undefined
+        }
+        resolveDragPath={async () =>
+          resolvePathLinkTarget((await resolveHostPath()).absolutePath, cwd ?? "")
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
@@ -2031,9 +2037,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     // SCIENT-FORK:END
 
     const language = extractFenceLanguage(codeBlock.className);
-    // SCIENT-FORK:START — the code block is Scient's (scient/presentation/MarkdownCodeBlock.tsx).
-    // A visual fence renders once it closes, even mid-stream; unfinished source stays readable
-    // while its renderer loads.
+    // SCIENT-FORK:START — rich fences (Mermaid, Plotly, Vega) render once they close, even
+    // mid-stream; unfinished source stays readable while its renderer loads.
     const fenceMeta = extractPreCodeMeta(node);
     const fenceTitle = extractFenceTitle(fenceMeta);
     const richFenceKind = resolveScientRichFenceKind(language);
@@ -2057,43 +2062,55 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </RenderErrorBoundary>
       );
     }
-    // The box direction is shared with the Copy message button's rich flavour.
-    const copyTextDirection = chatCodeBoxDirection({
-      code: codeBlock.code,
-      language,
-      fenceMeta,
-      conversationDirection: resolvedContentDirection,
-      isStreaming,
-    });
     // SCIENT-FORK:END
+    const highlightedCode = (
+      <RenderErrorBoundary
+        resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+        fallback={<pre {...props}>{children}</pre>}
+      >
+        <Suspense
+          fallback={
+            // SCIENT-FORK: not aria-hidden, so Copy message keeps code whose colours are loading.
+            <pre {...props} className="invisible">
+              {children}
+            </pre>
+          }
+        >
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={diffThemeName}
+            isStreaming={isStreaming}
+          />
+        </Suspense>
+      </RenderErrorBoundary>
+    );
     return (
-      <ScientMarkdownCodeBlock
+      <MarkdownCodeBlock
         code={codeBlock.code}
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
-        // SCIENT-FORK:START — only shell fences run (the check moved here from the code block).
         onRunShellCommand={
-          onRunShellCommand &&
-          /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
-          !isStreaming &&
-          isClosedCodeFence(node, text, codeBlock.code)
+          onRunShellCommand && !isStreaming && isClosedCodeFence(node, text, codeBlock.code)
             ? onRunShellCommand
             : undefined
         }
-        copyTextDirection={copyTextDirection}
-        // SCIENT-FORK:END
         isStreaming={isStreaming}
-        // SCIENT-FORK:START — the code block renders its own highlighted body and fallback.
-        fallback={<pre {...props}>{children}</pre>}
-        onCopyFailure={(cause) =>
-          reportMarkdownActionFailure(
-            { operation: "copy-code-block", language, ...(fenceTitle ? { fenceTitle } : {}) },
-            cause,
-          )
-        }
-      />
-      // SCIENT-FORK:END
+        // SCIENT-FORK:START — Hebrew or Arabic code reads right to left; Copy message shares it.
+        dir={chatCodeBoxDirection({
+          code: codeBlock.code,
+          language,
+          fenceMeta,
+          conversationDirection: resolvedContentDirection,
+          isStreaming,
+        })}
+        // A failed copy says so beside the Copy button, like Copy message.
+        onCopyFailure={(cause, copyButton) => showAnchoredCopyErrorToast(copyButton, cause)}
+        // SCIENT-FORK:END
+      >
+        {highlightedCode}
+      </MarkdownCodeBlock>
     );
   },
 } satisfies Components;

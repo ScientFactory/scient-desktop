@@ -73,6 +73,8 @@ import { ConnectorRuntime, ExtensionsDiscover } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
 import * as ConnectorCredentialStore from "./ConnectorCredentialStore.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
+import { disabledAnalyticsService } from "../../../telemetry/ScientAnalytics.ts";
 import {
   ConnectorOAuthError,
   ConnectorOAuthFlows,
@@ -625,6 +627,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly runTool?: RunTool;
     /** Told when a change reaches a connector's lock. */
     readonly onConnectorLock?: (connectorId: string) => void;
+    /** Receives the runtime's analytics events. */
+    readonly analytics?: AnalyticsService["Service"];
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -656,6 +660,9 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     options.github === undefined
       ? (effect) => effect
       : Effect.provideService(GitHubSourceControlCredential, options.github),
+    options.analytics === undefined
+      ? (effect) => effect
+      : Effect.provideService(AnalyticsService, options.analytics),
   );
 
   const delivered = new Set<string>();
@@ -883,6 +890,79 @@ describe("connector probe", () => {
       const listed = yield* harness.runtime.list();
       expect(listed.connectors[0]).toMatchObject({
         description: "Search the vendor's documentation.",
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("connector analytics", () => {
+  it.live("reports the connector added, signed in to, used and removed, by its host", () =>
+    Effect.gen(function* () {
+      const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
+      const harness = yield* makeHarness({
+        analytics: {
+          ...disabledAnalyticsService,
+          record: (name, properties) =>
+            Effect.sync(() => {
+              events.push({ name, properties: { ...properties } });
+            }),
+        },
+      });
+      const connectorId = yield* harness.connectSecure("/noprm/mcp");
+      yield* harness.proxy(connectorId, toolCall(1));
+      yield* harness.runtime.remove({ connectorId });
+      const host = new URL(vendor.base).hostname;
+      expect(
+        events.map(({ name, properties }) => [
+          name,
+          properties.change ?? properties.outcome,
+          properties.connector,
+        ]),
+      ).toEqual([
+        ["extension.changed", "added", host],
+        ["extension.sign_in.started", "ok", host],
+        ["extension.changed", "connected", host],
+        ["extension.sign_in.finished", "ok", host],
+        ["extension.tool.called", "ok", host],
+        ["extension.changed", "removed", host],
+      ]);
+      expect(
+        events.find((event) => event.name === "extension.tool.called")?.properties,
+      ).toMatchObject({
+        owner: "scient",
+        connectorSource: "url",
+        extensionName: "Vendor",
+        tool: "search",
+        outcome: "ok",
+        callerProviderInstance: "codex",
+      });
+      expect(JSON.stringify(events)).not.toContain("/noprm/mcp");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("reports why a sign-in did not finish", () =>
+    Effect.gen(function* () {
+      const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
+      const harness = yield* makeHarness({
+        analytics: {
+          ...disabledAnalyticsService,
+          record: (name, properties) =>
+            Effect.sync(() => {
+              events.push({ name, properties: { ...properties } });
+            }),
+        },
+      });
+      const added = yield* harness.addSecure();
+      const { callback } = yield* harness.authorize(added.connector.connectorId);
+      callback.searchParams.delete("code");
+      callback.searchParams.set("error", "access_denied");
+      yield* harness.send(new Request(callback.href));
+      expect(
+        events.find((event) => event.name === "extension.sign_in.finished")?.properties,
+      ).toMatchObject({
+        outcome: "error",
+        reason: "denied",
+        extensionName: "Vendor",
       });
     }).pipe(Effect.provide(testLayer)),
   );

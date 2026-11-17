@@ -192,6 +192,11 @@ export const make = Effect.gen(function* () {
       runMenuEffect("import-conversation", dispatchMenuAction("import-conversation"));
     };
     // SCIENT-FORK:END
+    // SCIENT-FORK:START — the renderer opens "Send feedback to Scient".
+    const sendFeedbackClick = () => {
+      runMenuEffect("send-feedback", dispatchMenuAction("send-feedback"));
+    };
+    // SCIENT-FORK:END
     // Chromium and the renderer already handle this chord; injecting another paste duplicates text.
     const pasteAsTextClick = (
       _item: Electron.MenuItem,
@@ -375,6 +380,10 @@ export const make = Effect.gen(function* () {
       {
         role: "help",
         submenu: [
+          // SCIENT-FORK:START — feedback reports to the Scient team.
+          { label: "Send Feedback...", click: sendFeedbackClick },
+          { type: "separator" },
+          // SCIENT-FORK:END
           {
             label: "Check for Updates...",
             click: checkForUpdatesClick,

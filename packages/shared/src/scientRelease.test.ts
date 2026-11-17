@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   assertScientReleaseChannelVersion,
   assertScientBetaTargetAheadOfStable,
+  scientDesktopRuntimeUpdateFeed,
   scientDesktopUpdateFeed,
   isExactScientReleaseVersion,
   scientServerNpxCommand,
@@ -37,6 +38,13 @@ describe("Scient release distribution", () => {
       owner: "ScientFactory",
       repo: "scient-desktop-beta",
     });
+    // Running apps read the mirror; nightly builds, which it does not carry, keep GitHub.
+    assert.deepEqual(scientDesktopRuntimeUpdateFeed("beta"), {
+      provider: "generic",
+      url: "https://downloads.scientfactory.com/scient-desktop/updates/beta",
+      useMultipleRangeRequest: false,
+    });
+    assert.deepEqual(scientDesktopRuntimeUpdateFeed("nightly"), scientDesktopUpdateFeed("nightly"));
     assert.doesNotThrow(() => assertScientReleaseChannelVersion(version, "beta"));
     assert.throws(() => assertScientReleaseChannelVersion(version), "Stable releases require");
     assert.throws(

@@ -37,6 +37,10 @@ import { eventVersion as messageVersion } from "./NativeTelemetryClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
+// SCIENT-FORK:START — journaled desktop update facts
+import { ingestDesktopUpdateFacts } from "../telemetry/DesktopUpdateFacts.ts";
+import { ScientRecordedAnalyticsIngest } from "../telemetry/ScientAnalytics.ts";
+// SCIENT-FORK:END
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const INITIAL_SAMPLE_DEADLINE_MS = 90_000;
@@ -406,6 +410,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const analytics = yield* Effect.serviceOption(AnalyticsService);
+  // SCIENT-FORK:START — ingest for desktop-journaled update facts
+  const recordedAnalytics = yield* ScientRecordedAnalyticsIngest;
+  // SCIENT-FORK:END
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
   const lastContactAtMs = yield* Ref.make(
@@ -604,6 +611,25 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
         }
 
+        // SCIENT-FORK:START — a report carrying facts delivers them; the desktop forgets them only
+        // after this backend's outbox holds them, and their status is not a change.
+        if (message.type === "desktopUpdateStatus" && message.facts !== undefined) {
+          const facts = message.facts;
+          return recordContact.pipe(
+            Effect.andThen(
+              ingestDesktopUpdateFacts(recordedAnalytics, facts).pipe(
+                Effect.flatMap((ids) =>
+                  ids.length === 0
+                    ? Effect.void
+                    : sendControlMessage({ version: 1, type: "ackDesktopUpdateFacts", ids }),
+                ),
+                Effect.ignoreCause(),
+              ),
+            ),
+            Effect.asVoid,
+          );
+        }
+        // SCIENT-FORK:END
         if (message.type === "desktopUpdateStatus") {
           return recordContact.pipe(
             Effect.andThen(Ref.set(latestUpdateReport, Option.some(message))),
@@ -622,6 +648,12 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
                       operation: "termination",
                       outcome: "abnormal",
                       failureClass: message.failureClass,
+                      // SCIENT-FORK:START — how the process ended
+                      ...(message.exitReason === undefined
+                        ? {}
+                        : { exitReason: message.exitReason }),
+                      ...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),
+                      // SCIENT-FORK:END
                     })
                     .pipe(Effect.ignoreCause())
                 : Effect.void,

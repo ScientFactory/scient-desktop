@@ -1,0 +1,480 @@
+{
+  "from": "Public Zotero group 30 (Digital Humanities), read through api.zotero.org without a key on 2026-11-15. Collection keys, names and parents only; two names that were people's names are replaced.",
+  "collections": [
+    {
+      "key": "29M3DMLG",
+      "name": "- Dataset availability",
+      "parent": "2D4LY9RV"
+    },
+    {
+      "key": "2D4LY9RV",
+      "name": "- Providers & Services (Web Archives)",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "2EZLLSQW",
+      "name": "- Introduction to Web Archive Research",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "2FECQP6C",
+      "name": "Digital Gaming",
+      "parent": null
+    },
+    {
+      "key": "2WHFHHKU",
+      "name": "Preservation",
+      "parent": null
+    },
+    {
+      "key": "2ZTI5QQQ",
+      "name": "Cairn-RTM_216_0089-20240527",
+      "parent": null
+    },
+    {
+      "key": "3FLCM9PA",
+      "name": "-- Qualitative, quantitative data analysis",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "3IIRGMPU",
+      "name": "Digital Narratives, Visualizations",
+      "parent": null
+    },
+    {
+      "key": "43DV5F6Q",
+      "name": "Graduate Degree Programs",
+      "parent": null
+    },
+    {
+      "key": "4YIKPDP9",
+      "name": "Digital Humanities",
+      "parent": null
+    },
+    {
+      "key": "527XIULZ",
+      "name": "- Appraisal, selection, collection development",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "5Q4Z6SGH",
+      "name": "ethics",
+      "parent": "3IIRGMPU"
+    },
+    {
+      "key": "6426WTXL",
+      "name": "- Web/digital preservation (including storage, forensics, archaeology)",
+      "parent": "ML52RKEM"
+    },
+    {
+      "key": "653GZGER",
+      "name": "Linked (Open) Data",
+      "parent": null
+    },
+    {
+      "key": "68QPRRIP",
+      "name": "vocational awe",
+      "parent": null
+    },
+    {
+      "key": "6NDEIWG4",
+      "name": "-- Network analysis",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "6PBHRUSJ",
+      "name": "- Surveys, Reports, State of the Art",
+      "parent": "2EZLLSQW"
+    },
+    {
+      "key": "6PP4G78T",
+      "name": "Course readings",
+      "parent": null
+    },
+    {
+      "key": "7HBWNAJ5",
+      "name": "Text Mining",
+      "parent": null
+    },
+    {
+      "key": "7SDWDMAV",
+      "name": "Museums, Collections and Exhibitions",
+      "parent": null
+    },
+    {
+      "key": "7ZCZXZXF",
+      "name": "Methods",
+      "parent": null
+    },
+    {
+      "key": "88KPFVAN",
+      "name": "Data management & preservation (in general)",
+      "parent": "ML52RKEM"
+    },
+    {
+      "key": "9MGVCFXD",
+      "name": "Workshops, Training, and Institutes",
+      "parent": null
+    },
+    {
+      "key": "A63N8SZ8",
+      "name": "PHD",
+      "parent": null
+    },
+    {
+      "key": "A827P8G4",
+      "name": "DHNow",
+      "parent": null
+    },
+    {
+      "key": "AT2F5JR9",
+      "name": "Geo-Spatial",
+      "parent": null
+    },
+    {
+      "key": "B5PGND65",
+      "name": "postcolonial studies--language",
+      "parent": null
+    },
+    {
+      "key": "B7NB5GFL",
+      "name": "- Software, Tools, Environments",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "BDZM52NF",
+      "name": "Data Management for DH",
+      "parent": "A827P8G4"
+    },
+    {
+      "key": "BI4QHUUQ",
+      "name": "- Access, replay/playback",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "BN8JZN5T",
+      "name": "CDP",
+      "parent": null
+    },
+    {
+      "key": "CEBCRFWG",
+      "name": "What is Digital Humanities?",
+      "parent": null
+    },
+    {
+      "key": "CVW9YKZJ",
+      "name": "- Use cases, studies",
+      "parent": "GV8BJ85E"
+    },
+    {
+      "key": "CXTEFN2D",
+      "name": "-- Data analysis, extraction, cleaning, transformation, visualisation",
+      "parent": "MAHSE7HJ"
+    },
+    {
+      "key": "D5GICDTE",
+      "name": "Speaking in Code",
+      "parent": null
+    },
+    {
+      "key": "DCNG7CSN",
+      "name": "-- Link Rot, Web Content drift/change",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "DGZRCUTP",
+      "name": "Digital Library Graduate Programs",
+      "parent": null
+    },
+    {
+      "key": "E266SJ55",
+      "name": "Corpora and Corpus Linguistics",
+      "parent": "7HBWNAJ5"
+    },
+    {
+      "key": "EFDH23BX",
+      "name": "Libraries and DH",
+      "parent": null
+    },
+    {
+      "key": "EIWPMQRA",
+      "name": "-- Emulation",
+      "parent": "MAHSE7HJ"
+    },
+    {
+      "key": "EQ27DSTC",
+      "name": "Digital humanities",
+      "parent": null
+    },
+    {
+      "key": "F67DBHII",
+      "name": "- Bibliographies",
+      "parent": "2EZLLSQW"
+    },
+    {
+      "key": "FHLFDMCI",
+      "name": "Web Archive Research",
+      "parent": null
+    },
+    {
+      "key": "FUMUFD27",
+      "name": "- Computing infrastructures/environments",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "G99X9Q7Z",
+      "name": "-- Website monitoring",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "GV8BJ85E",
+      "name": "- Use of web archives & archived web content",
+      "parent": "NEPQN4DG"
+    },
+    {
+      "key": "HT3MEI5J",
+      "name": "Scholarly Communication",
+      "parent": null
+    },
+    {
+      "key": "HUE7UIVD",
+      "name": "Hist & Future Readings",
+      "parent": null
+    },
+    {
+      "key": "I84IRCE2",
+      "name": "Practical Guides",
+      "parent": "A63N8SZ8"
+    },
+    {
+      "key": "J7USYZ2I",
+      "name": "DB_elsosokenk",
+      "parent": null
+    },
+    {
+      "key": "JFJE65BA",
+      "name": "Values",
+      "parent": null
+    },
+    {
+      "key": "KAIJQCCV",
+      "name": "Dissertations",
+      "parent": null
+    },
+    {
+      "key": "KE7M3W35",
+      "name": "Sustainability",
+      "parent": null
+    },
+    {
+      "key": "KFSJ9R29",
+      "name": "Reading group",
+      "parent": null
+    },
+    {
+      "key": "KLUITVYQ",
+      "name": "exercise",
+      "parent": null
+    },
+    {
+      "key": "KRQVIARA",
+      "name": "Theories of International Relations",
+      "parent": null
+    },
+    {
+      "key": "L42JTNID",
+      "name": "- Training Info. & Materials",
+      "parent": "2EZLLSQW"
+    },
+    {
+      "key": "MAHSE7HJ",
+      "name": "- Web archiving lifecycle",
+      "parent": "B7NB5GFL"
+    },
+    {
+      "key": "MBFGCRQN",
+      "name": "- Research methods & approaches",
+      "parent": "NEPQN4DG"
+    },
+    {
+      "key": "MCDTE9HF",
+      "name": "- Social media archiving, collecting data from API",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "MJN89VZH",
+      "name": "- Overviews (Web Archive Research)",
+      "parent": "2EZLLSQW"
+    },
+    {
+      "key": "ML52RKEM",
+      "name": "-- Preservation (digitised, born digital, reborn digital)",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "MWYA636P",
+      "name": "- Web archives, web archiving, curation",
+      "parent": "NEPQN4DG"
+    },
+    {
+      "key": "MXXZGU2I",
+      "name": "Chaucer Paper",
+      "parent": "A827P8G4"
+    },
+    {
+      "key": "NDBSTIFE",
+      "name": "- Histories of web archiving/curation",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "NEPQN4DG",
+      "name": "- Web Archiving Lifecycle",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "NM77EAM6",
+      "name": "Scholarly Digital Edition editors",
+      "parent": "D5GICDTE"
+    },
+    {
+      "key": "NMEVS3L4",
+      "name": "- User studies, usability studies",
+      "parent": "GV8BJ85E"
+    },
+    {
+      "key": "NRJ4GJHE",
+      "name": "-- Machine learning",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "NUTCSKT8",
+      "name": "Introductions to Media Studies",
+      "parent": null
+    },
+    {
+      "key": "P6H4JRAI",
+      "name": "Quantitative research specifics and methods",
+      "parent": "7ZCZXZXF"
+    },
+    {
+      "key": "P7BQ4YQL",
+      "name": "Difference between qualitative and quantitative research",
+      "parent": "7ZCZXZXF"
+    },
+    {
+      "key": "PLVWVA52",
+      "name": "- Collaborations",
+      "parent": "MBFGCRQN"
+    },
+    {
+      "key": "R79FGBCU",
+      "name": "-- Data visualisation",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "RKSNBAMM",
+      "name": "-- Ethics, Research Integrity, etc.",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "SAZVI7LX",
+      "name": "- Search and information retrieval",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "SB4WENVI",
+      "name": "Syllabi",
+      "parent": null
+    },
+    {
+      "key": "SS5SW7AW",
+      "name": "PMLA",
+      "parent": null
+    },
+    {
+      "key": "TDMME3NH",
+      "name": "- Provenance, metadata, indexing, description",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "TIH4J5EU",
+      "name": "-- Screenshots, screen captures, screencasts",
+      "parent": "MAHSE7HJ"
+    },
+    {
+      "key": "TJUP5TT9",
+      "name": "Undergraduate Degree Programs",
+      "parent": null
+    },
+    {
+      "key": "UM8TTDJX",
+      "name": "Politics",
+      "parent": "TJUP5TT9"
+    },
+    {
+      "key": "UVBV87K2",
+      "name": "NCRCS",
+      "parent": null
+    },
+    {
+      "key": "VF7HZGVN",
+      "name": "- Web archiving",
+      "parent": "MAHSE7HJ"
+    },
+    {
+      "key": "VRPJ95WG",
+      "name": "Intellectual Property and Open Access",
+      "parent": null
+    },
+    {
+      "key": "VSEZACGX",
+      "name": "Journals",
+      "parent": null
+    },
+    {
+      "key": "VSR4BNCA",
+      "name": "-- Web scraping (extracting data from web pages)",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "WS53T56G",
+      "name": "Videos",
+      "parent": null
+    },
+    {
+      "key": "XGGMGVSM",
+      "name": "Cyber-Infrastructure",
+      "parent": null
+    },
+    {
+      "key": "XK3NF35X",
+      "name": "-- Programming/scripting languages, computing environments",
+      "parent": "MAHSE7HJ"
+    },
+    {
+      "key": "XTTDTUT4",
+      "name": "Digital History",
+      "parent": null
+    },
+    {
+      "key": "YHENK3XP",
+      "name": "-- Internet & Web History",
+      "parent": "FHLFDMCI"
+    },
+    {
+      "key": "YLREYYMM",
+      "name": "- Crawling, capture, curation, quality assurance",
+      "parent": "MWYA636P"
+    },
+    {
+      "key": "YWXLI2VG",
+      "name": "-- Data analysis, extraction, cleaning, transformation",
+      "parent": "CXTEFN2D"
+    },
+    {
+      "key": "ZDKNUAK6",
+      "name": "- User challenges",
+      "parent": "GV8BJ85E"
+    }
+  ]
+}

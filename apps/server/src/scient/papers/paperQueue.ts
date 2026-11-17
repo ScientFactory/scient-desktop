@@ -2,13 +2,17 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
-  AccountId,
   AccountsError,
   EnvironmentId,
   PaperItem,
+  PaperVersion,
+  ProjectId,
   ThreadId,
+  type AccountId,
   type PaperAsked,
   type PaperQueueSummary,
+  type PaperQueueContinueInput,
+  type PreviewAutomationStatus,
   type PaperRequest,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -19,39 +23,70 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { ServerConfig } from "../../config.ts";
+import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { userRunInvocation } from "../accounts/checkAccounts.ts";
+import type { ScientSourceAttachmentRetrieval } from "@scientfactory/scient-sources";
+import { pinScientLibrarySource } from "@scientfactory/scient-sources/project-pins";
 import { attachSourcePdf } from "../sources/ScientSourcesCoordinator.ts";
+import { addPaperToLibrary, type PaperIntakeResult } from "../sources/paperIntake.ts";
+import {
+  resolveLibrarySourceId,
+  syncProjectBibliography,
+} from "../sources/LibraryProjectSources.ts";
+import { resolveScientLibraryStoreAt } from "../sources/SourcesBackend.ts";
+import { keyedIdentifierLookup } from "../sources/researchKeys.ts";
+import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import {
   PAPERS_THREAD,
   clearHolds,
   fetchOnePaper,
   pausedPublishers,
+  releaseHolds,
   type PaperRequester,
 } from "./paperAttempt.ts";
+import { ownsPaperTermsTab } from "./paperFetch.ts";
 import { paperFileName, type Paper } from "./paperLookup.ts";
+import { pdfNamesPaper, readPdfFacts } from "./pdfCheck.ts";
 
 export type { PaperRequester } from "./paperAttempt.ts";
 
 const QUEUE_FILE = [".scient", "papers", "queue.json"] as const;
 /** After the user acts, a sign-in may take a while to finish: keep trying for ten minutes. */
 const RETRY_GAP = "30 seconds";
-const RETRIES_AFTER_ACTING = 20;
+const RETRY_FOR_MS = 10 * 60 * 1000;
+/** The projects with unfinished papers, in the server's state, so a restart finds them. */
+const UNFINISHED_FILE = ["papers", "unfinished.json"] as const;
 const BROWSER_RETRY_GAP = "1 minute";
 const MOST_BROWSER_FAILURES = 5;
 
 const StoredRequester = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: Schema.optionalKey(ThreadId),
+  projectId: Schema.optionalKey(ProjectId),
   browser: Schema.Boolean,
-  accounts: Schema.Union([Schema.Literal("all"), Schema.Array(AccountId)]),
 });
+/** A PDF the queue saved: which paper it is and which version, for the next request. */
+const SavedFile = Schema.Struct({
+  doi: Schema.optionalKey(Schema.String),
+  url: Schema.optionalKey(Schema.String),
+  version: PaperVersion,
+  /** Its bytes when saved: a file replaced since is not that copy any more. */
+  sha256: Schema.String,
+});
+type SavedFile = typeof SavedFile.Type;
 const Stored = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   items: Schema.Array(PaperItem),
   /** Who asked for each paper, so a restart keeps it to what they may use. */
   requesters: Schema.optional(Schema.Record(Schema.String, StoredRequester)),
+  /** Who asked to file a paper someone else had asked for, so the Library credits them. */
+  filers: Schema.optional(Schema.Record(Schema.String, StoredRequester)),
+  /** Each PDF it saved, by its path in the project. */
+  files: Schema.optional(Schema.Record(Schema.String, SavedFile)),
 });
 const decodeStored = Schema.decodeUnknownOption(Schema.fromJsonString(Stored));
 const encodeStored = Schema.encodeSync(Schema.fromJsonString(Stored));
@@ -61,13 +96,21 @@ interface Queue {
   threadId: ThreadId | undefined;
   items: Map<string, PaperItem>;
   running: boolean;
-  retries: number;
+  /** Papers waiting on the user are tried again until then, after the user acted. */
+  retryUntil: number;
+  /** Counts the user's actions, so an attempt that began before one doesn't undo it. */
+  acted: number;
   /** Whoever last acted here: the environment the queue runs in. */
   requester: PaperRequester;
   /** Each paper runs with what its requester may use, whoever else asked since. */
   readonly requesters: Map<string, PaperRequester>;
+  /** Who added the Library request to a paper someone else asked for. */
+  readonly filers: Map<string, PaperRequester>;
+  readonly files: Map<string, SavedFile>;
   browserDown: boolean;
   readonly browserFailures: Map<string, number>;
+  /** One write of queue.json at a time. */
+  readonly writes: Semaphore.Semaphore;
 }
 const queues = new Map<string, Queue>();
 
@@ -100,13 +143,62 @@ const savePdf = Effect.fn("Papers.save")(
   ),
 );
 
+const unfinished = (queue: Queue) =>
+  [...queue.items.values()].some((item) => item.state === "waiting" || item.state === "needs-you");
+
+const unfinishedLock = Semaphore.makeUnsafe(1);
+
+const unfinishedFile = Effect.gen(function* () {
+  const config = yield* Effect.serviceOption(ServerConfig);
+  const path = yield* Path.Path;
+  return Option.map(config, ({ stateDir }) => path.join(stateDir, ...UNFINISHED_FILE));
+});
+
+/** The projects whose papers were unfinished when last stored, read from the server's state. */
+const unfinishedRoots = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const file = yield* unfinishedFile;
+  if (Option.isNone(file)) return [];
+  const text = yield* fs.readFileString(file.value).pipe(Effect.orElseSucceed(() => "[]"));
+  return Option.getOrElse(decodeRoots(text), () => []);
+});
+const decodeRoots = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeRoots = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
+const noteUnfinished = Effect.fn("Papers.queue.noteUnfinished")(function* (queue: Queue) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = yield* unfinishedFile;
+  if (Option.isNone(file)) return;
+  const roots = new Set(yield* unfinishedRoots);
+  const listed = roots.has(queue.root);
+  if (listed === unfinished(queue)) return;
+  if (listed) roots.delete(queue.root);
+  else roots.add(queue.root);
+  yield* fs.makeDirectory(path.dirname(file.value), { recursive: true });
+  yield* writeReplacing(file.value, encodeRoots([...roots]));
+}, unfinishedLock.withPermits(1));
+
+/** Written beside the old file and moved over it, so a crash leaves one or the other whole. */
+const writeReplacing = Effect.fn("Papers.queue.writeReplacing")(function* (
+  file: string,
+  text: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const temporary = `${file}.${NodeCrypto.randomUUID()}.tmp`;
+  yield* fs.writeFileString(temporary, text);
+  yield* fs
+    .rename(temporary, file)
+    .pipe(Effect.onError(() => fs.remove(temporary).pipe(Effect.ignore)));
+});
+
 /** The queue survives a restart in the project, next to its sources. */
 const store = Effect.fn("Papers.queue.store")(function* (queue: Queue) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const file = path.join(queue.root, ...QUEUE_FILE);
   yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-  yield* fs.writeFileString(
+  yield* writeReplacing(
     file,
     encodeStored({
       ...(queue.threadId === undefined ? {} : { threadId: queue.threadId }),
@@ -114,37 +206,58 @@ const store = Effect.fn("Papers.queue.store")(function* (queue: Queue) {
       requesters: Object.fromEntries(
         [...queue.requesters].filter(([itemId]) => queue.items.has(itemId)),
       ),
+      filers: Object.fromEntries([...queue.filers].filter(([itemId]) => queue.items.has(itemId))),
+      files: Object.fromEntries(queue.files),
     }),
-  );
+  ).pipe(queue.writes.withPermits(1));
 });
 
+const unreadable = () =>
+  new AccountsError({ reason: "unavailable", message: "This project's paper list can't be read." });
+
+/** The stored queue, none when there is no file; a file that can't be read is never replaced. */
 const readStored = Effect.fn("Papers.queue.read")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const text = yield* fs
-    .readFileString(path.join(root, ...QUEUE_FILE))
-    .pipe(Effect.orElseSucceed(() => undefined));
-  return text === undefined ? Option.none() : decodeStored(text);
+  const file = path.join(root, ...QUEUE_FILE);
+  const text = yield* fs.readFileString(file).pipe(
+    Effect.asSome,
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(Option.none<string>()),
+    ),
+    Effect.mapError(unreadable),
+  );
+  if (Option.isNone(text)) return Option.none();
+  const stored = decodeStored(text.value);
+  // Kept aside rather than overwritten, so the papers it listed can still be read.
+  if (Option.isNone(stored)) {
+    yield* fs.rename(file, `${file}.unreadable`).pipe(Effect.mapError(unreadable));
+    yield* Effect.logWarning("A project's paper queue could not be read; it was set aside.", {
+      file,
+    });
+  }
+  return stored;
 });
 
 const load = Effect.fn("Papers.queue.load")(function* (root: string, requester: PaperRequester) {
   const known = queues.get(root);
   if (known) return known;
-  const stored = yield* readStored(root);
+  const stored = Option.getOrUndefined(yield* readStored(root));
   const queue: Queue = {
     root,
-    threadId: Option.isSome(stored) ? stored.value.threadId : undefined,
-    items: new Map(
-      (Option.isSome(stored) ? stored.value.items : []).map((item) => [item.itemId, item]),
-    ),
+    threadId: stored?.threadId,
+    items: new Map((stored?.items ?? []).map((item) => [item.itemId, item])),
     running: false,
-    retries: 0,
+    retryUntil: 0,
+    acted: 0,
     requester,
-    requesters: new Map(
-      Object.entries(Option.isSome(stored) ? (stored.value.requesters ?? {}) : {}),
-    ),
+    requesters: new Map(Object.entries(stored?.requesters ?? {})),
+    filers: new Map(Object.entries(stored?.filers ?? {})),
+    files: new Map(Object.entries(stored?.files ?? {})),
     browserDown: false,
     browserFailures: new Map(),
+    writes: Semaphore.makeUnsafe(1),
   };
   queues.set(root, queue);
   return queue;
@@ -155,7 +268,7 @@ const summary = (queue: Queue, now: number): PaperQueueSummary => {
   const requests = new Map<string, PaperRequest>();
   for (const { needed } of items) {
     if (!needed) continue;
-    const key = `${needed.kind}|${needed.site ?? ""}`;
+    const key = `${needed.kind}|${needed.site ?? ""}|${needed.profileId ?? ""}`;
     requests.set(key, { ...needed, count: (requests.get(key)?.count ?? 0) + 1 });
   }
   return {
@@ -174,24 +287,49 @@ const summary = (queue: Queue, now: number): PaperQueueSummary => {
 
 const announce = Effect.fn("Papers.queue.announce")(function* (queue: Queue) {
   const accounts = yield* AccountsService;
-  yield* store(queue).pipe(Effect.ignore);
+  yield* store(queue).pipe(
+    Effect.andThen(noteUnfinished(queue)),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("A project's paper queue could not be stored.", { cause }),
+    ),
+  );
   yield* accounts.setPaperQueue(summary(queue, yield* Clock.currentTimeMillis));
 });
+
+/** An agent's request carries its conversation; the user's own does not. */
+const actorOf = (requester: PaperRequester) =>
+  requester.threadId === undefined ? ("user" as const) : ("agent" as const);
 
 const attach = Effect.fn("Papers.attach")(function* (
   root: string,
   source: NonNullable<PaperAsked["source"]>,
   relative: string,
+  retrieval: ScientSourceAttachmentRetrieval | undefined,
+  requester: PaperRequester,
 ) {
   const path = yield* Path.Path;
+  // A request to file a paper was allowed to change the Library when it was made.
+  const library = yield* resolveScientLibraryStoreAt(root, "write", "until-done").pipe(
+    Effect.mapError(
+      () =>
+        new AccountsError({
+          reason: "unavailable",
+          message: `The PDF is in ${relative}, but it could not be attached to this source.`,
+        }),
+    ),
+  );
   return yield* Effect.tryPromise({
-    try: () =>
+    try: async () =>
       attachSourcePdf({
-        root,
-        sourceId: source.sourceId,
+        root: library?.store ?? root,
+        sourceId: library
+          ? ((await resolveLibrarySourceId(library, source.sourceId)) ?? source.sourceId)
+          : source.sourceId,
         expectedRevision: source.expectedRevision,
         pdfPath: path.join(root, relative),
         fileName: path.basename(relative),
+        actor: actorOf(requester),
+        ...(retrieval ? { retrieval } : {}),
       }),
     catch: () =>
       new AccountsError({
@@ -201,23 +339,115 @@ const attach = Effect.fn("Papers.attach")(function* (
   });
 });
 
+const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
+  root: string,
+  paper: Paper,
+  relative: string,
+  retrieval: ScientSourceAttachmentRetrieval | undefined,
+  requester: PaperRequester,
+) {
+  const resolveIdentifier = yield* keyedIdentifierLookup();
+  const observer = yield* makeSourceImportAnalytics(actorOf(requester));
+  const failed: PaperIntakeResult = {
+    outcome: "not-added",
+    message: "The Library could not be updated.",
+  };
+  // A request to add a paper was allowed to change the Library when it was made.
+  const library = yield* resolveScientLibraryStoreAt(root, "write", "until-done").pipe(
+    Effect.mapError(() => failed),
+  );
+  return yield* Effect.tryPromise({
+    try: async () => {
+      const added = await addPaperToLibrary(
+        {
+          root,
+          ...(library ? { store: library.store } : {}),
+          pdfRelativePath: relative,
+          ...(paper.doi ? { doi: paper.doi } : {}),
+          ...(paper.arxiv ? { arxiv: paper.arxiv } : {}),
+          actor: actorOf(requester),
+          resolveIdentifier,
+          fallback: {
+            ...(paper.title ? { title: paper.title } : {}),
+            ...(paper.year ? { year: paper.year } : {}),
+          },
+          ...(retrieval ? { retrieval } : {}),
+        },
+        observer,
+      );
+      // A paper added from a project is pinned there, as any other intake is. The source is in
+      // the Library either way, so a pin that fails does not undo the add.
+      if (library && added.outcome !== "not-added") {
+        await pinScientLibrarySource({
+          projectRoot: library.root,
+          library: library.library,
+          sourceId: added.sourceId,
+          actor: actorOf(requester),
+        })
+          .then(() => syncProjectBibliography(library, actorOf(requester)))
+          .catch(() => undefined);
+      }
+      return added;
+    },
+    catch: () => failed,
+  }).pipe(Effect.catch(Effect.succeed));
+});
+
+const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+
+/** Whether a file the queue saved is still the bytes it saved. */
+const intact = Effect.fn("Papers.queue.intact")(function* (queue: Queue, relative: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const recorded = queue.files.get(relative);
+  const bytes = yield* fs.readFile(path.join(queue.root, relative)).pipe(Effect.option);
+  return recorded !== undefined && Option.isSome(bytes) && sha256(bytes.value) === recorded.sha256;
+});
+
+/** The copy of this paper the queue saved before, or one already in papers/ that names it. */
+const savedBefore = Effect.fn("Papers.queue.savedBefore")(function* (queue: Queue, paper: Paper) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const present = (relative: string) =>
+    fs.exists(path.join(queue.root, relative)).pipe(Effect.orElseSucceed(() => false));
+  const bytesOf = (relative: string) =>
+    fs.readFile(path.join(queue.root, relative)).pipe(Effect.option);
+  const doi = paper.doi?.toLowerCase();
+  for (const [relative, file] of queue.files) {
+    const same =
+      (doi !== undefined && file.doi?.toLowerCase() === doi) ||
+      (doi === undefined && file.url !== undefined && file.url === paper.landingUrl);
+    const bytes = same ? yield* bytesOf(relative) : Option.none();
+    if (Option.isSome(bytes) && sha256(bytes.value) === file.sha256)
+      return { path: relative, version: file.version };
+  }
+  // A file the queue didn't record is this paper only if its own text names it.
+  const relative = `papers/${paperFileName(paper)}`;
+  if (queue.files.has(relative) || !(yield* present(relative))) return undefined;
+  const bytes = yield* bytesOf(relative);
+  if (Option.isNone(bytes)) return undefined;
+  const facts = yield* readPdfFacts(bytes.value);
+  return facts && pdfNamesPaper(paper, facts)
+    ? { path: relative, version: "unknown" as const }
+    : undefined;
+});
+
 const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: PaperItem) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const savedBefore = (paper: Paper) => {
-    const relative = `papers/${paperFileName(paper)}`;
-    return fs.exists(path.join(queue.root, relative)).pipe(
-      Effect.map((exists) => (exists ? relative : undefined)),
-      Effect.orElseSucceed(() => undefined),
-    );
-  };
+  const acted = queue.acted;
   // A paper from an older queue file has no record of who asked, so it gets free copies only.
   const requester: PaperRequester = queue.requesters.get(item.itemId) ?? {
     environmentId: queue.requester.environmentId,
     browser: false,
-    accounts: [],
   };
-  const fetched = yield* fetchOnePaper(item, requester, savedBefore).pipe(
+  const fetched = yield* fetchOnePaper(item, requester, (paper) =>
+    savedBefore(queue, paper).pipe(
+      Effect.orElseSucceed(() => undefined),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    ),
+  ).pipe(
     Effect.catch((error) =>
       Effect.succeed({ state: "no-access" as const, message: error.message, broken: true }),
     ),
@@ -229,12 +459,15 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
     queue.browserDown = true;
     return;
   }
-  const { itemId, doi, url, source } = item;
+  // Another request may have asked meanwhile to file this paper.
+  const { itemId, doi, url, source, library } = queue.items.get(item.itemId) ?? item;
+  const filer = queue.filers.get(itemId) ?? requester;
   const base = {
     itemId,
     ...(doi ? { doi } : {}),
     ...(url ? { url } : {}),
     ...(source ? { source } : {}),
+    ...(library ? { library } : {}),
     title: ("paper" in fetched ? fetched.paper?.title : undefined) ?? item.title,
   };
   const known = base.title === undefined ? (({ title: _, ...rest }) => rest)(base) : base;
@@ -249,25 +482,76 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
           } as const)
         : ({ ...known, state: fetched.state, message: fetched.message } as const);
     const saved = fetched.path ?? (yield* savePdf(queue.root, fetched.paper, fetched.bytes!));
-    const attached = source ? yield* attach(queue.root, source, saved) : undefined;
+    const { version } = fetched;
+    const savedBytes = fetched.bytes ?? (yield* fs.readFile(path.join(queue.root, saved)));
+    queue.files.set(saved, {
+      ...(fetched.paper.doi ? { doi: fetched.paper.doi } : {}),
+      url: fetched.paper.landingUrl,
+      version,
+      sha256: sha256(savedBytes),
+    });
+    const retrieval =
+      fetched.route === "saved-before" ? undefined : { route: fetched.route, version };
+    const attached = source
+      ? yield* attach(queue.root, source, saved, retrieval, filer)
+      : undefined;
+    const added =
+      !source && library
+        ? yield* intoLibrary(queue.root, fetched.paper, saved, retrieval, filer)
+        : undefined;
+    const sourceId =
+      attached && attached.outcome !== "stale"
+        ? attached.record.sourceId
+        : added && added.outcome !== "not-added"
+          ? added.sourceId
+          : undefined;
+    const message =
+      attached?.outcome === "stale"
+        ? `This source changed meanwhile; attach ${saved} from there.`
+        : added?.outcome === "not-added"
+          ? `The PDF is in ${saved}, but it is not in the Library. ${added.message}`
+          : undefined;
     return {
       ...known,
       state: "saved",
       route: fetched.route,
       published: fetched.published,
+      version,
       path: saved,
-      ...(attached?.outcome === "stale"
-        ? { message: `This source changed meanwhile; attach ${saved} from there.` }
-        : {}),
+      ...(sourceId ? { sourceId } : {}),
+      ...(message ? { message } : {}),
     } as const;
   }).pipe(
     Effect.catch((error) =>
       Effect.succeed({ ...known, state: "no-access", message: error.message } as const),
     ),
   );
+  // A request to file it that came while it was being filed runs it again, from the saved copy.
+  const latest = queue.items.get(itemId);
+  const refiled =
+    result.state === "saved" &&
+    latest !== undefined &&
+    (latest.source?.sourceId !== source?.sourceId || (latest.library && !library));
+  if (refiled) {
+    queue.items.set(itemId, { ...latest, state: "waiting" });
+    yield* announce(queue);
+    return;
+  }
+  // The user acted while this attempt ran: what it asked them for may already be done.
+  if (result.state === "needs-you" && queue.acted !== acted) {
+    queue.items.set(itemId, {
+      ...known,
+      state: "waiting",
+      ...(result.needed.kind === "terms" ? { needed: result.needed } : {}),
+    });
+    yield* announce(queue);
+    return;
+  }
   // A finished paper runs no more; one waiting or needing the person runs again as its requester.
-  if (result.state === "saved" || result.state === "no-access" || result.state === "not-found")
+  if (result.state === "saved" || result.state === "no-access" || result.state === "not-found") {
     queue.requesters.delete(itemId);
+    queue.filers.delete(itemId);
+  }
   queue.items.set(itemId, result);
   yield* announce(queue);
 });
@@ -275,7 +559,7 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
 const wake = (queue: Queue) => {
   for (const item of queue.items.values())
     if (item.state === "needs-you" && item.needed?.kind !== "university") {
-      const { needed: _, message: __, ...rest } = item;
+      const { message: _, ...rest } = item;
       queue.items.set(item.itemId, { ...rest, state: "waiting" });
     }
 };
@@ -298,10 +582,9 @@ const work = Effect.fn("Papers.queue.work")(function* (queue: Queue) {
     const stuck = [...queue.items.values()].some(
       (item) => item.state === "needs-you" && item.needed?.kind !== "university",
     );
-    if (queue.retries <= 0 || !stuck) break;
-    queue.retries -= 1;
+    if ((yield* Clock.currentTimeMillis) >= queue.retryUntil || !stuck) break;
     yield* Effect.sleep(RETRY_GAP);
-    clearHolds();
+    releaseHolds([...queue.items.values()].flatMap(({ needed }) => (needed ? [needed] : [])));
     wake(queue);
     yield* announce(queue);
   }
@@ -346,12 +629,68 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
   if (!unfinished && papers.length > 1) {
     queue.items.clear();
     queue.requesters.clear();
+    queue.filers.clear();
   }
+  // A saved paper whose file was replaced or removed since is fetched again.
+  const gone = new Set<string>();
+  for (const item of queue.items.values())
+    if (
+      item.state === "saved" &&
+      item.path !== undefined &&
+      papers.some((asked) => sameAsked(item, asked)) &&
+      !(yield* intact(queue, item.path))
+    )
+      gone.add(item.itemId);
   const items = papers.map((asked) => {
+    const filed = (item: PaperItem) =>
+      asked.source
+        ? item.sourceId === asked.source.sourceId
+        : !asked.library || item.sourceId !== undefined;
     const existing = [...queue.items.values()].find(
-      (item) => sameAsked(item, asked) && item.state !== "no-access" && item.state !== "not-found",
+      (item) =>
+        sameAsked(item, asked) &&
+        !gone.has(item.itemId) &&
+        item.state !== "no-access" &&
+        item.state !== "not-found" &&
+        // A saved paper not yet where this request files it goes again, to file its saved copy.
+        (item.state !== "saved" || filed(item)) &&
+        // One paper goes on one named source; another source asks for it again.
+        !(asked.source && item.source && item.source.sourceId !== asked.source.sourceId),
     );
-    if (existing) return existing;
+    const addsSource = existing?.source === undefined ? asked.source : undefined;
+    const addsLibrary = asked.library === true && !existing?.library;
+    if (existing) {
+      const joins = existing.state !== "saved" && (addsSource || addsLibrary);
+      // Asked again, a paper that waited for the person tries again.
+      const retries = existing.state === "needs-you";
+      const before = queue.requesters.get(existing.itemId);
+      // The user's own request for an agent's unfinished paper makes it theirs; one already
+      // underway goes again as theirs if it comes back waiting on them.
+      const claims =
+        requester.threadId === undefined &&
+        existing.state !== "saved" &&
+        before?.threadId !== undefined;
+      if (claims) {
+        queue.requesters.set(existing.itemId, requester);
+        queue.acted += 1;
+      }
+      if (!joins && !retries) return existing;
+      const { needed: _, message: __, ...unanswered } = existing;
+      const joined: PaperItem = {
+        ...(retries ? { ...unanswered, state: "waiting" as const } : existing),
+        ...(existing.needed?.kind === "terms" ? { needed: existing.needed } : {}),
+        ...(addsSource ? { source: addsSource } : {}),
+        ...(addsLibrary ? { library: true } : {}),
+      };
+      queue.items.set(existing.itemId, joined);
+      // A named source outranks the Library, so a redundant Library request keeps its filer.
+      if (joins && (addsSource || existing.source === undefined))
+        queue.filers.set(existing.itemId, requester);
+      // It runs as whoever asked last; the user's own request stays theirs.
+      if (retries && !claims && (before === undefined || before.threadId !== undefined))
+        queue.requesters.set(existing.itemId, requester);
+      return joined;
+    }
     const item: PaperItem = { ...asked, itemId: NodeCrypto.randomUUID(), state: "waiting" };
     queue.items.set(item.itemId, item);
     queue.requesters.set(item.itemId, requester);
@@ -362,29 +701,94 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
   return items;
 });
 
-/** The user signed in, passed a check or connected their university: everything waiting goes on. */
+/**
+ * The user signed in, passed a check or connected their university: everything waiting goes on,
+ * each paper as its requester, which each attempt decides afresh. A sign-in releases the papers
+ * held for that account only.
+ */
 export const continuePapers = Effect.fn("Papers.queue.continue")(function* (
   root: string,
   requester: PaperRequester,
+  signedIn?: AccountId,
+  terms?: PaperQueueContinueInput["terms"],
 ) {
   const queue = yield* load(root, requester);
   queue.requester = requester;
-  clearHolds();
+  if (terms) {
+    const broker = yield* PreviewAutomationBroker;
+    for (const item of queue.items.values()) {
+      const need = item.needed;
+      if (
+        need?.kind !== "terms" ||
+        need.site !== terms.site ||
+        need.profileId !== terms.profileId ||
+        !need.tabId
+      )
+        continue;
+      const target = {
+        scope: userRunInvocation(PAPERS_THREAD, requester.environmentId),
+        tabId: need.tabId,
+        updateCurrentTab: false,
+      };
+      const live = ownsPaperTermsTab(need.tabId, requester.environmentId, terms.profileId)
+        ? yield* broker
+            .invoke<PreviewAutomationStatus>({
+              ...target,
+              operation: "status",
+              input: {},
+            })
+            .pipe(Effect.option)
+        : Option.none();
+      if (Option.isSome(live) && live.value.tabId === need.tabId) {
+        yield* broker
+          .invoke({
+            ...target,
+            operation: "open",
+            input: { tabId: need.tabId, reuseExistingTab: true, open: true },
+          })
+          .pipe(
+            Effect.mapError(
+              () =>
+                new AccountsError({
+                  reason: "unavailable",
+                  message: "The publisher's terms page could not be shown.",
+                }),
+            ),
+          );
+      } else {
+        const { tabId: _, ...withoutTab } = need;
+        queue.items.set(item.itemId, { ...item, needed: withoutTab });
+      }
+      break;
+    }
+  }
+  clearHolds(signedIn);
+  queue.acted += 1;
   for (const item of queue.items.values())
     if (item.state === "needs-you") {
-      const { needed: _, message: __, ...rest } = item;
+      const { message: _, ...rest } = item;
       queue.items.set(item.itemId, { ...rest, state: "waiting" });
     }
-  queue.retries = RETRIES_AFTER_ACTING;
+  queue.retryUntil = (yield* Clock.currentTimeMillis) + RETRY_FOR_MS;
   yield* announce(queue);
   yield* ensureRunning(queue);
 });
 
-/** The projects with papers waiting for the person. */
-export const waitingPaperRoots = () =>
-  [...queues.values()]
-    .filter(({ items }) => [...items.values()].some((item) => item.state === "needs-you"))
-    .map(({ root }) => root);
+/** The projects with unfinished papers, those a restart left on disk included. */
+export const waitingPaperRoots = Effect.fn("Papers.queue.waitingRoots")(function* () {
+  // Unfinished, not only waiting on the person: an attempt underway may yet ask for what was done.
+  const loaded = [...queues.values()].filter(unfinished).map(({ root }) => root);
+  const stored = (yield* unfinishedRoots).filter((root) => !queues.has(root));
+  return [...loaded, ...stored];
+});
+
+/** After a restart, what every project's papers wait for shows again; they go on when opened. */
+export const showUnfinishedPapers = Effect.fn("Papers.queue.showUnfinished")(function* (
+  requester: PaperRequester,
+) {
+  for (const root of yield* unfinishedRoots)
+    yield* load(root, requester).pipe(Effect.flatMap(announce), Effect.ignore);
+});
 
 export const paperQueueRunning = (root: string) => queues.get(root)?.running === true;
 

@@ -51,6 +51,10 @@ import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { matchComposerModelItems } from "./composerModelMentions";
 import type { ModelEsque } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+// SCIENT-FORK:START — `/feedback` sends feedback to the Scient team.
+import { feedbackAvailable } from "../../scient/feedback/FeedbackDialog";
+import { renameCodexFeedbackCommand } from "../../scient/feedback/feedbackSlashCommand";
+// SCIENT-FORK:END
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -249,12 +253,32 @@ export function useComposerMenuItems({
           description: "Fork this conversation",
         },
         {
+          id: "slash:fork-worktree",
+          type: "slash-command",
+          command: "fork-worktree",
+          label: "/fork-worktree",
+          description: "Fork into a new worktree",
+        },
+        {
           id: "slash:model",
           type: "slash-command",
           command: "model",
           label: "/model",
           description: "Switch response model for this thread",
         },
+        // SCIENT-FORK:START — `/feedback` sends feedback to the Scient team.
+        ...(feedbackAvailable()
+          ? ([
+              {
+                id: "slash:feedback",
+                type: "slash-command",
+                command: "feedback",
+                label: "/feedback",
+                description: "Send feedback to the Scient team",
+              },
+            ] as const)
+          : []),
+        // SCIENT-FORK:END
         ...(sideChatAvailable
           ? ([
               {
@@ -292,14 +316,19 @@ export function useComposerMenuItems({
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
         selectedProviderSlashCommands,
         slashMenuSkills,
-      ).map((command) => ({
-        id: `provider-slash-command:${selectedProvider}:${command.name}`,
-        type: "provider-slash-command" as const,
-        provider: selectedProvider,
-        command,
-        label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
-      }));
+      )
+        // SCIENT-FORK: Codex's `/feedback` shows as `/feedback-openai` beside Scient's `/feedback`.
+        .map((command) =>
+          renameCodexFeedbackCommand(selectedProvider, command, feedbackAvailable()),
+        )
+        .map((command) => ({
+          id: `provider-slash-command:${selectedProvider}:${command.name}`,
+          type: "provider-slash-command" as const,
+          provider: selectedProvider,
+          command,
+          label: `/${command.name}`,
+          description: command.description ?? command.input?.hint ?? "Run provider command",
+        }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,

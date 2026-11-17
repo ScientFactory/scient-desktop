@@ -112,6 +112,8 @@ describe("clientPersistenceStorage", () => {
         sidebarAutoSettleOnMerge: true,
       }),
     );
+    // Saved after every one-time reset, so only missing keys take defaults.
+    testWindow.localStorage.setItem("scient-next:client-settings:v1:resets", "3");
     const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
 
     expect(readBrowserClientSettings()).toEqual(
@@ -126,10 +128,34 @@ describe("clientPersistenceStorage", () => {
     testWindow.localStorage.setItem("scient-next:client-settings:v1", "{}");
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
-        fontSizeInterface: 17,
+        fontSizeInterface: 15,
         showSkillsInSlashMenu: false,
       }),
     );
+  });
+
+  it("returns font sizes saved before the size reset to the defaults once, then keeps a later choice", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "scient-next:client-settings:v1",
+      JSON.stringify({ fontSizeInterface: 17, fontSizePrompt: 18, fontSizeCode: 15 }),
+    );
+    testWindow.localStorage.setItem("scient-next:client-settings:v1:resets", "2");
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    const reset = readBrowserClientSettings();
+    expect(reset).toEqual(
+      expect.objectContaining({
+        fontSizeInterface: 15,
+        fontSizePrompt: 16,
+        fontSizeCode: 14,
+        fontSizeTerminal: 14,
+      }),
+    );
+
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, fontSizeInterface: 17 });
+    expect(readBrowserClientSettings()?.fontSizeInterface).toBe(17);
   });
   // SCIENT-FORK:END
 });

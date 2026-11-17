@@ -35,7 +35,10 @@ const FILES = {
     "src/scient/overleaf/OverleafSync.folderMoves.test.ts",
     "src/scient/overleaf/OverleafCoordinator.platform.test.ts",
     "src/scient/overleaf/WorkspaceApplier.crash.test.ts",
-    "src/scient/overleaf/WorkspaceApplier.crash.shapes.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.resume.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.prepared.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.checked.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.called.test.ts",
     "src/scient/overleaf/WorkspaceApplier.crash.platform.test.ts",
     "src/scient/workspace/PlatformFileIdentity.test.ts",
     "src/scient/workspace/NativeFilePublication.test.ts",
@@ -99,11 +102,10 @@ function platformFiles() {
 // Enough of each failure to carry a command's own error output, as hdiutil's reason.
 const FAILURE_LINES = 20;
 
-// The server config runs files one at a time, against load-sensitive flakes. Two at a time
-// roughly halves this step on the hosted runners. Each file runs in its own process with its own
-// temporary folders and disk images; the one machine-wide resource, the drive letter
-// WindowsRetainedFileMutation gives its virtual disk, belongs to a single file.
-const WORKERS = 2;
+// Three files at a time, each in its own process with its own temporary folders and disk images.
+// The one machine-wide resource, the drive letter WindowsRetainedFileMutation gives its virtual
+// disk, belongs to a single file.
+const WORKERS = 3;
 
 /** Each failed test with the start of its failure message, from a Vitest JSON report. */
 function failures(report) {

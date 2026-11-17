@@ -25,8 +25,8 @@ import { waitForTitleRegenerationOutcome } from "./threadTitleRegeneration.ts";
 import {
   type InterruptThreadTurnInput,
   // SCIENT-FORK:START
-  type ForkThreadInput,
-  forkThread,
+  type ForkConversationInput,
+  forkConversation,
   // SCIENT-FORK:END
   type UpdateThreadMetadataInput,
   archiveThread,
@@ -384,17 +384,21 @@ export function createThreadEnvironmentAtoms<R, E>(
     // `threadId`, so it uses its own concurrency key rather than the shared one).
     fork: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:fork",
-      execute: forkThread,
+      execute: forkConversation,
       scheduler,
       concurrency: {
         mode: "serial" as const,
-        key: ({ environmentId, input }: { environmentId: string; input: ForkThreadInput }) =>
-          JSON.stringify([environmentId, input.originThreadId]),
+        key: ({ environmentId, input }: { environmentId: string; input: ForkConversationInput }) =>
+          JSON.stringify([environmentId, input.sourceThreadId]),
       },
     }),
     getForkOptions: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:fork-options",
       tag: ORCHESTRATION_WS_METHODS.getForkOptions,
+    }),
+    awaitFork: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:await-fork",
+      tag: ORCHESTRATION_WS_METHODS.awaitFork,
     }),
     // SCIENT-FORK:END
     forkFromRun: createEnvironmentCommand(runtime, {

@@ -3,6 +3,7 @@ import type {
   ScientSourceImportOperation,
   ScientSourcesOverviewResult,
   ScientSourcesPreflightResult,
+  ScientSourcesReadingStateResult,
   ZoteroCollection,
   ZoteroConnectionStatus,
   ZoteroImportScope,
@@ -23,48 +24,67 @@ import {
 
 export type ImportPreparation =
   | { readonly kind: "local-files"; readonly names: ReadonlyArray<string> }
-  | { readonly kind: "zotero"; readonly count: number };
+  | { readonly kind: "zotero"; readonly count: number }
+  | { readonly kind: "file"; readonly name: string };
 
 export interface SourcesWorkflowState {
   readonly request: number;
   readonly overviewRequest: number;
+  /** The newest overview read that answered or failed; behind `overviewRequest` while one runs. */
+  readonly overviewSettled: number;
   readonly zoteroRequest: number;
+  readonly zoteroSettled: number;
   readonly overview: ScientSourcesOverviewResult | null;
   readonly sourceDetails: Readonly<Record<string, ScientSourceDetailResult>>;
   readonly zoteroStatus: ZoteroConnectionStatus | null;
   readonly library: ZoteroLibraryPage | null;
   readonly zoteroCollections: ReadonlyArray<ZoteroCollection>;
   readonly zoteroScope: ZoteroImportScope;
+  /** The Zotero group being browsed; null for My Library. */
+  readonly zoteroGroupId: string | null;
   readonly preflight: ScientSourcesPreflightResult | null;
   readonly preflightAdapter: "zotero" | "local-files" | null;
   readonly operation: ScientSourceImportOperation | null;
+  /** An import, its review, cancel or retry runs. Reads never set it. */
   readonly busy: boolean;
+  /** Removals under way; counted, so one ending cannot release another. */
+  readonly removals: number;
   readonly importPreparation: ImportPreparation | null;
   readonly checkingZotero: boolean;
   readonly zoteroCheckFeedback: string | null;
   readonly cancelling: boolean;
+  /** The failure of an action the person took. */
   readonly error: string | null;
+  /** The newest overview read's failure; kept apart so a refresh cannot erase an action's error. */
+  readonly overviewError: string | null;
+  readonly readingOverrides: Readonly<Record<string, ReadingOverride>>;
 }
 
 export const initialSourcesWorkflowState: SourcesWorkflowState = {
   request: 0,
   overviewRequest: 0,
+  overviewSettled: 0,
   zoteroRequest: 0,
+  zoteroSettled: 0,
   overview: null,
   sourceDetails: {},
   zoteroStatus: null,
   library: null,
   zoteroCollections: [],
   zoteroScope: { kind: "library" },
+  zoteroGroupId: null,
   preflight: null,
   preflightAdapter: null,
   operation: null,
   busy: false,
+  removals: 0,
   importPreparation: null,
   checkingZotero: false,
   zoteroCheckFeedback: null,
   cancelling: false,
   error: null,
+  overviewError: null,
+  readingOverrides: {},
 };
 
 export type SourcesWorkflowAction =
@@ -76,7 +96,10 @@ export type SourcesWorkflowAction =
     }
   | { readonly type: "requestStarted"; readonly request: number }
   | { readonly type: "overviewRequestStarted"; readonly request: number }
+  | { readonly type: "overviewFailed"; readonly request: number; readonly error: string }
+  | { readonly type: "overviewErrorCleared" }
   | { readonly type: "zoteroRequestStarted"; readonly request: number }
+  | { readonly type: "zoteroRequestSettled"; readonly request: number }
   | {
       readonly type: "overviewArrived";
       readonly request: number;
@@ -86,9 +109,15 @@ export type SourcesWorkflowAction =
       readonly type: "sourceDetailArrived";
       readonly sourceId: string;
       readonly detail: ScientSourceDetailResult;
+      readonly atDetailFetch: number;
     }
   | { readonly type: "sourceRecordAccepted"; readonly record: ScientSourceDetailResult }
   | { readonly type: "sourceRemoved"; readonly sourceId: string }
+  | {
+      readonly type: "readingStateArrived";
+      readonly result: ScientSourcesReadingStateResult;
+      readonly atDetailFetch: number;
+    }
   | {
       readonly type: "zoteroStatusArrived";
       readonly status: ZoteroConnectionStatus;
@@ -101,6 +130,7 @@ export type SourcesWorkflowAction =
     }
   | { readonly type: "zoteroLibrarySeeded"; readonly page: ZoteroLibraryPage }
   | { readonly type: "zoteroScopeChanged"; readonly scope: ZoteroImportScope }
+  | { readonly type: "zoteroGroupChanged"; readonly groupId: string | null }
   | {
       readonly type: "zoteroCollectionsArrived";
       readonly collections: ReadonlyArray<ZoteroCollection>;
@@ -129,6 +159,8 @@ export type SourcesWorkflowAction =
       readonly clearPreflight?: boolean;
     }
   | { readonly type: "busyChanged"; readonly busy: boolean }
+  | { readonly type: "removalStarted" }
+  | { readonly type: "removalSettled" }
   | { readonly type: "cancellingChanged"; readonly cancelling: boolean }
   | { readonly type: "checkingZoteroChanged"; readonly checking: boolean }
   | { readonly type: "errorArrived"; readonly error: string | null }
@@ -139,6 +171,11 @@ function isCurrent(state: SourcesWorkflowState, request: number): boolean {
   return request === state.request;
 }
 
+type OverviewRow = ScientSourcesOverviewResult["records"][number];
+
+/** A library server's row: its keys are this project's pins. */
+const isLibraryRow = (row: OverviewRow | undefined): boolean => row?.pinned !== undefined;
+
 function acceptRecordIntoOverview(
   overview: ScientSourcesOverviewResult,
   record: ScientSourceDetailResult,
@@ -146,9 +183,14 @@ function acceptRecordIntoOverview(
   const recordIndex = overview.records.findIndex((entry) => entry.sourceId === record.sourceId);
   if (recordIndex === -1) return overview;
   const records = [...overview.records];
+  const row = overview.records[recordIndex];
+  const citationKey = isLibraryRow(row)
+    ? row?.citationKey
+    : (record.citationKey ?? row?.citationKey);
   records[recordIndex] = {
     sourceId: record.sourceId,
     revision: record.revision,
+    ...(citationKey ? { citationKey } : {}),
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -165,8 +207,83 @@ function acceptRecordIntoOverview(
     })),
     importedAt: record.importedAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
+    ...libraryFields(record, row),
   };
   return { ...overview, records };
+}
+
+type ReadingChange = Partial<
+  Pick<ScientSourcesReadingStateResult["sources"][number], "outcome" | "readingStatus" | "starred">
+>;
+
+/** A landed reading change, kept until an overview that started after it, and applied only to reads that started before it. */
+type ReadingOverride = ReadingChange & {
+  readonly atOverviewRequest: number;
+  readonly atDetailFetch: number;
+};
+
+type LibraryFields = Pick<
+  ScientSourceDetailResult,
+  "pinned" | "projectNote" | "fromSnapshot" | "readingStatus" | "starred" | "alsoCitedAs"
+>;
+const LIBRARY_FIELDS = [
+  "pinned",
+  "projectNote",
+  "fromSnapshot",
+  "readingStatus",
+  "starred",
+] as const;
+
+/** A library server's row fields: from the record where it carries them, its keys from the row. */
+function libraryFields(record: LibraryFields, row: LibraryFields | undefined): LibraryFields {
+  const alsoCitedAs = row?.alsoCitedAs;
+  return {
+    ...Object.fromEntries(
+      LIBRARY_FIELDS.flatMap((key) =>
+        key in record ? [[key, record[key]]] : row && key in row ? [[key, row[key]]] : [],
+      ),
+    ),
+    ...(alsoCitedAs ? { alsoCitedAs } : {}),
+  };
+}
+
+/**
+ * Edit results other than the personal note's own leave the personal note out; the one on screen
+ * stays. Reading state changes no revision, so it is kept from the details shown.
+ */
+function keepPersonalFields(
+  record: ScientSourceDetailResult,
+  shown: ScientSourceDetailResult | undefined,
+): ScientSourceDetailResult {
+  if (!shown) return record;
+  return {
+    ...(shown.readingStatus !== undefined && !("readingStatus" in record)
+      ? { readingStatus: shown.readingStatus }
+      : {}),
+    ...(shown.starred !== undefined && !("starred" in record) ? { starred: shown.starred } : {}),
+    ...record,
+    ...("personalNote" in shown && !("personalNote" in record)
+      ? { personalNote: shown.personalNote ?? null }
+      : {}),
+  };
+}
+
+function withReadingState<
+  T extends {
+    readonly sourceId: string;
+    readonly readingStatus?: unknown;
+    readonly starred?: unknown;
+  },
+>(record: T, changes: ReadonlyMap<string, ReadingChange>): T {
+  const change = changes.get(record.sourceId);
+  if (!change || change.outcome === "not-found" || record.readingStatus === undefined) {
+    return record;
+  }
+  return {
+    ...record,
+    ...(change.readingStatus !== undefined ? { readingStatus: change.readingStatus } : {}),
+    ...(change.starred !== undefined ? { starred: change.starred } : {}),
+  };
 }
 
 function pruneSourceDetails(
@@ -174,12 +291,75 @@ function pruneSourceDetails(
   overview: ScientSourcesOverviewResult,
 ): SourcesWorkflowState["sourceDetails"] {
   return Object.fromEntries(
-    Object.entries(details).filter(([sourceId, detail]) =>
-      overview.records.some(
-        (summary) => summary.sourceId === sourceId && summary.revision === detail.revision,
-      ),
-    ),
+    Object.entries(details).flatMap(([sourceId, detail]) => {
+      const summary = overview.records.find(
+        (entry) => entry.sourceId === sourceId && entry.revision === detail.revision,
+      );
+      return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
+    }),
   );
+}
+
+/** The newest reading change wins over an answer to a read that started before it. */
+function withReadingOverride<
+  A extends {
+    readonly sourceId: string;
+    readonly readingStatus?: unknown;
+    readonly starred?: unknown;
+  },
+>(record: A, overrides: Readonly<Record<string, ReadingOverride>>, atDetailFetch?: number): A {
+  const override = overrides[record.sourceId];
+  if (!override || (atDetailFetch !== undefined && atDetailFetch > override.atDetailFetch)) {
+    return record;
+  }
+  return withReadingState(record, new Map([[record.sourceId, override]]));
+}
+
+/** Reading state changes no revision, so a kept detail takes it from the newer overview. */
+function withSummaryReadingState(
+  detail: ScientSourceDetailResult,
+  summary: OverviewRow,
+): ScientSourceDetailResult {
+  if (
+    summary.readingStatus === undefined ||
+    (summary.readingStatus === detail.readingStatus && summary.starred === detail.starred)
+  ) {
+    return detail;
+  }
+  return {
+    ...detail,
+    readingStatus: summary.readingStatus,
+    ...(summary.starred !== undefined ? { starred: summary.starred } : {}),
+  };
+}
+
+/**
+ * The details shown for a source: the cached detail at the overview row's revision. Pins change
+ * without a revision, so this project's keys come from the latest overview row alone, never from a
+ * detail answer, which may have been read before the newest pin change. A review record served
+ * from the review's snapshot has no row; its detail is shown as read.
+ */
+export function shownSourceRecord(
+  state: Pick<SourcesWorkflowState, "overview" | "sourceDetails">,
+  sourceId: string,
+): ScientSourceDetailResult | null {
+  const row = state.overview?.records.find((record) => record.sourceId === sourceId);
+  const detail = state.sourceDetails[sourceId];
+  if (!row && detail?.label === "From this review's snapshot") return detail;
+  if (!row || !detail || detail.revision !== row.revision) return null;
+  if (!isLibraryRow(row)) return detail;
+  if (
+    row.citationKey === detail.citationKey &&
+    (row.alsoCitedAs ?? []).join("\0") === (detail.alsoCitedAs ?? []).join("\0")
+  ) {
+    return detail;
+  }
+  const { citationKey: _key, alsoCitedAs: _others, ...rest } = detail;
+  return {
+    ...rest,
+    ...(row.citationKey ? { citationKey: row.citationKey } : {}),
+    ...(row.alsoCitedAs ? { alsoCitedAs: row.alsoCitedAs } : {}),
+  };
 }
 
 export function sourcesWorkflowReducer(
@@ -193,24 +373,53 @@ export function sourcesWorkflowReducer(
         ...initialSourcesWorkflowState,
         request: action.request,
         overviewRequest: action.overviewRequest,
+        overviewSettled: action.overviewRequest,
         zoteroRequest: action.zoteroRequest,
+        zoteroSettled: action.zoteroRequest,
       };
     }
     case "requestStarted":
       return { ...state, request: action.request };
     case "overviewRequestStarted":
       return { ...state, overviewRequest: action.request };
+    case "overviewFailed":
+      if (action.request !== state.overviewRequest) return state;
+      return { ...state, overviewSettled: action.request, overviewError: action.error };
+    case "overviewErrorCleared":
+      return { ...state, overviewError: null };
     case "zoteroRequestStarted":
       return { ...state, zoteroRequest: action.request };
+    case "zoteroRequestSettled":
+      if (action.request !== state.zoteroRequest) return state;
+      return { ...state, zoteroSettled: action.request };
     case "overviewArrived": {
       // Only the newest overview load wins; import progress and Zotero
       // browsing run on their own lanes and are unaffected by this check.
       if (action.request !== state.overviewRequest) return state;
+      const pending = new Map(
+        Object.entries(state.readingOverrides).filter(
+          ([, override]) => override.atOverviewRequest >= action.request,
+        ),
+      );
+      const overview =
+        pending.size > 0
+          ? {
+              ...action.overview,
+              records: action.overview.records.map((record) => withReadingState(record, pending)),
+            }
+          : action.overview;
       return {
         ...state,
-        overview: action.overview,
-        sourceDetails: pruneSourceDetails(state.sourceDetails, action.overview),
-        operation: action.overview.activeOperation ?? state.operation,
+        overview,
+        overviewSettled: action.request,
+        overviewError: null,
+        sourceDetails: pruneSourceDetails(state.sourceDetails, overview),
+        operation: overview.activeOperation ?? state.operation,
+        readingOverrides: Object.fromEntries(
+          Object.entries(state.readingOverrides).filter(
+            ([, override]) => override.atOverviewRequest >= action.request,
+          ),
+        ),
       };
     }
     case "sourceDetailArrived": {
@@ -218,20 +427,25 @@ export function sourcesWorkflowReducer(
         ...state,
         sourceDetails: {
           ...state.sourceDetails,
-          [action.sourceId]: action.detail,
+          [action.sourceId]: withReadingOverride(
+            action.detail,
+            state.readingOverrides,
+            action.atDetailFetch,
+          ),
         },
       };
     }
     case "sourceRecordAccepted": {
+      // No reading override here: the record was read after this window's own write,
+      // so an older override would mask fresher server state.
+      const record = action.record;
       return {
         ...state,
         sourceDetails: {
           ...state.sourceDetails,
-          [action.record.sourceId]: action.record,
+          [record.sourceId]: keepPersonalFields(record, state.sourceDetails[record.sourceId]),
         },
-        ...(state.overview
-          ? { overview: acceptRecordIntoOverview(state.overview, action.record) }
-          : {}),
+        ...(state.overview ? { overview: acceptRecordIntoOverview(state.overview, record) } : {}),
       };
     }
     case "sourceRemoved": {
@@ -249,6 +463,37 @@ export function sourcesWorkflowReducer(
               recordDiagnostics: state.overview.recordDiagnostics.filter(
                 (entry) => entry.sourceId !== action.sourceId,
               ),
+            }
+          : state.overview,
+      };
+    }
+    case "readingStateArrived": {
+      const changes = new Map(action.result.sources.map((entry) => [entry.sourceId, entry]));
+      const readingOverrides = { ...state.readingOverrides };
+      for (const entry of action.result.sources) {
+        if (entry.outcome === "not-found") continue;
+        if (entry.readingStatus === undefined && entry.starred === undefined) continue;
+        readingOverrides[entry.sourceId] = {
+          ...readingOverrides[entry.sourceId],
+          ...(entry.readingStatus !== undefined ? { readingStatus: entry.readingStatus } : {}),
+          ...(entry.starred !== undefined ? { starred: entry.starred } : {}),
+          atOverviewRequest: state.overviewRequest,
+          atDetailFetch: action.atDetailFetch,
+        };
+      }
+      return {
+        ...state,
+        readingOverrides,
+        sourceDetails: Object.fromEntries(
+          Object.entries(state.sourceDetails).map(([sourceId, detail]) => [
+            sourceId,
+            withReadingState(detail, changes),
+          ]),
+        ),
+        overview: state.overview
+          ? {
+              ...state.overview,
+              records: state.overview.records.map((record) => withReadingState(record, changes)),
             }
           : state.overview,
       };
@@ -277,6 +522,8 @@ export function sourcesWorkflowReducer(
       return { ...state, library: action.page };
     case "zoteroScopeChanged":
       return { ...state, zoteroScope: action.scope };
+    case "zoteroGroupChanged":
+      return { ...state, zoteroGroupId: action.groupId, zoteroCollections: [] };
     case "zoteroCollectionsArrived":
       return { ...state, zoteroCollections: action.collections };
     case "zoteroLibraryClosed":
@@ -318,6 +565,10 @@ export function sourcesWorkflowReducer(
     }
     case "busyChanged":
       return { ...state, busy: action.busy };
+    case "removalStarted":
+      return { ...state, removals: state.removals + 1 };
+    case "removalSettled":
+      return { ...state, removals: Math.max(0, state.removals - 1) };
     case "cancellingChanged":
       return { ...state, cancelling: action.cancelling };
     case "checkingZoteroChanged":

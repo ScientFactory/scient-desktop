@@ -1,4 +1,4 @@
-import type { AnalyticsConsent, AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
+import type { AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
 
 /** One upload's deadline, from connecting through reading the acknowledgement. */
 export const SEND_DEADLINE_MS = 15_000;
@@ -7,14 +7,10 @@ export const SEND_DEADLINE_MS = 15_000;
  * deadline still fits, so a flush (and an explicit `flush()` waiting on it) ends within it.
  */
 export const FLUSH_DEADLINE_MS = 2 * SEND_DEADLINE_MS;
-/** A person waits on deletion, so it gets a shorter deadline. */
-export const DELETE_DEADLINE_MS = 10_000;
 
 export interface AnalyticsWorkerInput {
   readonly outboxPath: string;
   readonly endpoint: string;
-  readonly consent: AnalyticsConsent;
-  readonly purpose: "collection" | "deletion";
 }
 
 export interface AnalyticsEventDraft extends Omit<AnalyticsEvent, "distinct_id"> {
@@ -28,13 +24,7 @@ export type AnalyticsWorkerCommand =
       readonly events: ReadonlyArray<AnalyticsEventDraft>;
     }
   | { readonly type: "flush"; readonly requestId: number }
-  | {
-      readonly type: "set-consent";
-      readonly requestId: number;
-      readonly consent: AnalyticsConsent;
-    }
   | { readonly type: "pending-count"; readonly requestId: number }
-  | { readonly type: "delete-data"; readonly requestId: number }
   | { readonly type: "close"; readonly requestId: number };
 
 export type AnalyticsWorkerResponse =
@@ -44,6 +34,8 @@ export type AnalyticsWorkerResponse =
       readonly queuedCount: number;
       readonly droppedCount: number;
       readonly retryCount: number;
+      /** How long the batch's oldest event waited to be sent, in milliseconds. */
+      readonly oldestEventAgeMs: number;
       readonly deliveryClass: "delivered" | "timeout" | "network" | "rejected";
     }
   | {

@@ -810,7 +810,13 @@ describe("Scient provider settings", () => {
         "google-antigravity/gemini-3.8-flash",
         "google-antigravity/gemini-3.1-pro",
       ].map((slug) => ({ slug, name: slug, isCustom: false, capabilities: {} }));
-      const curatedHidden = ["anthropic/claude-haiku-4-5", "google-antigravity/claude-opus-4-5"];
+      const curatedHidden = [
+        "anthropic/claude-haiku-4-5",
+        "google-antigravity/claude-opus-4-5",
+        "google-antigravity/claude-opus-4-6",
+        "google-antigravity/gemini-3.8-flash",
+        "google-antigravity/gemini-3.1-pro",
+      ];
       const initialPreferences =
         preferences === "empty" ? { [instanceId]: { hiddenModels: [], modelOrder: [] } } : {};
       state.settings = {

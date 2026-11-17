@@ -7,7 +7,7 @@ import {
   checkpointSupportsRewind,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
-  type ThreadForkCommand,
+  type ScientThreadForkOptions,
   WS_METHODS,
   type ChatAttachment,
   MessageId,
@@ -256,8 +256,13 @@ export type SetThreadSectionInput = Omit<
   "type" | "commandId"
 > &
   CommandMetadata;
-// SCIENT-FORK:START
-export type ForkThreadInput = Omit<ThreadForkCommand, "type" | "commandId"> & CommandMetadata;
+// SCIENT-FORK:START — Scient's fork boundary and workspace choice on T3's thread.fork.
+export interface ForkConversationInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly scient: ScientThreadForkOptions;
+  readonly title?: string;
+}
 // SCIENT-FORK:END
 
 export interface ForkSideChatInput extends CommandMetadata {
@@ -374,16 +379,13 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   }
 });
 
-// SCIENT-FORK:START — dedicated conversation-boundary fork transport.
+// SCIENT-FORK:START
 type DispatchTag = typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
   SecureRandom.SecureRandom | EnvironmentSupervisor.EnvironmentSupervisor
 >;
-
-const dispatchConversationFork = (command: ThreadForkCommand) =>
-  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 // SCIENT-FORK:END
 
 const getProjection = (threadId: ThreadId) =>
@@ -1225,22 +1227,13 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
-  // SCIENT-FORK:START — equal protocol versions do not imply support for a new command tag.
-  let startSelectedRun = false;
-  if (input.runId !== undefined) {
-    const { capabilities } = (yield* getInitialServerConfig()).environment;
-    // Only legacy Scient advertises the queue.resume(runId) form; upstream v2 uses the new tag.
-    startSelectedRun = capabilities.queuedRunStart ?? capabilities.threadQueueExplicitSend !== true;
-  }
   return yield* dispatch({
-    ...(input.runId !== undefined && startSelectedRun
-      ? { type: "queued-run.start" as const, runId: input.runId }
-      : { type: "queue.resume" as const }),
+    ...(input.runId === undefined
+      ? { type: "queue.resume" as const }
+      : { type: "queued-run.start" as const, runId: input.runId }),
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-    ...(input.runId === undefined ? {} : { runId: input.runId }),
   });
-  // SCIENT-FORK:END
 });
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
@@ -1255,15 +1248,21 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
   });
 });
 
-// SCIENT-FORK:START — the server stamps fork events and resolves retained turn boundaries.
-// Destination-derived command IDs keep transport retries of the same fork idempotent.
-export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.forkThread",
+// SCIENT-FORK:START — the server resolves the boundary and allocates the title. A
+// destination-derived command ID keeps transport retries of the same fork idempotent.
+export const forkConversation: (input: ForkConversationInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.forkConversation",
 )(function* (input) {
-  return yield* dispatchConversationFork({
-    ...input,
+  return yield* dispatch({
     type: "thread.fork",
-    commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.newThreadId}`),
+    commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.targetThreadId}`),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "latest_stable" },
+    scient: input.scient,
+    ...(input.title === undefined ? {} : { title: input.title }),
   });
 });
 // SCIENT-FORK:END

@@ -503,6 +503,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let commandRejected = false;
   /** Evidence for the open turn's outcome; reset when a turn begins. */
   let evidence: TurnEvidence = {};
+  /**
+   * A later run of the open turn started after its prompt's own run ended, for example when a
+   * background result woke the agent before the turn settled. prompt_result reports only the
+   * prompt's own run: when the later run ends normally, the turn recovered and completes.
+   */
+  let promptSuperseded = false;
   const settledPromptIds: Array<string> = [];
   /**
    * prompt_result and AsyncCommandFailure frames that arrived while the open
@@ -526,6 +532,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /** Agent runs are numbered at agent_start; OMP events carry no run id. */
   let runSequence = 0;
   let openRunId: number | undefined;
+  // SCIENT-FORK: since OMP 18.21 a run paused on background work later ends with no loop of its own.
+  let pausedRunId: number | undefined;
   /** A run still open when its turn settled; nothing it sends belongs to a turn. */
   let abandonedRunId: number | undefined;
   let protocolFailed = false;
@@ -613,9 +621,24 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         ...(commandRejected ? { source: "command" as const, failureCode: "command_rejected" } : {}),
       };
     }
+    // After a later run, prompt_result describes only the prompt's own run, so the latest run's
+    // ending decides. Only a later run that failed after a failed prompt keeps the prompt's
+    // structured cause (a usage limit's reset time, for example).
+    const laterRunFailed =
+      evidence.stopReason === "error" ||
+      evidence.stopReason === "aborted" ||
+      evidence.retryExhausted === true;
+    const runOnly = promptSuperseded && !(laterRunFailed && evidence.promptStatus === "error");
     const verdict = classifyOmpTurnOutcome(input.target, {
       settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
-      ...evidence,
+      ...(runOnly
+        ? {
+            stopReason: evidence.stopReason,
+            errorMessage: evidence.errorMessage,
+            retryExhausted: evidence.retryExhausted,
+            retryFinalError: evidence.retryFinalError,
+          }
+        : evidence),
     });
     if (verdict.outcome === "unknown") {
       return {
@@ -698,10 +721,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     promptReported = false;
     promptWaitStartedAt = undefined;
     evidence = {};
+    promptSuperseded = false;
     pendingOutcomes = [];
+    // SCIENT-FORK: a paused run is unfinished too, so its final agent_end is stale here.
+    const staleRunId = openRunId ?? pausedRunId;
     yield* applySignal({
       type: "begin",
-      ...(openRunId === undefined ? {} : { staleRunId: openRunId }),
+      ...(staleRunId === undefined ? {} : { staleRunId }),
     });
     yield* publish({ type: "turn-started", turnId });
   });
@@ -1015,13 +1041,31 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       ) {
         yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
       }
+      const followUpRun = turnIsOpen(turn) && turn.phase === "draining";
       openRunId = ++runSequence;
+      // SCIENT-FORK: a paused run that resumes starts a loop of its own.
+      pausedRunId = undefined;
       yield* applySignal({ type: "agent-start", runId: openRunId });
+      if (followUpRun && turn.runId === openRunId) {
+        // Only this run's ending says whether the earlier run's failure was recovered from.
+        promptSuperseded = true;
+        evidence = {
+          ...evidence,
+          stopReason: undefined,
+          errorMessage: undefined,
+          assistantEnded: false,
+          retryExhausted: false,
+          retryFinalError: undefined,
+        };
+      }
       return;
     }
     if (event.type === "agent_end") {
-      const runId = openRunId;
+      // SCIENT-FORK: the final agent_end of a paused run closes that run, not the next turn's.
+      const runId = openRunId ?? pausedRunId;
       openRunId = undefined;
+      // SCIENT-FORK: a non-terminal end leaves its run paused.
+      pausedRunId = event.isTerminal === false ? runId : undefined;
       // The tail of an aborted run carries no output for the current turn.
       const stale = runId !== undefined && runId === turn.staleRunId;
       // Yield ends the visible response even when a background result can
@@ -1111,6 +1155,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       yield* publish({ type: "observation", event });
       return;
     }
+    // SCIENT-FORK:START — Scient Agent's warming stopped: its confirmed cache times idle compaction.
+    if (event.type === "cache_warming_stopped") {
+      yield* publish({ type: "observation", event });
+      return;
+    }
+    // SCIENT-FORK:END
     if (event.type === "auto_retry_start") {
       if (!turnIsOpen(turn) || staleRunOpen()) return;
       evidence.retryExhausted = false;

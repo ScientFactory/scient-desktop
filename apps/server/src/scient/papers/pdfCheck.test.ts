@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { pdfVerdict } from "./pdfCheck.ts";
+import { pdfNamesPaper, pdfVerdict } from "./pdfCheck.ts";
 
 const paper = {
   doi: "10.1000/abc",
@@ -45,4 +45,16 @@ it("refuses a supplement, which shares the paper's title", () => {
 
 it("keeps a scan, which has no text to judge it by", () => {
   expect(pdfVerdict(paper, { pages: 12, text: "", firstPage: "" })).toBe("the-paper");
+});
+
+it("names a file of unknown origin as the paper only on its own evidence", () => {
+  expect(pdfNamesPaper(paper, { pages: 12, text: `${body} 10.1000/abc`, firstPage: "" })).toBe(
+    true,
+  );
+  // A scan, a preview, or a paper with no title or DOI to look for is not evidence.
+  expect(pdfNamesPaper(paper, { pages: 12, text: "", firstPage: "" })).toBe(false);
+  expect(pdfNamesPaper(paper, { pages: 1, text: `${body} 10.1000/abc`, firstPage: "" })).toBe(
+    false,
+  );
+  expect(pdfNamesPaper({}, { pages: 12, text: body, firstPage: "" })).toBe(false);
 });

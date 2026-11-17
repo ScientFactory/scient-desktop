@@ -16,20 +16,22 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
-import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as DesktopVoice from "./app/DesktopVoice.ts";
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — the update facts journal the updater writes and the telemetry pipe delivers.
+import * as DesktopUpdateFacts from "./scient/updateOutcomes/DesktopUpdateFacts.ts";
 // SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
@@ -135,33 +137,15 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
-const resolveDesktopSshCliRunner = (
-  environment: DesktopEnvironment.DesktopEnvironment["Service"],
-): RemoteT3RunnerOptions => {
-  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
-  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
-    return {
-      nodeScriptPath: devRemoteEntryPath,
-      nodeEngineRange: serverPackageJson.engines.node,
-    };
-  }
-  // SCIENT-FORK: without a published Scient server for this build the remote
-  // runner reports that clearly instead of installing a substitute.
-  const packageSpec = resolveRemoteT3CliPackageSpec({
-    appVersion: environment.appVersion,
-    isDevelopment: environment.isDevelopment,
-  });
-  return {
-    ...(packageSpec === undefined ? {} : { packageSpec }),
-    nodeEngineRange: serverPackageJson.engines.node,
-  };
-};
-
 const layerDesktopSshEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const env = yield* HostProcess.Environment;
     return DesktopSshEnvironment.layer({
-      resolveCliRunner: Effect.sync(() => resolveDesktopSshCliRunner(environment)),
+      // Per connect: the login shell's environment is installed after this layer is built.
+      resolveCliRunner: Effect.sync(() =>
+        DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, env),
+      ),
       resolveLauncherId: yield* Effect.cached(
         DesktopSshEnvironment.readOrCreateLauncherId(
           environment.path.join(environment.stateDir, "ssh-launcher-id"),
@@ -223,7 +207,8 @@ const layerDesktopPreview = PreviewManager.layer.pipe(
 );
 
 const layerDesktopWindow = DesktopWindow.layer.pipe(
-  Layer.provideMerge(DesktopTelemetryPublisher.layer),
+  // SCIENT-FORK: the same journal layer as the updater's, so both share one journal.
+  Layer.provideMerge(DesktopTelemetryPublisher.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
   Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(layerDesktopServerExposure),
   Layer.provideMerge(layerDesktopPreview),
@@ -259,6 +244,9 @@ const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — keep the computer awake while threads work.
   DesktopKeepAwake.layer,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — feedback reports to the Scient team.
+  DesktopFeedback.layer,
+  // SCIENT-FORK:END
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,
@@ -271,6 +259,8 @@ const layerDesktopApplication = Layer.mergeAll(
   Layer.provideMerge(
     DesktopUpdates.layer.pipe(
       Layer.provide(DesktopUpdatePolicy.layer),
+      // SCIENT-FORK: the same journal layer as the telemetry publisher's.
+      Layer.provide(DesktopUpdateFacts.layer),
       // The same layer as the foundation's, so the policy is still read once.
       Layer.provide(DesktopManagedPolicy.layer),
     ),

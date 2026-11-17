@@ -1,0 +1,98 @@
+Bundled journal, publisher and platform artwork
+
+Retrieved 2026-11-16. The four PNG files preserve the complete source artwork,
+its aspect ratio, and transparency. No letters, symbols or registration marks
+are removed; no shape is redrawn or recomposed, and no white canvas is added.
+Only fully transparent outer margins are trimmed. Network access is not needed
+for these fallbacks. A publisher/platform fallback does not stop venue discovery
+and is replaced when the server discovers an icon for that venue.
+
+Redistribution basis: CC0-1.0 for the specified Simple Icons files; Wikimedia
+Commons PD-textlogo classification for the complete NEJM Evidence wordmark
+(LicenseRef-PD-textlogo). Commons documents a public-domain assessment for
+simple text/geometric logos, not a publisher-issued license. Public availability
+and open-access article licenses are not treated as artwork licenses.
+
+Trademark rights and other non-copyright restrictions remain with their owners.
+These marks identify the named journal, publisher or platform; no affiliation,
+sponsorship or endorsement of Scient is implied. CC0 does not waive trademark
+rights. The Commons record also expressly warns of trademark restrictions.
+This notice does not claim universal legal clearance in every jurisdiction.
+
+nejm-evidence.png
+  Identity: complete NEJM Evidence journal wordmark, including NEJM and Evidence.
+    Used only for NEJM Evidence (ISSN 2766-5526), never for NEJM AI, NEJM Group
+    or The New England Journal of Medicine.
+  Author / trademark owner: NEJM Evidence / Massachusetts Medical Society.
+  Documented basis: Commons PD-textlogo, with trademark warning.
+  Provenance: https://commons.wikimedia.org/wiki/File:NEJM_Evidence_logo.svg
+  Revision: https://commons.wikimedia.org/w/index.php?title=File:NEJM_Evidence_logo.svg&oldid=875866478
+  Source: https://upload.wikimedia.org/wikipedia/commons/a/a3/NEJM_Evidence_logo.svg
+  Official source cited by Commons: https://evidence.nejm.org/
+  Journal identity: https://portal.issn.org/resource/ISSN/2766-5526
+  Source SVG SHA-256: edb8fb17389fb2a4d56966cc1955b082cd7091376485776249fa2bafe0474c2b
+  Transformation: rasterize complete SVG with ImageMagick at density 960,
+    transparent background; trim fully transparent margins and proportionally
+    resize within 240 x 240. Preserve all original colors and artwork.
+  Packaged: 240 x 88 RGBA PNG, 7,705 bytes.
+  SHA-256: fe3855500c346b76c6f31526ca53b0a9a4cd7d6eb4f56c8bd357e9e8eba9ca2c
+
+Simple Icons sources
+  Project: https://github.com/simple-icons/simple-icons
+  Pinned revision: c37b20d397a710fdd402aae3cb643b820b142074
+  License: CC0 1.0 Universal (CC0-1.0).
+  License text: https://github.com/simple-icons/simple-icons/blob/c37b20d397a710fdd402aae3cb643b820b142074/LICENSE.md
+  Summary: https://creativecommons.org/publicdomain/zero/1.0/
+  Metadata: https://github.com/simple-icons/simple-icons/blob/c37b20d397a710fdd402aae3cb643b820b142074/data/simple-icons.json
+  No individual license override is declared for ACM, IEEE or PubMed at this
+  revision. Brand colors and official-source URLs below are from that metadata.
+  These are the complete upstream brand paths, not necessarily the website's
+  favicon. All three are explicitly labeled publisher or platform, not journal.
+  Transformation for each: set SVG fill to its metadata brand color; rasterize
+    the complete SVG using ImageMagick at density 960 on transparent background;
+    trim fully transparent margins; proportionally resize within 240 x 240.
+
+acm.png
+  Identity: ACM publisher mark, not journal-specific artwork.
+  Trademark owner: Association for Computing Machinery.
+  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/acm.svg
+  Official source in metadata: https://identitystandards.acm.org/
+  Color: #0085CA.
+  Source SVG SHA-256: b69a0bfe5b08b2db9799d091607760e636ad288832aad5ca9d008ca76f46993b
+  Packaged: 240 x 240 RGBA PNG, 7,590 bytes.
+  SHA-256: a166c3e565ae5aeffb1c4874033c1c9f63b8a9cf291575bb32a8d0e8c1497ec2
+
+ieee.png
+  Identity: complete IEEE publisher master brand, symbol and IEEE wordmark.
+    Not distinct artwork for IEEE Access or any other journal or conference.
+  Trademark owner: Institute of Electrical and Electronics Engineers.
+  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/ieee.svg
+  Official source in metadata: https://brand-experience.ieee.org/templates-tools-resources/resources/master-brand-and-logos/
+  Brand reference: https://brand-experience.ieee.org/guidelines/master-brand-and-logos/
+  Color: #00629B.
+  Source SVG SHA-256: 53877ab27f061e2b21ced82e9987e3eb5f293ad73a32cb480980cd7f71ad0fab
+  Packaged: 240 x 71 RGBA PNG, 3,577 bytes.
+  SHA-256: d0ebff4b1c85a0a60c15396f06ffb14429092f994f9d3070cf669582e45e878f
+
+pubmed.png
+  Identity: PubMed indexing platform, not a journal, NCBI or PubMed Central mark.
+  Trademark owner: relevant US National Library of Medicine / NIH rights holders.
+  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/pubmed.svg
+  Official source in metadata: https://pubmed.ncbi.nlm.nih.gov/
+  Color: #326599.
+  Source SVG SHA-256: 1425034ba757d4d8449a231e0261c9469ae44ee502500c023879beb192462064
+  Packaged: 190 x 240 RGBA PNG, 6,236 bytes.
+  SHA-256: 468690ec2bf86e1a8db61f95dbfa060fcbb5902388cdb9d27f410af48aa47ec1
+
+Not bundled
+  Nature's former cropped n and NEJM's former extracted circled-N are removed.
+  Commons' assessment of the Nature wordmark does not document redistribution
+  rights for Nature's original favicon. Its complete official favicon is left
+  to server discovery/cache, rather than packaging a fabricated replacement.
+  Official Nature homepage declares:
+    https://www.nature.com/static/images/favicons/nature/favicon-48x48-b52890008c.png
+    https://www.nature.com/static/images/favicons/nature/apple-touch-icon-f39cb19454.png
+  Nature terms: https://www.nature.com/info/terms-and-conditions
+  Likewise NEJM AI and generic NEJM-family sites do not receive Evidence art.
+  Their original site artwork is left to server discovery; no redistribution
+  license is inferred for their original favicons or wordmarks.

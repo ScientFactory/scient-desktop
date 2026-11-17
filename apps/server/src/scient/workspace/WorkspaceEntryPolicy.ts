@@ -96,6 +96,10 @@ export function workspaceEntryDisposition(relativePath: string): WorkspaceEntryD
     return internal("scient.sources-managed");
   }
 
+  if (segments[1] === "annotations") {
+    return ordinary("scient.annotations-durable-data", "owner");
+  }
+
   const scientPath = segments.join("/");
   if (scientPath === ".scient/project.json") {
     return ordinary("scient.project-identity", "owner");

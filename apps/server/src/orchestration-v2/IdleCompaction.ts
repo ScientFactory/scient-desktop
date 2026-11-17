@@ -4,6 +4,9 @@ import { compactsIdleThreads } from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
+// SCIENT-FORK:START — Scient Agent's own compaction timing.
+import { scientAgentIdleCompactionWindow } from "./scient-fork/ScientAgentIdleCompaction.ts";
+// SCIENT-FORK:END
 
 // Claude Code's idleCompaction defaults to 200K and won't go below 100K. Below
 // that a cold re-read is cheap, so compacting mostly loses context for little
@@ -102,6 +105,18 @@ export function idleCompactionWindow(
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
+  // SCIENT-FORK:START — Scient Agent compacts while its agent still holds a warm cache.
+  if (providerThread.driver === "scient") {
+    const window = scientAgentIdleCompactionWindow({
+      usage: usages[0],
+      warmingStopped: providerThread.promptCacheWarmingStopped,
+      threadSelection: thread.modelSelection,
+      runSelection: latestRun.modelSelection,
+      nowMs,
+    });
+    return window === null ? null : { runId: latestRun.id, ...window };
+  }
+  // SCIENT-FORK:END
   // A request served fully from cache creates no cache entry and reports no
   // TTL, but it still refreshes the cache. Treat it as unknown and skip.
   const expiresAt = usages[0]?.promptCacheExpiresAt;

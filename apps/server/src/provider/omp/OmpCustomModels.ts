@@ -113,6 +113,7 @@ const scientModelsBridge = (bootstrap) => {
         api: connection.api,
         apiKey: apiKeyFor(connection),
         models: connection.models,
+        ...(connection.headers ? { headers: connection.headers } : {}),
       };
       owner.registerProvider(connection.id, config);
       registered.set(connection.id, { signature, config });
@@ -294,7 +295,27 @@ interface OmpModelServerPayload {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly models: ReadonlyArray<NonNullable<ReturnType<typeof modelPayload>>>;
+  readonly headers?: Readonly<Record<string, string>>;
 }
+
+/**
+ * OpenRouter credits requests to the app these headers name. OMP adds its own only for its built-in
+ * `openrouter` provider, and Pi matches the host itself, so a Scient connection names Scient here.
+ */
+const OPENROUTER_APP_HEADERS = {
+  "HTTP-Referer": "https://scientfactory.com",
+  "X-OpenRouter-Title": "Scient",
+  "X-Title": "Scient",
+};
+
+const isOpenRouter = (baseUrl: string) => {
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+};
 
 type PublishableModelConnection = ResolvedModelConnection & {
   readonly credentialError?: never;
@@ -334,6 +355,7 @@ export const buildOmpCustomModelPayload = (
       baseUrl: connection.baseUrl,
       apiKey,
       models,
+      ...(isOpenRouter(connection.baseUrl) ? { headers: OPENROUTER_APP_HEADERS } : {}),
     });
   });
   return { payload, keys };

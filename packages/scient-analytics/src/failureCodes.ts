@@ -27,6 +27,7 @@ const OMP_CODES = new Set([
   "empty-response",
   "provider-finish-error",
   "timeout",
+  "network",
   "silent-abort",
   "user-interrupt",
   "abort",

@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
-import { resolveSshTarget } from "@t3tools/ssh/command";
+import { resolveRemoteT3CliPackageSpec, resolveSshTarget } from "@t3tools/ssh/command";
 import { discoverSshHosts } from "@t3tools/ssh/config";
 import {
   SshCommandError,
@@ -27,6 +27,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Option from "effect/Option";
+import serverPackageJson from "../../../server/package.json" with { type: "json" };
+
+import type * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
@@ -74,6 +78,31 @@ export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
   readonly resolveLauncherId?: Effect.Effect<string | null>;
 }
+
+export const resolveDesktopSshCliRunner = (
+  environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  // SCIENT-FORK: no release mirror applies; the remote runs Scient's published server package.
+  _env: NodeJS.ProcessEnv,
+): SshTunnel.RemoteT3RunnerOptions => {
+  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
+  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
+    return {
+      nodeScriptPath: devRemoteEntryPath,
+      nodeEngineRange: serverPackageJson.engines.node,
+    };
+  }
+  // SCIENT-FORK:START — without a published Scient server for this build the remote
+  // runner reports that clearly instead of installing a substitute.
+  const packageSpec = resolveRemoteT3CliPackageSpec({
+    appVersion: environment.appVersion,
+    isDevelopment: environment.isDevelopment,
+  });
+  return {
+    ...(packageSpec === undefined ? {} : { packageSpec }),
+    nodeEngineRange: serverPackageJson.engines.node,
+  };
+  // SCIENT-FORK:END
+};
 
 // Remote servers record this ID as their owner, so it has to outlive restarts,
 // updates and edits to a saved connection. Without a stored one there is none.

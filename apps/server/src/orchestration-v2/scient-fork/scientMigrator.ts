@@ -39,6 +39,8 @@ import Migration026 from "./migrations/026_CompactArchivedProjectionHandoffs.ts"
 import Migration027 from "./migrations/027_BrowserHistory.ts";
 import Migration028 from "./migrations/028_CopyLegacyHandoffSources.ts";
 import Migration029 from "./migrations/029_SharedHistoryBodies.ts";
+import Migration030 from "./migrations/030_ConversationForkRecords.ts";
+import Migration031 from "./migrations/031_ForkHandoffHistoryRanges.ts";
 
 export class ScientMigrationError extends Schema.TaggedError<ScientMigrationError>()(
   "ScientMigrationError",
@@ -100,6 +102,8 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 27, name: "browser-history", effect: Migration027 },
   { id: 28, name: "copy-legacy-handoff-sources", effect: Migration028 },
   { id: 29, name: "shared-history-bodies", effect: Migration029 },
+  { id: 30, name: "conversation-fork-records", effect: Migration030 },
+  { id: 31, name: "fork-handoff-history-ranges", effect: Migration031 },
 ] as const;
 
 const loader = Migrator.fromRecord(

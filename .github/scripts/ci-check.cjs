@@ -9,7 +9,16 @@ const GATED = {
   linux_packaging: ["linux_changed"],
 };
 const REPORTERS = ["test_web_reused", "test_server_reused", "stable_contexts_reused"];
-const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
+const ALWAYS = [
+  "changes",
+  "lint",
+  "build",
+  "test",
+  "test_web",
+  "test_server",
+  "test_web_performance",
+  "test_server_performance",
+];
 const JOBS = [
   "release_notes",
   "queue_ci",
@@ -63,7 +72,34 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
   return errors;
 }
 
-module.exports = { ADVISORY, GATED, JOBS, jobFailures };
+// Test lanes whose failures ci-quarantine.cjs may still accept, failed test by failed test.
+// Setup, lint, build, release notes and static analysis always block. The receipt fails
+// whenever another need does, so it is a candidate only beside them.
+const QUARANTINABLE = [
+  "test",
+  "test_web",
+  "test_server",
+  "test_web_performance",
+  "test_server_performance",
+  "overleaf_windows",
+  "compute_native",
+  "windows_packaging",
+  "remote_server_packaging",
+  "linux_packaging",
+  "qualification",
+];
+
+/** True when every failure is a plain test-lane `failure` that the quarantine may explain. */
+function quarantineCandidate(needs, failures) {
+  if (failures.length === 0) return false;
+  const failed = failures.map((failure) => /^([a-z_]+): failure$/.exec(failure)?.[1]);
+  return (
+    failed.every((job) => job && QUARANTINABLE.includes(job) && needs[job]?.result === "failure") &&
+    failed.some((job) => job !== "qualification")
+  );
+}
+
+module.exports = { ADVISORY, GATED, JOBS, QUARANTINABLE, jobFailures, quarantineCandidate };
 if (require.main === module) {
   const needs = JSON.parse(process.env.RESULTS);
   for (const [job, { result }] of Object.entries(needs)) console.log(`${job}: ${result}`);
@@ -72,6 +108,10 @@ if (require.main === module) {
     qualifyingPr: process.env.QUALIFYING_PR === "true",
   });
   for (const failure of failures) console.error(failure);
-  if (failures.length) process.exitCode = 1;
+  if (quarantineCandidate(needs, failures)) {
+    // The next step reads each failed job and passes only if every failure is quarantined.
+    console.log("Only test lanes failed; checking them against the flake quarantine.");
+    require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, "quarantine=candidate\n");
+  } else if (failures.length) process.exitCode = 1;
 }
 // SCIENT-FORK:END

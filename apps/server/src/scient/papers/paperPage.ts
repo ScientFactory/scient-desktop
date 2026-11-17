@@ -10,6 +10,7 @@ export const PaperPage = Schema.Struct({
   pdfUrl: Schema.NullOr(Schema.String),
   login: Schema.Boolean,
   challenge: Schema.Boolean,
+  terms: Schema.Boolean,
   institutionUrl: Schema.NullOr(Schema.String),
   buy: Schema.Boolean,
 });
@@ -29,6 +30,14 @@ export const paperPageScript = String.raw`(() => {
     /access through|institution(?:al)? (?:access|log ?in|sign ?in)|your institution|shibboleth|openathens/i.test(a.textContent ?? "") ||
     /\/user\/institution\/login|ssostart|institutionLogin|\/wayf/i.test(a.href),
   )?.href;
+  const visible = (element) => element.getClientRects().length > 0 &&
+    getComputedStyle(element).visibility !== "hidden";
+  const legalTerms = /\bterms\s+(?:and\s+conditions|of\s+(?:use|service))\b|\buser agreement\b/i;
+  const nejm = /(?:^|\.)nejm\.org$/i.test(location.hostname);
+  // NEJM's institutional SAML consent submits "Yes", not "Accept".
+  const terms = nejm && [...document.querySelectorAll('form, [role="dialog"], dialog[open]')]
+    .some((root) => visible(root) && legalTerms.test(root.innerText ?? "") &&
+      [...root.querySelectorAll('input.saml__consent__yes[type="submit"]')].some(visible));
   return {
     url: location.href,
     title: document.title,
@@ -39,6 +48,7 @@ export const paperPageScript = String.raw`(() => {
     challenge:
       /just a moment|attention required|are you a robot|verify you are human|security check|checking your browser/i.test(document.title) ||
       document.querySelector('#challenge-form, #cf-challenge-running, script[src*="challenges.cloudflare.com"], iframe[src*="challenges.cloudflare.com"]') !== null,
+    terms,
     institutionUrl: institution ?? null,
     buy: /\b(?:buy|purchase|rent) (?:this |the )?(?:article|chapter|access|pdf)|(?:\$|€|£)\s?\d+(?:\.\d\d)?\b/i.test(text),
   };
@@ -48,6 +58,7 @@ export type PageState =
   | { readonly state: "pdf" }
   | { readonly state: "pdf-link"; readonly url: string }
   | { readonly state: "bot-check" }
+  | { readonly state: "terms" }
   | { readonly state: "sign-in" }
   | { readonly state: "institution"; readonly url: string }
   | { readonly state: "paywall" }
@@ -62,6 +73,7 @@ const REFUSED = new Set([401, 403, 418, 429]);
  * password field or a known sign-in address rule a sign-in, since words vary with the language.
  */
 export function pageState(page: PaperPage): PageState {
+  if (page.terms) return { state: "terms" };
   if (page.pdf) return { state: "pdf" };
   if (page.challenge) return { state: "bot-check" };
   if (page.login) return { state: "sign-in" };

@@ -42,6 +42,7 @@ import {
   sourcePositionFromPointerEvent,
   type LatexSourceNavigation,
 } from "./latexSourceNavigation";
+import { useLatexCitationOpener, useLatexSourceCitationOpen } from "./useLatexCitationOpener";
 import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
@@ -68,6 +69,7 @@ import type {
 import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
+import { ReferenceCheckDialog } from "~/scient/references/ReferenceCheckDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
 import { DockCommandItem } from "../writing/dockChrome";
@@ -668,6 +670,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const compilationMode = normalizeLatexCompilation(storedCompilation);
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
+  const [referenceCheckOpen, setReferenceCheckOpen] = useState(false);
   // The build messages card is temporary: a click anywhere else closes it.
   const diagnosticsCard = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for outside pointer and Escape key events on the document while the diagnostics card is open
@@ -996,6 +999,19 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     keyboardStep: LATEX_SPLIT_KEYBOARD_STEP,
     onCommit: commitSplitFraction,
   });
+  const citationOpener = useLatexCitationOpener({
+    environmentId: props.environmentId,
+    root: props.cwd,
+    threadRef: props.threadRef,
+    documentPath: props.relativePath,
+  });
+  const linkedSourcePane =
+    (mode === "split" && persistence !== null && !sourceRecovery.blocked) || !!linkedSourceReveal;
+  const sourceCitation = useLatexSourceCitationOpen(linkedSourcePane ? null : citationOpener, () =>
+    persistence === null || sourceRecovery.blocked
+      ? props.contents
+      : persistence.getSnapshot().draftSource,
+  );
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
   const diagnosticRows = latexDiagnosticRows(diagnostics);
@@ -1903,6 +1919,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         </IfRowHidden>
       ) : null}
       {withDocumentCommands ? exportItems : null}
+      {withDocumentCommands ? (
+        <DockCommandItem onClick={() => setReferenceCheckOpen(true)}>
+          Check references
+        </DockCommandItem>
+      ) : null}
       {withDocumentCommands ? props.templateActions : null}
       {withDocumentCommands ? <PanelTabNewWindowItem separated /> : null}
     </>
@@ -2256,12 +2277,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           <div
             ref={primaryPaneRef}
             className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
-            onPointerDownCapture={() => {
+            onPointerDownCapture={(event) => {
               syncRequestRef.current += 1;
               containerRef.current?.dispatchEvent(
                 new CustomEvent("scient-latex-source-interaction"),
               );
+              sourceCitation.onPointerDown(event);
             }}
+            onMouseDownCapture={sourceCitation.onMouseDown}
+            onClickCapture={sourceCitation.onClick}
             onKeyDownCapture={() => {
               syncRequestRef.current += 1;
               containerRef.current?.dispatchEvent(
@@ -2281,9 +2305,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                 );
             }}
           >
-            {(mode === "split" && persistence !== null && !sourceRecovery.blocked) ||
-            linkedSourceReveal ? (
+            {linkedSourcePane ? (
               <LatexVisualSourcePane
+                citationOpener={citationOpener}
                 threadRef={props.threadRef}
                 onCite={props.onCite}
                 key={linkedSourceReveal?.path ?? props.relativePath}
@@ -2499,6 +2523,18 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               : null;
           }}
           onClose={() => setWordExportOpen(false)}
+        />
+      ) : null}
+      {referenceCheckOpen ? (
+        <ReferenceCheckDialog
+          environmentId={props.environmentId}
+          root={props.cwd}
+          initialTarget={{ kind: "file", path: target?.relativePath ?? props.relativePath }}
+          onOpenFile={(path, line) => {
+            setReferenceCheckOpen(false);
+            props.onOpenFileSource(path, line);
+          }}
+          onClose={() => setReferenceCheckOpen(false)}
         />
       ) : null}
     </div>

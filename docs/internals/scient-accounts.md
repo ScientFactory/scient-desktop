@@ -920,7 +920,13 @@ provider environment. The existing proxy redacts reflected values in responses.
   Shibboleth SP's `Login`, or a discovery service's `return` with `entityID`) as a further route. The route that worked last at a publisher is kept in memory by the paper service, not
   on the account, and a paper's result refreshes the university's last seen state. Reaching a page
   follows the browser profile; signing in follows the account. Publishers go one at a time with a
-  10-20 s pause, and back off only when they refuse.
+  10-20 s pause, and back off only when they refuse. A paper asked for the Library is filed on its
+  Sources record after it is saved (see [Scient Sources](scient-sources.md)); the queue item then
+  carries its `sourceId` and the PDF's `version`.
+  NEJM SAML legal-consent forms produce a `terms` request, distinct from a bot check.
+  Its live tab stays open because `authenticateSharedSP` can require a POST; the explicit
+  user Open action reveals that tab, never submits consent, and starts bounded retries in
+  the same profile. New attempts still reauthorize access and fetch the article separately.
 - Browser-sign-in rows name the profile agents use; the usual Signed out / Sign in again applies.
 - **API keys**: Get a key opens the service's key page in the default browser. A pasted key with a
   known prefix picks its catalogue entry and goes straight into the key input, never into search

@@ -20,6 +20,7 @@ import type {
 } from "../scientDocumentExport.ts";
 import type { ClientSettings } from "../settings.ts";
 import type { DesktopAccountsBridge } from "./desktopAccountsBridge.ts";
+import type { DesktopFeedbackBridge } from "./feedback.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
 import type { KeepAwakeChoice, KeepAwakeState } from "../scientKeepAwake.ts";
 
@@ -102,6 +103,8 @@ export interface ScientDesktopBridge {
   voice?: DesktopVoiceBridge;
   /** Scient Accounts: browser profile details, sign-in capture and fill. Desktop only. */
   accounts?: DesktopAccountsBridge;
+  /** Scient: feedback and problem reports to the Scient team. Desktop only. */
+  feedback?: DesktopFeedbackBridge;
   /**
    * Scient: opens another full app window. `route` is an app path such as
    * `/<environmentId>/<threadId>`; `atCursor` opens the window under the pointer

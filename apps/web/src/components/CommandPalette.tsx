@@ -24,6 +24,7 @@ import {
   useScientProjectFolderActions,
 } from "~/scient/commandPalette/scientCommandPalette";
 import { useOverleafPaletteItems } from "~/scient/overleaf/overleafPaletteItems";
+import { feedbackPaletteItems } from "~/scient/feedback/FeedbackCoordinator";
 import { insertOverleafAddProjectItem } from "~/scient/overleaf/OverleafNewProject";
 // SCIENT-FORK:END
 import {
@@ -38,6 +39,7 @@ import {
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  getAddProjectInitialQuery,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
   addProjectRemoteSourceLabel,
@@ -792,12 +794,7 @@ function OpenCommandPaletteDialog(props: {
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const getAddProjectInitialQueryForEnvironment = (environmentId: EnvironmentId | null): string => {
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
-    const environmentSettings = environment?.serverConfig?.settings ?? null;
-    const baseDirectory = environmentSettings?.addProjectBaseDirectory?.trim() ?? "";
-    if (baseDirectory.length === 0) {
-      return "~/";
-    }
-    return ensureBrowseDirectoryPath(baseDirectory);
+    return getAddProjectInitialQuery(environment?.serverConfig?.settings.addProjectBaseDirectory);
   };
 
   const { projectByKey } = useProjectLookups();
@@ -1785,6 +1782,13 @@ function OpenCommandPaletteDialog(props: {
 
   // SCIENT-FORK:START — Sync with Overleaf, for each linked folder of this thread's project
   actionItems.push(...overleafPaletteItems);
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — "Send feedback to Scient".
+  actionItems.push(
+    ...feedbackPaletteItems(
+      activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+    ),
+  );
   // SCIENT-FORK:END
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);

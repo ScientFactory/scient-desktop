@@ -448,7 +448,7 @@ export default function(pi) {
                     (scenario === "captured" || barrier) &&
                     !heldCapture &&
                     input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                    input.args.includes("fetch") &&
+                    input.args.includes("update-ref") &&
                     input.args.some((arg) => arg.endsWith(barrier ? "/ordinal/1" : "/ordinal/2"))
                   ) {
                     heldCapture = true;

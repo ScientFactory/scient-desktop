@@ -16,6 +16,9 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 // SCIENT-FORK:START — Scient Accounts: expose the desktop accounts bridge.
 import { makeDesktopAccountsBridge } from "./scient/accounts/preloadBridge.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import { makeDesktopFeedbackBridge } from "./scient/feedback/preloadBridge.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — several app windows share one desktop process.
 import { makeMultiWindowBridge } from "./scient/multiWindow/preloadBridge.ts";
 // SCIENT-FORK:END
@@ -154,8 +157,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
-  getRelayTelemetryEnabled: () =>
-    ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
+  getRelayTelemetryEnabled: () => {
+    const enabled = ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL);
+    return enabled === null ? null : enabled === true;
+  },
   getClientPlatform: () => clientPlatform,
   restartAudioService: () => ipcRenderer.invoke(IpcChannels.RESTART_AUDIO_SERVICE_CHANNEL),
   // SCIENT-FORK:START — keep the computer awake while threads work.
@@ -337,6 +342,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
   cancelProviderAuthCallback: (url: string) =>
     ipcRenderer.invoke(IpcChannels.CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
+  startFileDrag: (input) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, input),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   readMedia: (url: string) => ipcRenderer.invoke(IpcChannels.READ_MEDIA_CHANNEL, url),
   checkSystemPermission: (pane: string) =>
@@ -545,6 +551,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     exportPdf: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL, { tabId }),
     renderHtmlPdf: (sourceUrl) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL, { sourceUrl }),
+    // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+    readLibraryPage: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_LIBRARY_PAGE_CHANNEL, { tabId }),
+    // SCIENT-FORK:END
     revealArtifact: (path) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
     copyArtifactToClipboard: (path) =>
@@ -631,6 +641,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   voice: makeDesktopVoiceBridge(ipcRenderer),
   // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.
   accounts: makeDesktopAccountsBridge(ipcRenderer),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — feedback reports to the Scient team.
+  feedback: makeDesktopFeedbackBridge(ipcRenderer),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — several app windows share one desktop process.
   ...makeMultiWindowBridge(ipcRenderer),

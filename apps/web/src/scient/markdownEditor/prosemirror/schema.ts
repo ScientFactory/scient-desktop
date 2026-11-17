@@ -932,7 +932,7 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       open: "~~",
     },
   },
-  { escapeExtraCharacters: /[<&]/gu },
+  { escapeExtraCharacters: /[<&$]/gu },
 );
 
 const tableCellSerializer = new ScientMarkdownSerializer(
@@ -941,7 +941,7 @@ const tableCellSerializer = new ScientMarkdownSerializer(
     hard_break: (state) => state.write("<br>"),
   },
   scientMarkdownSerializer.marks,
-  { escapeExtraCharacters: /[<&]/gu },
+  { escapeExtraCharacters: /[<&$]/gu },
 );
 
 export function withMarkdownSourceId(node: ProseMirrorNode, sourceId: string): ProseMirrorNode {

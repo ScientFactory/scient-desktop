@@ -227,12 +227,35 @@ export const ProviderRuntimeOperation = Schema.Struct({
   background: Schema.optionalKey(Schema.Boolean),
   /** Which background try this is, from 1, for analytics. */
   attempt: Schema.optionalKey(PositiveInt),
-  /** How the finished download went, for analytics. */
+  /**
+   * How the download went, for analytics: once complete, or as far as a failed try got. Fields
+   * after `compressed` are optional so older clients keep decoding the operation.
+   */
   download: Schema.optionalKey(
     Schema.Struct({
       resumedBytes: NonNegativeInt,
       source: Schema.Literals(["primary", "fallback"]),
       compressed: Schema.Boolean,
+      sourceKind: ForwardCompatibleOptional(Schema.Literals(["scient_mirror", "github", "vendor"])),
+      tries: Schema.optionalKey(PositiveInt),
+      progressPercent: Schema.optionalKey(NonNegativeInt),
+      /** Received bytes per second of request time; kept bytes and waits between tries excluded. */
+      bytesPerSecond: Schema.optionalKey(NonNegativeInt),
+      /** How the latest try's connection failed; `stalled` is 30 seconds without data. */
+      networkKind: ForwardCompatibleOptional(
+        Schema.Literals([
+          "dns",
+          "refused",
+          "reset",
+          "unreachable",
+          "connect_timeout",
+          "stalled",
+          "cut_off",
+          "other",
+        ]),
+      ),
+      /** Why the zstd copy failed, when the raw binary was downloaded after it. */
+      compressedFailure: ForwardCompatibleOptional(ProviderRuntimeFailureClass),
     }),
   ),
 });
@@ -311,6 +334,16 @@ export const ProviderRuntimeSummary = Schema.Struct({
   /** For runtimes Scient can manage; optional so older servers keep decoding. */
   catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),
   operation: Schema.NullOr(ProviderRuntimeOperation),
+  /** A requested change waiting for recovery; it is not a running operation. */
+  pendingRecovery: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        requestId: TrimmedNonEmptyString,
+        action: Schema.Literals(["install", "update", "repair"]),
+        nextRetryAt: IsoDateTime,
+      }),
+    ),
+  ),
   message: TrimmedNonEmptyString,
   /**
    * Whether the selected runtime passed the provider's own capability check, for a provider that
@@ -467,10 +500,10 @@ export const ProviderRuntimeStartInput = Schema.Struct({
 });
 export type ProviderRuntimeStartInput = typeof ProviderRuntimeStartInput.Type;
 
-export const ProviderRuntimeCancelInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  operationId: TrimmedNonEmptyString,
-});
+export const ProviderRuntimeCancelInput = Schema.Union([
+  Schema.Struct({ instanceId: ProviderInstanceId, operationId: TrimmedNonEmptyString }),
+  Schema.Struct({ instanceId: ProviderInstanceId, requestId: TrimmedNonEmptyString }),
+]);
 export type ProviderRuntimeCancelInput = typeof ProviderRuntimeCancelInput.Type;
 
 /** The user picked this provider in the composer, for "ready at first pick" analytics. */

@@ -6,7 +6,6 @@ import * as NodeZlib from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
-import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
@@ -29,6 +28,9 @@ import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 import { formatAppDisplayName, resolveWebAppStageLabel } from "./src/branding.logic";
 // SCIENT-FORK:START — balance CI's fixed three web shards using recorded file durations.
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — opt-in CI attribution of browser page and socket loss.
+import { browserProvider } from "./src/testUtils/browserLifecycleDiagnostics";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — opt-in CI-like CPU throttle for local browser runs.
 import { applyCpuThrottle } from "./test/scientCpuThrottle";
@@ -184,7 +186,9 @@ const browserTestProject = {
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright(),
+      // SCIENT-FORK:START — Playwright, plus lifecycle records when CI opts in.
+      provider: browserProvider(),
+      // SCIENT-FORK:END
       instances: [{ browser: "chromium" }],
       screenshotFailures: false,
       commands: {

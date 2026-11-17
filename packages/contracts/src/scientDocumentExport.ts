@@ -6,6 +6,7 @@ import {
   BROWSER_PDF_EXPORT_MAX_BASE64_LENGTH,
   BrowserPdfExportSourceSignals,
 } from "./browserPdfExport.ts";
+import { isSignedAssetPath } from "./scient/signedAssetPath.ts";
 import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 import {
   DocumentAsset,
@@ -187,6 +188,7 @@ export const ScientDocumentPageRenderRequest = Schema.Struct({
     Schema.isTrimmed(),
     Schema.isNonEmpty(),
     Schema.isMaxLength(32_768),
+    isSignedAssetPath(),
   ),
   expected: ScientDocumentPageExpectation,
 });

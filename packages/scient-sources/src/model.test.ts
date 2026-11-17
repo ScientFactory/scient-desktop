@@ -85,7 +85,7 @@ describe("Scient source model", () => {
 
     expect(summary).toMatchObject({ sourceId: "source_123", title: "A careful study" });
     expect(summary).not.toHaveProperty("abstract");
-    expect(summary).not.toHaveProperty("tags");
+    expect(summary.tags).toEqual(["reviewed"]);
     expect(summary).not.toHaveProperty("fieldProvenance");
     expect(JSON.stringify(summary).length).toBeLessThan(JSON.stringify(detail).length / 10);
   });
@@ -124,6 +124,7 @@ describe("Scient source model", () => {
     expect(normalizePersistentIdentifier("arXiv", "https://arxiv.org/pdf/2401.01234.pdf")).toBe(
       "arxiv:2401.01234",
     );
+    expect(normalizePersistentIdentifier("arXiv", "arXiv:2401.01234v3")).toBe("arxiv:2401.01234");
   });
 
   // regression: 4e05b272c1 feat(sources): complete reference intake workflows
@@ -144,6 +145,101 @@ describe("Scient source model", () => {
       ).toMatchObject({ kind: "same-identifier", matchingSourceIds: ["source_123"] });
     },
   );
+
+  it("knows an arXiv paper filed by arXiv's DOI, which a registry called an article", () => {
+    // Filed by its DOI at arXiv (typed "article" by the DOI registry); the same paper comes
+    // again as arXiv's preprint, by its arXiv ID.
+    const preprint = {
+      ...candidate,
+      sourceKey: "local_pdf",
+      type: "preprint" as const,
+      identifiers: [{ scheme: "arxiv", value: "1706.03762" }],
+      externalReferences: [],
+    };
+    const filed = record({
+      identifiers: [{ scheme: "doi", value: "https://doi.org/10.48550/arXiv.1706.03762" }],
+      externalReferences: [],
+    });
+    expect(assessSourceDuplicate({ candidate: preprint, existing: [filed] })).toMatchObject({
+      kind: "same-identifier",
+      matchingSourceIds: ["source_123"],
+    });
+    // A type a person chose stands: their article is not taken for the preprint.
+    const typedByHand = {
+      ...filed,
+      fieldProvenance: [{ field: "type", origin: "user" as const, sourceField: null }],
+    };
+    expect(assessSourceDuplicate({ candidate: preprint, existing: [typedByHand] })).toMatchObject({
+      kind: "new",
+      matchingSourceIds: ["source_123"],
+    });
+    // A published version that names the same arXiv ID is still another source.
+    const published = record({
+      type: "conference-paper",
+      identifiers: [
+        { scheme: "doi", value: "10.18653/v1/N19-1423" },
+        { scheme: "arxiv", value: "1706.03762" },
+      ],
+      externalReferences: [],
+    });
+    expect(assessSourceDuplicate({ candidate: preprint, existing: [published] })).toMatchObject({
+      kind: "new",
+      matchingSourceIds: ["source_123"],
+    });
+  });
+
+  it("does not take a title that is only the file's name for the work's", () => {
+    const sha256 = "a".repeat(64);
+    const filed = record({
+      externalReferences: [],
+      attachments: [
+        {
+          attachmentId: "pdf_1",
+          kind: "pdf",
+          fileName: "paper.pdf",
+          mediaType: "application/pdf",
+          sha256,
+          byteLength: 10,
+          relativePath: `files/sha256/aa/${sha256}.pdf`,
+          importedAt: "2026-08-12T00:00:00.000Z",
+        },
+      ],
+    });
+    // The same PDF, which names no title: its file name is no reason to keep the two apart.
+    const unnamed = {
+      ...candidate,
+      sourceKey: "local_pdf",
+      type: "other" as const,
+      title: "1706.03762",
+      identifiers: [],
+      externalReferences: [],
+      fieldProvenance: [{ field: "title", origin: "local-pdf" as const, sourceField: "file-name" }],
+    };
+    expect(
+      assessSourceDuplicate({ candidate: unnamed, existing: [filed], pdfSha256: sha256 }),
+    ).toMatchObject({ kind: "same-pdf", matchingSourceIds: ["source_123"] });
+    expect(sourceMetadataDiagnostics(unnamed).map((diagnostic) => diagnostic.field)).toContain(
+      "title",
+    );
+  });
+
+  it.each([
+    ["openalex", "https://openalex.org/W2741809807", "W2741809807"],
+    ["s2", "corpusid:13756489", "CorpusId:13756489"],
+  ])("knows the same %s work without its authors or year", (scheme, given, stored) => {
+    const sparse = { creators: [], issuedRaw: null, issuedYear: null, externalReferences: [] };
+    expect(
+      assessSourceDuplicate({
+        candidate: {
+          ...candidate,
+          ...sparse,
+          sourceKey: "DIFFERENT",
+          identifiers: [{ scheme, value: given }],
+        },
+        existing: [record({ ...sparse, identifiers: [{ scheme, value: stored }] })],
+      }),
+    ).toMatchObject({ kind: "same-identifier", matchingSourceIds: ["source_123"] });
+  });
 
   // regression: 4e05b272c1 feat(sources): complete reference intake workflows
   it.each(["issn", "isbn", "journal-id"])(

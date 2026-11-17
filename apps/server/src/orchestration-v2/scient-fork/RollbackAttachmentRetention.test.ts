@@ -6,7 +6,7 @@ import {
   rollbackAttachmentCandidateIds,
 } from "./RollbackAttachmentRetention.ts";
 
-type Owner = Parameters<typeof retainedRollbackAttachmentIds>[1][number];
+type Owner = Parameters<typeof retainedRollbackAttachmentIds>[1][number]["projection"];
 
 const runId = RunId.make("rolled-back-run");
 const file = { type: "file" as const, id: "source-file", name: "a.txt", mimeType: "text/plain" };
@@ -14,18 +14,19 @@ const owner = (input: {
   readonly id: string;
   readonly deleted: boolean;
   readonly messageRunId: RunId | null;
-}) =>
-  ({
+}) => ({
+  projection: {
     thread: {
       id: ThreadId.make(input.id),
       deletedAt: input.deleted ? "2026-10-08T00:00:00.000Z" : null,
-      conversationFork: null,
     },
     runs: [{ id: runId, status: "rolled_back", queueHeld: false }],
     messages: [{ id: `${input.id}-message`, runId: input.messageRunId, attachments: [file] }],
     turnItems: [],
     runtimeRequests: [],
-  }) as unknown as Owner;
+  } as unknown as Owner,
+  conversationFork: null,
+});
 
 describe("retainedRollbackAttachmentIds", () => {
   const input = {

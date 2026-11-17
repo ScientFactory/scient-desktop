@@ -1063,6 +1063,63 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       }),
     ),
   );
+  it.effect("continues a turn that ended early by prompting, since the RPC has no resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        const { message, ...turn } = h.input;
+        if (h.runtime.resumeTurn === undefined)
+          return yield* Effect.die("Scient Agent offers no manual continuation");
+        yield* h.runtime.resumeTurn({ ...turn, messageId: message.messageId });
+        yield* peer.finish();
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        assert.deepInclude(terminal, { status: "completed" });
+        assert.deepEqual(
+          peer.state.prompts.map((prompt) => [prompt.frame.type, prompt.frame.message]),
+          [["prompt", "Continue where you left off."]],
+        );
+      }),
+    ),
+  );
+  it.effect("asks for the model catalog again once when a turn's discovery times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const silenced = yield* Deferred.make<void>();
+        let silenceNextDiscovery = false;
+        const discovery = (frame: { readonly type: string }) => {
+          if (frame.type !== "get_available_models" || !silenceNextDiscovery) return false;
+          silenceNextDiscovery = false;
+          return true;
+        };
+        const h = yield* modelHarness({
+          silentReply: discovery,
+          holdReply: (frame) =>
+            frame.type === "get_available_models" && silenceNextDiscovery
+              ? Deferred.succeed(silenced, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        silenceNextDiscovery = true;
+        const starting = yield* h.start(1, "vendor/a", "high").pipe(Effect.forkScoped);
+        yield* Deferred.await(silenced);
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(starting).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        yield* h.peer.finish();
+        const terminal = yield* h.terminal();
+        assert.deepInclude(terminal, { status: "completed" });
+        assert.equal(
+          h.peer.state.log.filter((entry) => entry.startsWith("get_available_models")).length,
+          2,
+        );
+      }),
+    ),
+  );
   it.effect.each([
     {
       caseTitle: "carries the usage-limit reset time Scient Agent reports",
@@ -1255,7 +1312,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
   it.effect("reports the native OMP frame limit when even a file reference cannot fit", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const h = yield* imageHarness(1024);
+        // SCIENT-FORK:START — Scient's extra event types make the session's event filter line 1,031 bytes.
+        const h = yield* imageHarness(1280);
+        // SCIENT-FORK:END
         const failure = yield* Effect.result(
           h.runtime.startTurn({
             ...h.input,
@@ -1266,14 +1325,18 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               // names keep it over the limit however short the temp directory is.
               attachments: yield* Effect.forEach(
                 Array.from({ length: 8 }, (_, i) => i),
-                (i) => h.image(`frame-${i}-${"x".repeat(120)}`, 8192),
+                // SCIENT-FORK:START — longer names keep the reference over the larger limit.
+                (i) => h.image(`frame-${i}-${"x".repeat(200)}`, 8192),
+                // SCIENT-FORK:END
               ),
             },
           }),
         );
         assert.equal(failure._tag, "Failure");
         if (failure._tag !== "Failure") return yield* Effect.die("Oversized frame reached OMP");
-        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1024-byte frame limit");
+        // SCIENT-FORK:START — the limit set above.
+        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1280-byte frame limit");
+        // SCIENT-FORK:END
         assert.lengthOf(h.peer.state.prompts, 0);
       }),
     ),
@@ -4525,6 +4588,59 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
         }),
       ),
   );
+
+  // SCIENT-FORK:START — warming that stops on a five-minute cache times its idle compaction.
+  it.effect("records the entry warming stopped on as a session-scoped thread update", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-16T12:21:00Z"));
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", contextWindow: 200_000 }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: peer.makeProcess,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([{ type: "agent_start" }]);
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const arrivedAt = DateTime.toEpochMillis(yield* DateTime.now);
+        const stoppedAt = arrivedAt - 2 * 60_000;
+        const stopped = (promptCache?: object) => ({
+          type: "cache_warming_stopped",
+          reason: "30-minute idle safety limit reached",
+          stoppedAt,
+          ...(promptCache === undefined ? {} : { promptCache }),
+        });
+        const recorded = (event: ProviderAdapterV2Event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.promptCacheWarmingStopped !== undefined;
+        yield* peer.emit([
+          stopped({ tier: "short", touchedAt: stoppedAt - 60_000, ttlMs: 300_000 }),
+        ]);
+        const marked = yield* h.takeUntil(recorded);
+        assert.isTrue(marked.type === "provider_thread.updated");
+        if (marked.type !== "provider_thread.updated") return;
+        assert.isTrue(marked.sessionScoped);
+        // Delivery was delayed; persistence must retain the agent's earlier stop time.
+        assert.deepEqual(marked.providerThread.promptCacheWarmingStopped, {
+          stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt + 240_000)),
+        });
+        // A stop that left no readable entry clears it.
+        yield* peer.emit([stopped()]);
+        const cleared = yield* h.takeUntil(recorded);
+        assert.isTrue(
+          cleared.type === "provider_thread.updated" &&
+            cleared.providerThread.promptCacheWarmingStopped === null,
+        );
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
 
   it.effect(
     "compacts through a real turn and retains the summary, counts, and post-compaction meter",

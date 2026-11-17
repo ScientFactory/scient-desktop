@@ -46,10 +46,12 @@ and every existing Beta, and the SHA must equal the dispatched commit.
 Beta always publishes, even when `publish_release` is left at its default
 `false`; that checkbox controls Stable only. Beta has no What's New catalog
 requirement and omits release notes. `allow_note_free` also controls Stable only.
-The owner-approved unsigned-Windows exception applies automatically to Beta,
-with the Windows signing notice retained in its GitHub release body. macOS
-signing and notarization remain mandatory. Stable's publication, notes, signing
-exception inputs and protected `production` approval remain unchanged.
+The owner-approved unsigned-Windows exception applies automatically to Beta
+until either channel has shipped a Windows app that pins a publisher. After that,
+both channels require that publisher's signature, including candidates assembled
+before the pin appeared. The Windows signing notice is retained in the workflow
+summary. macOS signing and notarization remain mandatory. Stable's publication,
+notes, signing exception inputs and protected `production` approval remain unchanged.
 
 Beta is manual rather than scheduled. Release the stable bridge containing the
 selector before the first Beta. A Beta must target a core ahead of current
@@ -87,6 +89,13 @@ checked separately during packaging; the approved Windows exception remains.
 
 The run retains an immutable candidate for 30 days. Publication verifies its
 run, artifact digest, source/tree, distribution identity and all asset hashes.
+Stable and Beta publication jobs share concurrency group
+`scient-desktop-stable-beta-publication`. Inside that boundary, after environment
+protection, each job fetches the newest public handoffs again and checks the
+downloaded candidate's Windows signing record after draft-byte verification, just
+before making it public. Lookup or signing-record failures stop publication.
+Builds keep their separate channel concurrency; Stable still needs `production`
+approval.
 It stages a draft in the isolated Beta repository, downloads and compares every
 uploaded byte, then automatically makes it public as a prerelease with
 `latest=false`. It verifies that canonical Stable Latest did not change.

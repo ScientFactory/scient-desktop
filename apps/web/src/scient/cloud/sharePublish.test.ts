@@ -53,7 +53,7 @@ const build: ScientCloudShareBuild = {
       bytes: 3,
       name: "decay.png",
       mimeType: "image/png",
-      relativeUrl: "/attachments/1",
+      relativeUrl: "/api/assets/token/decay.png",
     },
   ],
 };

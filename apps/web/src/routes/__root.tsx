@@ -95,6 +95,11 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 // SCIENT-FORK:START hosted-landing
 import { useHostedLandingActive } from "~/scient/hosted/hostedLandingActive";
 // SCIENT-FORK:END hosted-landing
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import { FeedbackCoordinator } from "~/scient/feedback/FeedbackCoordinator";
+import { FeedbackDialogHost, feedbackAvailable } from "~/scient/feedback/FeedbackDialog";
+import { requestFeedback } from "~/scient/feedback/feedbackStore";
+// SCIENT-FORK:END
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -250,6 +255,9 @@ function RootRouteBranch() {
       {/* SCIENT-FORK:START — Add project ▸ Overleaf project. */}
       <OverleafNewProjectDialogHost />
       {/* SCIENT-FORK:END */}
+      {/* SCIENT-FORK:START — Help ▸ Send Feedback and the feedback dialog. */}
+      <FeedbackCoordinator />
+      {/* SCIENT-FORK:END */}
     </>
   );
   const appShell = (
@@ -360,7 +368,26 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
           Reload app
         </Button>
         <CopyErrorButton report={report} />
+        {/* SCIENT-FORK:START — report the error to the Scient team from the page. */}
+        {feedbackAvailable() ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              requestFeedback({
+                source: "error-page",
+                error: { message: `${message}\n\n${report}`.slice(0, 8000) },
+              })
+            }
+          >
+            Report problem
+          </Button>
+        ) : null}
+        {/* SCIENT-FORK:END */}
       </div>
+      {/* SCIENT-FORK:START — the error page replaces the app, so it hosts its own dialog. */}
+      <FeedbackDialogHost />
+      {/* SCIENT-FORK:END */}
 
       <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
         <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Error report</p>

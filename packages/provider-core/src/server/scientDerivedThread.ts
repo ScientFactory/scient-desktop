@@ -9,7 +9,6 @@ export const SCIENT_DERIVED_THREAD_RESETS = {
   opens: null,
   activeOrderKey: null,
   lastSnoozeWakeAt: null,
-  conversationFork: null,
   conversationImport: null,
   forkLineage: null,
   rollbackRequestId: undefined,

@@ -10,10 +10,10 @@ const activeImports = new Map<string, ActiveImport>();
 
 function importKey(input: {
   readonly environmentId: EnvironmentId;
-  readonly projectId: string;
+  readonly projectId: string | undefined;
   readonly operationId: string;
 }): string {
-  return `${input.environmentId}\0${input.projectId}\0${input.operationId}`;
+  return `${input.environmentId}\0${input.projectId ?? ""}\0${input.operationId}`;
 }
 
 export function continueSourceImport(input: {
@@ -78,7 +78,7 @@ export function continueSourceImport(input: {
 
 export function stopSourceImportContinuation(input: {
   readonly environmentId: EnvironmentId;
-  readonly projectId: string;
+  readonly projectId: string | undefined;
   readonly operationId: string;
 }): void {
   const active = activeImports.get(importKey(input));

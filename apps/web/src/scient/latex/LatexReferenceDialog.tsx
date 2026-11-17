@@ -21,6 +21,11 @@ import {
   inlineBibliographyChoices,
   type LatexReferenceChoice,
 } from "./latexAuthoringModel";
+import {
+  LIBRARY_BIBLIOGRAPHY_HINT,
+  libraryLatexCitationChoices,
+} from "../sources/libraryCitations";
+import { useLibraryCitations } from "../sources/useLibraryCitations";
 
 export const LatexReferenceDialog = memo(
   function LatexReferenceDialog(props: {
@@ -173,7 +178,22 @@ export const LatexReferenceDialog = memo(
     const inlineSources = props.open
       ? mergedInlineBibliographyChoices(props.source, props.setupSource)
       : [];
-    const candidates = mode === "reference" ? documentObjects : [...inlineSources, ...references];
+    const library = useLibraryCitations({
+      environmentId: mode === "citation" && props.cwd ? (props.environmentId ?? null) : null,
+      root: props.cwd ?? "",
+      refresh: String(props.open),
+    });
+    const fileChoices = [...inlineSources, ...references];
+    const libraryChoices = libraryLatexCitationChoices(
+      library ?? [],
+      new Set(fileChoices.map((entry) => entry.key)),
+    );
+    const candidates = mode === "reference" ? documentObjects : [...fileChoices, ...libraryChoices];
+    // The managed references.bib sits at the project root.
+    const librarySelectedWithoutBibliography =
+      mode === "citation" &&
+      !paths.includes("references.bib") &&
+      selected.some((key) => libraryChoices.some((entry) => entry.key === key));
     const occurrences = new Map<string, number>();
     const choices = candidates
       .map((entry) => {
@@ -308,6 +328,9 @@ export const LatexReferenceDialog = memo(
                     {mode === "citation" ? `Citation keys: ${keys}` : `Reference label: ${keys}`}.
                     Appearance follows the document; final numbers appear after compilation.
                   </p>
+                  {librarySelectedWithoutBibliography ? (
+                    <p className="text-sm text-muted-foreground">{LIBRARY_BIBLIOGRAPHY_HINT}</p>
+                  ) : null}
                   <Button disabled={!validKeys(keys)} onClick={() => insert(command, keys)}>
                     {mode === "citation" ? "Insert citation" : "Insert reference"}
                   </Button>

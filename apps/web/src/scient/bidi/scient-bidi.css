@@ -72,7 +72,7 @@
   text-align: start;
 }
 
-.chat-markdown .chat-markdown-codeblock[data-copy-text-direction="auto"] pre {
+.chat-markdown .chat-markdown-codeblock[dir="auto"] pre {
   unicode-bidi: plaintext;
   text-align: start;
 }

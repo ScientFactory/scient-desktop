@@ -6,7 +6,7 @@ import { resolveComparisonBase } from "./ci-comparison-base.cjs";
 // Unit tests run in the ordinary test lanes and no native suite imports them, so
 // changing one proves nothing the native suites would add. Integration and live
 // tests are the native suites themselves. ComputeRpcServerTests.ts is the RPC
-// fixture server.test.ts registers.
+// fixture server.workspace.test.ts registers.
 const ordinaryTest = (path) =>
   (/\.test\.tsx?$/.test(path) && !/\.(integration|live)\.test\.tsx?$/.test(path)) ||
   path === "apps/server/src/scient/compute/ComputeRpcServerTests.ts";

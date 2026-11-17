@@ -36,6 +36,8 @@ import {
   registerStartupSessionReservations,
 } from "./scient-provider/StartupSessionHold.ts";
 import { requireEnabledProviderInstance } from "./scient-provider/ProviderInstanceEnabled.ts";
+// SCIENT-FORK: Continue on agents that cannot resume natively.
+import { continuationTurnInput } from "./scient-provider/ContinuationTurn.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -116,6 +118,9 @@ import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindin
 // SCIENT-FORK:END
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+// SCIENT-FORK:START — Scient Agent's idle compaction starts before this release.
+export const PROVIDER_SESSION_IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
+// SCIENT-FORK:END
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
@@ -294,6 +299,10 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     /** A deferred turn start refuses a provider turned off since its message was admitted. */
     readonly requireEnabledInstance?: boolean;
     // SCIENT-FORK:END provider-enabled-at-open
+    // SCIENT-FORK:START — the refused owner a replacement session supersedes.
+    /** Retired first when still live and unusable; it can hold the native history's lease. */
+    readonly supersededProviderSessionId?: ProviderSessionId;
+    // SCIENT-FORK:END
   }) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
@@ -2279,6 +2288,25 @@ export const layerWithOptions = (
           ),
         );
 
+      const forgetProviderThreadLoaded = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
+        readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+      }) =>
+        Ref.update(sessions, (current) => {
+          const key = sessionKey(input.providerSessionId);
+          const entry = current.get(key);
+          if (
+            entry?.runtime !== input.runtime ||
+            !entry.loadedProviderThreadKeyByThread.has(input.threadId)
+          ) {
+            return current;
+          }
+          const loadedProviderThreadKeyByThread = new Map(entry.loadedProviderThreadKeyByThread);
+          loadedProviderThreadKeyByThread.delete(input.threadId);
+          return new Map(current).set(key, { ...entry, loadedProviderThreadKeyByThread });
+        });
+
       /** Pass the setting read before a native load; cache hits keep the earlier record. */
       const markProviderThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -2976,7 +3004,8 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
-        return {
+        // SCIENT-FORK: named so the Continue fallback below can start through it.
+        const exposed: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           // SCIENT-FORK:START — the manager alone reads the running-fork text subscription.
           ...subscriberRuntime,
           mcpSessionInjection,
@@ -3202,6 +3231,16 @@ export const layerWithOptions = (
                       ? observeActivity(
                           providerSessionId,
                           markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                        ).pipe(
+                          // A failed start can leave its native thread gone (Claude rejecting a
+                          // resume), so the next start must ask the adapter to resume it again.
+                          Effect.andThen(
+                            forgetProviderThreadLoaded({
+                              providerSessionId,
+                              threadId: input.threadId,
+                              runtime,
+                            }),
+                          ),
                         )
                       : Effect.void,
                 ),
@@ -3265,7 +3304,18 @@ export const layerWithOptions = (
                   .pipe(turnMetrics("runtime-request-response")),
               ),
             ),
+          // SCIENT-FORK:START — Continue on agents that cannot resume natively: the prompt OMP's
+          // protocol needs too, as an ordinary turn through this manager's start.
+          ...(runtime.resumeTurn === undefined
+            ? {
+                resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+                  exposed.startTurn(continuationTurnInput(input)),
+              }
+            : {}),
+          // SCIENT-FORK:END
         };
+        // SCIENT-FORK: returns the named runtime.
+        return exposed;
       };
 
       const persistProviderSessionUpdate = Effect.fn(
@@ -3825,6 +3875,36 @@ export const layerWithOptions = (
                           ? "The prior native close failed; exact-owner recovery is required."
                           : "The prior native close is still pending.",
                     });
+                  // SCIENT-FORK:START — retire the exact unusable owner this replacement supersedes.
+                  const supersededId = input.supersededProviderSessionId;
+                  const superseded =
+                    supersededId === undefined || sessionKey(supersededId) === key
+                      ? undefined
+                      : (yield* Ref.get(sessions)).get(sessionKey(supersededId));
+                  if (
+                    supersededId !== undefined &&
+                    superseded !== undefined &&
+                    superseded.runtime.instanceId === input.modelSelection.instanceId &&
+                    superseded.attachedThreadIds.has(input.threadId)
+                  )
+                    yield* retireUnusableOwner(superseded.runtime, (reason) =>
+                      releaseEntry({
+                        providerSessionId: supersededId,
+                        expectedRuntime: superseded.runtime,
+                        reason,
+                        detail: "A replacement session supersedes this native owner.",
+                      }).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderSessionOpenError({
+                              instanceId: input.modelSelection.instanceId,
+                              providerSessionId: input.providerSessionId,
+                              cause,
+                            }),
+                        ),
+                      ),
+                    );
+                  // SCIENT-FORK:END
                   const existing = (yield* Ref.get(sessions)).get(key);
                   if (existing !== undefined) {
                     if (releasingRuntimes.has(existing.runtime))
