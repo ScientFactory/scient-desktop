@@ -5,6 +5,7 @@ import type { TimelineEntry } from "../../session-logic";
 import {
   createForkConversationCommand,
   createForkMessageCommands,
+  forkWorktreeAvailabilityFromOptions,
   type ForkCommandTarget,
 } from "./chatViewFork";
 
@@ -37,8 +38,8 @@ describe("fork command live timeline ownership", () => {
       activeRunningTurnId: null,
       activeThreadId: ThreadId.make("thread"),
       activeThreadEnvironmentId: EnvironmentId.make("environment"),
-      requestFork: (next) => {
-        target = next;
+      setForkCommandTarget: (next) => {
+        target = typeof next === "function" ? next(target) : next;
       },
     });
     fork();
@@ -57,8 +58,8 @@ describe("fork command live timeline ownership", () => {
       activeRunningTurnId: RunId.make("running"),
       activeThreadId: ThreadId.make("thread"),
       activeThreadEnvironmentId: EnvironmentId.make("environment"),
-      requestFork: (next) => {
-        target = next;
+      setForkCommandTarget: (next) => {
+        target = typeof next === "function" ? next(target) : next;
       },
     });
     fork();
@@ -67,12 +68,39 @@ describe("fork command live timeline ownership", () => {
     expect(target).toMatchObject({
       kind: "assistant-response",
       messageId: "completed",
-      composerDraft: true,
+      source: "new-chat",
     });
   });
 });
 
-describe("run fork commands share the Scient fork owner", () => {
+describe("/fork-worktree", () => {
+  it("opens the fork card with New worktree switched on", () => {
+    let target: ForkCommandTarget | null = null;
+    const fork = createForkConversationCommand({
+      timelineEntries: [],
+      readTimelineEntries: () => [answer("completed")],
+      activeLatestRun: null,
+      activeRunningTurnId: null,
+      activeThreadId: ThreadId.make("thread"),
+      activeThreadEnvironmentId: EnvironmentId.make("environment"),
+      setForkCommandTarget: (next) => {
+        target = typeof next === "function" ? next(target) : next;
+      },
+    });
+    fork({ workspaceMode: "new-worktree" });
+    expect(target).toMatchObject({
+      kind: "assistant-response",
+      messageId: "completed",
+      source: "latest-response",
+      newWorktree: true,
+    });
+    // `/fork` opens the same card with the switch off.
+    fork();
+    expect(target).not.toHaveProperty("newWorktree");
+  });
+});
+
+describe("run fork commands share the Scient dialog owner", () => {
   it("uses a live completed response and fences a stale source thread", async () => {
     let target: ForkCommandTarget | null = null;
     let live: ReadonlyArray<TimelineEntry> = [];
@@ -81,8 +109,8 @@ describe("run fork commands share the Scient fork owner", () => {
       activeThreadEnvironmentId: EnvironmentId.make("environment"),
       activeRunningTurnId: null,
       readTimelineEntries: () => live,
-      requestFork: (next) => {
-        target = next;
+      setForkCommandTarget: (next) => {
+        target = typeof next === "function" ? next(target) : next;
       },
     });
     live = [answer("run")];
@@ -98,26 +126,51 @@ describe("run fork commands share the Scient fork owner", () => {
     expect(target).toMatchObject({
       kind: "assistant-response",
       messageId: "run",
-      latest: false,
-      workspaceMode: "local",
+      source: "this-response",
     });
   });
 
-  it("forks the running turn without a completed response", async () => {
+  it("opens the running-turn dialog without a completed response", async () => {
     let target: ForkCommandTarget | null = null;
     const actions = createForkMessageCommands({
       activeThreadId: ThreadId.make("thread"),
       activeThreadEnvironmentId: EnvironmentId.make("environment"),
       activeRunningTurnId: RunId.make("run"),
       readTimelineEntries: () => [],
-      requestFork: (next) => {
-        target = next;
+      setForkCommandTarget: (next) => {
+        target = typeof next === "function" ? next(target) : next;
       },
     });
     await actions.onForkFromRun({
       sourceThreadId: ThreadId.make("thread"),
       runId: RunId.make("run"),
     });
-    expect(target).toMatchObject({ kind: "running-turn", runId: "run" });
+    expect(target).toMatchObject({ kind: "running-turn", runId: "run", source: "running-turn" });
+  });
+});
+
+describe("forkWorktreeAvailabilityFromOptions", () => {
+  it("offers a new worktree whenever the server can build one", () => {
+    expect(forkWorktreeAvailabilityFromOptions({ newWorktree: true }, true)).toEqual({
+      available: true,
+    });
+  });
+
+  it("names a missing checkpoint for a finished fork point", () => {
+    expect(forkWorktreeAvailabilityFromOptions({ newWorktree: false }, false)).toEqual({
+      available: false,
+      reason: "no-checkpoint",
+    });
+  });
+
+  it("names the removed worktree, not Git, for a running fork whose worktree is gone", () => {
+    const notice = "The original worktree was removed, so this fork works in the project folder.";
+    expect(
+      forkWorktreeAvailabilityFromOptions({ newWorktree: false, workspaceNotice: notice }, true),
+    ).toEqual({ available: false, reason: "worktree-removed" });
+    expect(forkWorktreeAvailabilityFromOptions({ newWorktree: false }, true)).toEqual({
+      available: false,
+      reason: "no-git-repository",
+    });
   });
 });

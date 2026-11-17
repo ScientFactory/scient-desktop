@@ -33,8 +33,9 @@ import { readTimelinePosition } from "./chat/timelineScrollAnchoring";
 import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
 import { isOnlySendBusy, deriveTimelineWorking } from "./chat/timelineWorkingState";
 import {
-  ScientChatForkContext,
+  ScientChatForkDialog,
   useChatViewForkCommand,
+  useClearForkCommandOnThreadChange,
   createForkConversationCommand,
   useForkLanding,
   useForkLandingReveal,
@@ -1137,7 +1138,7 @@ function ChatViewContent(props: ChatViewProps) {
           title: parentSubagentThread?.title ?? "Parent thread",
         };
   const hasProjectWorkspace = activeThread?.projectId != null;
-  // SCIENT-FORK:START — one-click forks of this conversation.
+  // SCIENT-FORK:START — fork dialog target, preview and command state.
   const forkCommand = useChatViewForkCommand({
     activeThread,
     navigate,
@@ -1149,7 +1150,7 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     ),
   });
-  const { isForkingThread, requestFork } = forkCommand;
+  const { isForkingThread, setForkCommandTarget } = forkCommand;
   // SCIENT-FORK:END
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
@@ -1202,6 +1203,13 @@ function ChatViewContent(props: ChatViewProps) {
       items: serverVisibleTurnItems.map(({ item }) => item),
     });
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  // SCIENT-FORK:START — a fork target belongs to the thread it was opened on.
+  useClearForkCommandOnThreadChange(
+    setForkCommandTarget,
+    activeThreadId,
+    activeThreadEnvironmentId,
+  );
+  // SCIENT-FORK:END
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -2075,7 +2083,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeRunningTurnId,
     activeThreadId,
     activeThreadEnvironmentId,
-    requestFork,
+    setForkCommandTarget,
   });
   // SCIENT-FORK:END
   const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection ?? null);
@@ -2233,9 +2241,22 @@ function ChatViewContent(props: ChatViewProps) {
     : (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — fork baseline.
-  const { hasForkBaseline, forkOriginThreadId, forkBaselineAssistantMessageId } =
-    deriveForkTimelineBaseline({ activeThread, serverVisibleTurnItems });
+  // SCIENT-FORK:START — fork baseline and new-worktree availability.
+  const {
+    hasForkBaseline,
+    forkOriginThreadId,
+    forkBaselineAssistantMessageId,
+    forkWorktreeAvailability,
+  } = deriveForkTimelineBaseline({
+    readTimelineEntries: readLiveTimelineEntries,
+    turnDiffSummaries,
+    activeThread,
+    serverVisibleTurnItems,
+    isGitRepo,
+    forkDialogOpen: forkCommand.forkDialogOpen,
+    forkCommandTarget: forkCommand.forkCommandTarget,
+    timelineEntries,
+  });
   // SCIENT-FORK:END
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
@@ -3857,7 +3878,7 @@ function ChatViewContent(props: ChatViewProps) {
   const { onForkAssistantMessage, onForkUserMessage, onForkFromRun } = createForkMessageCommands({
     activeThreadId,
     activeThreadEnvironmentId,
-    requestFork,
+    setForkCommandTarget,
     activeRunningTurnId,
     readTimelineEntries: readLiveTimelineEntries,
   });
@@ -5050,11 +5071,15 @@ function ChatViewContent(props: ChatViewProps) {
       <ThreadOpenRecorder threadRef={routeThreadRef} />
       {/* SCIENT-FORK:END */}
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
-      {/* SCIENT-FORK:START — fork requests know the thread's ref and folder. */}
-      <ScientChatForkContext
+      {/* SCIENT-FORK:START — the fork dialog. */}
+      <ScientChatForkDialog
         fork={forkCommand}
+        activeThread={activeThread}
+        activeThreadId={activeThreadId}
+        activeThreadEnvironmentId={activeThreadEnvironmentId}
         activeThreadRef={activeThreadRef}
         activeWorkspaceRoot={activeWorkspaceRoot}
+        forkWorktreeAvailability={forkWorktreeAvailability}
       />
       {/* SCIENT-FORK:END */}
     </div>

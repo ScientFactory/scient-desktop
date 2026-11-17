@@ -570,6 +570,130 @@ describe("fork lifecycle across navigation and remounts", () => {
   });
 });
 
+describe("forks from the fork card", () => {
+  it("sends the edited title and reuses the card's check", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(source));
+    expect(_fixture.hook.preview).toMatchObject({ checking: false, locked: false });
+    expect(_fixture.hook.preview?.options?.available).toBe(true);
+    await act(() =>
+      _fixture.hook.forkFromMessage(
+        source,
+        {
+          workspaceMode: "local",
+          titleOverride: "Renamed",
+          displayTitle: "Renamed",
+          fromCard: true,
+        },
+        "/workspace",
+      ),
+    );
+    expect(commands.options).toHaveBeenCalledOnce();
+    expect(commands.dispatch.mock.calls[0]![0].input.title).toBe("Renamed");
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(commands.toast).not.toHaveBeenCalled();
+  });
+
+  it("leaves the title to the server when it was not edited", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.dispatch.mock.calls[0]![0].input).not.toHaveProperty("title");
+  });
+
+  it("shows a failed fork in the card, and the card resumes it with its title", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    commands.ready.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("The worktree could not be created."))),
+    );
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(source));
+    await act(() =>
+      _fixture.hook.forkFromMessage(
+        source,
+        {
+          workspaceMode: "local",
+          titleOverride: "Renamed",
+          displayTitle: "Renamed",
+          fromCard: true,
+        },
+        "/workspace",
+      ),
+    );
+    expect(commands.toast).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(_fixture.hook.errorUpdate?.message).toContain("Retry to resume this same fork");
+    expect(_fixture.hook.preview?.locked).toBe(true);
+    // Opening the card again finds the saved fork and its title.
+    await act(() => _fixture.hook.prepareFork(source));
+    expect(_fixture.hook.preview).toMatchObject({
+      locked: true,
+      retryTitle: "Renamed",
+      retryWorkspaceMode: "local",
+    });
+  });
+
+  it("says a workspace move found only when Fork is pressed, but not one the card showed", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const notice = "The original worktree was removed, so this fork works in the project folder.";
+    const latest = { kind: "assistant-response" as const, messageId: null, latest: true };
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(latest));
+    // "Latest" is checked again on Fork, and only then finds the worktree gone.
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: false,
+        workspaceNotice: notice,
+        sourceAssistantMessageId: source.messageId,
+        sourceUserMessageId: null,
+      }),
+    );
+    await act(() =>
+      _fixture.hook.forkFromMessage(latest, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.toast).toHaveBeenCalledWith(expect.objectContaining({ description: notice }));
+
+    // A card that already showed the notice does not say it again.
+    commands.toast.mockClear();
+    await act(() => _fixture.hook.prepareFork(source));
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.toast).not.toHaveBeenCalled();
+  });
+
+  it("says in the card that an older server cannot take this fork", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.supported = false;
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(source));
+    expect(commands.options).not.toHaveBeenCalled();
+    expect(_fixture.hook.errorUpdate?.message).toContain("Update Scient");
+    expect(commands.toast).not.toHaveBeenCalled();
+  });
+});
+
 function _createFixture() {
   let _published_hook = undefined! as ReturnType<typeof useScientThreadFork>;
 
