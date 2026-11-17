@@ -150,14 +150,26 @@ const asScientAgent = (record: UsageRecord): UsageRecord => ({
   provider: "scient",
   dedupeKey: record.dedupeKey === null ? null : `scient:${record.dedupeKey}`,
 });
+const pi = piUsageFormat as TranscriptUsageFormat<unknown>;
+// Calls outside the conversation (prompt predictions, titles, cache warming) are `model_usage`
+// entries, which carry the fields of Pi's `usage` entry.
+const asPiEntry = (entry: unknown): unknown =>
+  typeof entry === "object" && entry !== null && "type" in entry && entry.type === "model_usage"
+    ? { ...entry, type: "usage" }
+    : entry;
 const scientAgentUsageFormat: TranscriptUsageFormat<unknown> = {
-  ...(piUsageFormat as TranscriptUsageFormat<unknown>),
-  parseLine: (line, state) =>
-    (piUsageFormat as TranscriptUsageFormat<unknown>).parseLine(line, state).map(asScientAgent),
+  ...pi,
+  parseLine: (line, state) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return [];
+    }
+    return pi.parseProjected(asPiEntry(parsed), state).map(asScientAgent);
+  },
   parseProjected: (projected, state) =>
-    (piUsageFormat as TranscriptUsageFormat<unknown>)
-      .parseProjected(projected, state)
-      .map(asScientAgent),
+    pi.parseProjected(asPiEntry(projected), state).map(asScientAgent),
 };
 
 /** Token and cost history from the conversations Scient runs with the agent. */

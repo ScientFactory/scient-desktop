@@ -61,6 +61,16 @@ thread inspection and management, delegation, secrets and skill discovery. Other
 and connector tools remain callable through `xd://` devices. Older runtimes receive
 all schemas directly. The bridge passes service ownership metadata so runtimes with
 grouped catalogs can list a service once and expose its individual tools on demand.
+Each service's description is the first line of its MCP server's `instructions`. Scient's
+own server sends `SCIENT_MCP_INSTRUCTIONS`, which Codex also shows for its namespace.
+
+Pi's `tool_search` finds only tools that are not loaded yet. On completion gateways the
+bridge loads every schema, so its guidance says that loaded tools are called directly
+and that an empty search does not mean a capability is missing.
+
+Custom-model connections to OpenRouter carry Scient's app headers (`HTTP-Referer`,
+`X-OpenRouter-Title`). OMP adds its own headers only for its built-in `openrouter`
+provider.
 
 ## Product surface
 

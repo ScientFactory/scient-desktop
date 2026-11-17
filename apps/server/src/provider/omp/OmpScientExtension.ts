@@ -162,6 +162,11 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     ),
   );
   if (typeof initialized?.protocolVersion === "string") protocolVersion = initialized.protocolVersion;
+  // The server's first instruction line describes it in Scient Agent's catalog, as Codex shows it.
+  const description =
+    typeof initialized?.instructions === "string"
+      ? initialized.instructions.split(/\\r?\\n/u).find((line) => line.trim())?.trim().slice(0, 200)
+      : undefined;
   await request("notifications/initialized", {}, connectSignal, true);
   const tools = [];
   let cursor;
@@ -185,7 +190,7 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     if (seen.has(cursor) || page === 99) throw new Error(label + " tool catalog pagination did not finish.");
     seen.add(cursor);
   }
-  return { tools, request };
+  return { tools, request, description };
 };
 
 /** The tool's model-facing name, or undefined when none is usable. */
@@ -240,7 +245,7 @@ export default async function scientOmpExtension(pi) {
     connectors: scientConnectors(bootstrap.connectors).map((connector) => {
       const label = "Connector " + JSON.stringify(connector.displayName);
       return scientConnect(connector.url, bootstrap.authorization, label, AbortSignal.timeout(30_000)).then(
-        ({ tools, request }) => ({ ...connector, label, connected: true, tools, request }),
+        ({ tools, request, description }) => ({ ...connector, label, connected: true, tools, request, description }),
         () => ({ ...connector, label, connected: false, tools: [], request: undefined }),
       );
     }),
@@ -248,13 +253,13 @@ export default async function scientOmpExtension(pi) {
   const awareness = shared.awareness + (shared.connectorLoadMode === "discoverable"
     ? "\\nAdditional Scient and connector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write JSON arguments to xd://<name> to call them. Tools named in these instructions may be devices rather than top-level tools."
     : "");
-  const [{ tools, request }, connectors] = await Promise.all([
+  const [{ tools, request, description }, connectors] = await Promise.all([
     shared.connection,
     Promise.all(shared.connectors),
   ]);
   const coreTools = new Set(${JSON.stringify(SCIENT_ALWAYS_LOADED_TOOLS)});
   const proxied = tools.map((tool) => ({
-    ...tool, remoteName: tool.name, label: "Scient", request, serverName: "scient",
+    ...tool, remoteName: tool.name, label: "Scient", request, serverName: "Scient", serverDescription: description ?? "Scient workspace tools",
     loadMode: coreTools.has(tool.name) ? "essential" : shared.connectorLoadMode,
   }));
   const skipped = new Map();
@@ -267,7 +272,7 @@ export default async function scientOmpExtension(pi) {
         continue;
       }
       taken.add(name);
-      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, serverName: connector.serverName, request: connector.request, loadMode: shared.connectorLoadMode });
+      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, serverName: connector.serverName, serverDescription: connector.description ?? connector.displayName + ", a Scient connector", request: connector.request, loadMode: shared.connectorLoadMode });
     }
   }
   const toolNames = proxied.map((tool) => tool.name);
@@ -278,6 +283,8 @@ export default async function scientOmpExtension(pi) {
       label: name,
       loadMode: tool.loadMode,
       mcpServerName: tool.serverName,
+      // Scient Agent lists a described service as one catalog row.
+      mcpServerDescription: tool.serverDescription,
       mcpToolName: remoteName,
       description: tool.description,
       parameters: tool.parameters,

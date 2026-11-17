@@ -141,4 +141,26 @@ describe("scientAgentUsageReader", () => {
     assert.strictEqual(record?.provider, "scient");
     assert.isTrue(record?.dedupeKey?.startsWith("scient:"));
   });
+
+  it("counts the agent's calls outside the conversation, such as prompt predictions", () => {
+    if (scientAgentUsageReader.kind !== "transcripts") throw new Error("transcripts reader");
+    const format = scientAgentUsageReader.format;
+    const state = format.state!.initial();
+    const [record] = format.parseLine(
+      JSON.stringify({
+        type: "model_usage",
+        id: "u1",
+        timestamp: "2026-11-16T10:00:00.000Z",
+        purpose: "composer-prediction",
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        model: "gpt-6-luna",
+        usage: { input: 900, output: 12, cacheRead: 80_000, cacheWrite: 0 },
+        stopReason: "stop",
+      }),
+      state,
+    );
+    assert.deepInclude(record, { provider: "scient", model: "openai-codex/gpt-6-luna" });
+    assert.strictEqual(record?.totals.cachedInputTokens, 80_000);
+  });
 });

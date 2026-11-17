@@ -134,7 +134,12 @@ it("bounds always-sent schemas on capable runtimes and preserves deferred and le
     if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
     const result =
       body.method === "initialize"
-        ? { protocolVersion: "2025-06-18" }
+        ? {
+            protocolVersion: "2025-06-18",
+            ...(String(input).endsWith("/scient")
+              ? { instructions: "Scient workspace tools.\nMore detail." }
+              : {}),
+          }
         : body.method === "tools/list"
           ? { tools: String(input).endsWith("/scient") ? catalog : connectorTools }
           : { content: [{ type: "text", text: `${String(input)}:${body.params?.name}` }] };
@@ -208,6 +213,15 @@ it("bounds always-sent schemas on capable runtimes and preserves deferred and le
           mode === "discoverable" ? "discoverable" : "essential",
         );
         expect(tools.find((tool) => tool.name === "delegate_task")?.loadMode).toBe("essential");
+        // The server's first instruction line becomes its catalog description.
+        expect(tools.find((tool) => tool.name === "scient_connector_list")).toMatchObject({
+          mcpServerName: "Scient",
+          mcpServerDescription: "Scient workspace tools.",
+        });
+        // A connector whose server sends no instructions is described by its name.
+        expect(tools.find((tool) => tool.name === "github__search_records")).toMatchObject({
+          mcpServerDescription: "github, a Scient connector",
+        });
         expect(
           tools
             .filter((tool) => catalog.some(({ name }) => name === tool.name))

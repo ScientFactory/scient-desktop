@@ -563,8 +563,16 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
   delete process.env[TOOL_NAME_MAP_ENV];
   const modelToolName = (canonicalName: string) => toolNameMap[canonicalName] ?? canonicalName;
+  // SCIENT-FORK:START: Pi's search covers only tools not loaded yet; say so wherever it is offered.
+  const toolSearchNote = () =>
+    hasBuiltinToolSearch()
+      ? "tool_search finds only tools that are not loaded yet. Tools already in your tool list, such as bash, read, edit and write, are callable directly; an empty search does not mean a capability is missing."
+      : "";
   const runtimeSystemPrompt = (systemPrompt: string) =>
-    [systemPrompt, awareness, endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""].filter(Boolean).join("\\n\\n");
+    [systemPrompt, awareness, toolSearchNote(), endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""]
+      .filter(Boolean)
+      .join("\\n\\n");
+  // SCIENT-FORK:END
   if (endpoint === undefined || token === undefined) {
     // SCIENT-FORK:START: runtime guidance without MCP; this path's single before_agent_start hook.
     pi.on("before_agent_start", (event, ctx) => {
