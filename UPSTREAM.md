@@ -237,8 +237,10 @@ The install reservation spans `preparing`, both all-window save acknowledgements
 handoff. Backends remain running until the final acknowledgement. `quitting` becomes true
 before the final barrier to prevent new windows, and that barrier locks renderer input before
 saving; failure/interruption releases every lock before returning control.
-The compact control shows only a state-specific, reduced-motion-aware spinner; progress
-belongs in its tooltip, not long button copy.
+The compact control shows only a state-specific, reduced-motion-aware spinner, never long
+button copy. Its tooltip opens by itself with the progress, then for a few seconds with the reason
+a restart stopped (`apps/web/src/scient/desktopUpdate/useRestartProgressNotice.ts`); with the
+sidebar closed, progress is a corner toast.
 The version shown by an install caller remains binding even when its final feed check
 discovers and downloads a newer release. Late download events cannot replace the current
 offer, and update events cannot mutate an install's reserved release.

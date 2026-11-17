@@ -70,6 +70,7 @@ import { useLocalWorkBlocksRestart } from "../../scient/desktopUpdate/restartWhe
 // SCIENT-FORK:START — replaces upstream's UpdateEverythingDialog: a pass asks beside the pill,
 // and only when it would stop running threads.
 import { UpdateEverythingAsk } from "../../scient/desktopUpdate/UpdateEverythingAsk";
+import { useRestartProgressNotice } from "../../scient/desktopUpdate/useRestartProgressNotice";
 import { confirmServerStops } from "../../scient/desktopUpdate/useOtherUpdates";
 // SCIENT-FORK:END
 
@@ -224,6 +225,8 @@ function SidebarUpdateControl() {
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
+  // Restart progress and the reason a restart stopped show beside it without hover.
+  const restartNotice = useRestartProgressNotice(state, releaseNotesTriggerId);
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
   // The card Update opens stays until Restart or dismissal; a second press closes it.
   const restartCardOpenRef = useRef(false);
@@ -241,9 +244,11 @@ function SidebarUpdateControl() {
   ) => {
     updateReadyNoticeRef.current?.close();
     setIsActionPending(true);
-    return installDesktopUpdateNow(bridge, reportError, expectedVersion).finally(() =>
-      setIsActionPending(false),
-    );
+    return installDesktopUpdateNow(
+      bridge,
+      reportError ?? restartNotice.reportFailure,
+      expectedVersion,
+    ).finally(() => setIsActionPending(false));
   };
   // SCIENT-FORK:END
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -364,6 +369,7 @@ function SidebarUpdateControl() {
         : !canCheckForUpdate(state);
   const isInteractionDisabled = isPreparing || disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
+    !restartNotice.open &&
     !isPreparing &&
     !isRunningEverything &&
     shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
@@ -671,6 +677,17 @@ function SidebarUpdateControl() {
     </button>
   );
 
+  // SCIENT-FORK:START — progress, then the reason a restart stopped, announced as they change.
+  const restartNoticeContent = restartNotice.open ? (
+    <div aria-live="polite" className="text-left" role="status">
+      {restartNotice.title ? <div className="font-medium">{restartNotice.title}</div> : null}
+      <div className={restartNotice.title ? "text-muted-foreground" : undefined}>
+        {restartNotice.description}
+      </div>
+    </div>
+  ) : null;
+  // SCIENT-FORK:END
+
   return (
     <SidebarMenuItem
       // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
@@ -694,7 +711,12 @@ function SidebarUpdateControl() {
           if (!details.isCanceled) setReleaseNotesOpen(open);
         }}
       >
-        <Tooltip key={isPreparing ? "preparing" : "update"} disabled={showReleaseNotesPopover}>
+        <Tooltip
+          // SCIENT-FORK: the restart notice holds the tooltip open; hover cannot close it.
+          key={restartNotice.open ? "restart-notice" : isPreparing ? "preparing" : "update"}
+          disabled={showReleaseNotesPopover}
+          {...(restartNotice.open ? { open: true } : {})}
+        >
           <TooltipTrigger
             id={releaseNotesTriggerId}
             render={
@@ -721,18 +743,26 @@ function SidebarUpdateControl() {
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
-              className={showUpdateDetails ? "max-w-48 text-left" : undefined}
+              className={
+                // SCIENT-FORK: an off-screen control's notice is a corner toast instead.
+                restartNotice.open
+                  ? "max-w-56 text-left in-data-[anchor-hidden]:invisible"
+                  : showUpdateDetails
+                    ? "max-w-48 text-left"
+                    : undefined
+              }
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              {!isPreparing && idleTooltip?.detail ? (
-                <div className="text-left">
-                  <div className="font-medium">{idleTooltip.title}</div>
-                  <div className="text-muted-foreground">{idleTooltip.detail}</div>
-                </div>
-              ) : (
-                <span className="whitespace-pre-line">{tooltip}</span>
-              )}
+              {restartNoticeContent ??
+                (!isPreparing && idleTooltip?.detail ? (
+                  <div className="text-left">
+                    <div className="font-medium">{idleTooltip.title}</div>
+                    <div className="text-muted-foreground">{idleTooltip.detail}</div>
+                  </div>
+                ) : (
+                  <span className="whitespace-pre-line">{tooltip}</span>
+                ))}
             </TooltipPopup>
           ) : null}
         </Tooltip>

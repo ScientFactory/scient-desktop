@@ -11,12 +11,14 @@ export function useDesktopUpdateSaveHandling(): void {
     () =>
       registerDesktopUpdateSaveHandler(async () => {
         const saved = await prepareDesktopUpdateSave(windowEditors, flushComposerDraftPersistence);
-        if (!saved)
+        // The window Restart was chosen in shows the reason beside its update control; another
+        // window says that it is the one holding the restart back.
+        if (!saved && !document.hasFocus())
           toastManager.add({
             type: "warning",
             title: "Restart paused",
             description:
-              "A file or draft could not be saved. Resolve its save notice and try again.",
+              "A file or draft in this window could not be saved. Resolve its save notice and try again.",
           });
         return saved;
       }),

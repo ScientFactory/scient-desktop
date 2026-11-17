@@ -1265,8 +1265,7 @@ export const make = Effect.gen(function* () {
           yield* updateState((state) => ({
             ...state,
             status: "preparing",
-            message:
-              "Preparing update… Verifying the authorized release while Scient keeps running.",
+            message: "Preparing update… You can keep working.",
             errorContext: null,
             canRetry: false,
           }));
@@ -1298,7 +1297,7 @@ export const make = Effect.gen(function* () {
           });
           yield* updateState((state) => ({
             ...state,
-            message: "Preparing update… Saving open workspaces before restarting.",
+            message: "Saving your work before restarting…",
           }));
           yield* Ref.set(desktopState.quitting, true);
           if (!(yield* updateSave.prepareForRestart)) {

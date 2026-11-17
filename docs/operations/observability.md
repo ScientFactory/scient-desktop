@@ -173,7 +173,9 @@ Renderer saves reuse the document/file/LaTeX/input-composition registries,
 including dirty editors held for disconnected environments, and explicitly
 flush composer draft persistence. The final synchronous unsaved check catches
 edits made while another environment was saving. Failure leaves the app and
-backends running with a Restart paused notice; neither native preparation nor
+backends running, with the reason beside the update control of the window
+Restart was chosen in, and a Restart paused notice in any other window that could
+not save; neither native preparation nor
 backend shutdown may proceed from a failed save barrier.
 
 The first save leaves the app editable during native preparation. The final

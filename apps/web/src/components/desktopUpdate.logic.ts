@@ -158,10 +158,7 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
   if (state.status === "preparing") {
-    return (
-      state.message ??
-      "Preparing update… Scient keeps running until the update is verified and your workspace is saved."
-    );
+    return state.message ?? "Preparing update… You can keep working.";
   }
   if (
     state.notAppliedVersion !== undefined &&

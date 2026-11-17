@@ -139,6 +139,7 @@ const cornerNotice = () => {
   const viewport = document.querySelector<HTMLElement>('[data-slot="toast-viewport"]');
   return viewport && viewport.textContent !== "" ? viewport : null;
 };
+const tooltipText = () => document.querySelector('[data-slot="tooltip-popup"]')?.textContent ?? "";
 const restartNow = (notice: HTMLElement) =>
   [...notice.querySelectorAll("button")].find((button) => button.textContent === "Restart now");
 
@@ -276,7 +277,7 @@ describe("update restart flow", () => {
     expect(cornerNotice()).toBeNull();
   });
 
-  it("keeps native preparation compact and prevents another restart or check", async () => {
+  it("shows native preparation beside the compact control without hover and blocks another restart or check", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -298,13 +299,10 @@ describe("update restart flow", () => {
     expect(footerButton(_fixture).textContent).toBe("");
     expect(footerButton(_fixture).getAttribute("aria-disabled")).toBe("true");
     expect(footerButton(_fixture).getAttribute("aria-label")).toContain("Preparing update");
+    // Nobody has to hover: the progress stays open beside the control, and leaving keeps it.
+    await vi.waitFor(() => expect(tooltipText()).toContain("Preparing update"));
     await userEvent.unhover(footerButton(_fixture).parentElement!);
-    await userEvent.hover(footerButton(_fixture).parentElement!);
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-        "Preparing update",
-      ),
-    );
+    expect(tooltipText()).toContain("Preparing update");
     footerButton(_fixture).click();
     expect(bridge.installUpdate).toHaveBeenCalledOnce();
     expect(bridge.checkForUpdate).not.toHaveBeenCalled();
@@ -399,7 +397,10 @@ describe("update restart flow", () => {
     footerButton(_fixture).click();
     await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
     restartNow(anchoredNotice()!)?.click();
-    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("IPC closed"));
+    // The reason stays where the user was looking, not in a corner toast.
+    await vi.waitFor(() => expect(tooltipText()).toContain("IPC closed"));
+    expect(tooltipText()).toContain("Could not install update");
+    expect(cornerNotice()).toBeNull();
     await vi.waitFor(() => expect(footerButton(_fixture).getAttribute("aria-disabled")).toBeNull());
 
     footerButton(_fixture).click();

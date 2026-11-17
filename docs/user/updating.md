@@ -47,14 +47,20 @@ Threads, settings, and project files remain in their existing locations.
 
 On macOS, choosing **Restart now** first saves open workspaces and prepares the
 exact downloaded update with the native installer while Scient and its servers
-keep running. The compact update control shows a spinner; its tooltip explains
-**Preparing update…**. Native verification must finish, and every open workspace
+keep running. Native verification must finish, and every open workspace
 must save again, before servers stop and the app restarts. During that final save
 and restart, editing is temporarily locked so no new edits can be lost. Windows
 and Linux keep their supported installer paths rather than replacing the running installation early.
 
+On every platform, the compact update control shows a spinner after **Restart now**,
+and a note beside it opens by itself: **Preparing update… You can keep working.**,
+then **Saving your work before restarting…**. With the sidebar closed, the note
+appears in the corner instead.
+
 If preparation or a workspace save fails, Scient stays open, unlocks editing,
-and offers **Retry**. A terminal native verification failure requires downloading
+shows the reason beside the update control for a few seconds, and offers **Retry**.
+Another window whose file or draft could not be saved says so itself.
+A terminal native verification failure requires downloading
 the archive again, then choosing **Restart now** again.
 A preparation wait ends after five minutes; retrying waits for that same
 authorized update rather than starting a competing native operation. On macOS,

@@ -33,7 +33,8 @@ function isWindowsHost(): boolean {
 /** Where an install failure goes: a toast by default, or a bulk update's summary. */
 export type ReportDesktopInstallError = (title: string, description: string) => void;
 
-const toastInstallFailure: ReportDesktopInstallError = (title, description) => {
+/** The default report: a corner toast. */
+export const toastInstallFailure: ReportDesktopInstallError = (title, description) => {
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 };
 
