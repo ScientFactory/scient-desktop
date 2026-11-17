@@ -670,6 +670,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`e9a1e8699e0b8530a27372de4a22e57cf1ebbe70` is recorded in
+[the 2026-11-17 e9a1e8699e receipt](docs/internals/t3-upstream-sync-20261117-e9a1e8699e.md).
+Literal merge `d9ea28b9ebad988f15a57f22e1377c3dd7c4e364` has owned base
+`f2b24cb2d03e3f1df87f43ef361412e3ac4b0f69` and the frozen official target as parents, retaining
+the 105 official commits after `47f90ee2e9`. The range is fixes and small features: Claude
+requests that never answer fail after 10 minutes, retried MCP and provider calls recheck their
+limits, snapshots copy between composers, themes can carry a background image, and T3's phone
+builds move to one shared local-build action. Release remains separate.
+
+The previous committed alignment through
 `47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
 [the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
 Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
