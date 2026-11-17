@@ -1,31 +1,33 @@
 /**
- * DesktopUpdateFactsRoute - the desktop's update facts over HTTP, for a backend started without
- * the telemetry pipes (a WSL-only primary). Same ingest and same acknowledgement as the pipe:
- * the response lists the ids the outbox holds, which the desktop may then forget.
- *
- * @module DesktopUpdateFactsRoute
+ * Update facts over HTTP for a desktop-mode backend without the telemetry pipes (WSL-only).
+ * Only the desktop's own bootstrap session may post; paired clients hold the scopes, not that
+ * subject. The response lists the ids the outbox holds, which the desktop may then forget.
  */
-import {
-  AuthEnvironmentMaintainScope,
-  DESKTOP_UPDATE_FACTS_HTTP_PATH,
-  DesktopUpdateFactsHttpRequest,
-} from "@t3tools/contracts";
+import { DESKTOP_UPDATE_FACTS_HTTP_PATH, DesktopUpdateFactsHttpRequest } from "@t3tools/contracts";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerConfig from "../config.ts";
 import { ingestDesktopUpdateFacts } from "./DesktopUpdateFacts.ts";
 import { ScientRecordedAnalyticsIngest } from "./ScientAnalytics.ts";
 
+/** The subject of sessions exchanged from the desktop bootstrap credential (PairingGrantStore). */
+const DESKTOP_BOOTSTRAP_SUBJECT = "desktop-bootstrap";
 const MAX_BODY_BYTES = 256 * 1024;
-const decodeRequest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(DesktopUpdateFactsHttpRequest),
-);
+const decodeRequest = Schema.decodeUnknownEffect(DesktopUpdateFactsHttpRequest);
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    // A backend with the pipes takes facts there; it never needs this route.
+    if (config.mode !== "desktop" || config.desktopTelemetryControlFd !== undefined) {
+      return Layer.empty;
+    }
     const recorded = yield* ScientRecordedAnalyticsIngest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     return HttpRouter.add(
@@ -37,18 +39,19 @@ export const layer = Layer.unwrap(
         if (session._tag === "None") {
           return HttpServerResponse.text("Unauthorized", { status: 401 });
         }
-        if (!session.value.scopes.includes(AuthEnvironmentMaintainScope)) {
+        if (session.value.subject !== DESKTOP_BOOTSTRAP_SUBJECT) {
           return HttpServerResponse.text("Forbidden", { status: 403 });
         }
-        const declared = Number(request.headers["content-length"] ?? 0);
-        if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+        // A declared length over the cap is refused before reading; chunked bodies hit the reader cap.
+        if (Number(request.headers["content-length"] ?? "0") > MAX_BODY_BYTES) {
           return HttpServerResponse.text("Payload Too Large", { status: 413 });
         }
-        const body = yield* request.text.pipe(Effect.option);
-        if (body._tag === "None" || body.value.length > MAX_BODY_BYTES) {
-          return HttpServerResponse.text("Bad Request", { status: 400 });
-        }
-        const parsed = yield* decodeRequest(body.value).pipe(Effect.option);
+        const body = yield* request.json.pipe(
+          Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_BODY_BYTES)),
+          Effect.option,
+        );
+        const parsed =
+          body._tag === "None" ? body : yield* decodeRequest(body.value).pipe(Effect.option);
         if (parsed._tag === "None") {
           return HttpServerResponse.text("Bad Request", { status: 400 });
         }
