@@ -32,13 +32,28 @@ const cases = [
   ["scient", "cursor/grok-4.7-high", "cursor/claude-opus-5-high", "thinkingLevel", "high"],
   [
     "scient",
-    "google-antigravity/gemini-3.8-flash",
-    "google-antigravity/gemini-3.1-pro",
+    "google-antigravity/gemini-4-hydrogen",
+    "google-antigravity/gemini-4-argon",
     "thinkingLevel",
     "high",
   ],
   ["cursor", "grok-4.7", "auto", "reasoning", "high"],
-  ["antigravity", "gemini-3.8-flash", "gemini-3.1-pro", "reasoningEffort", "high"],
+  ["antigravity", "gemini-4-hydrogen", "gemini-4-argon", "reasoningEffort", "high"],
+  [
+    "scient",
+    "antigravity-cli/gemini-4-hydrogen",
+    "antigravity-cli/gemini-4-carbon",
+    "thinkingLevel",
+    "medium",
+  ],
+  [
+    "scient",
+    "muse-code/muse-wonder-full-1.0",
+    "muse-code/muse-wonder-1.0",
+    "thinkingLevel",
+    "medium",
+  ],
+  ["muse", "muse-wonder-full-1.0", "muse-wonder-1.0", "reasoning", "high"],
   ["codex", "gpt-6.1-sol", "gpt-6-astra", "reasoningEffort", "medium"],
   ["claudeAgent", "claude-opus-5-5", "claude-sonnet-5-5", "effort", "medium"],
 ] as const;
@@ -87,6 +102,9 @@ describe("preferred account defaults", () => {
       ).toBe(previous);
     }
     expect(resolveAutomaticModel(driver, [model(previous)])).toBe(previous);
+    expect(
+      resolveAutomaticModel(driver, [model(preferred), model(previous, { isDefault: true })]),
+    ).toBe(preferred);
   });
 
   it("preserves account order when several preferred accounts are present", () => {
@@ -94,6 +112,8 @@ describe("preferred account defaults", () => {
     const anthropic = model("anthropic/claude-opus-5-5");
     const codex = model("openai-codex/gpt-6.1-sol");
     expect(resolveAutomaticModel(driver, [anthropic, codex])).toBe(anthropic.slug);
+    const sonnet = model("anthropic/claude-sonnet-5-5", { isDefault: true });
+    expect(resolveAutomaticModel(driver, [sonnet, codex])).toBe(sonnet.slug);
     expect(resolveAutomaticModel(driver, [codex, anthropic])).toBe(codex.slug);
   });
 

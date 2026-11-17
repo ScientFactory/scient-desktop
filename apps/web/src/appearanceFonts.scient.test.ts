@@ -76,9 +76,9 @@ describe("interface text weight", () => {
       expect(style.getPropertyValue("--font-sans")).toContain("Arial");
       expect(style.getPropertyValue("--font-mono")).toContain("Menlo");
       expect(style.getPropertyValue("--font-composer")).toContain("Georgia");
-      expect(style.fontSize).toBe("17px");
+      expect(style.fontSize).toBe("15px");
       expect(style.getPropertyValue("--font-size-prompt")).toBe("16px");
-      expect(style.getPropertyValue("--diffs-font-size")).toBe("15px");
+      expect(style.getPropertyValue("--diffs-font-size")).toBe("14px");
     }
     applyAppearanceFontVariables(root, preferences);
     expect(style.getPropertyValue("--font-sans")).toBe("");

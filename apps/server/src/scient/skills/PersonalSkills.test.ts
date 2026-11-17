@@ -81,8 +81,6 @@ const recorder = () => {
         Effect.sync(() => {
           events.push({ name, properties });
         }),
-      status: Effect.succeed({ available: true, consent: "product" }),
-      collectionEpoch: Effect.succeed(0),
       flush: Effect.void,
     }),
   );

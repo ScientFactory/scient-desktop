@@ -21,7 +21,11 @@ import {
 
 import * as DateTime from "effect/DateTime";
 // SCIENT-FORK:START — Scient Agent's own accounts stand in for each other.
-import { scientAgentAlternativeModel } from "./scientAgentModelFallback.ts";
+import {
+  scientAgentAlternativeModel,
+  scientSubscriptionFamily,
+} from "./scientAgentModelFallback.ts";
+import { resolveProviderModelPreferences } from "./scientModel.ts";
 // SCIENT-FORK:END
 
 import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
@@ -82,6 +86,79 @@ export function exhaustedUsageWindow(
   }
 }
 
+// SCIENT-FORK:START — subscription fallback shares picker visibility and preferred models.
+export function resolveUsageLimitFallback(input: {
+  readonly currentSelection: ModelSelection;
+  readonly fallbackSelection: ModelSelection | null;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings;
+  readonly projectId?: ProjectId | null;
+}): ModelSelection | undefined {
+  const currentProvider = input.providers.find(
+    (provider) => provider.instanceId === input.currentSelection.instanceId,
+  );
+  if (!currentProvider) return undefined;
+  const currentFamily = scientSubscriptionFamily(currentProvider, input.currentSelection.model);
+  const eligible = (
+    provider: ServerProvider,
+    selection: ModelSelection,
+    includeDefaults = false,
+  ) => {
+    const model = provider.models.find(
+      (candidate) =>
+        candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+    );
+    if (
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      provider.status === "error" ||
+      !isProviderAvailable(provider) ||
+      !model ||
+      model.unavailableReason ||
+      model.supportsTextGeneration === false ||
+      exhaustedUsageWindow(provider, input.now, model.slug) ||
+      (input.settings &&
+        !resolveProjectProviderInstanceEnabled(
+          input.settings,
+          input.projectId ?? null,
+          provider.instanceId,
+        ))
+    ) {
+      return false;
+    }
+    const preferences = input.settings?.providerModelPreferences?.[provider.instanceId];
+    const hidden = includeDefaults
+      ? resolveProviderModelPreferences(provider.driver, provider.models, preferences).hiddenModels
+      : (preferences?.hiddenModels ?? []);
+    return !hidden.includes(selection.model) && !hidden.includes(model.slug);
+  };
+  if (input.fallbackSelection) {
+    const preferred = input.providers.find(
+      (provider) => provider.instanceId === input.fallbackSelection?.instanceId,
+    );
+    if (preferred && eligible(preferred, input.fallbackSelection)) return input.fallbackSelection;
+  }
+  const agents = input.providers.filter((provider) => provider.driver === "scient");
+  agents.sort(
+    (a, b) =>
+      Number(b.instanceId === input.currentSelection.instanceId) -
+      Number(a.instanceId === input.currentSelection.instanceId),
+  );
+  for (const agent of agents) {
+    const alternative = scientAgentAlternativeModel(
+      agent,
+      input.currentSelection.model,
+      (slug) => !eligible(agent, { instanceId: agent.instanceId, model: slug }, true),
+      currentFamily,
+    );
+    if (alternative) return { instanceId: agent.instanceId, model: alternative.slug };
+  }
+  return undefined;
+}
+// SCIENT-FORK:END
+
 export function resolveNewThreadModelSelection(input: {
   readonly defaultSelection: ModelSelection | null;
   readonly explicitSelection?: ModelSelection | null;
@@ -93,50 +170,17 @@ export function resolveNewThreadModelSelection(input: {
 }) {
   const selection = input.explicitSelection ?? input.defaultSelection;
   const unchanged = { selection, fallback: null };
-  // SCIENT-FORK:START — Scient Agent answers with another signed-in account's model first.
-  if (!input.explicitSelection && selection) {
-    const agent = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-    const limited = exhaustedUsageWindow(agent, input.now, selection.model);
-    const alternative =
-      limited &&
-      scientAgentAlternativeModel(
-        agent,
-        selection.model,
-        (slug) => exhaustedUsageWindow(agent, input.now, slug) !== undefined,
-      );
-    if (agent && limited && alternative)
-      return {
-        selection: { instanceId: selection.instanceId, model: alternative.slug },
-        fallback: { provider: agent, resetsAt: limited.resetsAt ?? null },
-      };
-  }
-  // SCIENT-FORK:END
-  if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
+  if (input.explicitSelection || !selection) return unchanged;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   const window = exhaustedUsageWindow(provider, input.now, selection.model);
-  const fallback = input.providers.find(
-    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
-  );
-  if (
-    !provider ||
-    !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
-  )
-    return unchanged;
-  return {
-    selection: input.fallbackSelection,
-    fallback: { provider, resetsAt: window.resetsAt ?? null },
-  };
+  if (!provider || !window) return unchanged;
+  const fallback = resolveUsageLimitFallback({ ...input, currentSelection: selection });
+  return fallback
+    ? {
+        selection: fallback,
+        fallback: { provider, resetsAt: window.resetsAt ?? null },
+      }
+    : unchanged;
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";

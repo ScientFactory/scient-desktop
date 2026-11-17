@@ -83,9 +83,6 @@ describe("native agent model selection", () => {
       expect(selected.map((model) => model.slug)).toEqual([
         "anthropic/claude-sonnet-5-5",
         "openai-codex/gpt-6.1-sol",
-        "google-antigravity/claude-opus-4-6",
-        "google-antigravity/gemini-3.8-flash",
-        "google-antigravity/gemini-3.1-pro",
       ]);
       expect(
         resolveAppModelSelectionForInstance(

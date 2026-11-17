@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderConnectionAccount,
@@ -7,7 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { scientAgentAlternativeModel } from "./scientAgentModelFallback.ts";
-import { resolveNewThreadModelSelection } from "./usageLimits.ts";
+import { resolveNewThreadModelSelection, resolveUsageLimitFallback } from "./usageLimits.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 const account = (
@@ -46,6 +47,7 @@ function scientAgent(
       model("ollama/qwen", true),
       model("deepseek/deepseek-v4"),
       model("openai-codex/gpt-6-luna"),
+      model("openai-codex/gpt-6.1-sol"),
     ],
     slashCommands: [],
     skills: [],
@@ -84,7 +86,7 @@ describe("scientAgentAlternativeModel", () => {
         "google-antigravity/gemini-3.8-flash",
         exhausted(provider),
       )?.slug,
-    ).toBe("openai-codex/gpt-6-luna");
+    ).toBe("openai-codex/gpt-6.1-sol");
   });
 
   it("offers nothing when the other account is signed out or out of quota too", () => {
@@ -120,7 +122,7 @@ describe("resolveNewThreadModelSelection for Scient Agent", () => {
     });
     expect(resolved.selection).toEqual({
       instanceId: provider.instanceId,
-      model: "openai-codex/gpt-6-luna",
+      model: "openai-codex/gpt-6.1-sol",
     });
     expect(resolved.fallback?.resetsAt).toBe("2026-11-13T15:00:00.000Z");
 
@@ -137,5 +139,268 @@ describe("resolveNewThreadModelSelection for Scient Agent", () => {
         now: NOW,
       }).fallback,
     ).toBeNull();
+  });
+});
+
+describe("subscription fallback policy", () => {
+  const currentModel = "anthropic/claude-opus-5-5";
+  const sol = "openai-codex/gpt-6.1-sol";
+  const wonder = "muse-code/muse-wonder-full-1.0";
+  const makeAgent = () => ({
+    ...scientAgent(
+      [account("anthropic"), account("openai-codex"), account("muse-code"), account("openrouter")],
+      "anthropic",
+    ),
+    models: [
+      model("openrouter/first-alphabetically"),
+      model("openai-codex/gpt-5.6-luna"),
+      model(sol),
+      model(currentModel),
+      model(wonder),
+    ],
+  });
+  const resolve = (agent: ServerProvider, overrides = {}) =>
+    resolveUsageLimitFallback({
+      currentSelection: { instanceId: agent.instanceId, model: currentModel },
+      fallbackSelection: null,
+      providers: [agent],
+      now: NOW,
+      ...overrides,
+    });
+
+  it("honors the explicit fallback before another subscription inside Scient Agent", () => {
+    const agent = makeAgent();
+    const native: ServerProvider = {
+      ...agent,
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      auth: { status: "authenticated", type: "chatgpt" },
+      models: [model("gpt-6.1-sol")],
+      usageLimits: undefined,
+    };
+    const configured = {
+      instanceId: native.instanceId,
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const input = {
+      defaultSelection: { instanceId: agent.instanceId, model: currentModel },
+      fallbackSelection: configured,
+      providers: [agent, native],
+      now: NOW,
+    };
+    expect(resolveNewThreadModelSelection(input).selection).toEqual(configured);
+    expect(
+      resolveUsageLimitFallback({ ...input, currentSelection: input.defaultSelection }),
+    ).toEqual(configured);
+    for (const auth of [
+      { status: "authenticated" as const, type: "apiKey" },
+      { status: "authenticated" as const, type: "chatgpt", endpoint: "https://metered.example" },
+    ]) {
+      expect(
+        resolveUsageLimitFallback({
+          ...input,
+          currentSelection: input.defaultSelection,
+          providers: [agent, { ...native, auth }],
+        }),
+      ).toEqual(configured);
+    }
+    expect(
+      resolveNewThreadModelSelection({
+        ...input,
+        explicitSelection: input.defaultSelection,
+      }).selection,
+    ).toEqual(input.defaultSelection);
+  });
+
+  it.each([
+    { driver: "cursor", model: "grok-4.7" },
+    { driver: "claudeAgent", model: "claude-sonnet-5-5" },
+    { driver: "antigravity", model: "gemini-4-hydrogen" },
+    { driver: "muse", model: "muse-wonder-full-1.0" },
+  ])("honors a configured $driver fallback without requiring quota telemetry", (candidate) => {
+    const agent = makeAgent();
+    const native: ServerProvider = {
+      ...agent,
+      instanceId: ProviderInstanceId.make("configured"),
+      driver: ProviderDriverKind.make(candidate.driver),
+      auth: { status: "authenticated" },
+      models: [model(candidate.model)],
+      usageLimits: undefined,
+    };
+    const configured = { instanceId: native.instanceId, model: candidate.model };
+    const input = {
+      defaultSelection: { instanceId: agent.instanceId, model: currentModel },
+      fallbackSelection: configured,
+      providers: [agent, native],
+      now: NOW,
+    };
+    expect(resolveNewThreadModelSelection(input).selection).toEqual(configured);
+    expect(
+      resolveUsageLimitFallback({ ...input, currentSelection: input.defaultSelection }),
+    ).toEqual(configured);
+    expect(
+      resolveUsageLimitFallback({
+        ...input,
+        currentSelection: input.defaultSelection,
+        providers: [agent, { ...native, models: [{ ...native.models[0]!, isCustom: true }] }],
+      }),
+    ).toEqual(configured);
+  });
+
+  it.each(["gemini-3.8-flash", "antigravity-default"])(
+    "keeps a saved fallback hidden only by defaults: %s",
+    (savedModel) => {
+      const agent = makeAgent();
+      const slug = "gemini-3.8-flash";
+      const native: ServerProvider = {
+        ...agent,
+        instanceId: ProviderInstanceId.make("antigravity"),
+        driver: ProviderDriverKind.make("antigravity"),
+        models: [{ ...model(slug), aliases: ["antigravity-default"] }],
+        usageLimits: undefined,
+      };
+      const configured = { instanceId: native.instanceId, model: savedModel };
+      const input = {
+        currentSelection: { instanceId: agent.instanceId, model: currentModel },
+        fallbackSelection: configured,
+        providers: [agent, native],
+        now: NOW,
+      };
+      expect(resolveUsageLimitFallback(input)).toEqual(configured);
+      expect(
+        resolveUsageLimitFallback({
+          ...input,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            providerModelPreferences: {
+              [native.instanceId]: { hiddenModels: [slug], modelOrder: [] },
+            },
+          },
+        }),
+      ).toEqual({ instanceId: agent.instanceId, model: sol });
+      expect(
+        resolveUsageLimitFallback({
+          ...input,
+          providers: [
+            agent,
+            {
+              ...native,
+              usageLimits: {
+                checkedAt: native.checkedAt,
+                windows: [
+                  {
+                    id: "gemini-pool",
+                    kind: "session",
+                    label: "Gemini",
+                    usedPercent: 100,
+                    modelIds: [slug],
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ).toEqual({ instanceId: agent.instanceId, model: sol });
+    },
+  );
+
+  it("skips hidden and unavailable preferred models without reviving an old catalog entry", () => {
+    const agent = makeAgent();
+    expect(
+      resolve(agent, {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerModelPreferences: {
+            [agent.instanceId]: { hiddenModels: [sol], modelOrder: [] },
+          },
+        },
+      }),
+    ).toEqual({ instanceId: agent.instanceId, model: wonder });
+    const unavailable = {
+      ...agent,
+      models: agent.models.map((entry) =>
+        entry.slug === sol ? { ...entry, unavailableReason: "Not in this plan" } : entry,
+      ),
+    };
+    expect(resolve(unavailable)).toEqual({ instanceId: agent.instanceId, model: wonder });
+    expect(
+      resolve({
+        ...agent,
+        models: agent.models.filter((entry) => entry.slug !== sol && entry.slug !== wonder),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not use OAuth billing routes or escape an exhausted subscription through an alias", () => {
+    const agent = makeAgent();
+    const aliases = {
+      ...agent,
+      connection: {
+        ...agent.connection!,
+        accounts: [
+          account("anthropic"),
+          account("openai-codex"),
+          account("openai-codex-device", { sameAccountAs: "openai-codex" }),
+          account("openrouter"),
+        ],
+      },
+    };
+    expect(
+      resolve(aliases, {
+        currentSelection: {
+          instanceId: agent.instanceId,
+          model: "openai-codex-device/gpt-6.1-sol",
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      resolve({
+        ...agent,
+        connection: {
+          ...agent.connection!,
+          accounts: [account("anthropic"), account("openrouter")],
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects disabled instances and exhausted preferred pools, preserving healthy defaults", () => {
+    const agent = makeAgent();
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [agent.instanceId]: { driver: agent.driver, enabled: false, config: {} },
+      },
+    };
+    expect(resolve(agent, { settings })).toBeUndefined();
+    expect(
+      resolve({
+        ...agent,
+        usageLimits: {
+          checkedAt: agent.checkedAt,
+          windows: [
+            ...agent.usageLimits!.windows,
+            {
+              id: "openai-week",
+              kind: "weekly",
+              label: "OpenAI",
+              providerIds: ["openai-codex"],
+              usedPercent: 100,
+              resetsAt: "2026-11-14T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    ).toEqual({ instanceId: agent.instanceId, model: wonder });
+    const healthy = { ...agent, usageLimits: undefined };
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection: { instanceId: agent.instanceId, model: currentModel },
+        fallbackSelection: { instanceId: agent.instanceId, model: sol },
+        providers: [healthy],
+        now: NOW,
+      }).selection,
+    ).toEqual({ instanceId: agent.instanceId, model: currentModel });
   });
 });

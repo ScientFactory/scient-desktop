@@ -1,11 +1,14 @@
 import type {
   DeviceServiceState,
   EnvironmentId,
+  MessageId,
+  OrchestrationV2ThreadProjection,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import type { ReactNode } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -23,6 +26,7 @@ import {
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
+import { findRevertCheckpoint } from "../../session-logic";
 import { registerThreadOverlay } from "./threadOverlayRetention";
 
 /**
@@ -173,6 +177,123 @@ export function BranchRestoreConfirmHost(props: {
           >
             Switch branch
           </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+interface PendingRevert {
+  readonly turnCount: number;
+  readonly messageId: MessageId;
+  // SCIENT-FORK: why the last attempt failed, for a host that stays open while reverting.
+  readonly error?: string;
+}
+
+const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
+
+export function openRevertConfirm(threadKey: string, pending: PendingRevert): void {
+  appAtomRegistry.set(revertConfirmAtom, { threadKey, value: pending });
+}
+
+// SCIENT-FORK:START — a host that stays open while reverting is closed, or shown the failure,
+// by the revert it started. False when the dialog is no longer open for that thread (its route
+// was left), so the caller reports the failure another way.
+export function settleRevertConfirm(threadKey: string, error: string | null): boolean {
+  const entry = appAtomRegistry.get(revertConfirmAtom);
+  if (entry === null || entry.threadKey !== threadKey) return false;
+  appAtomRegistry.set(
+    revertConfirmAtom,
+    error === null ? null : { threadKey, value: { ...entry.value, error } },
+  );
+  return true;
+}
+// SCIENT-FORK:END
+
+export function RevertConfirmHost(props: {
+  readonly threadKey: string;
+  readonly checkpoints: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
+  readonly worktreePath: string | null;
+  readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
+  // SCIENT-FORK:START
+  /**
+   * Given, the dialog stays open while the revert runs, its actions disabled, until
+   * settleRevertConfirm closes it or records why it failed.
+   */
+  readonly reverting?: boolean;
+  /**
+   * Given, files that cannot be restored are explained in the description and
+   * "Revert files too" is hidden rather than disabled.
+   */
+  readonly describeUnrestorableFiles?: (reason: "outside-worktree" | "no-snapshot") => string;
+  /** Shown under the description, with the last failure if there was one. */
+  readonly renderDetails?: (error: string | undefined) => ReactNode;
+  // SCIENT-FORK:END
+}) {
+  const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  // The server refuses file restore outside an isolated worktree.
+  const canRestoreFiles =
+    pending !== null &&
+    props.worktreePath !== null &&
+    findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status === "ready";
+  // SCIENT-FORK:START
+  const keepsOpen = props.reverting !== undefined;
+  const reverting = props.reverting === true;
+  const unrestorableFiles =
+    pending === null || canRestoreFiles || props.describeUnrestorableFiles === undefined
+      ? null
+      : props.describeUnrestorableFiles(
+          findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status !== "ready"
+            ? "no-snapshot"
+            : "outside-worktree",
+        );
+  // SCIENT-FORK:END
+  const confirm = (restoreFiles: boolean) => {
+    if (pending === null || (restoreFiles && !canRestoreFiles)) return;
+    // SCIENT-FORK: a host that stays open closes when the revert settles.
+    if (!keepsOpen) closeThreadOverlay(revertConfirmAtom);
+    props.onConfirm(pending.turnCount, pending.messageId, restoreFiles);
+  };
+  return (
+    <AlertDialog
+      open={pending !== null}
+      onOpenChange={(open) => {
+        // SCIENT-FORK: a running revert cannot be dismissed.
+        if (!open && !reverting) closeThreadOverlay(revertConfirmAtom);
+      }}
+    >
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Edit from here?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Rewind chat to before this message. Your prompt and attachments return to the composer.
+            {/* SCIENT-FORK:START */}
+            {unrestorableFiles === null
+              ? " “Revert files too” also undoes your own edits."
+              : ` ${unrestorableFiles}`}
+            {/* SCIENT-FORK:END */}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {/* SCIENT-FORK: e.g. diagnostics or the last failure. */}
+        {pending === null ? null : props.renderDetails?.(pending.error)}
+        <AlertDialogFooter>
+          <AlertDialogClose render={<Button variant="outline" disabled={reverting} />}>
+            Cancel
+          </AlertDialogClose>
+          {/* SCIENT-FORK:START */}
+          {unrestorableFiles !== null ? null : (
+            <Button
+              variant="destructive-outline"
+              disabled={!canRestoreFiles || reverting}
+              onClick={() => confirm(true)}
+            >
+              Revert files too
+            </Button>
+          )}
+          <Button disabled={reverting} onClick={() => confirm(false)}>
+            {unrestorableFiles === null ? "Revert and keep changes" : "Rewind chat"}
+          </Button>
+          {/* SCIENT-FORK:END */}
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

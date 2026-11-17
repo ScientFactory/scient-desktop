@@ -3,6 +3,10 @@ import * as Schema from "effect/Schema";
 import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { AuthProvidersManageScope, AuthSettingsWriteScope } from "./auth.ts";
+import {
+  applyClientSettingsResets,
+  CLIENT_SETTINGS_RESET_REVISION,
+} from "./scientClientSettingsResets.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   AntigravitySettings,
@@ -56,6 +60,26 @@ describe("ServerSettings thread sections", () => {
 });
 
 describe("ClientSettings typography defaults", () => {
+  it("uses the Scient reading sizes", () => {
+    expect(DEFAULT_CLIENT_SETTINGS).toMatchObject({
+      fontSizeInterface: 15,
+      fontSizePrompt: 16,
+      fontSizeCode: 14,
+      fontSizeTerminal: 14,
+    });
+  });
+
+  it("returns every saved font size to the defaults once", () => {
+    const saved = { ...DEFAULT_CLIENT_SETTINGS, fontSizeInterface: 18, fontSizeCode: 16 };
+    expect(applyClientSettingsResets(saved, 2)).toMatchObject({
+      fontSizeInterface: 15,
+      fontSizePrompt: 16,
+      fontSizeCode: 14,
+      fontSizeTerminal: 14,
+    });
+    expect(applyClientSettingsResets(saved, CLIENT_SETTINGS_RESET_REVISION)).toBe(saved);
+  });
+
   it("defaults old settings to regular weight without adding a patch value", () => {
     expect(decodeClientSettings({}).fontWeightInterface).toBe(400);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("fontWeightInterface");

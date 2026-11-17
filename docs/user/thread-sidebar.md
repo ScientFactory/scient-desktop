@@ -228,7 +228,7 @@ project**. It appears when the current environment offers scratch conversations.
 to a real project without losing the draft. The sidebar row and Add project flow stay the same.
 
 Scient creates one internal scratch project per machine and a separate plain folder for
-each conversation under its data directory. Files, Sources, Documents, and Compute use
+each conversation under its data directory. Files, Library, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
 conversation and its files into another existing project is not yet supported.

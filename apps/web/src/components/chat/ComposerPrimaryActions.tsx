@@ -9,7 +9,7 @@ import {
   type PointerEventHandler,
   type ReactNode,
 } from "react";
-import { ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -60,7 +60,7 @@ interface ComposerPrimaryActionsProps {
    * SCIENT-FORK: Available on desktop as well as mobile.
    */
   showSendWhileRunning?: boolean;
-
+  isEditingQueuedMessage?: boolean;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
@@ -246,7 +246,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canResume = false,
   preserveComposerFocusOnPointerDown = false,
   showSendWhileRunning = false,
-
+  isEditingQueuedMessage = false,
   onSubmitMessage,
   onResume,
   onPreviousPendingQuestion,
@@ -263,6 +263,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const shortcutModifiers = useShortcutModifierState();
   const isQueuing =
+    !isEditingQueuedMessage &&
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
@@ -369,37 +370,46 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (
     (canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") &&
-    !hasSendableContent
+    !hasSendableContent &&
+    !isEditingQueuedMessage
   ) {
     return renderStopGenerationButton();
   }
 
-  const showResume = canResume && !hasSendableContent;
+  const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
 
   const compactTokens =
-    compactBeforeSendTokens !== null && !showResume
+    compactBeforeSendTokens !== null && !showResume && !isEditingQueuedMessage
       ? formatContextWindowTokens(compactBeforeSendTokens)
       : null;
   const compactsBeforeSend = compactTokens !== null && !keepFullHistory;
 
   const submitLabel = showResume
     ? "Resume thread"
-    : compactsBeforeSend
-      ? "Compact and send"
-      : isQueuing
-        ? "Queue message"
-        : isRunning
-          ? "Steer message"
-          : "Submit message";
+    : isEditingQueuedMessage
+      ? "Update queued message"
+      : compactsBeforeSend
+        ? "Compact and send"
+        : isQueuing
+          ? "Queue message"
+          : isRunning
+            ? "Steer message"
+            : "Submit message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
-      (isPreparingWorktree ? "Preparing worktree" : isSendBusy ? "Submitting message" : null));
+      (isPreparingWorktree
+        ? "Preparing worktree"
+        : isSendBusy
+          ? isEditingQueuedMessage
+            ? "Updating queued message"
+            : "Submitting message"
+          : null));
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && canSteer
+      : isRunning && !isEditingQueuedMessage && canSteer
         ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
@@ -438,6 +448,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <Spinner size="sm" aria-hidden="true" />
       ) : showResume ? (
         <PlayIcon className="size-4 fill-current" aria-hidden="true" />
+      ) : isEditingQueuedMessage ? (
+        <CheckIcon className="size-4" aria-hidden="true" />
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path
@@ -455,7 +467,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submit = (
     <>
       {isRunning ? renderStopGenerationButton() : null}
-      {!isRunning || (showSendWhileRunning && hasSendableContent) ? (
+      {!isRunning || isEditingQueuedMessage || (showSendWhileRunning && hasSendableContent) ? (
         <Tooltip key="submit">
           <TooltipTrigger render={<span className="inline-flex" />}>{sendButton}</TooltipTrigger>
           <TooltipPopup>{submitTooltip}</TooltipPopup>

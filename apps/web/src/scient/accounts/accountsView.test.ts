@@ -262,6 +262,17 @@ describe("Accounts decisions", () => {
       (form) => form.kind === "api-key" && form.envName === "ANTHROPIC_API_KEY",
     );
     expect(anthropic).toMatchObject({ auth: { type: "header", name: "x-api-key" } });
+    const research = Object.fromEntries(
+      forms.flatMap((form) =>
+        form.kind === "api-key" && form.envName ? [[form.envName, form.auth]] : [],
+      ),
+    );
+    expect(research).toMatchObject({
+      NCBI_API_KEY: { type: "query", name: "api_key" },
+      SEMANTIC_SCHOLAR_API_KEY: { type: "header", name: "x-api-key" },
+      OPENALEX_API_KEY: { type: "query", name: "api_key" },
+      UNPAYWALL_EMAIL: { type: "query", name: "email" },
+    });
     expect(secretFields(catalogueDetails(null, "example.com"))).toEqual(["password", "totp"]);
     const gh = forms.find((form) => form.kind === "cli-login" && form.tool === "gh");
     expect(gh && secretFields(gh)).toEqual(["GH_TOKEN"]);

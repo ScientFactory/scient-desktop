@@ -126,7 +126,7 @@ layout from replacing a valid saved viewport.
 
 `scient/pdf/anchors` owns quoting. A quote is a `PdfCitation` (contracts): the
 conversation plus a `PdfTarget` from `@scientfactory/document-artifacts`, the
-neutral location format a later annotation store will reuse.
+neutral location format the annotation store reuses.
 
 - **Target.** Document identity (authority, logical key, a scoped locator for
   workspace, Sources, generated, attachment or environment PDFs), proven
@@ -140,7 +140,10 @@ neutral location format a later annotation store will reuse.
   pages with selected text (pages holding only the selection's start or end do
   not count). `PdfQuoteLayer` shows Ask in chat (or the refusal) next to the
   selection and inserts through the active composer (`ComposerHandleContext`).
-  A host enables it by passing `citeThread`; a draft attachment has none.
+  A host enables it by passing `citeThread`; a draft attachment has none. For a
+  project PDF, `PdfAnnotationLayer` (`scient/annotations`) wraps the quote
+  layer and adds Highlight and Note to the same bar, with or without a thread;
+  annotations are described in [Sources](scient-sources.md#annotations).
 - **Budget.** A new quote's link must fit 40,000 characters
   (`PDF_CITATION_CAPTURE_BUDGET`), or the button says "Shorten selection". Links
   are read back up to 240,000 characters, as file quotes are, so the longest

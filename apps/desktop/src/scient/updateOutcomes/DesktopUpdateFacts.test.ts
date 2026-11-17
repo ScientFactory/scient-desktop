@@ -54,7 +54,6 @@ function inLaunch<A>(
   program: (
     facts: DesktopUpdateFacts.DesktopUpdateFacts["Service"],
   ) => Effect.Effect<A, never, Scope.Scope>,
-  consent?: string,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
@@ -62,10 +61,7 @@ function inLaunch<A>(
     }),
   ).pipe(
     Effect.provide(journalLayer(home)),
-    Effect.provideService(HostProcess.Environment, {
-      SCIENT_ANALYTICS_ENABLED: analytics,
-      ...(consent === undefined ? {} : { SCIENT_ANALYTICS_CONSENT: consent }),
-    }),
+    Effect.provideService(HostProcess.Environment, { SCIENT_ANALYTICS_ENABLED: analytics }),
   );
 }
 
@@ -136,11 +132,7 @@ describe("DesktopUpdateFacts", () => {
       }),
   );
 
-  it.effect.each([
-    { reason: "availability is off", analytics: "false" as const, consent: "diagnostic" },
-    { reason: "consent is off", analytics: "true" as const, consent: "off" },
-    { reason: "consent is invalid", analytics: "true" as const, consent: "invalid" },
-  ])("never keeps or replays facts when $reason", ({ analytics, consent }) =>
+  it.effect("never keeps or replays facts when analytics is switched off", () =>
     Effect.gen(function* () {
       const home = temporaryHome();
       yield* inLaunch(home, "true", (facts) =>
@@ -148,12 +140,8 @@ describe("DesktopUpdateFacts", () => {
       );
       assert.isTrue(NodeFS.existsSync(journalFile(home)));
 
-      yield* inLaunch(
-        home,
-        analytics,
-        (facts) =>
-          facts.record("app.update.outcome", { step: "install", outcome: "handoff-attempted" }),
-        consent,
+      yield* inLaunch(home, "false", (facts) =>
+        facts.record("app.update.outcome", { step: "install", outcome: "handoff-attempted" }),
       );
       assert.isFalse(NodeFS.existsSync(journalFile(home)));
 

@@ -22,6 +22,9 @@ describe("Scient built-in skill releases", () => {
       "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,
       "scient.overleaf-sync": true,
+      "scient.systematic-review": true,
+      "scient.references": true,
+      "scient.compare-sources": true,
     });
   });
 

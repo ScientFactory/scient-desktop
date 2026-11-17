@@ -1,8 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
-import { SourceJournalIcon, sourceJournalIconInternals } from "./SourceJournalIcon";
+import { SourceJournalIcon } from "./SourceJournalIcon";
 
 const record = {
   formatVersion: 1 as const,
@@ -30,17 +30,28 @@ const record = {
   importedAt: "2026-08-13T00:00:00.000Z",
 };
 
-describe("SourceJournalIcon", () => {
-  it("does not request journal enrichment without a journal identity", () => {
-    expect(
-      sourceJournalIconInternals.canResolveJournalIcon({ ...record, containerTitle: null }),
-    ).toBe(false);
-    expect(sourceJournalIconInternals.canResolveJournalIcon(record)).toBe(true);
-  });
+it("includes bundled artwork in the first render without article links or a journal lookup", () => {
+  const resolveIcon = vi.fn(async () => null);
+  for (const identity of [
+    { containerTitle: "NEJM Evidence", identifiers: [] },
+    { containerTitle: null, identifiers: [{ scheme: "issn", value: "2766-5526" }] },
+  ]) {
+    const markup = renderToStaticMarkup(
+      <SourceJournalIcon
+        environmentId={EnvironmentId.make("environment-test")}
+        root="/project"
+        record={{ ...record, ...identity, url: null }}
+        resolveIcon={resolveIcon}
+      />,
+    );
+    expect(markup).toContain("<img");
+    expect(markup).not.toContain('data-testid="source-generic-icon"');
+  }
+  expect(resolveIcon).not.toHaveBeenCalled();
 });
 
 // regression: 4e05b272c1 feat(sources): complete reference intake workflows
-it("renders the book immediately and does not wait for journal lookup", () => {
+it("renders the type's icon immediately and does not wait for journal lookup", () => {
   const resolveIcon = vi.fn(async () => null);
   const markup = renderToStaticMarkup(
     <SourceJournalIcon

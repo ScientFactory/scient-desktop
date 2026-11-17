@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 import { act, fakeTimers, render } from "../../../test/render";
 import { advanceTestClock } from "../../../test/testClock";
-import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { CodeBlockActions } from "~/scient/presentation/CodeBlockActions";
+
+const failures = vi.hoisted(() => ({ report: vi.fn() }));
+vi.mock(import("./markdownActionFailure"), () => ({
+  reportMarkdownActionFailure: failures.report,
+}));
 
 function clipboardValue(value: unknown) {
   const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -21,15 +26,21 @@ describe("canonical code copy selection and lifetime", () => {
     "preserves a backward rendered-code selection when execCommand returns %s",
     async (accepted) => {
       const code = "alpha βeta gamma\n  delta\tomega  \n";
-      const failed = vi.fn();
+      failures.report.mockClear();
       await using screen = await render(
         <MarkdownCodeBlock
           code={code}
           language="text"
           fenceTitle={null}
           theme="light"
-          onCopyFailure={failed}
-        />,
+          isStreaming={false}
+        >
+          <div className="chat-markdown-shiki">
+            <pre>
+              <code>{code}</code>
+            </pre>
+          </div>
+        </MarkdownCodeBlock>,
         // The canonical block has no links or route dependencies.
         { router: false },
       );
@@ -67,7 +78,7 @@ describe("canonical code copy selection and lifetime", () => {
         selection.focusOffset,
       ]).toEqual([first, 6, first, 2]);
       expect(screen.container.querySelector('[aria-label="Copied"]') !== null).toBe(accepted);
-      expect(failed).toHaveBeenCalledTimes(accepted ? 0 : 1);
+      expect(failures.report).toHaveBeenCalledTimes(accepted ? 0 : 1);
     },
   );
 

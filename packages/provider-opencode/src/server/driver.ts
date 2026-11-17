@@ -429,7 +429,10 @@ export const makeOpenCodeDriver = (
       }).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server)),
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      // An external server may not have the host's cwd; without a location it uses its own default.
+      openCode2Server.withConnection(({ client, external }) =>
+        loadOpenCode2Catalog(client, external ? undefined : host.paths.cwd),
+      ),
       processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>

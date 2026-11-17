@@ -1,11 +1,14 @@
-import type { CSSProperties, KeyboardEvent, Ref } from "react";
+import { Fragment, type CSSProperties, type KeyboardEvent, type Ref } from "react";
 
 import { cn } from "~/lib/utils";
 
 const SEGMENT_CLASS =
   "flex h-7 cursor-pointer items-center whitespace-nowrap px-2.5 font-medium text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:text-muted-foreground disabled:hover:bg-transparent aria-disabled:cursor-default aria-disabled:hover:bg-transparent sm:text-xs";
 
-/** What a selection can do: Ask in chat, and Ask in side chat where the conversation has them. */
+/**
+ * What a selection can do: Ask in chat and Ask in side chat where the
+ * conversation has them, and Highlight and Note where the document keeps annotations.
+ */
 export function CitationActionBar({
   ref,
   ...props
@@ -22,11 +25,19 @@ export function CitationActionBar({
   readonly disabled?: boolean;
   /** Stays focusable, unlike `disabled`, so the label is read out, not skipped. */
   readonly refused?: boolean;
-  readonly onAskInChat: () => void;
+  /** Absent when only the annotation actions apply. */
+  readonly onAskInChat?: (() => void) | undefined;
   readonly onAskInSideChat?: (() => void) | undefined;
+  readonly onHighlight?: (() => void) | undefined;
+  readonly onNote?: (() => void) | undefined;
   readonly onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }) {
   const label = props.label ?? "Ask in chat";
+  const segments = [
+    { label: "Ask in side chat", onClick: props.onAskInSideChat },
+    { label: "Highlight", onClick: props.onHighlight },
+    { label: "Note", onClick: props.onNote },
+  ].flatMap((segment) => (segment.onClick ? [{ ...segment, onClick: segment.onClick }] : []));
   return (
     <div
       ref={ref}
@@ -42,24 +53,28 @@ export function CitationActionBar({
       onPointerDown={(event) => event.preventDefault()}
       onKeyDown={props.onKeyDown}
     >
-      <button
-        type="button"
-        className={SEGMENT_CLASS}
-        disabled={props.disabled}
-        aria-disabled={props.refused || undefined}
-        aria-label={props.accessibleLabel ?? label}
-        onClick={props.onAskInChat}
-      >
-        <span aria-live="polite">{label}</span>
-      </button>
-      {props.onAskInSideChat ? (
-        <>
-          <span aria-hidden className="w-px shrink-0 bg-border/60" />
-          <button type="button" className={SEGMENT_CLASS} onClick={props.onAskInSideChat}>
-            Ask in side chat
-          </button>
-        </>
+      {props.onAskInChat ? (
+        <button
+          type="button"
+          className={SEGMENT_CLASS}
+          disabled={props.disabled}
+          aria-disabled={props.refused || undefined}
+          aria-label={props.accessibleLabel ?? label}
+          onClick={props.onAskInChat}
+        >
+          <span aria-live="polite">{label}</span>
+        </button>
       ) : null}
+      {segments.map((segment, index) => (
+        <Fragment key={segment.label}>
+          {index > 0 || props.onAskInChat ? (
+            <span aria-hidden className="w-px shrink-0 bg-border/60" />
+          ) : null}
+          <button type="button" className={SEGMENT_CLASS} onClick={segment.onClick}>
+            {segment.label}
+          </button>
+        </Fragment>
+      ))}
     </div>
   );
 }

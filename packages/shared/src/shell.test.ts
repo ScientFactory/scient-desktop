@@ -35,6 +35,7 @@ import {
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   runsGitWithoutConsole,
+  windowsEnvironmentValueCommand,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
   withPathDirectoryListings,
@@ -129,7 +130,8 @@ describe("readEnvironmentFromLoginShell", () => {
           encoding: "utf8",
           env: { PATH: process.env.PATH },
         }).trim();
-        NodeFS.copyFileSync(printenv, NodePath.join(tools, "printenv"));
+        // macOS kills copied system executables; keep this PATH fixture linked to the original.
+        NodeFS.symlinkSync(printenv, NodePath.join(tools, "printenv"));
         vi.stubEnv("PATH", tools);
         const shellPath = NodePath.join(home, "bin");
         const bashEnv = NodePath.join(home, "env.bash");
@@ -254,6 +256,18 @@ describe("mergePathEntries", () => {
     expect(mergePathEntries("/opt/bin :/opt/bin", "/opt/bin :/usr/bin", "linux")).toBe(
       "/opt/bin :/opt/bin:/usr/bin",
     );
+  });
+});
+
+describe("windowsEnvironmentValueCommand", () => {
+  it("joins PATH as Process, then Machine, then User so prepends win and User installs still appear", () => {
+    const command = windowsEnvironmentValueCommand("PATH");
+    const processAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','Process')");
+    const machineAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','Machine')");
+    const userAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','User')");
+    expect(processAt).toBeGreaterThan(-1);
+    expect(processAt).toBeLessThan(machineAt);
+    expect(machineAt).toBeLessThan(userAt);
   });
 });
 

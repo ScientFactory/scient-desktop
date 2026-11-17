@@ -232,7 +232,10 @@ describe("PDF quote identity and navigation", () => {
     const previousActivation = pdfCitationActivation();
     expect(openPdfCitation(quote, "/project", now)).toBe(previousActivation + 1);
     // The reader looks its pending reveal up by the source it shows.
-    expect(pendingPdfReveal(pdfRevealDocumentKey(workspaceSource))?.target).toEqual(quote.target);
+    expect(pendingPdfReveal(pdfRevealDocumentKey(workspaceSource))).toEqual({
+      id: expect.any(Number),
+      target: quote.target,
+    });
   });
 
   it("waits for the active editor's pending save before leaving it", () => {
@@ -272,7 +275,10 @@ describe("PDF quote identity and navigation", () => {
       module: "generated-pdf",
       source: current,
     });
-    expect(pendingPdfReveal(pdfRevealDocumentKey(captured))?.target).toEqual(quote.target);
+    expect(pendingPdfReveal(pdfRevealDocumentKey(captured))).toEqual({
+      id: expect.any(Number),
+      target: quote.target,
+    });
 
     currentDocument.mockResolvedValueOnce({ descriptor: null });
     openPdfCitation(quote, "/project", now);

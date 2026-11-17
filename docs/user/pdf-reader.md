@@ -57,10 +57,14 @@ and a little text around it.
   quote with it highlighted. If the PDF has changed since, Scient looks for the
   quoted text and tells you whether it found it, found it more than once, or
   couldn't find it; then it opens the page where the quote was.
-- PDFs in the Files panel, LaTeX output, generated PDFs, Sources papers, files
+- PDFs in the Files panel, LaTeX output, generated PDFs, Library papers, files
   outside the project and sent chat attachments can be quoted. An attachment
   you are still composing can't be quoted yet; ask about it in words, or quote
   it once the message is sent.
+
+In a PDF in your project, the same bar also offers **Highlight** and **Note**,
+even where there is no conversation. See
+[Highlight and annotate PDFs](sources.md#highlight-and-annotate-pdfs).
 
 ## Page changes
 
@@ -103,7 +107,7 @@ Text fields keep their own undo and selection shortcuts. History is kept in
 memory while the document's editing session remains open.
 
 Generated PDFs are immutable build outputs: their first page edit automatically
-creates a separate edited document. PDFs in Sources and files outside writable
+creates a separate edited document. PDFs in the Library and files outside writable
 project folders also use an edited copy, so the original stays exactly as it was.
 Scient remembers the copy for this conversation and opens it when you return to
 the original document. After a LaTeX rebuild, the new build replaces the old

@@ -7,26 +7,9 @@ import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useLayoutEffect, useRef } from "react";
 
-import {
-  composerTargetKey,
-  useComposerDraftStore,
-  type ComposerThreadTarget,
-} from "../../composerDraftStore.ts";
+import { composerTargetKey, type ComposerThreadTarget } from "../../composerDraftStore.ts";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../../threadRoutes.ts";
-import { useQueueEditSessions } from "../threadQueue/editSession.ts";
 import { registerVoiceDraftEndpoint, type VoiceDraftOrigin } from "./voiceDraftDelivery.ts";
-
-/**
- * Extracted queue drafts and open queue edits prepare the send asynchronously
- * (journal intake, edit flush) before the send path reads the composer.
- */
-export function hasAsyncSendPreparation(target: ComposerThreadTarget): boolean {
-  const draft = useComposerDraftStore.getState().getComposerDraft(target);
-  return (
-    Boolean(draft?.extractedIntent) ||
-    useQueueEditSessions.getState().sessions[composerTargetKey(target)] !== undefined
-  );
-}
 
 /**
  * Registers the composer as its draft's voice endpoint and returns the origin
@@ -35,6 +18,8 @@ export function hasAsyncSendPreparation(target: ComposerThreadTarget): boolean {
  */
 export function useScientVoiceDraftOrigin(input: {
   readonly target: ComposerThreadTarget;
+  /** Where Open goes: the thread that holds a queued-message edit, otherwise `target`. */
+  readonly openTarget: ComposerThreadTarget;
   readonly environmentId: EnvironmentId;
   readonly title: string | null;
   readonly acceptsDraftText: boolean;
@@ -51,6 +36,7 @@ export function useScientVoiceDraftOrigin(input: {
   });
   const key = composerTargetKey(input.target);
   const target = input.target;
+  const openTarget = input.openTarget;
   const environmentId = input.environmentId;
   const title = input.title;
 
@@ -62,8 +48,7 @@ export function useScientVoiceDraftOrigin(input: {
         acceptsDraftText: () => latestRef.current.acceptsDraftText,
         environmentId: () => latestRef.current.environmentId,
         insert: (text) => latestRef.current.insert(text),
-        canSubmit: () =>
-          latestRef.current.sendReady() && !hasAsyncSendPreparation(latestRef.current.target),
+        canSubmit: () => latestRef.current.sendReady(),
         submit: () => latestRef.current.submit(),
       }),
     [key],
@@ -75,12 +60,12 @@ export function useScientVoiceDraftOrigin(input: {
     environmentId,
     title,
     open: () => {
-      if (typeof target === "string") {
-        void navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(target) });
+      if (typeof openTarget === "string") {
+        void navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(openTarget) });
       } else {
         void navigate({
           to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(target),
+          params: buildThreadRouteParams(openTarget),
         });
       }
     },

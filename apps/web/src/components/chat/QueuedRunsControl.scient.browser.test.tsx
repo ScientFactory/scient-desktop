@@ -170,7 +170,7 @@ const sendButtons = (screen: Awaited<ReturnType<typeof render>>) =>
     .elements()
     .filter((button) => button.checkVisibility());
 
-describe("held queue Send follows the server's queue.resume rule", () => {
+describe("held queue Send now", () => {
   // regression: 7327b42210 fix(queue): Send on any queued message resumes the queue
   it("offers Send now on every held row of an idle thread", async () => {
     setup(heldQueue({}));
@@ -202,19 +202,11 @@ describe("held queue Send follows the server's queue.resume rule", () => {
     });
   });
 
-  // regression: 7ed434c8e1 fix(queue): keep queue controls unless the server's shell confirms the limit
-  it("hides Send now, from rows and the shortcut, only when the shell confirms a usage limit", async () => {
+  // Upstream's queued-run.start: the server, not the row, refuses a usage-limited thread.
+  it("offers Send now after a usage limit and leaves the refusal to the server", async () => {
     setup(limitedQueue(), { runtime: { lastErrorClass: "usage_limit" } });
-    const ref = createRef<QueuedRunsControlHandle>();
-    await using screen = await render(<QueuedRunsControl {...props} ref={ref} />);
+    await using screen = await render(<QueuedRunsControl {...props} />);
     expect(screen.getByRole("listitem").elements()).toHaveLength(2);
-    expect(sendButtons(screen)).toHaveLength(0);
-    expect(ref.current?.steerNext(false)).toBe(false);
-    expect(state.command).not.toHaveBeenCalled();
-
-    // A lifted limit (lastErrorClass: null) takes the same path as a missing shell.
-    setup(limitedQueue(), null);
-    await screen.rerender(<QueuedRunsControl {...props} />);
     expect(sendButtons(screen)).toHaveLength(2);
   });
 });
@@ -245,32 +237,6 @@ it("says why a queue command failed", async () => {
     expect(screen.getByRole("alert").element().textContent).toContain("The run already started."),
   );
 });
-
-it.each([false, true])(
-  "keeps one Cancel after extraction removes the edited row (another row remains: %s)",
-  async (hasTail) => {
-    const queue = heldQueue({});
-    const extracted = {
-      ...queue,
-      runs: queue.runs.flatMap((run) =>
-        run.id === RunId.make("run-2")
-          ? [{ ...run, status: "cancelled" as const, queueHeld: false, queuePosition: null }]
-          : hasTail
-            ? [run]
-            : [],
-      ),
-    };
-    setup(extracted);
-    await using screen = await render(
-      <QueuedRunsControl {...props} editingRunId={RunId.make("run-2")} />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Cancel editing queued message" }).elements(),
-    ).toHaveLength(1);
-    expect(screen.container.textContent).not.toContain("Message 2");
-    expect(screen.getByRole("listitem").elements()).toHaveLength(hasTail ? 1 : 0);
-  },
-);
 
 it("previews a follow-up being admitted, saying Queuing… only when admission is slow", async () => {
   setup({ ...base, runs: [], messages: [] });

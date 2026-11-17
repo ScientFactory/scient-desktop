@@ -12,9 +12,9 @@ For V2 threads, native queued runs and their user messages are the sole live
 queue authority. Upstream's `QueuedRunsControl` presents that projection in the
 composer's drawer column (`queuedRunsControl` → `attachedAbove`), so it shares the
 Tasks bar's width. Scient's parts are mounted from
-`scient/threadQueue/useScientQueueParts.tsx`: the held-queue Send rule, the
-failed-start notice with Retry, readable command failures, the "Editing queued
-message" row after extraction, and "Queuing…" only when admission is slow.
+`scient/threadQueue/useScientQueueParts.tsx`: the
+failed-start notice with Retry, readable command failures, and "Queuing…" only
+when admission is slow.
 The web app does not read the pre-native queue endpoint except once per thread,
 through `useLegacyQueueRecoveryError`, to show retained work that needs recovery.
 `Orchestrator` owns admission, held state, ordering and delivery.
@@ -22,24 +22,17 @@ Legacy payloads enter native held runs through `LegacyQueueCutover` before
 native delivery. Reading recovery data never executes it. The V1 Scient
 ledger and worker are superseded; do not build new queue behavior on them.
 
-Native Edit first journals the captured message, context, settings and owned
-attachment bytes, then sends `queued-run.cancel` with its exact message
-`expectedUpdatedAt` and a stable journal command ID. Only accepted cancellation
-installs an ordinary draft; ambiguous outcomes retain the journal and original
-draft for reconciliation. The existing IndexedDB journal, Web Lock and prompt
-stash protect reloads, multiple windows and previous ordinary drafts.
-An exact durable rejection clears the extraction intent and releases its lock;
-it leaves the ordinary draft and server queue unchanged. An arbitrary transport
-or storage error does not prove rejection.
-
-Mobile uses a separate native in-place edit contract: its queue sheet opens a dedicated edit draft
-without cancelling the queued run. Saving uses `queued-run.edit` with retained server attachments
-and newly prepared uploads; context bindings follow the replacement list. Cancel leaves the queued
-message unchanged, and a rejected save keeps the edit in the composer. See
-[mobile composer Help](../user/composer.md#send-while-the-agent-is-working) and
-[`queued-run-edit.ts`](../../apps/mobile/src/state/queued-run-edit.ts).
-The desktop/web cancellation, extracted-packet journal and Web Lock recovery described here are
-not a mobile recovery guarantee.
+Web, desktop and mobile edit a queued message in place, as upstream does. The web composer
+uses upstream's [`useQueuedRunEdit`](../../apps/web/src/components/chat/useQueuedRunEdit.ts);
+mobile uses [`queued-run-edit.ts`](../../apps/mobile/src/state/queued-run-edit.ts). Edit opens
+the message in a dedicated edit draft (`queuedRunEditDraftId`) without cancelling the queued run,
+so it keeps its place. Saving sends `queued-run.edit` with retained server attachments and newly
+prepared uploads; context bindings follow the replacement list. Cancel leaves the queued message
+unchanged, and a rejected save keeps the edit in the composer. The edit lives in memory: it
+survives navigating between threads, while a reload or crash before saving leaves the queued
+message exactly as it was and drops only the unsaved changes. If the run starts or is removed
+elsewhere during an edit, changed content moves into the thread's draft when that draft is empty.
+See [composer Help](../user/composer.md#queued-messages).
 
 An unheld native queue advances automatically, one message at a time, after
 the current turn finishes successfully and its finalization settles. Ordinary
@@ -49,12 +42,14 @@ hold delivery. Becoming idle does not resume a held queue.
 Three things release a held queue, and each releases every queued run:
 
 - **Send on a row.** While the queue is held and the thread is idle, every user
-  row offers **Send now** (on mobile too). It dispatches `queue.resume(runId)`: the
-  server moves automatic delegated completions first, then the chosen message,
-  then the other messages in their current order, and releases them all. The
-  shared rule is `canSendQueuedRun` (`@t3tools/shared/scientQueuedRunSend`);
-  the server refuses a run that is not queued, an automatic delivery, a busy
-  thread, or a usage-limited thread. There is no held header or Resume queue.
+  row offers **Send now** (on mobile too). It dispatches upstream's `queued-run.start`:
+  the server starts the chosen message first, even ahead of a waiting automatic
+  completion, and releases the rest in their current order. It refuses a run that
+  is not a queued user message or a thread that is still running ("A queued user
+  message can only be sent now while the thread is stopped."). Scient builds before
+  0.6.26 send this as `queue.resume` with a `runId`; client intake reads that as
+  `queued-run.start` (`scient-fork/QueuedRunSend.ts`). There is no held header or
+  Resume queue.
 - **A direct send.** A user message sent with `start_immediately` and no
   delivery intent (or `auto`) that starts its own run releases every queued run
   in the same command (`scient-fork/QueuedRunSend.ts`). A Queue submission or a
@@ -65,14 +60,13 @@ Three things release a held queue, and each releases every queued run:
 - **Resume.** `queue.resume` without a run, from the composer's empty-draft
   Resume, still releases the whole queue.
 
-A usage limit refuses Send and Resume. The composer's **Resume thread** continues
-the limited thread first and then resumes the queue. Clients hide Send for the
-limit only when the server-built thread shell confirms it, so a windowed
-snapshot never hides a Send the server would accept. Idle reorder remains
+A usage limit refuses Send and Resume ("Continue the limited thread before resuming its
+queue."). The composer's **Resume thread** continues the limited thread first and then
+resumes the queue. Clients offer Send and leave that refusal to the server. Idle reorder remains
 available, including before a provider session exists. Provider-start failure
 retains the queued message for Retry, which is Send on that message.
 Holds follow the exact attempt's original failure or interruption boundary.
-The terminal hold reaction treats a release written by `queue.resume` or by a
+The terminal hold reaction treats a release written by `queue.resume`, `queued-run.start` or by a
 direct send's `message.dispatch` as newer than an earlier terminal, so a late
 reaction or a delayed checkpoint echo cannot hold the queue again; a failure or
 Stop after the release still holds it.
@@ -101,7 +95,7 @@ serialized messages and the actual file size of each owned attachment reference,
 promoted run whose native acceptance is still pending. Missing or foreign-thread bytes fail closed.
 
 The native commands are `queued-run.reorder`, `queued-run.cancel`, `queued-run.edit`,
-`queued-message.promote-to-steer`, and `queue.resume`. Their predicates and receipts belong to
+`queued-message.promote-to-steer`, `queued-run.start` and `queue.resume`. Their predicates and receipts belong to
 V2. The effect worker starts an admitted run through `ProviderTurnStartService`; provider events
 flow through `ProviderEventIngestor` and `RunExecutionService`. Finalization settles checkpoint
 work separately from provider success. A capture failure does not turn an answer into a failure.
@@ -153,84 +147,49 @@ it to select a separate queued-message fallback. Image IDs and capture metadata
 survive queueing and editing; the normal attachment pipeline rebinds client IDs
 at admission.
 
-The retained snapshot codec uses version 2. Version 1 snapshots and older edit journals
-migrate saved element picks into preview annotations and terminal placeholders
-into references. Migration reuses the ordinary composer's conversion helpers;
-malformed selections are reported rather than discarded, and reading a journal
-does not rewrite its original bytes.
+Imported legacy messages may still carry a `composerSnapshot`; the server keeps it, but the client
+no longer reads it. Editing opens the message text without the synthetic attachment-only prompt,
+the thread, machine and reply records the text still references, and its existing attachments.
+Saving sends the edited text, the replacement attachment list and context, and the selected Scient
+skills recomputed from the edited `$skill` mentions, as a new send computes them. Native
+`queued-run.edit` retains context and selected skills when their fields are omitted. Explicit
+`context: null` clears context; an explicit empty skill-selection list clears selections. Every
+accepted native edit discards the previous composer snapshot.
 
-Editing restores those typed context fields and raw text, then recomputes
-explicit selections and materializes context once on resend. The existing
-journal carries `composerSeparated` through reload and stash recovery. Malformed
-snapshots leave the item untouched. Legacy items/journals without separated
-context cannot safely infer `$name` selections: an affected edit is retained
-with an explanation to compose a new selected-Skill message. Plain legacy text
-remains editable, and already queued delivery does not require an edit snapshot.
-Native `queued-run.edit` retains context and selected skills when their fields are omitted.
-Explicit `context: null` clears context; an explicit empty skill-selection list clears selections.
-Every accepted native edit discards the previous composer snapshot. This command differs from
-the queue control's cancellation/extraction followed by a new ordinary submission.
-
-`editSession.ts` keeps both complete drafts in the existing IndexedDB journal,
-including attachment bytes. Before extraction, the client saves the queued message's
-snapshot and bytes. Native cancellation checks `expectedUpdatedAt`; its durable
-command receipt reconciles retries before installing the ordinary draft. Legacy edit
-journals retain their original recovery identities and are handled by compatibility
-code, not by restoring a V1 sender.
-
-Extraction installs the edited content into the ordinary draft identity. Async
-callbacks retain their captured draft targets. Journal persistence resamples the
-previous draft before replacement, so typing during extraction is retained in
-its stash. Browser Web Locks prevent two windows from recovering the same edit
-journal concurrently. Storage or network failure preserves the draft and recovery
-intent; a lost response reconciles with the same token.
-
-Send uses the ordinary submission path. An extracted draft freezes its prepared
-submission packet, intent and identities before offering intake through
-[`extractedIntentSend.ts`](../../apps/web/src/scient/threadQueue/extractedIntentSend.ts) and
-[`submission.ts`](../../apps/web/src/scient/threadQueue/submission.ts). An unknown acknowledgment
-retries that same packet; it never substitutes current settings, uploads or a newer draft.
-The server reconciles accepted command receipts before
-repeating upload claims or bootstrap side effects. A queued acknowledgment removes
-the optimistic message and releases local dispatch immediately. An ordinary send
-clears its draft when its optimistic message appears, as upstream does. A failure
-removes that message and returns the draft to an empty composer; otherwise a
-persistent toast restores the whole snapshot once the composer is empty. A send carrying a queue edit or extracted
-intent keeps its draft until acceptance, because that draft binds its recovery
-journal, and then clears only the submitted draft. Typing during either request
-remains in the composer.
-
-Stashes reference full journals instead of placing file bytes in localStorage.
-Restoration saves a discoverable recovery journal for the target draft before
-releasing the source copy. Browser storage is local to that installation; clearing
-it removes local draft recovery data. It is not cloud draft sync.
+An ordinary send carries a durable submission identity from
+[`submission.ts`](../../apps/web/src/scient/threadQueue/submission.ts), so an unknown
+acknowledgment retries the same command and message IDs instead of submitting twice. The server
+reconciles accepted command receipts before repeating upload claims or bootstrap side effects. A
+queued acknowledgment removes the optimistic message and releases local dispatch immediately. An
+ordinary send clears its draft when its optimistic message appears, as upstream does. A failure
+removes that message and returns the draft to an empty composer; otherwise a persistent toast
+restores the whole snapshot once the composer is empty.
 
 Queue attachment ownership participates in existing revert pruning and removal
 cleanup. Bytes still referenced by a queued item or projected message are retained.
 
 ## Implementation owners
 
-| Owner                                                                                   | Responsibility                                                               |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `apps/server/src/orchestration-v2/Orchestrator.ts`                                      | Admission, command predicates, held state, and advancement                   |
-| `apps/server/src/scient/orchestration/TerminalQueueHold.ts`                             | Exact terminal boundary and held-queue eligibility                           |
-| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`                                    | Native delivery order and automatic-completion separation                    |
-| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts`                               | Serialized-message and owned-byte limits                                     |
-| `apps/server/src/orchestration-v2/EffectWorker.ts`                                      | Durable execution after admission                                            |
-| `apps/server/src/orchestration-v2/legacy/`                                              | Legacy queue cutover and recovery readers                                    |
-| `apps/web/src/components/chat/QueuedRunsControl.tsx`                                    | Upstream's queue presentation and native commands, with marked Scient mounts |
-| `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`                               | Held-queue Send rule, Retry, command errors, edit row, admission status      |
-| `apps/web/src/scient/threadQueue/useLegacyQueueRecoveryError.ts`                        | One-time notice for retained pre-native queue work                           |
-| `apps/web/src/scient/threadQueue/editSession.ts`                                        | Local draft journal and edit recovery                                        |
-| `apps/web/src/scient/threadQueue/extractedIntentSend.ts`, `submission.ts`               | Frozen offered packet, uncertain-intake retry and later-draft preservation   |
-| `apps/web/src/scient/threadQueue/extractedDraftIntent.ts`, `extractedImageSelection.ts` | Extracted intent and image-selection ownership                               |
+| Owner                                                            | Responsibility                                                               |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `apps/server/src/orchestration-v2/Orchestrator.ts`               | Admission, command predicates, held state, and advancement                   |
+| `apps/server/src/scient/orchestration/TerminalQueueHold.ts`      | Exact terminal boundary and held-queue eligibility                           |
+| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`             | Native delivery order and automatic-completion separation                    |
+| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts`        | Serialized-message and owned-byte limits                                     |
+| `apps/server/src/orchestration-v2/EffectWorker.ts`               | Durable execution after admission                                            |
+| `apps/server/src/orchestration-v2/legacy/`                       | Legacy queue cutover and recovery readers                                    |
+| `apps/web/src/components/chat/QueuedRunsControl.tsx`             | Upstream's queue presentation and native commands, with marked Scient mounts |
+| `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`        | Retry, command errors, admission status                                      |
+| `apps/web/src/scient/threadQueue/useLegacyQueueRecoveryError.ts` | One-time notice for retained pre-native queue work                           |
+| `apps/web/src/components/chat/useQueuedRunEdit.ts`               | Upstream's in-place queued edit, with a marked Scient skill-selection mount  |
+| `apps/web/src/scient/threadQueue/submission.ts`                  | Ordinary send submission identity and accepted-draft matching                |
 
 ## Verification and manual acceptance
 
 Native qualification includes `NativeQueueHoldPolicy.integration.test.ts`,
 `QueuedStartRecovery.integration.test.ts`, `QueuedMessageBudget.integration.test.ts`,
 `LegacyV1RecoveryAcceptance.integration.test.ts`, complete runtime/worker tests,
-and the mounted queue, shortcut, edit-journal and timeline-consumer tests.
+and the mounted queue, shortcut, queued-run edit and timeline-consumer tests.
 V1 ledger/worker tests are not evidence for native queue execution. Retained-reader tests qualify
 only their import/recovery boundary.
 Repository format, lint, type, test, build and desktop smoke gates are required
@@ -241,11 +200,11 @@ Manual acceptance should exercise these cases in an isolated candidate:
 1. Queue several messages in A, visit B, and stay there while A finishes. Every
    message belongs to A; each starts after its own preceding answer finishes.
 2. Edit a middle item over an ordinary draft containing text and attachments.
-   Verify the old row disappears and the previous draft is available in Stash.
-   Send the edit while idle and busy, then exercise cursor/undo and navigation.
-3. Edit the head while the current answer finishes. Later waiting items may
-   start; the withdrawn message must stay in the composer. Send before and
-   after that advance and verify ordinary immediate/tail-queue behavior.
+   Verify the row stays in place and is highlighted, the ordinary draft returns
+   after saving or cancelling, and the saved message keeps its position. Save
+   with Enter, and with `Cmd+Enter` while a turn runs to save and steer it.
+3. Edit the head while the current answer finishes. When it starts, the edit
+   ends and changed content moves into an empty thread draft.
 4. Drag visible items while another message is being edited. Delete and explicitly
    steer rows using the existing controls.
 5. Stop with multiple messages queued. Visit another task, return, and restart
@@ -253,12 +212,12 @@ Manual acceptance should exercise these cases in an isolated candidate:
    queue is released and follows that message automatically. Stop again with
    several queued messages, reorder while idle, then Send a later held row;
    that row starts first and the remaining queue is released in its retained
-   order (automatic completions first). Verify delivery after each successful
+   order. Verify delivery after each successful
    finalized answer and check failed delivery/Retry separately. Exercise reload
    during editing, another window, and lost responses; inspect for missing or
    duplicated user messages and retained drafts.
-6. Stash and restore an edit through the usual menu. Reload immediately after
-   restoration; check text, file/image bytes, settings, and context fidelity.
+6. Navigate away from an open edit and back; the edit is still open. Reload
+   during an edit; the queued message is unchanged and still queued.
 
 Visual/layout and real-provider adoption remain manual acceptance work. Unit and
 integration tests do not establish those properties.

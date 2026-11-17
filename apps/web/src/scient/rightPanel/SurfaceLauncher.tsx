@@ -245,7 +245,7 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     },
     {
       id: "sources",
-      label: "Sources",
+      label: "Library",
       icon: Library,
       shortcut: "S",
       available: props.sourcesAvailable,

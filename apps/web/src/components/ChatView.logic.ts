@@ -19,6 +19,8 @@ import * as Option from "effect/Option";
 import type { SetStateAction } from "react";
 import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../providerModels";
+// SCIENT-FORK: shared quota recovery policy for the displayed resume action.
+import { resolveUsageLimitFallback } from "@t3tools/shared/usageLimits";
 import { sanitizeThreadErrorMessage } from "@t3tools/client-runtime/errors";
 import type {
   EnvironmentThreadShell,
@@ -429,6 +431,23 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
     ...(branchChanged ? { branch: input.nextBranch, worktreePath: null } : {}),
   };
 }
+
+// SCIENT-FORK:START — keep the resume selection and its displayed model together.
+export function resolveUsageLimitContinueWith(
+  input: Parameters<typeof resolveUsageLimitFallback>[0],
+) {
+  const selection = resolveUsageLimitFallback(input);
+  const model = selection
+    ? input.providers
+        .find((provider) => provider.instanceId === selection.instanceId)
+        ?.models.find(
+          (candidate) =>
+            candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+        )
+    : undefined;
+  return selection && model ? { selection, modelName: model.name } : undefined;
+}
+// SCIENT-FORK:END
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
@@ -1113,15 +1132,17 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   );
 }
 
-// Window return puts the caret in the composer unless focus is deliberate: another text field,
-// a terminal, an open dialog, menu, or popup, a region, timeline, or sidebar row reached from the
-// keyboard, or a region with its own keys (aria-keyshortcuts). A plain focused button or a clicked
-// row yields to the composer.
+// Window return puts the caret in the composer unless focus or a selection is deliberate: another
+// text field, a terminal, an open dialog, menu, or popup, a region, timeline, or sidebar row reached
+// from the keyboard, a region with its own keys (aria-keyshortcuts), or selected text the composer
+// would clear. A plain focused button or a clicked row yields to the composer.
 export function shouldRefocusComposerOnWindowFocus(
   activeElement:
     | (Pick<Element, "tagName" | "closest" | "getAttribute"> & { isContentEditable?: boolean })
     | null,
+  selection: Pick<Selection, "isCollapsed"> | null,
 ): boolean {
+  if (selection !== null && !selection.isCollapsed) return false;
   if (activeElement === null || activeElement.tagName === "BODY") return true;
   if (
     activeElement.tagName === "INPUT" ||

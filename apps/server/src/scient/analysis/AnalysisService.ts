@@ -280,7 +280,7 @@ const make = Effect.gen(function* () {
     const key = [run.projectId, String(receipt.runId)]
       .map((part) => `${part.length}:${part}`)
       .join("|");
-    // Phase/queue updates are not new work, including after a consent reset.
+    // Phase/queue updates are not new work.
     if (isNewRun || isTerminal(receipt.status)) {
       yield* observeOperation({
         key,
@@ -305,7 +305,7 @@ const make = Effect.gen(function* () {
     }
 
     // Capture is a separate persisted outcome: code can succeed without its figures.
-    // Admission starts observation once; later progress must not replay pre-consent work.
+    // Admission starts observation once; later progress must not replay earlier work.
     const capture = run.artifactReceipt.status;
     if (capture === "not-requested") return;
     if (!isNewRun && capture === "pending" && !isTerminal(receipt.status)) return;

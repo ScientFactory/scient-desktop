@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   normalizeScientSourceAbstract,
   normalizeScientSourceAbstractDocument,
+  plainTextFromMarkup,
 } from "./abstract.ts";
 
 describe("Scient source abstract normalization", () => {
@@ -81,6 +82,19 @@ describe("Scient source abstract normalization", () => {
         "<p>Visible text.</p><script>steal()</script><style>p{display:none}</style><p>Still visible.</p>",
       ),
     ).toBe("Visible text.\n\nStill visible.");
+  });
+
+  it("reads registry titles as text with inline markup", () => {
+    expect(plainTextFromMarkup("For x<y and z>0, a<b and c>d")).toBe(
+      "For x<y and z>0, a<b and c>d",
+    );
+    expect(plainTextFromMarkup("First<br/>Second")).toBe("First Second");
+    expect(plainTextFromMarkup("H<sub>2</sub>O &amp; <mml:mi>inter</mml:mi><i>leukin</i>")).toBe(
+      "H2O & interleukin",
+    );
+    expect(plainTextFromMarkup('<span class="x">A</span> &lt; B<script>x()</script>')).toBe(
+      "A < B",
+    );
   });
 
   it("returns null for empty markup", () => {

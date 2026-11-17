@@ -927,10 +927,10 @@ and citation numbers in Visual. Use Document > References to edit the original
 `.bbl` file needs to be copied into the project. Older builds need one rebuild
 to supply this presentation data. Visual does not run BibTeX itself.
 
-Scient Sources is a separate project-source library; adding a source there does
+The Scient Library is a separate reference library; adding a source there does
 not by itself create a manuscript citation or synchronize an existing `.bib` file.
 Use the document's References panel or edit its bibliography source for this
-workflow. See [Sources](./sources.md).
+workflow. See [Library](./sources.md).
 
 ### Links and document references
 
@@ -1285,7 +1285,7 @@ chat**. Scient adds a quotation chip to the message you are composing; review it
 add your question and send when ready. Use a shorter passage if a large selection
 cannot be quoted. This action does not send a message or
 save the document by itself. It is separate from a bibliography citation,
-Scient Sources and a persistent document annotation.
+a source in the Library and a persistent document annotation.
 
 A Visual quote records the owning source file and document root, with context
 from the current accepted source. Accepted work that is not yet saved can be

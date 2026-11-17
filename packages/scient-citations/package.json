@@ -8,14 +8,24 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./bibliography": {
+      "types": "./src/managedBibliography.ts",
+      "import": "./src/managedBibliography.ts"
+    },
     "./styles": {
       "types": "./src/styles.ts",
       "import": "./src/styles.ts"
+    },
+    "./catalog": {
+      "types": "./src/catalog.ts",
+      "import": "./src/catalog.ts"
     }
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "styles:bundle": "node scripts/bundle-styles.ts",
+    "styles:live-check": "node scripts/live-check.ts"
   },
   "dependencies": {
     "@citation-js/core": "0.8.2",

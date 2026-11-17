@@ -1,10 +1,12 @@
 import { RoomMessageId, type ScopedThreadRef } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { prepareTurnAttachments } from "../../lib/attachmentUpload";
+import { uploadComposerAttachmentShared } from "../../state/composer-attachment-uploads";
 import { useNowMinuteMs } from "../../lib/clock";
 import { uuidv4 } from "../../lib/uuid";
 import { threadEnvironment } from "../../state/threads";
@@ -79,17 +81,23 @@ export function useRoomPost(
     inFlight.current = true;
     setPosting(true);
     const attemptPost = async () => {
-      const prepared = await prepareTurnAttachments({
-        environmentId: threadRef.environmentId,
-        attachments: draft.attachments,
-        supportsImageUploads: true,
-        persistUploadedReferences: async (attachments) => {
-          if (!stillSendable()) return "abandon";
-          for (const attachment of attachments)
-            setComposerDraftAttachmentUpload(draftKey, attachment);
-          return "persisted";
-        },
-      });
+      const prepared = await Effect.runPromise(
+        prepareTurnAttachments({
+          environmentId: threadRef.environmentId,
+          attachments: draft.attachments,
+          supportsImageUploads: true,
+          // Joins the composer's own upload of the same attachment, as a turn's send does.
+          uploadAttachment: (attachment) =>
+            uploadComposerAttachmentShared(threadRef.environmentId, attachment),
+          persistUploadedReferences: (attachments) =>
+            Effect.sync(() => {
+              if (!stillSendable()) return "abandon" as const;
+              for (const attachment of attachments)
+                setComposerDraftAttachmentUpload(draftKey, attachment);
+              return "persisted" as const;
+            }),
+        }),
+      );
       if (prepared.status !== "ready") return;
       for (const attachment of prepared.draftAttachments)
         setComposerDraftAttachmentUpload(draftKey, attachment);

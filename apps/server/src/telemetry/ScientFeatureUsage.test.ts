@@ -16,7 +16,7 @@ import {
 } from "./ScientFeatureUsage.ts";
 import { disabledAnalyticsService } from "./ScientAnalytics.ts";
 
-const ROUTE_COUNT = 33;
+const ROUTE_COUNT = 41;
 const serverSource = NodePath.resolve(import.meta.dirname, "..");
 const routesSource = NodeFS.readFileSync(
   NodePath.resolve(

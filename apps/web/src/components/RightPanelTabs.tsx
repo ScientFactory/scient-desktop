@@ -230,7 +230,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
-  sources: "Sources are only available inside a project workspace.",
+  sources: "The Library is only available inside a project workspace.",
   documents: "Open a project to create and edit documents.",
   compute: "Compute is only available inside a project workspace.",
 
@@ -472,7 +472,7 @@ function RightPanelEmptyState(props: {
 
   const actions = [
     {
-      label: "Sources",
+      label: "Library",
       description: "Import and read research sources.",
       icon: Library,
       shortcut: "S",
@@ -1381,7 +1381,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   const addSurfaceActions = [
     {
-      label: "Sources",
+      label: "Library",
       icon: Library,
       shortcut: "S",
       available: props.sourcesAvailable,

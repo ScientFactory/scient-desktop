@@ -1091,6 +1091,7 @@ const {
   EnvironmentScientConversationImportHttpApi,
   EnvironmentScientWordExportHttpApi,
   EnvironmentScientOverleafHttpApi,
+  EnvironmentScientReferencesHttpApi,
   EnvironmentScientCloudHttpApi,
 } = makeScientEnvironmentHttpGroups({
   OptionalBearerHeaders,
@@ -1143,6 +1144,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientConversationImportHttpApi)
   .add(EnvironmentScientWordExportHttpApi)
   .add(EnvironmentScientOverleafHttpApi)
+  .add(EnvironmentScientReferencesHttpApi)
   .add(EnvironmentScientCloudHttpApi)
   // SCIENT-FORK:END
   .add(EnvironmentProjectsHttpApi)

@@ -1,5 +1,21 @@
 # Upstream maintenance
 
+Scient owns subscription-model policy in `packages/shared/src/scientModel.ts` and quota
+fallback in `packages/shared/src/scientAgentModelFallback.ts`, mounted in `ChatView.tsx`.
+Preserve exact-ID hidden defaults (new IDs visible), saved visibility/order/favorites and
+custom models, and explicit/persisted thread and global selections. Preferred subscription
+models, not catalog order, drive implicit defaults and the shared new-turn/explicit-resume
+quota fallback: configured fallback first (including an explicitly chosen API route or
+same-family account; default hiding cannot override it, but explicit hiding can), then
+Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
+subject to visibility, availability, sign-in, quota and task compatibility. Never silently
+choose metered API routes automatically or auto-resume a limited thread. This automatic
+chain can recover a standalone-provider thread too. Antigravity's native
+`google-antigravity` and CLI `antigravity-cli` catalog identities stay distinct; Hydrogen is
+preferred when offered even though the CLI source catalog names Carbon as its own default.
+Current choices and user controls: [Providers](docs/user/providers.md#model-visibility-and-subscription-defaults)
+and [Usage](docs/user/usage.md#subscription-quota-fallback).
+
 Mobile diff grammar tests: `apps/mobile/src/features/diffs/nativeReviewDiffHighlighter.test.ts`
 disables Shiki's per-line wall-clock timeout in its real-highlighter test wrapper.
 The inherited 500ms cutoff can return partial tokens and incomplete grammar state
@@ -144,13 +160,12 @@ marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's te
 upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
 change unless Scient wants its own drawing.
 
-Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
-`CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
-`ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
-hand. T3's invisible placeholder while a language loads (#11062), the copy button that swaps its
-icon without morphing (#33985) and the pressed wrap toggle (#13208) and the copy that leaves out the fence's closing newline (#37284) are ported. Sharing the generic implementation with
-upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
+Chat Markdown (Scient): code blocks render through T3's `chat/MarkdownCodeBlock.tsx`. Its one
+Scient seam is an optional `dir` prop (default `"ltr"`); `ChatMarkdown.tsx` passes
+`chatCodeBoxDirection(...)` so a Hebrew or Arabic plain-text box reads right to left, and Copy
+message reads the same `dir`. The loading placeholder in `ChatMarkdown.tsx` is not `aria-hidden`,
+so Copy message keeps code whose highlighting is still loading. The rich editor's code header
+keeps Scient's `CodeBlockActions.tsx` and `CodeBlockTitle.tsx`. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
 through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
 capture use the shared Pele lazy renderer in `chat/MermaidDiagram.tsx`, with Scient recovery,
@@ -260,7 +275,9 @@ Stop turns into a queued message joins the held queue. A stop made so a queued m
 (a `/goal`, or Send now into a running compaction) does not hold the queue
 (`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
-`SteeringCompletion.integration.test.ts` assert Scient's rule.
+`SteeringCompletion.integration.test.ts` assert Scient's rule. Send now on a held message is
+upstream's `queued-run.start`, with its order and refusals; the same file reads an older Scient
+client's `queue.resume` with a `runId` as that command.
 Upstream's release of unattended messages after a later completed run is composed: the
 terminal fence honours it as the one release without a command, and a message queued before a
 Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
@@ -268,8 +285,8 @@ Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
 The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
 `scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
-`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
-command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+`SCIENT-FORK queue-scient-parts` sections: failed-start Retry,
+command errors and the delayed "Queuing…" status. Take
 upstream's changes to the rest of the file as they are, including its single Send now action
 without reordering; agents still reorder through `scient_queue`.
 
@@ -663,6 +680,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`e9a1e8699e0b8530a27372de4a22e57cf1ebbe70` is recorded in
+[the 2026-11-17 e9a1e8699e receipt](docs/internals/t3-upstream-sync-20261117-e9a1e8699e.md).
+Literal merge `d9ea28b9ebad988f15a57f22e1377c3dd7c4e364` has owned base
+`f2b24cb2d03e3f1df87f43ef361412e3ac4b0f69` and the frozen official target as parents, retaining
+the 105 official commits after `47f90ee2e9`. The range is fixes and small features: Claude
+requests that never answer fail after 10 minutes, retried MCP and provider calls recheck their
+limits, snapshots copy between composers, themes can carry a background image, and T3's phone
+builds move to one shared local-build action. Release remains separate.
+
+The previous committed alignment through
 `47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
 [the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
 Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
@@ -1934,8 +1961,7 @@ folder's New document in `FileBrowserPanel.tsx` (see "Side panel and Files bar")
 a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
-Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
-`scient/presentation`; upstream fixes must be ported by hand) mounted in
+the `dir` prop on T3's `chat/MarkdownCodeBlock.tsx`, mounted in
 `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 `MediaActions.tsx`, and in `index.css` an additive trailing block and two Markdown
@@ -2216,13 +2242,15 @@ Chromium cookies, which Scient doesn't try to bypass
 
 ## Git maintenance, untracked scans and owned processes
 
-Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
-Scient owns the fix that keeps that fetch from starting Git's automatic maintenance
-(`ScientCheckpointCapture.ts`) and the server-owned upkeep that replaces it
-(`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
-Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
-(Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
-Checkpoint packing and upkeep share one pack-memory setting (one thread, a 256 MiB delta window).
+Checkpoints are captured on T3's path (a private object directory under the repository's
+`objects`, linked in before `update-ref`), which never runs Git's automatic maintenance. Scient's
+server-owned upkeep runs it instead (`ScientCheckpointUpkeep.ts`, provided once in `server.ts`,
+requested from `GitVcsDriver.ts` after each capture), with one pack thread and a 256 MiB delta
+window. Detached maintenance escaped the app's process group, and on Git without the detached-lock
+fix (Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+`ScientCheckpointCapture.ts` keeps Scient's changed-file size limit, the 90-second whole-capture
+deadline shared with submodules, and the fork's commit witness, each a marked block in
+`GitVcsDriver.ts`.
 The server keeps a minute-by-minute memory record that outlives a crash
 (`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
 beside the upkeep).
@@ -2427,3 +2455,9 @@ predates T3's unlisted-detail path and was written when a 404 was final. Since T
 and clicks on it, to the start page until the next retry. Scient keeps one divergence here:
 `resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
 readable through fork lineage.
+
+## Security policy
+
+`.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on
+`ScientFactory/scient-desktop`, not to T3's security address or policy page. Upstream edits to that
+file do not replace it; review them and keep Scient's contact.

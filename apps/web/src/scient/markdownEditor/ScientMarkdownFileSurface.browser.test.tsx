@@ -9,7 +9,7 @@ import {
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
-import { isValidElement, StrictMode } from "react";
+import { Children, isValidElement, StrictMode, type ReactNode } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -281,9 +281,13 @@ describe("ScientMarkdownFileSurface", () => {
     await _setupFixture0(_fixture);
 
     await mount(_fixture);
-    const actions = mocks.workspaceProps?.documentActions;
-    expect(isValidElement(actions)).toBe(true);
-    if (!isValidElement(actions)) return;
+    const menu = mocks.workspaceProps?.documentActions;
+    expect(isValidElement(menu)).toBe(true);
+    if (!isValidElement(menu)) return;
+    const actions = Children.toArray((menu.props as { children: ReactNode }).children).find(
+      (child) => isValidElement(child) && "onWordExport" in (child.props as object),
+    );
+    if (!isValidElement(actions)) throw new Error("The menu has no Export item.");
     const { onWordExport } = actions.props as { onWordExport: () => void };
 
     await act(async () => onWordExport());

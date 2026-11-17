@@ -9,7 +9,7 @@ import revision9 from "../fixtures/contract-v9.json" with { type: "json" };
 import revision10 from "../fixtures/contract-v10.json" with { type: "json" };
 import fixture from "../fixtures/contract-v11.json" with { type: "json" };
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
-import { ANALYTICS_EVENT_NAMES, consentAllows, normalizeInheritedEvent } from "./contract.ts";
+import { ANALYTICS_EVENT_NAMES, normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation, type PrivacyLevel } from "./wireContract.ts";
 
 describe("analytics contract conformance corpus", () => {
@@ -173,12 +173,6 @@ describe("analytics contract conformance corpus", () => {
           properties: result.properties,
         }),
       ).toBeNull();
-      expect(consentAllows("off", result.privacyLevel)).toBe(false);
-      expect(consentAllows(result.privacyLevel, result.privacyLevel)).toBe(true);
-      if (result.privacyLevel === "diagnostic")
-        expect(consentAllows("product", result.privacyLevel)).toBe(false);
-      if (result.privacyLevel === "product")
-        expect(consentAllows("essential", result.privacyLevel)).toBe(false);
     }
     expect(
       normalizeInheritedEvent(

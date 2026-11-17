@@ -83,7 +83,7 @@ const makePiSpawner = Effect.fnUntraced(function* (
                       ? []
                       : [{ name: "scient-models-refresh", source: "extension" }]),
                     personalSkill,
-                    ...(cwd === "/machine"
+                    ...(cwd?.endsWith("/pi-status-probe")
                       ? []
                       : [
                           {
@@ -184,9 +184,13 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       assert.equal(workspaceLaunch!.options.env?.HOST_ONLY_VALUE, "preserved-from-host");
       // Discovery processes are stopped as soon as they answer, so neither may start Pi's
       // network refresh at launch.
-      for (const cwd of ["/machine", "/first"]) {
+      assert.isFalse(launches.some((launch) => launch.options.cwd === "/machine"));
+      for (const isLaunch of [
+        (cwd: string | undefined) => cwd?.endsWith("/pi-status-probe") === true,
+        (cwd: string | undefined) => cwd === "/first",
+      ]) {
         const discovery = launches.find(
-          (launch) => launch.options.cwd === cwd && launch.args.includes("--mode"),
+          (launch) => isLaunch(launch.options.cwd) && launch.args.includes("--mode"),
         );
         assert.deepEqual(
           discovery?.args.filter((arg) => arg === "--offline"),

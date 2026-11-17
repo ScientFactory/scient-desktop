@@ -3,8 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
-import type { AnalyticsConsent, AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
-import { consentAllows } from "./contract.ts";
+import type { AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
 import { EVENT_NAME_PATTERN, eventContractViolation, isWireValue } from "./wireContract.ts";
 
 const MAX_OUTBOX_EVENTS = 10_000;
@@ -365,45 +364,6 @@ export class AnalyticsOutbox {
       this.#database.prepare("DELETE FROM analytics_meta WHERE key = 'dropped_count'").run();
       this.#database.exec("COMMIT");
       return row?.count ?? 0;
-    } catch (error) {
-      this.#database.exec("ROLLBACK");
-      throw error;
-    }
-  }
-
-  purgeAbove(consent: AnalyticsConsent): number {
-    const rows = this.#database
-      .prepare("SELECT id, privacy_level FROM analytics_outbox")
-      .all() as unknown as ReadonlyArray<{
-      readonly id: string;
-      readonly privacy_level: AnalyticsEvent["privacy_level"];
-    }>;
-    const ids = rows
-      .filter((row) => !consentAllows(consent, row.privacy_level))
-      .map((row) => row.id);
-    if (ids.length > 0) this.remove(ids);
-    if (consent !== "off") {
-      for (const level of ["essential", "product", "diagnostic"] as const) {
-        if (consentAllows(consent, level)) continue;
-        this.#database
-          .prepare("UPDATE analytics_outbox SET consent_level = ? WHERE consent_level = ?")
-          .run(consent, level);
-      }
-    }
-    return ids.length;
-  }
-
-  reset(): void {
-    this.#database.exec("BEGIN IMMEDIATE");
-    try {
-      this.#database.exec(`
-        DELETE FROM analytics_outbox;
-        DELETE FROM analytics_dead_letter;
-        DELETE FROM analytics_meta
-          WHERE key IN ('installation_id', 'installation_token', 'dropped_count');
-      `);
-      this.#database.exec("COMMIT");
-      this.#size = 0;
     } catch (error) {
       this.#database.exec("ROLLBACK");
       throw error;

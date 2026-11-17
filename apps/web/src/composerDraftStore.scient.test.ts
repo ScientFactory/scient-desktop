@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   partializeComposerDraftStoreState,
+  queuedRunEditDraftId,
   useComposerDraftStore,
 } from "./composerDraftStore";
 
@@ -67,57 +68,52 @@ describe("composerDraftStore Antigravity selections", () => {
   afterEach(resetComposerDraftStore);
 });
 
-describe("extracted draft intent persistence", () => {
+describe("drafts saved by the retired queue-edit extraction", () => {
   const threadId = ThreadId.make("extracted-intent-thread");
-  it("keeps the stable marker through persistence/hydration and ordinary authoring clears it explicitly", () => {
+  it("hydrate as ordinary drafts that keep their text and images", () => {
     const key = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
-    useComposerDraftStore
-      .getState()
-      .setPrompt(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "captured");
-    const marker = {
-      intentId: "11111111-1111-4111-8111-111111111111",
-      journalKey: "copied-journal",
+    const image = {
+      id: "image-1",
+      name: "kept.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,AAAA",
     };
-    useComposerDraftStore.setState((state) => ({
-      draftsByThreadKey: {
-        ...state.draftsByThreadKey,
-        [key]: { ...state.draftsByThreadKey[key]!, extractedIntent: marker },
-      },
-    }));
-    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
-    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
-      persisted,
-      useComposerDraftStore.getInitialState(),
-    );
-    expect(hydrated.draftsByThreadKey[key]?.extractedIntent).toEqual(marker);
-    useComposerDraftStore.setState(hydrated);
-    useComposerDraftStore
-      .getState()
-      .setPrompt(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "late typed");
-    expect(useComposerDraftStore.getState().draftsByThreadKey[key]?.extractedIntent).toEqual(
-      marker,
-    );
-    useComposerDraftStore
-      .getState()
-      .clearComposerContent(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId));
-    useComposerDraftStore
-      .getState()
-      .setPrompt(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "captured");
-    expect(
-      useComposerDraftStore.getState().draftsByThreadKey[key]?.extractedIntent,
-    ).toBeUndefined();
-  });
-  it("does not turn a malformed present marker into an unmarked ordinary draft", () => {
-    const key = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
     const hydrated = useComposerDraftStore.persist.getOptions().merge!(
       {
         draftsByThreadKey: {
-          [key]: { prompt: "keep", attachments: [], extractedIntent: { intentId: "bad" } },
+          [key]: {
+            prompt: "keep",
+            attachments: [image],
+            extractedIntent: {
+              intentId: "11111111-1111-4111-8111-111111111111",
+              journalKey: "journal",
+            },
+            imageSelection: [],
+          },
         },
       },
       useComposerDraftStore.getInitialState(),
     );
-    expect(hydrated.draftsByThreadKey[key]?.prompt).toBe("keep");
-    expect(hydrated.draftsByThreadKey[key]?.extractedIntent).toEqual({ invalid: true });
+    const draft = hydrated.draftsByThreadKey[key];
+    expect(draft?.prompt).toBe("keep");
+    expect(draft?.images.map(({ id }) => id)).toEqual(["image-1"]);
+    expect(draft && "extractedIntent" in draft).toBe(false);
+    expect(draft && "pendingImageSelection" in draft).toBe(false);
+  });
+});
+
+describe("queued-message edit drafts", () => {
+  it("stay in their window and are never stored", () => {
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("queued-edit-thread"));
+    const editTarget = queuedRunEditDraftId(threadRef, "run-1");
+    useComposerDraftStore.getState().setPrompt(threadRef, "ordinary draft");
+    useComposerDraftStore.getState().setPrompt(editTarget, "edited queued message");
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(Object.keys(persisted.draftsByThreadKey)).toEqual([scopedThreadKey(threadRef)]);
+    expect(useComposerDraftStore.getState().getComposerDraft(editTarget)?.prompt).toBe(
+      "edited queued message",
+    );
+    resetComposerDraftStore();
   });
 });

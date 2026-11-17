@@ -1152,7 +1152,7 @@ const make = Effect.gen(function* () {
         execution,
       });
     }
-    // Queue/phase changes must not recreate a start after consent is changed.
+    // Queue/phase changes must not recreate a start.
     if (
       !isNewExecution &&
       (status === undefined || !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status))
