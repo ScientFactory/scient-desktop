@@ -6362,6 +6362,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               commandType: command.type,
               cause,
             }),
+          fail: (cause) =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
           runForSourcePoint: (projection) => runForSourcePoint(projection, command.sourcePoint),
           runtimeCwd: (projection, run) =>
             runtimePolicy

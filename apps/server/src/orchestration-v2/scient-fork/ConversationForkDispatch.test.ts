@@ -215,7 +215,8 @@ it.effect("a fork with no stable run is refused without a destination or receipt
       })
       .pipe(Effect.flip);
 
-    assert.equal(refused._tag, "OrchestratorCommandRejectedError");
+    // Upstream's failure for a T3 source point; still no receipt, so the identity stays retryable.
+    assert.equal(refused._tag, "OrchestratorDispatchError");
     assert.isTrue(
       Option.isNone(yield* receipts.getByCommandId(CommandId.make("dispatch:no-run-fork"))),
     );

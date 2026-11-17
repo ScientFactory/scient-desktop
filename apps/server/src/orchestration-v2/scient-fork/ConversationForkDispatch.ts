@@ -163,6 +163,8 @@ export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.disp
       thread: OrchestrationV2AppThread,
     ) => Effect.Effect<void, OrchestratorV2Error>;
     readonly reject: (cause: unknown) => OrchestratorCommandRejectedError;
+    /** Upstream's failure for a T3 source point, so callers see what a T3 fork returns. */
+    readonly fail: (cause: string) => OrchestratorDispatchError;
     /** The folder T3 gives a fork of this run; a mobile or MCP fork falls back to it. */
     readonly runtimeCwd: (
       projection: OrchestrationV2ThreadProjection,
@@ -218,7 +220,7 @@ export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.disp
     // Mobile and MCP name T3's source point: the fork stops after that settled run.
     const run = deps.runForSourcePoint(projection);
     if (run === null)
-      return yield* deps.reject(
+      return yield* deps.fail(
         `No stable source run was found for fork source ${command.sourcePoint.type}.`,
       );
     boundary = { kind: "settled-run", runId: run.id };
