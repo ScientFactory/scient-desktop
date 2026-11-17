@@ -36,6 +36,46 @@ Build new UI the same way. Compose or extend a component instead of copying its 
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the
 shared component. A new composer banner or notice uses the `ComposerBanner` slots.
 
+## UI checklist
+
+Check each changed screen against this list in its before/after screenshots
+([AGENTS.md](../../AGENTS.md#verification)), in light and dark, at a normal window size and at the
+narrowest width the screen supports.
+
+- **Made of the screen's own parts.** New states are variants of the components the screen already
+  uses. Show a proposal as a screenshot of the real app, not a drawing.
+- **Nothing clipped, covered or uneven.** No edge cut off by an overflow or scroll container, no
+  control on top of or under another, and controls in one row are the same height.
+- **One focus border.** A focused control shows one thin, darker border, never a ring or halo. A
+  control that shows the halo gets its `data-slot` in
+  [`scient-form-focus.css`](../../apps/web/src/scient/presentation/scient-form-focus.css).
+- **No card in a card.** Items in a settings section are rows of that section (`SettingsRow`),
+  aligned with the sections around it.
+- **Say it once.** One status indicator per thing, no repeated labels or titles, silent success,
+  and no internal ids or hashes.
+- **Status on the item.** A state such as "Coming soon" or "Signed in" sits beside the item's name,
+  and the item keeps its place when the state changes.
+- **No extra steps.** No checking, loading or proof screen the action does not need. When a screen's
+  logic is wrong, remove the step instead of rewording it.
+- **Few words.** Labels are a few words. If every item needs a label to say who it is for, separate
+  the audiences by place instead.
+
+### Screenshots in a PR
+
+The repository is public, so screenshots show synthetic state only. Push them to a branch of their
+own, which runs no CI and is never merged, then embed their raw URLs in the PR body. From the
+checkout, with the images in `$shots`:
+
+```sh
+tree=$(for f in "$shots"/*.png; do
+  printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
+done | git mktree)
+git push origin "$(git commit-tree "$tree" -m "PR screenshots")":refs/heads/review-assets/<branch>
+```
+
+`https://raw.githubusercontent.com/ScientFactory/scient-desktop/review-assets/<branch>/<file>.png`
+then shows `<file>.png`. Pushing again to the same branch needs `--force`.
+
 ## Handlers in large components
 
 V8 gives every closure created in one render a single shared scope. A memoized handler keeps

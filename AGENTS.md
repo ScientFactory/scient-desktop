@@ -182,7 +182,9 @@ Prove flake fixes fail-before/pass-after under the same targeted slowness/probe:
 `SCIENT_TEST_CPU_THROTTLE=6 vp test run <file>` in `apps/web` (about 4 for fast-runner
 conditions, 6 for slow-runner conditions, 8 for stress; not a hardware guarantee).
 
-Prove visual fixes with before/after captures; capture the before-state before editing.
+Prove a UI change with before/after screenshots of every screen it changes, in light
+and dark, checked against the [UI checklist](docs/internals/web-ui.md#ui-checklist);
+capture the before-state before editing.
 Verify user-visible frontend changes once after integration in a real browser or
 simulator without asking first, using synthetic state. The primary agent performs
 this pass; subagents do not launch duplicate dev servers. This does not override
@@ -199,10 +201,11 @@ are separate.
   ownership; do not automatically rebase shared history. Respect unresolved blockers;
   report conflicts rather than resolving them without the relevant authorization.
 - Use GitHub's merge queue; do not bypass checks or jump the queue except through
-  the approved admin procedure below. Queue only a merge-authorized or already
-  auto-merge-enabled PR. When its current head is reviewed, required checks are green
-  and there are no conflicts, queue that head. Non-draft/green alone is not permission;
-  do not enable auto-merge on other PRs just because they look ready.
+  the approved admin procedure below. When merge is authorized, set auto-merge on the
+  reviewed, conflict-free head (`gh pr merge <number> --merge --auto
+  --match-head-commit <sha>`); the queue takes it when required checks pass, so
+  nobody watches it. Without that authorization leave auto-merge off: non-draft or
+  green alone is not permission.
 - Do not merge main solely for CI reuse or repeatedly realign a queued branch:
   an update adds another PR run and can serialize work the queue runs together.
   Align for conflicts, dependencies or sensitivity to intervening changes. Before
@@ -244,6 +247,17 @@ are separate.
 - Preserve literal upstream ancestry and dedicated alignment branches, separate
   from product changes. Before changing protected Scient divergence, read
   `UPSTREAM.md`, `upstream-state.json` and its linked record. User-facing language is Scient.
+
+### Definition of done
+
+Report work as done only when all of these hold on the final head:
+
+- focused tests and typecheck pass, plus the final checks [Verification](#verification)
+  asks for;
+- a UI change has its before/after screenshots in the PR, as Verification describes;
+- every link or URL the change adds was fetched once and works;
+- the PR states platform behavior, as below;
+- the PR is open, with auto-merge set if merge was authorized.
 
 Use conventional-commit titles. PRs include problem, resulting behavior, verification,
 documentation impact and model/harness attribution; follow

@@ -38,13 +38,21 @@ Documentation impact:
 
 ## UI Changes
 
-<!-- If this PR changes UI, include clear before/after screenshots.
-     If the change involves motion or interaction, include a short video.
-     Delete this section if not applicable. -->
+<!-- Before/after screenshots of every changed screen, light and dark, checked against the
+     UI checklist (docs/internals/web-ui.md#ui-checklist). Add a short video for motion or
+     interaction. Delete this section if the PR changes no UI. -->
+
+## Review
+
+<!-- Keep one, with the result: None — docs, copy or small UI | Light Codex review |
+     Codex high review and a live test — data, migrations, security, release or alignment -->
+
+Review:
 
 ## Checklist
 
 - [ ] This PR is small and focused
 - [ ] I explained what changed and why
-- [ ] I included before/after screenshots for any UI changes
-- [ ] I included a video for animation/interaction changes
+- [ ] Focused tests and typecheck pass on this head
+- [ ] UI: before/after screenshots, light and dark, checked against the UI checklist
+- [ ] Every link or URL this PR adds was fetched and works
