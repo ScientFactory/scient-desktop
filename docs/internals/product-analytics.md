@@ -634,9 +634,10 @@ Browser work is reported at three grains, all from the server, for tabs people a
   failed or download; `site` is the host only ([`BrowserSite.ts`](../../apps/server/src/telemetry/BrowserSite.ts):
   private and single-label hosts are `local`, file pages `file`, other schemes `internal`);
   `loadMs` runs from the first Loading report; failures carry Chromium's `errorCode` and, when it
-  is a Chromium name, `errorName`. `driver` is agent while an automation owner holds the tab.
-  A Success with no Loading before it (title updates, same-page changes) is not a load.
-- `browser.tab.closed`: the tab's lifetime, loads, failures and distinct sites.
+  is a Chromium name, `errorName`, once per navigation however often the desktop repeats it.
+  `owner` is agent when an agent opened the tab; a person taking over that tab is not visible
+  here. A Success with no Loading before it (title updates, same-page changes) is not a load.
+- `browser.tab.closed`: the tab's lifetime, loads, failures and distinct sites (counted up to 200).
 - `browser.turn.summary` ([`ScientMcpAnalytics.ts`](../../apps/server/src/telemetry/ScientMcpAnalytics.ts)):
   one per agent turn that called `preview_*` tools, from the per-thread call ledger: calls,
   failures, failures a later call of the same tool got past (`recoveredFailures`), the longest

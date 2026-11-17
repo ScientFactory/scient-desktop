@@ -21,16 +21,21 @@ import { AnalyticsService } from "./AnalyticsService.ts";
 import { browserSite } from "./BrowserSite.ts";
 
 const MAX_TRACKED_TABS = 500;
+/** Past this many distinct sites a tab's count stops growing; `siteCount` then reads as at least. */
+const MAX_SITES_PER_TAB = 200;
 /** Chromium's error names, such as ERR_NAME_NOT_RESOLVED; any other description stays home. */
 const CHROMIUM_ERROR = /^(?:net::)?(ERR_[A-Z0-9_]{1,60})$/u;
 
 interface TabState {
-  driver: "agent" | "user";
+  /** Who opened the tab. A person can take over an agent's tab; that is not visible here. */
+  owner: "agent" | "user";
   runtime: string;
   headless: boolean;
   profile: "main" | "incognito" | "other";
   openedAt: number;
   loadStartedAt: number | undefined;
+  /** The current navigation already reported its failure; the desktop repeats it on later reports. */
+  failureReported: boolean;
   loads: number;
   failures: number;
   readonly sites: Set<string>;
@@ -43,9 +48,9 @@ const profileKind = (snapshot: PreviewSessionSnapshot): TabState["profile"] =>
       ? "incognito"
       : "other";
 
-/** What a tab's snapshot says about who drives it and where it runs. */
+/** What a tab's snapshot says about who opened it and where it runs. */
 function describe(state: TabState, snapshot: PreviewSessionSnapshot): void {
-  state.driver = snapshot.automationOwner === undefined ? "user" : "agent";
+  state.owner = snapshot.automationOwner === undefined ? "user" : "agent";
   state.runtime = snapshot.runtime ?? "desktop";
   state.headless = snapshot.headless === true;
   state.profile = profileKind(snapshot);
@@ -67,12 +72,13 @@ export function createBrowserPageMapper() {
         if (oldest !== undefined) tabs.delete(oldest);
       }
       state = {
-        driver: "user",
+        owner: "user",
         runtime: "desktop",
         headless: false,
         profile: "main",
         openedAt: now,
         loadStartedAt: undefined,
+        failureReported: false,
         loads: 0,
         failures: 0,
         sites: new Set(),
@@ -82,7 +88,7 @@ export function createBrowserPageMapper() {
     return state;
   };
   const common = (state: TabState) => ({
-    driver: state.driver,
+    owner: state.owner,
     runtime: state.runtime,
     headless: state.headless,
     profile: state.profile,
@@ -94,7 +100,7 @@ export function createBrowserPageMapper() {
     fields: Readonly<Record<string, string | number | boolean>>,
   ): BrowserPageObservation => {
     const site = browserSite(url);
-    if (site !== undefined) state.sites.add(site);
+    if (site !== undefined && state.sites.size < MAX_SITES_PER_TAB) state.sites.add(site);
     const startedAt = state.loadStartedAt;
     state.loadStartedAt = undefined;
     return {
@@ -117,6 +123,7 @@ export function createBrowserPageMapper() {
         const status = event.snapshot.navStatus;
         if (status._tag === "Loading") {
           state.loadStartedAt ??= now;
+          state.failureReported = false;
           return [];
         }
         // A reload of a title or a same-page update reports Success again without loading.
@@ -126,6 +133,8 @@ export function createBrowserPageMapper() {
       }
       case "failed": {
         const state = tabOf(event.tabId, now);
+        if (state.failureReported) return [];
+        state.failureReported = true;
         const download = event.download !== undefined;
         if (!download) state.failures += 1;
         const errorName = CHROMIUM_ERROR.exec(event.description.trim())?.[1];

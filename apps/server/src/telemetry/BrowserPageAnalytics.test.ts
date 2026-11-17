@@ -85,12 +85,26 @@ describe("createBrowserPageMapper", () => {
       } as PreviewEvent,
       2_400,
     );
+    // The desktop repeats a failed load on later status reports; it is still one failure.
+    expect(
+      mapper.observe(
+        {
+          ...base,
+          type: "failed",
+          url: "https://nowhere.test/",
+          title: "",
+          code: -105,
+          description: "ERR_NAME_NOT_RESOLVED",
+        } as PreviewEvent,
+        2_500,
+      ),
+    ).toEqual([]);
     const closed = mapper.observe({ ...base, type: "closed" } as PreviewEvent, 5_000);
     expect([...loaded, ...failed, ...closed]).toEqual([
       {
         name: "browser.page.loaded",
         properties: {
-          driver: "agent",
+          owner: "agent",
           runtime: "desktop",
           headless: false,
           profile: "main",
@@ -102,7 +116,7 @@ describe("createBrowserPageMapper", () => {
       {
         name: "browser.page.loaded",
         properties: {
-          driver: "user",
+          owner: "user",
           runtime: "desktop",
           headless: false,
           profile: "main",
@@ -116,7 +130,7 @@ describe("createBrowserPageMapper", () => {
       {
         name: "browser.tab.closed",
         properties: {
-          driver: "user",
+          owner: "user",
           runtime: "desktop",
           headless: false,
           profile: "main",

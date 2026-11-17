@@ -248,10 +248,13 @@ export interface BrowserCall {
  */
 export class BrowserToolCallLedger {
   private readonly calls = new Map<string, Array<BrowserCall>>();
-  /** The site each thread's browser last showed, for failures whose result names none. */
+  /**
+   * The site each thread's tabs last showed, for failures whose result names none: keyed by
+   * thread and tab, and by thread alone for the tab a call without a tabId acts on.
+   */
   private readonly sites = new Map<string, string>();
 
-  record(threadId: string, call: BrowserCall): void {
+  record(threadId: string, call: BrowserCall, tabId?: string): void {
     let entries = this.calls.get(threadId);
     if (entries === undefined) {
       if (this.calls.size >= MAX_TRACKED_THREADS) {
@@ -263,18 +266,19 @@ export class BrowserToolCallLedger {
     }
     if (entries.length >= MAX_CALLS_PER_THREAD) entries.shift();
     entries.push(call);
-    if (call.site !== undefined) {
-      this.sites.delete(threadId);
-      if (this.sites.size >= MAX_TRACKED_THREADS) {
+    if (call.site === undefined) return;
+    for (const key of [threadId, ...(tabId === undefined ? [] : [`${threadId}\u0000${tabId}`])]) {
+      this.sites.delete(key);
+      if (this.sites.size >= MAX_TRACKED_THREADS * 2) {
         const oldest = this.sites.keys().next().value;
         if (oldest !== undefined) this.sites.delete(oldest);
       }
-      this.sites.set(threadId, call.site);
+      this.sites.set(key, call.site);
     }
   }
 
-  lastSite(threadId: string): string | undefined {
-    return this.sites.get(threadId);
+  lastSite(threadId: string, tabId?: string): string | undefined {
+    return this.sites.get(tabId === undefined ? threadId : `${threadId}\u0000${tabId}`);
   }
 
   /** The calls a thread made up to `until`; later ones belong to its next turn. */
@@ -409,12 +413,18 @@ export function recordBrowserCall(
   const args = fieldsOf(call.args);
   const content = fieldsOf(call.result?.structuredContent);
   const target = fieldsOf(args.target);
+  const tabId =
+    typeof args.tabId === "string"
+      ? args.tabId
+      : typeof content.tabId === "string"
+        ? content.tabId
+        : undefined;
   const site =
     browserSite(content.url) ??
     browserSite(fieldsOf(content.toolIcon).pageUrl) ??
     browserSite(args.url) ??
     browserSite(target.url) ??
-    ledger.lastSite(threadId);
+    ledger.lastSite(threadId, typeof args.tabId === "string" ? args.tabId : undefined);
   const action =
     call.tool === "preview_act" &&
     typeof args.action === "string" &&
@@ -428,18 +438,22 @@ export function recordBrowserCall(
       ...(site === undefined ? {} : { site }),
       ...(action === undefined ? {} : { action }),
     };
-  ledger.record(threadId, {
-    at: call.endedAt,
-    tool: call.tool,
-    durationMs: Math.max(0, call.endedAt - call.startedAt),
-    failed: outcome.outcome !== "ok",
-    errorCode: outcome.errorCode,
-    site,
-    ...(typeof loadErrorCode === "number" && Number.isInteger(loadErrorCode)
-      ? { loadErrorCode }
-      : {}),
-    ...(typeof content.accountsNote === "string" ? { accountsNote: true } : {}),
-  });
+  ledger.record(
+    threadId,
+    {
+      at: call.endedAt,
+      tool: call.tool,
+      durationMs: Math.max(0, call.endedAt - call.startedAt),
+      failed: outcome.outcome !== "ok",
+      errorCode: outcome.errorCode,
+      site,
+      ...(typeof loadErrorCode === "number" && Number.isInteger(loadErrorCode)
+        ? { loadErrorCode }
+        : {}),
+      ...(typeof content.accountsNote === "string" ? { accountsNote: true } : {}),
+    },
+    tabId,
+  );
 }
 
 export const isBrowserTool = (tool: string) => tool.startsWith("preview_");
