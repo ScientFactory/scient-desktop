@@ -1386,7 +1386,22 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/@napi-rs/canvas-win32-",
   "node_modules/@napi-rs/keyring-win32-",
   "node_modules/@cursor/sdk-win32-",
+  "node_modules/@koromix/koffi-win32-",
+  "node_modules/@transcribe-cpp/win32-",
 ] as const;
+// SCIENT-FORK:START — Scient builds its own WSL archive; Windows packages never load there.
+// A package built for Windows names its target (`koffi-win32-x64`, `win32-x64-cpu-vulkan`); none
+// can load in WSL, so a new one that the list above misses fails the build instead of shipping.
+const WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE = /^node_modules\/(?:@[^/]+\/)?[^/]*win32-/;
+
+export const findForbiddenWslRuntimeArchiveMember = (members: ReadonlyArray<string>) =>
+  members.find(
+    (member) =>
+      member.endsWith(".map") ||
+      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)) ||
+      WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE.test(member),
+  );
+// SCIENT-FORK:END
 // Build and ship the WSL archive only with Linux pty.node; otherwise every launch extracts an unusable cache.
 export const bundlesWslRuntime = (input: {
   readonly arch: typeof BuildArch.Type;
@@ -4241,11 +4256,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    const forbiddenMember = members.find(
-      (member) =>
-        member.endsWith(".map") ||
-        WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
-    );
+    const forbiddenMember = findForbiddenWslRuntimeArchiveMember(members);
     if (forbiddenMember !== undefined) {
       return yield* invalidWslRuntime(
         new Error(`WSL runtime archive contains forbidden member ${forbiddenMember}`),
