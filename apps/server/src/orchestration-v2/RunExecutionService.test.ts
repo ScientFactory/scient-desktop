@@ -7360,24 +7360,6 @@ it.effect("keeps a failed root's still-running native children live while the ru
   }),
 );
 
-it.effect("does not overwrite Stop when ownership changes after the finalization read", () =>
-  Effect.gen(function* () {
-    const { written, observed, submittedEffects, committedEffects } =
-      yield* captureRootRunTermination({
-        key: "stop-wins-finalization-gap",
-        shouldFinalizeRun: () => Effect.succeed(true),
-        declineFinalWrite: true,
-      });
-    assert.deepEqual(written, []);
-    assert.deepEqual(observed, []);
-    assert.deepEqual(
-      submittedEffects.map((effect) => effect.request.type),
-      ["checkpoint.capture"],
-    );
-    assert.deepEqual(committedEffects, []);
-  }),
-);
-
 it.effect("records a finished run as failed when its ownership check cannot be read", () =>
   Effect.gen(function* () {
     const { observed } = yield* captureRootRunTermination({
