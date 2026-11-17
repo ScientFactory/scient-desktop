@@ -484,7 +484,7 @@
       "purpose": "Include the account tools in the eager schema inventory."
     },
     {
-      "path": "apps/server/src/server.test.ts",
+      "path": "apps/server/src/server.testkit.ts",
       "anchor": "Scient Accounts: isolate account storage and key handling",
       "purpose": "Provide a synthetic Accounts owner to the shared server test harness."
     },
