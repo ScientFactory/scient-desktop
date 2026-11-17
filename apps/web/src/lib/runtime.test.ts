@@ -16,6 +16,11 @@ afterEach(() => {
   // SCIENT-FORK:END
 });
 
+const answers = (...values: Array<boolean | null>) => {
+  let call = 0;
+  return () => values[Math.min(call++, values.length - 1)] ?? null;
+};
+
 describe("web runtime relay telemetry policy", () => {
   // SCIENT-FORK:START
   const surfaces = [
@@ -29,6 +34,17 @@ describe("web runtime relay telemetry policy", () => {
       surface: "desktop enabled",
       desktopBridge: { getRelayTelemetryEnabled: () => true },
       exports: true,
+    },
+    {
+      // The desktop host reads the login shell after the renderer has started.
+      surface: "desktop enabled once the login shell is read",
+      desktopBridge: { getRelayTelemetryEnabled: answers(null, true) },
+      exports: true,
+    },
+    {
+      surface: "desktop opt-out found in the login shell",
+      desktopBridge: { getRelayTelemetryEnabled: answers(null, false, true) },
+      exports: false,
     },
     {
       surface: "ordinary browser ignores host opt-out",

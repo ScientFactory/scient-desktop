@@ -1,4 +1,8 @@
-import { isOrchestrationV2WorkActive, type ThreadId } from "@t3tools/contracts";
+import {
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2PendingBackgroundTask,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -11,6 +15,23 @@ export const subscribeDelegatedChildSettlements = Effect.fnUntraced(function* <E
   readonly afterSequence: number;
   readonly finalize: (threadId: ThreadId) => Effect.Effect<void, E>;
 }) {
+  // A roster counts when a task seen holding leaves it, since that may be one follow-up's (T3).
+  const holdingTaskIdsByProviderThread = new Map<string, ReadonlySet<string>>();
+  const settlesBackgroundWork = (
+    providerThreadId: string,
+    tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask> | undefined,
+  ) => {
+    const holding = new Set(
+      (tasks ?? [])
+        .filter((task) => backgroundWorkHoldsCompletion([task]))
+        .map((task) => task.taskId),
+    );
+    const previous = holdingTaskIdsByProviderThread.get(providerThreadId);
+    if (holding.size > 0) holdingTaskIdsByProviderThread.set(providerThreadId, holding);
+    else holdingTaskIdsByProviderThread.delete(providerThreadId);
+    const taskLeft = previous !== undefined && [...previous].some((id) => !holding.has(id));
+    return taskLeft || (tasks !== undefined && holding.size === 0);
+  };
   // Filter at the sink so a parent lock never buffers unrelated tool bodies.
   for (const eventType of [
     "subagent.updated",
@@ -23,10 +44,8 @@ export const subscribeDelegatedChildSettlements = Effect.fnUntraced(function* <E
           case "subagent.updated":
           case "provider-turn.updated":
             return !isOrchestrationV2WorkActive(event.payload.status);
-          case "provider-thread.updated": {
-            const tasks = event.payload.pendingBackgroundTasks;
-            return tasks !== undefined && !backgroundWorkHoldsCompletion(tasks);
-          }
+          case "provider-thread.updated":
+            return settlesBackgroundWork(event.payload.id, event.payload.pendingBackgroundTasks);
           default:
             return false;
         }

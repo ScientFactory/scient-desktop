@@ -261,9 +261,10 @@ patchedDependencies:
   # scroll target a Material bottom sheet picks, so sheet content can sit below its header.
   "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
-  # Exports the dependency-light subpaths mobile and the web diff parser import, and re-measures
-  # editor carets when the code font changes. Scient adds external edits that keep undo history,
-  # first-keystroke selection, and unmounts without an instance.
+  # Exports the dependency-light subpaths mobile and the web diff parser import, re-measures
+  # editor carets when the code font changes, and stops the find bar reclaiming focus from the file.
+  # Scient adds external edits that keep undo history, first-keystroke selection, and unmounts
+  # without an instance.
   "@pierre/diffs@1.7.0-beta.4": patches/@pierre__diffs@1.7.0-beta.4.patch
   # Keeps Hebrew and Arabic file names in reading order, and keeps a name field focused (and
   # uncommitted) when a listing moves or replaces its row.

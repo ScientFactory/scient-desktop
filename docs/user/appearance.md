@@ -60,7 +60,7 @@ the theme, applies after Scient's own styles on web and desktop, and is included
 
 Custom CSS cannot load files. `@import`, `image-set()`, and `url()` are ignored, except `url()`
 with a `data:` address or an `#id`. This keeps an imported theme from sending what is on your screen
-to another site.
+to another site. For a full-size image, use a [background image](#background-image).
 
 Class names in the app change between releases. For rules that keep working, target `data-slot`
 and other `data-` attributes, such as `[data-chat-header]` or `[data-slot="button"]`.

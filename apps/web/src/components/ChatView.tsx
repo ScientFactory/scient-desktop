@@ -2885,7 +2885,10 @@ function ChatViewContent(props: ChatViewProps) {
   const focusComposerOnThreadOpen = useStableCallback(() => {
     const opened = composerAutoFocusThreadIdRef.current !== (activeThread?.id ?? null);
     composerAutoFocusThreadIdRef.current = activeThread?.id ?? null;
-    if (opened || shouldRefocusComposerOnWindowFocus(document.activeElement)) {
+    if (
+      opened ||
+      shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
+    ) {
       focusComposerStable();
     }
   });
@@ -2919,7 +2922,7 @@ function ChatViewContent(props: ChatViewProps) {
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
             !isInSideChatPane(document.activeElement) &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
+            shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
           ) {
             focusComposerStable();
           }

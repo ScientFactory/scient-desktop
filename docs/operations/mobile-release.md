@@ -71,7 +71,7 @@ Repository settings, Actions. Variables are public values; secrets are not.
 | `EXPO_PRODUCTION_TOKEN`                                | secret   | Mobile EAS Production                                                 |
 | `EXPO_PREVIEW_TOKEN`                                   | secret   | Mobile EAS Preview, Mobile EAS Preview (Fork)                         |
 | `SCIENT_MOBILE_MACOS_RUNNER`                           | variable | optional macOS runner label; default `xcode-27`                       |
-| `MOBILE_IOS_LOCAL_BUILDS`                              | variable | optional; `true` builds iOS on the macOS runner instead of EAS        |
+| `MOBILE_IOS_LOCAL_BUILDS`                              | variable | optional; `true` builds iOS store builds on the macOS runner, not EAS |
 | `MOBILE_IOS_ALLOW_XCODE_RC`                            | variable | optional; accepts the Xcode release candidate                         |
 | `MOBILE_SOURCEMAPS_R2`                                 | secret   | optional; uploads source maps for relay crash stacks                  |
 | `SCIENT_MOBILE_FORK_PREVIEWS`                          | variable | `true` also runs previews for fork PRs                                |
@@ -89,8 +89,10 @@ for now. It publishes `android-beta-*` GitHub prereleases beside the desktop rel
 and its release text still says T3 Code.
 
 The workflows use GitHub-hosted runners (`ubuntu-24.04`, and `xcode-27` for local iOS
-builds). Android builds keep Gradle and ccache state in the Actions cache, which
-shares the repository's cache quota with CI.
+builds). iOS store and TestFlight builds run on EAS unless `MOBILE_IOS_LOCAL_BUILDS` is
+`true`; PR previews always build the iOS client locally on the macOS runner. Android
+builds keep Gradle and ccache state in the Actions cache, which shares the repository's
+cache quota with CI.
 
 ## App links
 
