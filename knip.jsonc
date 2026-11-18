@@ -31,6 +31,8 @@
         "knip-schemas.ts",
         "linux-after-pack.ts",
         "qualify-managed-runtime-catalog.ts",
+        // Run inside a multi-line windows-packaging.yml step, which knip does not trace.
+        "qualify-windows-install-folder.mjs",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
         // e2e loads its config and the scenarios by path, and starts the app script.
