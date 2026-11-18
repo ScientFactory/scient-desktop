@@ -122,7 +122,7 @@ describe("placing results for a LaTeX paper", () => {
       pointer: null,
     });
     expect(table.insert.source).toBe(
-      "\\begin{table}[htbp]\n\\centering\n\\caption{Table 1}\n\\label{tab:table1}\n\\input{results/analysis/table1.tex}\n\\end{table}",
+      "\\begin{table}[htbp]\n\\centering\n\\caption{Results of analysis.py}\n\\label{tab:table1}\n\\input{results/analysis/table1.tex}\n\\end{table}",
     );
     expect(await place.read("paper/results/analysis/table1.tex")).toContain("Treatment & 600 \\\\");
 

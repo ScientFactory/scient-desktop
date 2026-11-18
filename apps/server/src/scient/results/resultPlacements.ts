@@ -11,7 +11,7 @@ import type {
   ComputeResultsPlaceLatexResult,
   ComputeResultsPlacementsResult,
 } from "@t3tools/contracts";
-import { readResultValues } from "@t3tools/shared/computeResults";
+import { readResultValues, resultCaption } from "@t3tools/shared/computeResults";
 import * as Schema from "effect/Schema";
 
 import {
@@ -274,12 +274,6 @@ function scriptFolder(record: PlacementRecord, script: string): string {
   return name;
 }
 
-const humanCaption = (output: string) =>
-  outputSlug(output)
-    .replace(/[-_]+/gu, " ")
-    .replace(/(?<=[a-z])(?=[0-9])/gu, " ")
-    .replace(/^./u, (first) => first.toUpperCase());
-
 /**
  * Places one value, table or figure for a LaTeX paper and returns what to insert. All results from
  * one script in a paper come from one run, so a script whose files come from an older run must be
@@ -405,7 +399,7 @@ export function placeLatexResult(
       };
     }
     const label = outputSlug(output.name);
-    const caption = humanCaption(output.name);
+    const caption = escapeLatexText(resultCaption(output.name, script));
     if (source.kind === "copy" && output.kind === "figure")
       return {
         insert: {

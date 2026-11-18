@@ -25,6 +25,9 @@ const FILE_STATE_TEXT: Record<ComputeResultPlacedFile["state"], string> = {
 
 const fileName = (path: string) => path.split("/").at(-1) ?? path;
 
+/** Sent when Insert ▸ Result places files, so the build row shows them at once. */
+export const RESULTS_PLACED_EVENT = "scient-latex-results-placed";
+
 /** What a script's placed files need, most urgent first; null when nothing does. */
 function scriptAttention(script: ComputeResultPlacedScript): string | null {
   if (script.files.some((file) => file.state === "missing")) return "missing";
@@ -106,9 +109,11 @@ export function LatexResultsStatus(props: {
       if (document.visibilityState === "visible") setTick((value) => value + 1);
     };
     window.addEventListener("focus", refresh);
+    window.addEventListener(RESULTS_PLACED_EVENT, refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.removeEventListener("focus", refresh);
+      window.removeEventListener(RESULTS_PLACED_EVENT, refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
   }, []);

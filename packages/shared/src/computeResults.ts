@@ -105,6 +105,21 @@ export type MarkdownResultReference = ResultTarget &
     | { readonly kind: "table"; readonly caption: string }
   ) & { readonly start: number; readonly end: number };
 
+/**
+ * A caption to start from: `event-rates.png` → `Event rates`. A name such as `table1` says nothing
+ * a numbered caption does not, so those name the script instead: `Results of analysis.py`.
+ */
+export function resultCaption(output: string, scriptPath: string): string {
+  const words = (output.split("/").at(-1) ?? output)
+    .replace(/\.[^.]+$/u, "")
+    .replace(/[-_]+/gu, " ")
+    .replace(/(?<=[a-z])(?=[0-9])/gu, " ")
+    .trim();
+  if (words === "" || /^(?:table|tab|fig|figure|plot|chart)\s*\d*$/iu.test(words))
+    return `Results of ${scriptPath.split("/").at(-1) ?? scriptPath}`;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Tables are linked from their caption, `Table: [Table 1](scient-result:<revision>/table1.csv)`. */
 export const isResultTableOutput = (output: string) => /\.csv$/iu.test(output);
 

@@ -8,6 +8,7 @@ import {
   formatResultTarget,
   isResultTableOutput,
   parseResultTarget,
+  resultCaption,
   resultHasNewer,
   resultReferenceState as resultMarkState,
 } from "@t3tools/shared/computeResults";
@@ -515,14 +516,6 @@ function ResultCard(props: {
   );
 }
 
-/** `tables/table1.csv` → `Table 1`, a caption to start from. */
-const tableCaption = (output: string) =>
-  (output.split("/").at(-1) ?? output)
-    .replace(/\.[^.]+$/u, "")
-    .replace(/[-_]+/gu, " ")
-    .replace(/(?<=[a-z])(?=[0-9])/gu, " ")
-    .replace(/^./u, (first) => first.toUpperCase());
-
 /** Markdown shows PNG, JPEG and SVG figures; PDF figures are for LaTeX papers. */
 const MARKDOWN_FIGURE = /\.(?:png|jpe?g|svg)$/iu;
 
@@ -570,7 +563,7 @@ function MarkdownResultPicker(props: {
         {
           kind: "table",
           href: formatResultTarget(target),
-          caption: tableCaption(choice.output),
+          caption: resultCaption(choice.output, choice.script.latest.scriptPath),
           rows,
         },
         at,

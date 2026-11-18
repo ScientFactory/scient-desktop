@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { RESULTS_PLACED_EVENT } from "./LatexResultsStatus";
 import { ResultPicker, resultErrorMessage, type ResultChoice } from "./ResultPicker";
 
 /**
@@ -42,6 +43,7 @@ export function LatexResultPicker(props: {
     if (result._tag !== "Success")
       return resultErrorMessage(result, "The result could not be placed in the project.");
     const placed = result.value;
+    window.dispatchEvent(new Event(RESULTS_PLACED_EVENT));
     if (!(await props.prepareFiles(placed.files)))
       return "The placed files could not be read yet. Try again in a moment.";
     for (const name of placed.packages)
