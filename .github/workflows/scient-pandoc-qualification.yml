@@ -1,0 +1,79 @@
+# Runs Word export against the real pinned Pandoc. Pull requests run the converter's
+# transforms, failure mapping and installer checks with fixtures; this proves the actual
+# DOCX: its structure, embedded figures, editable equations, details blocks, local-resource
+# boundaries, cancellation, and a conversation's diagram source and unresolved citations.
+#
+# Weekly, and by hand: dispatch it before accepting a change to the converter's boundary or
+# to the Pandoc pin in pandocManifest.ts.
+name: Scient Pandoc Qualification
+
+on:
+  schedule:
+    - cron: "23 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scient-pandoc-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  real_pandoc:
+    name: Real Pandoc / ubuntu-24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: |
+            args:
+              - --filter=t3...
+
+      # The same asset, size and digest the app installs; nothing from the runner's own tools.
+      - name: Download and verify the pinned Pandoc
+        working-directory: apps/server
+        run: |
+          set -euo pipefail
+          read -r url sha size executable version < <(node --input-type=module -e 'import { PANDOC_MANIFEST } from "./src/scient/pandoc/pandocManifest.ts"; const asset = PANDOC_MANIFEST.assets["linux-x64"]; console.log(asset.url, asset.sha256, asset.sizeBytes, asset.executableRelativePath, PANDOC_MANIFEST.version)')
+          archive="$RUNNER_TEMP/pandoc.tar.gz"
+          curl --fail --location --silent --show-error --proto '=https' --output "$archive" "$url"
+          test "$(stat -c %s "$archive")" = "$size"
+          echo "$sha  $archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/pandoc"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/pandoc"
+          binary="$RUNNER_TEMP/pandoc/$executable"
+          test "$("$binary" --version | head -n 1)" = "pandoc $version"
+          echo "SCIENT_PANDOC_BINARY=$binary" >> "$GITHUB_ENV"
+
+      # Each suite skips without SCIENT_PANDOC_BINARY; a skip must not pass as a run.
+      - name: Convert to Word with the real Pandoc
+        working-directory: apps/server
+        run: |
+          set -euo pipefail
+          expect() {
+            node -e 'const r = require(process.argv[1]); const want = Number(process.argv[2]); if (r.numPassedTests !== want || r.numFailedTests !== 0) { console.error(`Expected ${want} real Pandoc cases to pass, got ${r.numPassedTests}`); process.exit(1); }' "$1" "$2"
+          }
+          vp test run src/scient/pandoc/PandocWordConverter.integration.test.ts \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/converter.json"
+          expect "$RUNNER_TEMP/converter.json" 13
+          vp test run src/scient/conversationExport/ConversationExportService.test.ts \
+            -t 'exports Mermaid source and unresolved bibliography keys through the real Word path' \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/conversation.json"
+          expect "$RUNNER_TEMP/conversation.json" 1
