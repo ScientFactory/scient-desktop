@@ -30,7 +30,8 @@ describe("editor code actions", () => {
   }
 
   it.each([
-    ["```text\nbefore\n```\n", "before"],
+    // The editor text ends in a newline; the fence's closing newline is not copied.
+    ["```text\nbefore\n\n```\n", "before"],
     ["---\ntitle: Before\n---\n", "---\ntitle: Before\n---"],
   ])(
     "copies current source and follows wrapping preferences without remounting: %s",
@@ -56,10 +57,21 @@ describe("editor code actions", () => {
       const surface = host.querySelector<HTMLElement>(".cm-editor")!;
       const editor = EditorView.findFromDOM(surface)!;
       expect(editor.contentDOM.classList.contains("cm-lineWrapping")).toBe(true);
+      // regression: cff39eeba2 fix(chat): Stop shows what arrived; code blocks and thread-read rows match upstream
+      const wrapToggle = host.querySelector<HTMLButtonElement>("[aria-label='Disable line wrap']")!;
+      expect(wrapToggle.getAttribute("aria-pressed")).toBe("true");
+      expect(wrapToggle.dataset.variant).toBe("secondary");
+      // regression: 010d58e874 fix(chat): Stop reaches answers that left the screen; thoughts read quietly when expanded
+      const copyButton = host.querySelector<HTMLButtonElement>("[aria-label='Copy code']")!;
+      expect(copyButton.dataset.variant).toBe("ghost-muted");
+      expect(copyButton.querySelector("svg.lucide")).not.toBeNull();
       await act(() => {
-        host.querySelector<HTMLButtonElement>("[aria-label='Disable line wrap']")!.click();
+        wrapToggle.click();
       });
       expect(editor.contentDOM.classList.contains("cm-lineWrapping")).toBe(false);
+      const unwrapped = host.querySelector<HTMLButtonElement>("[aria-label='Wrap lines']")!;
+      expect(unwrapped.getAttribute("aria-pressed")).toBe("false");
+      expect(unwrapped.dataset.variant).toBe("ghost-muted");
       expect(onUserSourceChange).not.toHaveBeenCalled();
       expect(preference.wrapped).toBe(true);
 
