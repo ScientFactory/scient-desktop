@@ -4,14 +4,6 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 export const MUSE_STABLE_CHANNEL_URL = "https://api.meta.ai/muse-code/channels/muse-stable";
 export const MUSE_DOWNLOAD_URL = "https://lookaside.facebook.com/lookaside/muse/download/";
 export const MUSE_MINIMUM_VERSION = "1.4.6-R6000.1";
-export const MUSE_TARGETS: ReadonlyArray<ManagedRuntimeTarget> = [
-  { platform: "darwin", arch: "arm64" },
-  { platform: "darwin", arch: "x64" },
-  { platform: "linux", arch: "arm64", libc: "glibc" },
-  { platform: "linux", arch: "x64", libc: "glibc" },
-  { platform: "win32", arch: "arm64" },
-  { platform: "win32", arch: "x64" },
-];
 
 const ARTIFACT_NAMES = {
   "darwin-arm64": "muse-aarch64-macos",
