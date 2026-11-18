@@ -22,16 +22,19 @@ import {
   scientPaperRequestScopes,
 } from "./scient/sourcesPermissions.ts";
 export * from "./scient/sourcesPermissions.ts";
+// Linked results write project files, so they take the file-write grant.
+import { AuthFilesystemWriteScope } from "./auth.ts";
 // SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
-  // SCIENT-FORK:START — linked results: placing, updating and undoing write the project; re-run starts a run.
-  [WS_METHODS.computeResultsPlaceFigure]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:START — linked results: placing, updating and undoing write project files, as
+  // any file write does; re-run starts a run.
+  [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
   [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
-  [WS_METHODS.computeResultsPlaceLatex]: AuthOrchestrationOperateScope,
-  [WS_METHODS.computeResultsUpdateFiles]: AuthOrchestrationOperateScope,
-  [WS_METHODS.computeResultsUndoUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUndoUpdate]: AuthFilesystemWriteScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
   ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
