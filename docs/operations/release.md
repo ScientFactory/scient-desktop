@@ -90,8 +90,7 @@ the stable scheduler and production gate.
   the cleanup on identical inputs, not a download comparison between releases.
   The resource monitor and capture helpers reuse release.yml's caches by their
   sources, the receipt-verified SyncTeX input is cached by its staging script
-  and runner image, and apt installs while dependencies install; a miss builds
-  as before, and the packaged binaries are executed either way.
+  and runner image; a miss builds as before, and the packaged binaries are executed either way.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
   WSL installation restores execute permissions for Cursor's Linux `rg` and
