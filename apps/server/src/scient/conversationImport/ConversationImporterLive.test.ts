@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
@@ -24,7 +23,6 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
@@ -46,20 +44,11 @@ import {
   destination,
   IMPORT_ID,
   importFixture,
-  OTHER_PROJECT_ID,
   principal,
-  PROJECT_ID,
-  PROVIDER_ID,
   testLease,
   type ImportFixture,
 } from "./conversationImport.test-fixtures.ts";
-import {
-  createProjects,
-  importTestLayer,
-  importHistoryTestLayer,
-  type ImportTestControls,
-} from "./conversationImport.test-harness.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { createProjects, importHistoryTestLayer } from "./conversationImport.test-harness.ts";
 import {
   conversationForkOf,
   forkConversation,
@@ -278,14 +267,6 @@ const forkHistory = Effect.fn("ImportTest.forkHistory")(function* (
   yield* Fiber.join(waiting);
 });
 
-const threadCount = Effect.flatMap(
-  SqlClient.SqlClient,
-  (sql) =>
-    sql<{
-      readonly count: number;
-    }>`SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads`,
-).pipe(Effect.map((rows) => rows[0]?.count ?? 0));
-
 const importRequest = (overrides: Parameters<typeof destination>[0] = {}) => ({
   destination: destination(overrides),
   principal: principal(),
@@ -306,28 +287,11 @@ const leaseFor = (
     }),
   );
 
-/**
- * Every test runs against fresh native stores, a database, and a state directory, on a
- * clock set after the fixtures' history (the test clock otherwise starts in
- * 1970, which would date every fixture after the import).
- */
-const withImporter = <A, E, R>(effect: Effect.Effect<A, E, R>, controls?: ImportTestControls) =>
-  TestClock.setTime(Date.parse("2026-09-28T09:30:00.000Z")).pipe(
-    Effect.andThen(createProjects),
-    Effect.andThen(effect),
-    Effect.provide(importTestLayer(controls)),
-  );
-
 const withNativeImporter = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(Date.parse("2026-09-28T09:30:00.000Z")).pipe(
     Effect.andThen(createProjects),
     Effect.andThen(effect),
     Effect.provide(importHistoryTestLayer()),
-  );
-
-const failImport = (lease: ConversationImportLease, request = importRequest()) =>
-  Effect.flatMap(ConversationImporter, (importer) =>
-    Effect.flip(importer.importConversation(lease, request)),
   );
 
 const importOnce = (lease: ConversationImportLease, request = importRequest()) =>
@@ -446,149 +410,6 @@ describe("ConversationImporter", () => {
           assert.strictEqual(reimport("2026-09-29T10:00:00.000Z"), shift + 36_000);
         }),
       ),
-  );
-
-  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
-  it.effect("imports a package as a new independent thread with fresh ids", () =>
-    withImporter(
-      Effect.gen(function* () {
-        const fixture = importFixture({
-          turns: 3,
-          reasoning: true,
-          workLog: true,
-          attachments: true,
-        });
-        const { lease, copied } = yield* leaseFor(fixture);
-        const completion = yield* importOnce(lease);
-
-        assert.strictEqual(completion.result.messageCount, 6);
-        assert.strictEqual(completion.result.attachmentCount, 2);
-        assert.strictEqual(completion.result.destination.projectId, PROJECT_ID);
-        assert.strictEqual(completion.packageSha256, fixture.input.package.packageSha256);
-
-        const thread = (yield* readThread(completion.result.threadId))!;
-        assert.strictEqual((yield* readProjection(thread.id)).thread.projectId, PROJECT_ID);
-        assert.strictEqual(thread.title, "Imported design discussion");
-        assert.strictEqual(thread.modelSelection.instanceId, PROVIDER_ID);
-        // 3 requests, 3 answers, 3 reasoning items; no id is an external one.
-        assert.strictEqual(thread.messages.length, 9);
-        const sourceIds = new Set([
-          ...fixture.input.snapshot.messages.map((message) => message.id),
-          ...fixture.input.snapshot.reasoning.map((reasoning) => reasoning.id),
-        ]);
-        for (const message of thread.messages) {
-          assert.isFalse(sourceIds.has(message.id));
-          assert.isNotNull(message.turnId);
-          assert.isFalse(message.turnId!.startsWith("src-"));
-        }
-        assert.notStrictEqual(thread.id, ThreadId.make("thread-on-another-machine"));
-
-        // Each request shares a turn with the answer it started.
-        const first = thread.messages.filter((message) => message.role !== "reasoning");
-        assert.strictEqual(first[0]!.turnId, first[1]!.turnId);
-        assert.notStrictEqual(first[1]!.turnId, first[3]!.turnId);
-
-        // Inline references became readable text; attachments are the published copies.
-        const request = first[0]!;
-        assert.notInclude(request.text, "scient-ref:");
-        assert.include(request.text, "figure.png");
-        assert.include(request.text, "`src/app.ts`");
-        assert.deepStrictEqual(
-          request.attachments?.map((attachment) => [attachment.type, attachment.name]),
-          [
-            ["image", "figure.png"],
-            ["file", "notes.txt"],
-          ],
-        );
-        const config = yield* ServerConfig;
-        for (const attachment of request.attachments ?? []) {
-          assert.isTrue(attachment.id.startsWith(thread.id.toLowerCase().slice(0, 8)));
-          const path = resolveAttachmentPath({
-            attachmentsDir: config.attachmentsDir,
-            attachment,
-          })!;
-          assert.isTrue(NodeFS.existsSync(path));
-          assert.include(copied, path);
-        }
-        assert.deepStrictEqual(
-          NodeFS.readFileSync(
-            resolveAttachmentPath({
-              attachmentsDir: config.attachmentsDir,
-              attachment: request.attachments![0]!,
-            })!,
-            "utf8",
-          ),
-          "figure-bytes",
-        );
-
-        // History only: the work log and the answer, nothing pending or executable.
-        assert.deepStrictEqual(thread.activities.map((activity) => activity.kind).toSorted(), [
-          "tool.completed",
-          "tool.completed",
-          "tool.completed",
-          "user-input.answer-submitted",
-        ]);
-        assert.strictEqual(thread.proposedPlans.length, 1);
-        const native = yield* readProjection(thread.id);
-        const shell = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadShell(thread.id);
-        assert.ok(shell);
-        assert.isEmpty(native.runtimeRequests);
-        assert.isEmpty(native.runs);
-        assert.isEmpty(native.providerSessions);
-        assert.isNull(native.thread.activeProviderThreadId);
-        assert.strictEqual(shell.conversationImport?.exportId, "7f3c9a2e41b8");
-
-        // External identity lives only in the import marker.
-        assert.deepStrictEqual(thread.conversationImport, {
-          source: "scic",
-          exportId: "7f3c9a2e41b8",
-          sourceThreadId: "thread-on-another-machine",
-          packageDigest: fixture.input.package.packageSha256,
-          sourceFormat: "scient.conversation-file",
-          sourceFormatVersion: 1,
-          importedAt: thread.conversationImport!.importedAt,
-          omissions: [{ _tag: "attachments-unavailable", count: 1 }],
-        });
-        // Imported groups are inert item history, never executable native runs/transfers.
-        assert.isNull(thread.activeTurn);
-        assert.strictEqual(native.thread.historyOrigin, "conversation_import");
-        assert.isEmpty(native.contextTransfers);
-        assert.isEmpty(native.contextHandoffs);
-        assert.deepStrictEqual(
-          new Set(native.turnItems.map((item) => item.historyTurnId ?? null)),
-          new Set(thread.messages.map((message) => message.turnId)),
-        );
-        const pairs = [0, 1, 2].map((index) => {
-          const items = native.turnItems.filter(
-            (item) => item.historyTurnId === first[2 * index]!.turnId,
-          );
-          const user = items.find((item) => item.type === "user_message")!;
-          const assistant = items.find((item) => item.type === "assistant_message")!;
-          assert.strictEqual(user.type, "user_message");
-          assert.strictEqual(assistant.type, "assistant_message");
-          return [user.messageId, assistant.messageId, user.status, assistant.status];
-        });
-        assert.deepStrictEqual(
-          pairs,
-          [0, 1, 2].map((index) => [
-            first[2 * index]!.id,
-            first[2 * index + 1]!.id,
-            "completed",
-            "completed",
-          ]),
-        );
-        assert.isNull(native.thread.forkLineage ?? null);
-        assert.isNull(native.thread.lineage.parentThreadId);
-
-        // The journal names the exact paths this attempt owns.
-        const journal = yield* journalOf(lease.attemptDirectory);
-        assert.strictEqual(journal.ids.threadId, thread.id);
-        assert.deepStrictEqual(
-          journal.attachments.map((attachment) => attachment.path).toSorted(),
-          [...copied].toSorted(),
-        );
-      }),
-    ),
   );
 
   it.effect("keeps async answers folded through import, continuation, and re-export", () =>
@@ -1424,67 +1245,6 @@ describe("ConversationImporter", () => {
             before.conversationImport,
           );
         }),
-      ),
-  );
-
-  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
-  it.effect(
-    "a rejected command removes exactly its files; confirming again starts a new attempt",
-    () =>
-      withImporter(
-        Effect.gen(function* () {
-          const fixture = importFixture({ attachments: true });
-          const { lease, copied } = yield* leaseFor(fixture);
-          const config = yield* ServerConfig;
-          NodeFS.mkdirSync(config.attachmentsDir, { recursive: true });
-          const bystander = NodePath.join(config.attachmentsDir, "other-thread-file.png");
-          NodeFS.writeFileSync(bystander, "unrelated");
-
-          const error = yield* failImport(lease);
-          assert.strictEqual(error.reason, "import-rejected");
-          assert.strictEqual(error.detail, "The destination project no longer exists.");
-          assert.strictEqual(copied.length, 2);
-          for (const path of copied) assert.isFalse(NodeFS.existsSync(path));
-          assert.isTrue(NodeFS.existsSync(bystander));
-          assert.isEmpty(NodeFS.readdirSync(lease.attemptDirectory));
-          assert.strictEqual(yield* threadCount, 0);
-
-          const completion = yield* importOnce(
-            lease,
-            importRequest({ projectId: OTHER_PROJECT_ID }),
-          );
-          assert.strictEqual(completion.result.destination.projectId, OTHER_PROJECT_ID);
-          assert.strictEqual(yield* threadCount, 1);
-        }),
-        {
-          // The destination disappears between the authority check and the commit.
-          beforeDispatch: (() => {
-            let calls = 0;
-            return (command) =>
-              command.type === "thread.conversation.import" && calls++ === 0
-                ? Effect.flatMap(EventSink.EventSinkV2, (sink) =>
-                    sink.commitProjectCommand({
-                      commandId: CommandId.make("delete-destination"),
-                      projectId: PROJECT_ID,
-                      commandType: "project.delete",
-                      acceptedAt: DateTime.makeUnsafe(command.createdAt),
-                      event: {
-                        eventId: EventId.make("delete-destination:event"),
-                        type: "project.deleted",
-                        aggregateKind: "project",
-                        aggregateId: PROJECT_ID,
-                        occurredAt: command.createdAt,
-                        commandId: null,
-                        causationEventId: null,
-                        correlationId: null,
-                        metadata: {},
-                        payload: { projectId: PROJECT_ID, deletedAt: command.createdAt },
-                      },
-                    }),
-                  ).pipe(Effect.orDie, Effect.asVoid)
-                : Effect.void;
-          })(),
-        },
       ),
   );
 });

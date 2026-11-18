@@ -700,13 +700,9 @@ describe("native imported content", () => {
         });
         assert.isNull(projection.thread.forkedFrom);
         assert.isNull(projection.thread.activeProviderThreadId);
-        const inherited = new Set(
-          projection.turnItems.flatMap((item) =>
-            item.historyTurnId == null ? [] : [item.historyTurnId],
-          ),
-        );
+        // Every imported item belongs to an inherited turn: none is left without one.
         assert.deepStrictEqual(
-          inherited,
+          new Set(projection.turnItems.map((item) => item.historyTurnId ?? null)),
           new Set(thread.messages.map((message) => message.turnId)),
         );
         // Imported groups are inert item history, never executable native runs/transfers.
