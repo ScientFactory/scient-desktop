@@ -18,6 +18,7 @@ import { attachShortcutHost } from "../keyboard/host";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
 import type { MarkdownCitationSource, MarkdownCiteHandler } from "./markdownCitation";
+import { MarkdownResults, type MarkdownResultsHandle } from "../results/MarkdownResults";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import { showScientMarkdownFootnoteContextMenu } from "./footnoteContextMenu";
@@ -179,6 +180,17 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   });
   const readBindings = useStableCallback(() => bindingsRef.current);
   const selectImage = useStableCallback(() => imageInputRef.current?.click());
+  const resultsRef = useRef<MarkdownResultsHandle | null>(null);
+  const registerResults = useStableCallback((handle: MarkdownResultsHandle) => {
+    resultsRef.current = handle;
+    return () => {
+      if (resultsRef.current === handle) resultsRef.current = null;
+    };
+  });
+  const openResult = useStableCallback((href: string, anchor: HTMLElement) =>
+    resultsRef.current?.openCard(href, anchor),
+  );
+  const selectResult = useStableCallback(() => resultsRef.current?.openPicker());
   const [controller] = useState(
     () =>
       new ScientMarkdownEditorView({
@@ -239,6 +251,12 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
           : {}),
         wikiLinkTargetExists: (target) => readBindings().wikiLinkTargetExists?.(target) ?? null,
         onOpenCitation: (request) => readBindings().onOpenCitation?.(request) ?? false,
+        ...(props.citationSource
+          ? {
+              onOpenResult: openResult,
+              selectResult,
+            }
+          : {}),
         showLinkContextMenu: async (request) => {
           const api = readLocalApi();
           if (!api) return null;
@@ -504,6 +522,15 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             );
             event.currentTarget.value = "";
           }}
+        />
+      ) : null}
+      {props.citationSource ? (
+        <MarkdownResults
+          controller={controller}
+          environmentId={props.citationSource.environmentId}
+          cwd={props.citationSource.cwd}
+          documentPath={props.citationSource.path}
+          register={registerResults}
         />
       ) : null}
       <div className="scient-markdown-rich-pane">

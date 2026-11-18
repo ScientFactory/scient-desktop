@@ -16,6 +16,8 @@ import type * as NotebookStore from "../notebook/NotebookStore.ts";
 import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type * as DataTables from "../data/DataTables.ts";
+import type { ComputeResults } from "../results/ComputeResults.ts";
+import { runScriptForResults, type ResultScriptRunner } from "../results/runScript.ts";
 import type * as AnalysisService from "./AnalysisService.ts";
 
 const ACTIVE_WORK_CHECK_INTERVAL = "1 second";
@@ -30,6 +32,8 @@ export const makeScientificRpcHandlers = ({
   saveConsoleNotebook,
   computeNotebookOutputs,
   dataTables,
+  computeResults,
+  resultScripts,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStreamEffect"> & {
   readonly analysis: AnalysisService.AnalysisService["Service"];
   readonly computeGateway: ComputeRpcGateway;
@@ -38,6 +42,8 @@ export const makeScientificRpcHandlers = ({
   readonly saveConsoleNotebook: ReturnType<typeof makeComputeConsoleNotebook>;
   readonly computeNotebookOutputs: ReturnType<typeof makeComputeNotebookOutputs>;
   readonly dataTables: DataTables.DataTables["Service"];
+  readonly computeResults: ComputeResults["Service"];
+  readonly resultScripts: ResultScriptRunner;
 }) =>
   WsScientificRpcGroup.of({
     [WS_METHODS.analysisStartRun]: (input) =>
@@ -180,6 +186,46 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeSaveOutput, saveComputeOutput(input), {
         "rpc.aggregate": "compute",
       }),
+    [WS_METHODS.computeResultsResolve]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.computeResultsResolve,
+        computeGateway.project({ cwd: input.cwd }).pipe(
+          Effect.flatMap((project) => computeResults.resolve(project, input.references)),
+          Effect.map((resolutions) => ({ resolutions })),
+        ),
+        { "rpc.aggregate": "compute" },
+      ),
+    [WS_METHODS.computeResultsList]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.computeResultsList,
+        computeGateway.project({ cwd: input.cwd }).pipe(
+          Effect.flatMap((project) => computeResults.list(project)),
+          Effect.map((scripts) => ({ scripts })),
+        ),
+        { "rpc.aggregate": "compute" },
+      ),
+    [WS_METHODS.computeResultsPlaceFigure]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.computeResultsPlaceFigure,
+        computeGateway.project({ cwd: input.cwd }).pipe(
+          Effect.flatMap((project) => computeResults.placeFigure(project, input)),
+          Effect.map((src) => ({ src })),
+        ),
+        { "rpc.aggregate": "compute" },
+      ),
+    [WS_METHODS.computeResultsRerun]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.computeResultsRerun,
+        computeGateway.project({ cwd: input.cwd }).pipe(
+          Effect.flatMap((project) =>
+            runScriptForResults(resultScripts, {
+              cwd: project.root,
+              scriptPath: input.scriptPath,
+            }),
+          ),
+        ),
+        { "rpc.aggregate": "compute" },
+      ),
     [WS_METHODS.computeSubmitCells]: (input) =>
       observeRpcEffect(WS_METHODS.computeSubmitCells, computeGateway.submitCells(input), {
         "rpc.aggregate": "compute",

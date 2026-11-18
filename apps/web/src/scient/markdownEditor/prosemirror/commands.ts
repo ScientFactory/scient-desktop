@@ -72,6 +72,7 @@ export type ScientMarkdownCommand =
   | "ordered-list"
   | "paragraph"
   | "redo"
+  | "result"
   | "select-table"
   | "split-cell"
   | "strike"
@@ -121,6 +122,11 @@ const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
   { command: "footnote", label: "Footnote", keywords: "note reference source" },
   { command: "table", label: "Table", keywords: "grid cells data" },
   { command: "image", label: "Image", keywords: "figure photo asset media" },
+  {
+    command: "result",
+    label: "Result",
+    keywords: "linked value number figure analysis compute run",
+  },
   { command: "wiki-link", label: "Wiki link", keywords: "note internal link" },
   { command: "horizontal-rule", label: "Divider", keywords: "rule separator" },
 ];
@@ -557,6 +563,9 @@ function commandFor(command: ScientMarkdownCommand): Command {
       return insertNode(requiredNodeType("horizontal_rule").create());
     case "image":
       return insertNode(requiredNodeType("image").create({ alt: "", src: "", title: null }));
+    // The host's result picker inserts it; with no host there is nothing to pick from.
+    case "result":
+      return () => false;
     case "display-math":
       return insertNode(requiredNodeType("display_math").create({ tex: "", delimiter: "$$" }));
     case "footnote":

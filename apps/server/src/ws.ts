@@ -342,6 +342,7 @@ import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+import * as ComputeResults from "./scient/results/ComputeResults.ts";
 import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
 import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
@@ -2016,6 +2017,7 @@ export const layerWsRpc = (
       const analysis = yield* AnalysisService.AnalysisService;
       const dataTables = yield* DataTables.DataTables;
       const compute = yield* ComputeSessionService.ComputeSessionService;
+      const computeResults = yield* ComputeResults.ComputeResults;
       const computeGateway = makeComputeRpcGateway({
         workspaceResolver: yield* WorkspaceBindingResolver,
         compute,
@@ -4241,6 +4243,13 @@ export const layerWsRpc = (
           notebooks: yield* NotebookStore.NotebookStore,
           saveConsoleNotebook,
           computeNotebookOutputs,
+          computeResults,
+          resultScripts: {
+            gateway: computeGateway,
+            results: computeResults,
+            runtimeDescriptors: compute.runtimeDescriptors,
+            readFile: workspaceFileSystem.readFile,
+          },
         }),
       });
       // SCIENT-FORK:START — Scient extensions RPCs.

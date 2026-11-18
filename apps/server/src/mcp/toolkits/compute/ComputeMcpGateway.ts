@@ -17,6 +17,8 @@ import * as ComputeSessionService from "../../../scient/compute/ComputeSessionSe
 import * as NotebookStore from "../../../scient/notebook/NotebookStore.ts";
 import { AnalysisService } from "../../../scient/analysis/AnalysisService.ts";
 import type { ComputeOutputResourceRef } from "@scientfactory/compute";
+import { ComputeResults } from "../../../scient/results/ComputeResults.ts";
+import { runScriptForResults } from "../../../scient/results/runScript.ts";
 
 export interface ComputeOutputBytes {
   readonly mediaType: string;
@@ -44,6 +46,13 @@ export interface ComputeMcpGatewayShape extends ComputeRpcGateway {
   readonly startFileRun: AnalysisService["Service"]["startRun"];
   readonly subscribeFileRuns: AnalysisService["Service"]["subscribeRuns"];
   readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
+  /** Linked results: what fresh script runs published, for agents to cite and check. */
+  readonly resolveResults: ComputeResults["Service"]["resolve"];
+  readonly listResults: ComputeResults["Service"]["list"];
+  readonly placeResultFigure: ComputeResults["Service"]["placeFigure"];
+  readonly runResultScript: (
+    input: Parameters<typeof runScriptForResults>[1],
+  ) => ReturnType<typeof runScriptForResults>;
 }
 
 export class ComputeMcpGateway extends Context.Service<ComputeMcpGateway, ComputeMcpGatewayShape>()(
@@ -76,6 +85,7 @@ export const ComputeMcpGatewayLive = Layer.effect(
     const notebooks = yield* NotebookStore.NotebookStore;
     const fileRuns = yield* AnalysisService;
     const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    const results = yield* ComputeResults;
     return ComputeMcpGateway.of({
       ...rpc,
       readOutput,
@@ -90,6 +100,20 @@ export const ComputeMcpGatewayLive = Layer.effect(
       startFileRun: fileRuns.startRun,
       subscribeFileRuns: fileRuns.subscribeRuns,
       readFile: workspaceFiles.readFile,
+      resolveResults: results.resolve,
+      listResults: results.list,
+      placeResultFigure: results.placeFigure,
+      runResultScript: Effect.fn("ComputeMcpGateway.runResultScript")(function* (input) {
+        return yield* runScriptForResults(
+          {
+            gateway: rpc,
+            results,
+            runtimeDescriptors: compute.runtimeDescriptors,
+            readFile: workspaceFiles.readFile,
+          },
+          input,
+        );
+      }),
     });
   }),
 );

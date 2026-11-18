@@ -619,6 +619,10 @@ export function makeComputeRpcGateway(input: {
         return yield* input.compute.stopSession({ ...request, projectId: project.projectId });
       }),
     ),
+    /** The project a folder's runs and linked results belong to. */
+    project: inWorkspace("get", (request: { readonly cwd: string }) =>
+      projectFor("get", request.cwd),
+    ),
     inspectVariables: inWorkspace("variables", inspectVariables),
     readTable: inWorkspace("table", readTable),
     subscribeSessions: inWorkspace("subscribe", subscribeSessions),

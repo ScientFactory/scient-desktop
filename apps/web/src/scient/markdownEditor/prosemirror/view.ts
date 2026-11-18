@@ -102,6 +102,18 @@ import {
   type LibraryCitationQuery,
 } from "./libraryCitation";
 
+import { RESULT_PROTOCOL } from "@t3tools/shared/computeResults";
+import {
+  editorResultReferences,
+  insertResultFigure,
+  insertResultValue,
+  setResultMarks,
+  updateResults,
+  type EditorResultReference,
+  type ResultMarkState,
+  type ResultUpdate,
+} from "./results";
+
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
   readonly alt: string;
@@ -141,6 +153,10 @@ export interface ScientMarkdownEditorViewOptions {
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
   /** Opens what a clicked citation names; false leaves the click to the editor. */
   readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
+  /** Shows a linked result's card beside the value or figure that was clicked. */
+  readonly onOpenResult?: (href: string, anchor: HTMLElement) => void;
+  /** Opens the picker the Result command inserts from. */
+  readonly selectResult?: () => void;
 }
 
 export interface ScientMarkdownEditorSnapshot {
@@ -170,6 +186,8 @@ export interface ScientMarkdownEditorSnapshot {
   readonly linkEditRequest: number;
   readonly outlineActiveIndex: number;
   readonly outlineItems: ReadonlyArray<ScientMarkdownOutlineItem>;
+  /** Linked results in the document; the same array until the document changes. */
+  readonly resultReferences: ReadonlyArray<EditorResultReference>;
   readonly selectionEmpty: boolean;
   readonly selectedWikiLinkTarget: string | null;
   readonly slashActiveIndex: number;
@@ -621,6 +639,60 @@ export class ScientMarkdownEditorView {
     this.publishSnapshot(false);
   }
 
+  private resultReferencesCache: {
+    readonly doc: ProseMirrorNode;
+    readonly references: ReadonlyArray<EditorResultReference>;
+  } | null = null;
+
+  private resultReferencesOf(doc: ProseMirrorNode): ReadonlyArray<EditorResultReference> {
+    if (this.resultReferencesCache?.doc !== doc)
+      this.resultReferencesCache = { doc, references: editorResultReferences(doc) };
+    return this.resultReferencesCache.references;
+  }
+
+  resultReferences(): ReadonlyArray<EditorResultReference> {
+    return this.resultReferencesOf(this.editorView?.state.doc ?? this.session.state.doc);
+  }
+
+  setResultMarks(states: ReadonlyMap<string, ResultMarkState>): void {
+    const view = this.editorView;
+    if (!view) return;
+    view.dispatch(
+      setResultMarks(view.state, states).setMeta(scientMarkdownTransactionOriginKey, "system"),
+    );
+  }
+
+  insertResult(
+    input:
+      | { readonly kind: "value"; readonly href: string; readonly text: string }
+      | {
+          readonly kind: "figure";
+          readonly href: string;
+          readonly src: string;
+          readonly alt: string;
+        },
+  ): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const transaction =
+      input.kind === "value"
+        ? insertResultValue(view.state, input.href, input.text)
+        : insertResultFigure(view.state, input);
+    if (transaction === null) return false;
+    view.dispatch(transaction.scrollIntoView());
+    view.focus();
+    return true;
+  }
+
+  updateResults(updates: ReadonlyArray<ResultUpdate>): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const transaction = updateResults(view.state, updates);
+    if (transaction === null) return false;
+    view.dispatch(transaction);
+    return true;
+  }
+
   execute(command: ScientMarkdownCommand): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
@@ -628,6 +700,10 @@ export class ScientMarkdownEditorView {
     if (command === "image" && this.options.selectImage) {
       this.options.selectImage();
       return true;
+    }
+    if (command === "result") {
+      this.options.selectResult?.();
+      return this.options.selectResult !== undefined;
     }
     const handled = runScientMarkdownCommand(command, view.state, view.dispatch);
     if (handled) {
@@ -1118,6 +1194,12 @@ export class ScientMarkdownEditorView {
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
       handleClickOn: (_view, _position, node, nodePosition, event, direct) => {
         if (!direct || event.button !== 0) return false;
+        if (node.type === scientMarkdownSchema.nodes.result_value && this.options.onOpenResult) {
+          const element = this.editorView?.nodeDOM(nodePosition);
+          if (!(element instanceof HTMLElement)) return false;
+          this.options.onOpenResult(String(node.attrs.target), element);
+          return true;
+        }
         if (node.type === scientMarkdownSchema.nodes.citation) {
           if (modeIsEditable(this.mode) && !(event.metaKey || event.ctrlKey)) return false;
           return this.openCitation(nodePosition, { x: event.clientX, y: event.clientY });
@@ -1616,6 +1698,11 @@ export class ScientMarkdownEditorView {
   }
 
   private openLinkTarget(target: string, anchor: HTMLElement): boolean {
+    if (target.startsWith(RESULT_PROTOCOL)) {
+      if (!this.options.onOpenResult) return false;
+      this.options.onOpenResult(target, anchor);
+      return true;
+    }
     if (target.startsWith("#") && this.navigateToHeadingFragment(target.slice(1))) {
       this.options.onLocalHeadingOpened?.();
       return true;
@@ -1810,6 +1897,7 @@ export class ScientMarkdownEditorView {
       outlineActiveIndex,
       textDirection,
       outlineItems,
+      resultReferences: this.resultReferencesOf(state.doc),
       selectionEmpty: selection.empty,
       selectedWikiLinkTarget: wikiLinkSelection?.target ?? null,
       slashActiveIndex: Math.min(this.slashActiveIndex, Math.max(0, slashItems.length - 1)),

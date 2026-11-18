@@ -95,6 +95,7 @@ export const ComputeStartSessionInput = Schema.Struct({
       executionId: ComputeExecutionId,
       code: StreamText,
       source: ComputeExecutionSource,
+      actor: Schema.optional(ComputeExecutionActor),
     }),
   ),
 });

@@ -23,6 +23,7 @@ import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
+import * as ComputeResults from "./results/ComputeResults.ts";
 import * as ComputeProjectOutputObserver from "./compute/ComputeProjectOutputObserver.ts";
 import * as NotebookRunRecorder from "./notebook/NotebookRunRecorder.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
@@ -246,6 +247,7 @@ export function makeScientRouteServices<
       Layer.provide(ComputeMcpGatewayLive),
       Layer.provide(AnalysisServiceLive),
       Layer.provide(NotebookRunRecorder.layer),
+      Layer.provide(ComputeResults.layer),
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(DataTables.layer),
       Layer.provide(NotebookStore.layer),
