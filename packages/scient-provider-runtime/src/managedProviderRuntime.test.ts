@@ -639,6 +639,10 @@ describe("ManagedProviderRuntime contract", () => {
         });
       }),
     ).toBe("version");
+    // A plain Effect failure object carries its step too.
+    expect(managedRuntimeFailedCheck(markManagedRuntimeCheck("refresh", { message: "x" }))).toBe(
+      "refresh",
+    );
   });
 
   it("keeps launching the active release while a newer artifact is only reviewed", async () => {

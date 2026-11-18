@@ -140,6 +140,8 @@ export const qualifyManagedScientAgentRuntime = Effect.fn("ScientAgentManagedRun
           Effect.andThen(client.close()),
           Effect.uninterruptible,
         );
+        // The deadline below covers both steps; its timeout names the one it cut short.
+        let step: "rpc_start" | "get_state" = "rpc_start";
         yield* Effect.gen(function* () {
           const ready = yield* client.ready.pipe(
             Effect.mapError((cause) => markManagedRuntimeCheck("rpc_start", cause)),
@@ -162,12 +164,14 @@ export const qualifyManagedScientAgentRuntime = Effect.fn("ScientAgentManagedRun
               }),
             );
           }
+          step = "get_state";
           yield* client
             .getState()
             .pipe(Effect.mapError((cause) => markManagedRuntimeCheck("get_state", cause)));
         }).pipe(
           Effect.onExit(() => cleanup),
           Effect.timeout(SCIENT_QUALIFICATION_TIMEOUT),
+          Effect.mapError((cause) => markManagedRuntimeCheck(step, cause)),
         );
       }),
     ).pipe(

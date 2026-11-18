@@ -247,21 +247,21 @@ export type ManagedRuntimeCheck =
   | "rollback"
   | "refresh";
 
-const failedChecks = new WeakMap<Error, ManagedRuntimeCheck>();
+const failedChecks = new WeakMap<object, ManagedRuntimeCheck>();
 
 /**
- * Records which step `cause` failed in, unless a step nearer the root cause already did.
- * Returns `cause` unchanged, so it can be rethrown or returned as the failure.
+ * Records which step `cause` failed in, unless a step nearer the root cause already did. Any
+ * object can carry it, since some Effect failures are plain objects. Returns `cause` unchanged.
  */
 export function markManagedRuntimeCheck<E>(check: ManagedRuntimeCheck, cause: E): E {
-  if (cause instanceof Error && managedRuntimeFailedCheck(cause) === undefined)
+  if (typeof cause === "object" && cause !== null && managedRuntimeFailedCheck(cause) === undefined)
     failedChecks.set(cause, check);
   return cause;
 }
 
 /** The step nearest the root cause along the cause chain. */
 export function managedRuntimeFailedCheck(cause: unknown): ManagedRuntimeCheck | undefined {
-  let found: ManagedRuntimeCheck | undefined;
+  let found = typeof cause === "object" && cause !== null ? failedChecks.get(cause) : undefined;
   for (const error of causeChain(cause)) found = failedChecks.get(error) ?? found;
   return found;
 }
