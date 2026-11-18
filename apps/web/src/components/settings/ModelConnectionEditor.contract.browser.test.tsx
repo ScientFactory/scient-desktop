@@ -245,7 +245,6 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[1]![0].connection.models[0]!.defaultReasoningLevel).toBeUndefined();
   });
   // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
-  // Sole guard of the droidAttached gate on the Droid reasoning note.
   it("explains which reasoning levels Droid offers when the model is used with Droid", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -274,15 +273,6 @@ describe("custom model editor", () => {
       agents: [{ id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") }],
     });
     expect(noteIn(withDroid.row("Reasoning"))).toBe(true);
-
-    await act(async () => await _fixture.root0!.unmount());
-    _fixture.root0 = undefined;
-    _fixture.host.remove();
-    const piOnly = await editor(_fixture, {
-      connection: { ...xhigh, models: [{ ...xhigh.models[0]!, instanceIds: [pi] }] },
-      edit: true,
-    });
-    expect(noteIn(piOnly.row("Reasoning"))).toBe(false);
   });
   describe("default level of an Anthropic Messages model Droid does not know as adaptive", () => {
     const droidAgent = { id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") };
@@ -355,6 +345,8 @@ describe("custom model editor", () => {
       });
       expect((await item(f, "max"))?.disabled).toBe(false);
       expect(says(f, substitute)).toBe(false);
+      // Neither Droid note: the reasoning-levels note and the default-level note share one gate.
+      expect(says(f, "Droid")).toBe(false);
     });
   });
   it("preserves saved limits until the user switches them to automatic", async () => {
