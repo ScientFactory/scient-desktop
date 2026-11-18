@@ -462,8 +462,18 @@ function stopOwnedUpdatedProcess(pid, executable, platform) {
   process.kill(pid, "SIGTERM");
 }
 
+// The app's own children (its backend runs the app's executable as Node) are not another main.
+function descendsFrom(candidate, ancestor, parentOf) {
+  for (let current = candidate, depth = 0; current > 1 && depth < 64; depth++) {
+    current = parentOf(current);
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
 function requireSingleMain(pid, executable, platform) {
-  let pids;
+  let candidates;
+  let parentOf;
   if (platform === "win32") {
     const rows = JSON.parse(
       NodeChildProcess.execFileSync(
@@ -471,63 +481,66 @@ function requireSingleMain(pid, executable, platform) {
         [
           "-NoProfile",
           "-Command",
-          "Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress",
+          "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress",
         ],
         { encoding: "utf8" },
       ),
     );
-    pids = rows
+    const parents = new Map(rows.map((row) => [row.ProcessId, row.ParentProcessId]));
+    parentOf = (child) => parents.get(child) ?? 0;
+    candidates = rows
       .filter(
         (row) =>
           row.ExecutablePath?.toLowerCase() === executable.toLowerCase() &&
           !row.CommandLine?.includes("--type="),
       )
-      .map((row) => row.ProcessId);
+      .map((row) => ({ pid: row.ProcessId, command: row.CommandLine }));
   } else if (platform === "darwin") {
-    pids = NodeChildProcess.execFileSync("ps", ["-axo", "pid=,comm="], { encoding: "utf8" })
+    const rows = NodeChildProcess.execFileSync("ps", ["-axo", "pid=,ppid=,comm="], {
+      encoding: "utf8",
+    })
       .split("\n")
-      .map((row) => /^\s*(\d+)\s+(.+)$/.exec(row))
-      .filter((row) => row?.[2] === executable)
-      .map((row) => Number(row[1]));
+      .map((row) => /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(row))
+      .filter((row) => row !== null)
+      .map((row) => ({ pid: Number(row[1]), ppid: Number(row[2]), command: row[3] }));
+    const parents = new Map(rows.map((row) => [row.pid, row.ppid]));
+    parentOf = (child) => parents.get(child) ?? 0;
+    candidates = rows.filter((row) => row.command === executable);
   } else {
     const actual = NodeFS.readlinkSync(`/proc/${pid}/exe`);
     // /proc/<pid>/stat is "pid (comm) state ppid …"; comm may itself contain ") ".
-    const parentOf = (child) => {
-      const stat = NodeFS.readFileSync(`/proc/${child}/stat`, "utf8");
-      return Number(stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[1]);
-    };
-    // The app's own children (its backend runs the same executable as Node) are not another main.
-    const descendsFromMain = (candidate) => {
-      for (let current = candidate, depth = 0; current > 1 && depth < 64; depth++) {
-        current = parentOf(current);
-        if (current === pid) return true;
+    parentOf = (child) => {
+      try {
+        const stat = NodeFS.readFileSync(`/proc/${child}/stat`, "utf8");
+        return Number(stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[1]);
+      } catch {
+        return 0;
       }
-      return false;
     };
-    pids = NodeFS.readdirSync("/proc")
+    candidates = NodeFS.readdirSync("/proc")
       .filter((name) => /^\d+$/.test(name))
       .flatMap((name) => {
         try {
-          return NodeFS.readlinkSync(`/proc/${name}/exe`) === actual &&
-            !NodeFS.readFileSync(`/proc/${name}/cmdline`, "utf8").includes("--type=") &&
-            !descendsFromMain(Number(name))
-            ? [Number(name)]
+          const command = NodeFS.readFileSync(`/proc/${name}/cmdline`, "utf8");
+          return NodeFS.readlinkSync(`/proc/${name}/exe`) === actual && !command.includes("--type=")
+            ? [{ pid: Number(name), command: command.replaceAll("\0", " ") }]
             : [];
         } catch {
           return [];
         }
       });
-    if (pids.length !== 1 || pids[0] !== pid)
-      console.error(
-        "Main-process candidates:",
-        pids.map((candidate) => ({
-          pid: candidate,
-          parent: parentOf(candidate),
-          cmdline: NodeFS.readFileSync(`/proc/${candidate}/cmdline`, "utf8").replaceAll("\0", " "),
-        })),
-      );
   }
-  NodeAssert.deepEqual(pids, [pid], "Exactly one updated main process must be running");
+  const mains = candidates.filter((candidate) => !descendsFrom(candidate.pid, pid, parentOf));
+  if (mains.length !== 1 || mains[0].pid !== pid)
+    console.error(
+      "Main-process candidates:",
+      mains.map((candidate) => ({ ...candidate, parent: parentOf(candidate.pid) })),
+    );
+  NodeAssert.deepEqual(
+    mains.map((candidate) => candidate.pid),
+    [pid],
+    "Exactly one updated main process must be running",
+  );
 }
 
 // Attach after the measured native restart, without adding a debug switch or test hook to the app.
