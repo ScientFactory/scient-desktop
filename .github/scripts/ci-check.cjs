@@ -19,17 +19,9 @@ const ALWAYS = [
   "test_web_performance",
   "test_server_performance",
 ];
-const JOBS = [
-  "release_notes",
-  "queue_ci",
-  ...ALWAYS,
-  "overleaf_windows",
-  ...Object.keys(GATED),
-  ...REPORTERS,
-];
-// Evidence and upkeep only: these run beside the gate and never block a merge. Without
-// shard_weights every shard uses the checked-in weights, and the shards themselves are gated.
-const ADVISORY = ["overleaf_macos", "shard_weights", "main_caches"];
+const JOBS = ["queue_ci", ...ALWAYS, "overleaf_windows", ...Object.keys(GATED), ...REPORTERS];
+// Evidence and upkeep only: these run beside the gate and never block a merge.
+const ADVISORY = ["overleaf_macos", "main_caches"];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];
@@ -62,9 +54,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
     else if (job === "qualification") skip = !qualify;
     else if (reporting) skip = !reused;
     else if (job === "overleaf_windows") skip = windowsReused;
-    else if (job !== "release_notes") {
-      skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
-    }
+    else skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
     // Active reporters and receipts must finish; every actual failure/cancellation blocks.
     if (result === "success" || (result === "skipped" && skip)) continue;
     errors.push(`${job}: ${result ?? "missing"}${result === "skipped" ? " without a reason" : ""}`);
@@ -73,7 +63,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
 }
 
 // Test lanes whose failures ci-quarantine.cjs may still accept, failed test by failed test.
-// Setup, lint, build, release notes and static analysis always block. The receipt fails
+// Setup, lint, build and static analysis always block. The receipt fails
 // whenever another need does, so it is a candidate only beside them.
 const QUARANTINABLE = [
   "test",

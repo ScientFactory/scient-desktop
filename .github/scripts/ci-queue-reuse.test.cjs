@@ -619,7 +619,6 @@ function receiptFixture(t, event) {
     };
   }
   f.needs = Object.fromEntries(JOBS.map((job) => [job, { result: "success" }]));
-  f.needs.release_notes.outputs = {};
   for (const reporter of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
     f.needs[reporter].result = "skipped";
   f.needs.queue_ci = { result: event === "merge_group" ? "success" : "skipped", outputs: {} };
@@ -673,7 +672,6 @@ test("queue receipt requires every lane, including non-required layout and mobil
 test("a queue run that reused PR qualification records its source", async (t) => {
   const f = receiptFixture(t, "merge_group");
   for (const job of JOBS) f.needs[job].result = "skipped";
-  f.needs.release_notes.result = "success";
   f.needs.queue_ci.result = "success";
   for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
     f.needs[job].result = "success";

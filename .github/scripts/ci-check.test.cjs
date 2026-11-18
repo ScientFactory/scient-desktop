@@ -74,11 +74,10 @@ test("only exact queue reuse can suppress unconditional suites and requires repo
   assert.ok(failures(f).some((error) => error.includes("lint: skipped")));
 });
 
-test("false change outputs and focused release notes cannot excuse missing test/build lanes", () => {
+test("false change outputs cannot excuse missing test/build lanes", () => {
   for (const event of ["pull_request", "merge_group", "push"]) {
     for (const job of ["build", "test", "test_web", "test_server"]) {
       const f = normal(event);
-      f.needs.release_notes.outputs.qualified = "true";
       for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
         f.needs.changes.outputs[key] = "false";
       f.needs[job].result = "skipped";
@@ -112,7 +111,6 @@ test("main reuses only confirmed exact queue qualification; unknown and missing 
   reusedPush.needs.queue_ci.result = "failure";
   assert.ok(failures(reusedPush).some((error) => error.includes("lint: skipped")));
   const f = normal("push");
-  f.needs.release_notes.outputs.qualified = "true";
   f.needs.queue_ci.outputs.reused = "false";
   f.needs.lint.result = "skipped";
   assert.ok(failures(f).some((error) => error.includes("lint")));
@@ -245,7 +243,6 @@ test("only plain test-lane failures are quarantine candidates", () => {
     ["build", "failure"],
     ["lint", "failure"],
     ["changes", "failure"],
-    ["release_notes", "failure"],
     ["mobile_native_static_analysis", "failure"],
     ["test_server", "cancelled"],
   ]) {
