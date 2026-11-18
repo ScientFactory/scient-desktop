@@ -868,13 +868,17 @@ async function qualify(options) {
         await page.keyboard.press("ControlOrMeta+p");
         await page.getByPlaceholder("Search files…", { exact: true }).fill("sentinel.txt");
         await page.getByText("sentinel.txt", { exact: true }).first().click();
-        const editor = page.getByRole("textbox").last();
-        await editor.first().waitFor({ state: "visible", timeout: TIMEOUT });
+        // The file editor, found by the file's own text: the chat composer is a textbox too.
+        const editor = page
+          .locator("[data-content]")
+          .filter({ hasText: "Synthetic restart qualification" })
+          .first();
+        await editor.waitFor({ state: "visible", timeout: TIMEOUT });
         // Freeze autosave only to establish a real dirty edit; resume the RPC scheduler before consent.
         await page.clock.install();
         await page.clock.pauseAt(new Date(Date.now() + 1_000));
         const editedSentinel = `${sentinel}Unsaved edit must survive native restart.\n`;
-        await editor.click();
+        await editor.locator("[data-line]").first().click();
         await page.keyboard.press("ControlOrMeta+a");
         await page.keyboard.insertText(editedSentinel);
         await page
