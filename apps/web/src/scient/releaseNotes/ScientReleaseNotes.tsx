@@ -195,11 +195,8 @@ function ScientReleaseDialogHeader({
   readonly onBack: () => void;
 }) {
   return (
-    <div
-      className="relative h-20 overflow-hidden bg-[linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] dark:bg-[#151315] dark:bg-none"
-      data-slot="dialog-header"
-    >
-      <ScientSymbol className="pointer-events-none absolute -right-3 -top-4 size-32 opacity-[0.065] dark:opacity-[0.09]" />
+    <div className="relative h-20" data-slot="dialog-header">
+      <ScientSymbol className="pointer-events-none absolute -right-3 -top-4 size-32 opacity-[0.065] mask-[linear-gradient(to_bottom,#000_65%,transparent_100%)] dark:opacity-[0.09]" />
       {view === "release" ? (
         <div className="relative flex h-full w-full items-center gap-3 px-5 pr-14">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[color-mix(in_srgb,var(--scient-burgundy)_13%,var(--border))] bg-[var(--scient-warm-white)] dark:bg-white/5">
@@ -238,7 +235,7 @@ function ScientReleaseDetail({ release }: { readonly release: ScientReleaseNote 
   if (release.format === "paragraphs") {
     return (
       <div>
-        <div className="-mx-5 -mt-5 bg-[linear-gradient(180deg,transparent_0%,white_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] px-5 pb-5 pt-7 dark:bg-[linear-gradient(180deg,transparent_0%,#151315_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-burgundy)_15%,#151315)_0%,#151315_100%)]">
+        <div className="-mx-5 -mt-5 px-5 pb-5 pt-7">
           <p className="text-lg font-semibold leading-snug text-foreground">{release.headline}</p>
         </div>
 
@@ -252,7 +249,7 @@ function ScientReleaseDetail({ release }: { readonly release: ScientReleaseNote 
 
   return (
     <div>
-      <div className="-mx-5 -mt-5 bg-[linear-gradient(180deg,transparent_0%,white_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] px-5 pb-5 pt-7 dark:bg-[linear-gradient(180deg,transparent_0%,#151315_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-burgundy)_15%,#151315)_0%,#151315_100%)]">
+      <div className="-mx-5 -mt-5 px-5 pb-5 pt-7">
         <p className="text-[11px] font-semibold uppercase tracking-[0.09em] text-[var(--scient-burgundy)] dark:text-[color-mix(in_srgb,var(--scient-warm-white)_82%,var(--scient-burgundy))]">
           {release.kicker}
         </p>
