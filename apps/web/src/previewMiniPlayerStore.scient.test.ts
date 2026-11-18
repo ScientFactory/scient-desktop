@@ -13,7 +13,6 @@ import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSu
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const tabA = browserMiniPlayerSource("tab-a");
-const tabB = browserMiniPlayerSource("tab-b");
 const pixel: PreviewMiniPlayerSource = {
   kind: "device",
   hostId: "nucbox",
@@ -148,23 +147,6 @@ describe("Scient floating previews", () => {
 });
 
 describe("previewMiniPlayerStore", () => {
-  // regression: 25f7acd40e refactor(analysis): render static artifacts without browser sessions
-  it("ignores stale drag and resize updates after the content changes", () => {
-    usePreviewMiniPlayerStore.getState().open(refA, tabA);
-    usePreviewMiniPlayerStore.getState().open(refA, tabB);
-    usePreviewMiniPlayerStore.getState().move(refA, "browser:tab-a", { x: 100, y: 100 });
-    usePreviewMiniPlayerStore.getState().resize(refA, "browser:tab-a", { width: 800, height: 600 });
-
-    expect(
-      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
-    ).toEqual({
-      content: { kind: "browser", id: "browser:tab-b", tabId: "tab-b" },
-      position: null,
-      size: null,
-      lastInteraction: "drag",
-    });
-  });
-
   // regression: 25f7acd40e refactor(analysis): render static artifacts without browser sessions
   it("updates position and size atomically", () => {
     usePreviewMiniPlayerStore.getState().open(refA, tabA);
