@@ -131,7 +131,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/scientific-computing": "Scientific Computing",
   "/settings/documents": "Documents",
-  "/settings/source-control": "Source Control",
+  "/settings/source-control": "Source Control & Issues",
   // SCIENT-FORK:START — Synced folders
   "/settings/synced-folders": "Synced folders",
   // SCIENT-FORK:END
@@ -1075,6 +1075,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["ask before thread chat history"],
   },
   {
+    id: "terminal-close-confirmation",
+    title: msg("Terminal close confirmation"),
+    to: "/settings/general",
+    searchTerms: ["ask before delete stop process shell console history"],
+  },
+  {
     id: "quit-confirmation",
     title: msg("Quit shortcut"),
     to: "/settings/general",
@@ -1450,6 +1456,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
     scope: "project-defaults",
     searchTerms: ["pull request merge squash rebase last selected"],
+  },
+  {
+    id: "issue-trackers",
+    title: "Issue trackers",
+    to: "/settings/source-control",
+    scope: "environment-defaults",
+    searchTerms: ["linear jira issues tracker team api key connect bind project"],
   },
   {
     id: "source-control",

@@ -461,6 +461,7 @@ export function WorkspaceBrowserPreview(props: {
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
       documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${settledRefreshKey}`}
+      documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
     />
   );

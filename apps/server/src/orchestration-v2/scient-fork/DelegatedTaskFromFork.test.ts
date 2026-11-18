@@ -62,6 +62,7 @@ const helperFields = {
   worktreePath: "inherited",
   linkedPullRequest: "reset",
   pullRequests: "set",
+  issues: "set",
   branchPullRequest: "inherited",
   activeProviderThreadId: "set",
   historyOrigin: "reset",

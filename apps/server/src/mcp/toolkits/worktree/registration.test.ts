@@ -30,6 +30,8 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as IssueService from "../../../issue/IssueService.ts";
+import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -98,6 +100,8 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(IssueService.IssueService)({}),
+  Layer.mock(ThreadIssueService.ThreadIssueService)({}),
   ServerSettings.layerTest({ linkedEnvironmentsEnabled: true }),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
@@ -232,12 +236,13 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      // The credential holds worktree, orchestration and preview: only the device
-      // tools, whose every call needs a grant it lacks, are not listed.
+      // The credential holds worktree, orchestration and preview: only the device and
+      // issue tools, whose every call needs a grant it lacks, are not listed.
       // Device tools need their grant, and only a deferring client lists tool_search.
       // The background wait is listed only for providers that can hold a thread on one.
       const unlisted = new Set([
         ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
+        ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
         "tool_search",
         "scient_background_wait",
       ]);

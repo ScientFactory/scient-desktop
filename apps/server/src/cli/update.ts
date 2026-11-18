@@ -25,11 +25,10 @@ import {
   ensurePinnedRuntimeInstalled,
   findPosixLauncher,
   launcherOwnsVersionsDir,
-  pinnedRuntimeCommand,
   isPackageInstallFailure,
   mirrorInstallFailureReason,
-  PinnedRuntimeInstallError,
   pinnedRuntimePaths,
+  PinnedRuntimePreflightBlockedError,
   pinnedRuntimeVersionsDir,
   prunePinnedRuntimes,
   recordPinnedRuntimeLauncher,
@@ -37,7 +36,12 @@ import {
   windowsShimTarget,
   writePosixLauncher,
 } from "../cloud/pinnedRuntime.ts";
-import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
+  SERVICE_LAUNCHER_PROTOCOL,
+} from "../cloud/serviceProtocol.ts";
+import { runStagedServicePreflight } from "../cloud/servicePreflight.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -277,6 +281,7 @@ export const updateCommand = Command.make("update", {
       return yield* runUpdate({
         baseDir: config.baseDir,
         logsDir: config.logsDir,
+        databasePath: config.dbPath,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
         requestedVersion: Option.getOrUndefined(flags.version),
@@ -342,6 +347,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
+  readonly databasePath: string;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
   readonly requestedVersion: string | undefined;
@@ -498,31 +504,39 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     path,
     runner,
     releaseBaseUrl: mirror?.feedUrl,
-    validate: (paths) =>
-      runner
-        .run({
-          command: pinnedRuntimeCommand(paths, nodePath).command,
-          args: [...pinnedRuntimeCommand(paths, nodePath).args, "--version"],
-          timeout: Duration.seconds(30),
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "verifying the downloaded t3", cause }),
-          ),
-          Effect.flatMap((result) =>
-            result.code === 0 && /\bv(\S+)\s*$/.exec(result.stdout)?.[1] === targetVersion
-              ? Effect.void
-              : Effect.fail(
-                  new PinnedRuntimeInstallError({
-                    step: "verifying the downloaded t3",
-                    exitCode: Number(result.code),
+    validate: (runtime) =>
+      runStagedServicePreflight({
+        runner,
+        runtime,
+        // SCIENT-FORK: Scient's runtime is a Node entry point run by this executable.
+        nodePath,
+        targetVersion,
+        databasePath: input.databasePath,
+        // The target then runs under its own launcher, so only its database check matters. Older
+        // builds may predate protocol 4; every stable release since 0.0.43 accepts 3.
+        launcherProtocol:
+          compareExactServiceVersions(targetVersion, currentVersion) < 0
+            ? 3
+            : SERVICE_LAUNCHER_PROTOCOL,
+      }).pipe(
+        Effect.catchTags({
+          PinnedRuntimeInstallError: (error) =>
+            Effect.fail(
+              error.exitCode === undefined
+                ? error
+                : new PinnedRuntimePreflightBlockedError({
+                    version: targetVersion,
+                    reason: `Scient server ${targetVersion} could not confirm it supports this database (its check exited with code ${error.exitCode}), so Scient did not switch to it.`,
                   }),
-                ),
-          ),
-        ),
+            ),
+        }),
+      ),
   }).pipe(
     Effect.ensuring(Effect.sync(progress.finish)),
+    Effect.catchTags({
+      PinnedRuntimePreflightBlockedError: (error) =>
+        Effect.fail(new CliUpdateError({ reason: error.reason })),
+    }),
     Effect.mapError((error) =>
       mirror !== undefined && isPackageInstallFailure(error)
         ? new CliUpdateError({

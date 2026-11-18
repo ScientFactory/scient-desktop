@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
@@ -33,18 +32,13 @@ import {
   ensurePinnedRuntimeInstalled,
   isPackageInstallFailure,
   mirrorInstallFailureReason,
-  PinnedRuntimeInstallError,
   pinnedRuntimePaths,
-  PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
 import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
-import { decodeServicePreflightResult } from "./servicePreflight.ts";
+import { runStagedServicePreflight } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { isExactServiceVersion } from "./serviceProtocol.ts";
-
-// A staged runtime's cold start can take over a minute on a loaded, swapping host.
-const PREFLIGHT_TIMEOUT = Duration.minutes(3);
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -227,74 +221,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         runner,
         releaseBaseUrl: mirror?.feedUrl,
         validate: (runtime) =>
-          runner
-            .run({
-              command: execPath,
-              args: [
-                runtime.entryPath,
-                "__service-preflight",
-                "--database-path",
-                serverConfig.dbPath,
-                "--launcher-protocol",
-                String(launcherProtocol),
-              ],
-              timeout: PREFLIGHT_TIMEOUT,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "running the staged service preflight",
-                    cause,
-                  }),
-              ),
-              Effect.flatMap(
-                (
-                  result,
-                ): Effect.Effect<
-                  void,
-                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
-                > => {
-                  if (result.code !== 0) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "running the staged service preflight",
-                        exitCode: Number(result.code),
-                        stdoutLength: result.stdout.length,
-                        stderrLength: result.stderr.length,
-                      }),
-                    );
-                  }
-                  let parsed: unknown;
-                  try {
-                    parsed = JSON.parse(result.stdout.trim());
-                  } catch (cause) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "decoding the staged service preflight",
-                        cause,
-                      }),
-                    );
-                  }
-                  const preflight = decodeServicePreflightResult(parsed, launcherProtocol);
-                  if (preflight === undefined || preflight.version !== targetVersion) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "verifying the staged service preflight",
-                      }),
-                    );
-                  }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
-                        }),
-                      );
-                },
-              ),
-            ),
+          runStagedServicePreflight({
+            runner,
+            runtime,
+            // SCIENT-FORK: Scient's runtime is a Node entry point run by this executable.
+            nodePath: execPath,
+            targetVersion,
+            databasePath: serverConfig.dbPath,
+            launcherProtocol,
+          }),
       }).pipe(
         Effect.mapError((error) =>
           error._tag === "PinnedRuntimePreflightBlockedError"

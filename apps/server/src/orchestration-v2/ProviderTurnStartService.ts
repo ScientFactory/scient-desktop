@@ -22,6 +22,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
@@ -84,6 +85,7 @@ import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts"
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { hasScientContextHistory } from "./ScientHistoricalContext.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
+import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import {
   handoffBudget,
   contextUsageForHandoff,
@@ -153,6 +155,53 @@ const refusedBeforePrompt = (error: unknown): boolean =>
     error.driver === CLAUDE_PROVIDER &&
     error.detail === CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+/**
+ * Whether a non-truncating provider's native session lost the conversation kept before `run`.
+ * Rollback resets it: the newest accepted turn was rolled back (works without legacy-missing
+ * native ids) or ran under another native id (rollback of runs the provider never accepted).
+ */
+const nativeSessionMissesKeptTurns = (
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "attempts" | "providerTurns" | "contextHandoffs"
+  >,
+  providerThread: OrchestrationV2ProviderThread,
+  run: OrchestrationV2Run,
+): boolean => {
+  const nativeId = providerThread.nativeThreadRef?.nativeId;
+  if (nativeId === undefined) return false;
+  const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  const accepted = projection.attempts.filter((attempt) => acceptedAttemptIds.has(attempt.id));
+  const runsById = new Map(projection.runs.map((source) => [source.id, source]));
+  const ordinalOf = (attempt: OrchestrationV2RunAttempt) =>
+    runsById.get(attempt.runId)?.ordinal ?? 0;
+  const newest = accepted
+    .filter((attempt) => attempt.providerThreadId === providerThread.id)
+    .toSorted((a, b) => ordinalOf(a) - ordinalOf(b) || a.attemptOrdinal - b.attemptOrdinal)
+    .at(-1);
+  if (newest === undefined) return false;
+  // Inherited fork history is kept even when every local run was rolled back.
+  const keepsHistory =
+    (projection.thread.forkedFrom?.type === "run" && projection.thread.lineage.sideChat !== true) ||
+    accepted.some((attempt) => {
+      const source = runsById.get(attempt.runId);
+      return (
+        source !== undefined && source.ordinal < run.ordinal && source.status !== "rolled_back"
+      );
+    });
+  return (
+    keepsHistory &&
+    (runsById.get(newest.runId)?.status === "rolled_back" ||
+      (newest.nativeThreadId !== undefined && newest.nativeThreadId !== nativeId)) &&
+    !projection.contextHandoffs.some(
+      (handoff) =>
+        handoff.toProviderThreadId === providerThread.id &&
+        handoff.delivery?.nativeThreadId === nativeId &&
+        handoff.delivery.status !== "pending",
+    )
+  );
+};
 
 /** Missing execution records cannot be repaired by retrying a start. */
 export class ProviderTurnStartRunStateMissingError extends Schema.TaggedError<ProviderTurnStartRunStateMissingError>()(
@@ -946,6 +995,13 @@ export const layer: Layer.Layer<
         referenceOnly: !forceBytePolicy && hasScientContextHistory(projection),
         settleStartFailure,
       });
+      const prepareFullHistoryBeforeStart = makeTurnStartHistory({
+        projectionStore,
+        threadId: input.threadId,
+        runs: projection.runs,
+        willRetry: input.willRetry,
+        settleStartFailure,
+      });
       // SCIENT-FORK:END
       // SCIENT-FORK:START provider-enabled-at-open
       if (
@@ -1189,11 +1245,8 @@ export const layer: Layer.Layer<
           ...loadedProviderThread,
           contextUsage: handoffUsage,
         };
-        // The resume fallback summary already covers every earlier run in order. A
-        // retry copy after it would rank older missed requests as the newest history.
         const missedRuns = projection.runs.filter(
           (source) =>
-            !resumeFellBack &&
             source.ordinal < run.ordinal &&
             source.providerThreadId === providerThread.id &&
             (source.status === "failed" || source.status === "interrupted") &&
@@ -1243,22 +1296,23 @@ export const layer: Layer.Layer<
       };
       const prepareRetryHandoff = Effect.fn("ProviderTurnStartService.prepareRetryHandoff")(
         function* (context: ReturnType<typeof handoffContextForThread>) {
-          const { missedRunIds, coveredItemIds, missedRuns } = context;
+          const { missedRunIds, coveredItemIds, missedRuns, acceptedAttempts } = context;
           // SCIENT-FORK:START — missing native receipts read portable history before this
           // attempt becomes running; a failed read must not strand a run without a native turn.
-          const missedHistory =
+          const missedRunHistory =
             missedRunIds.size === 0 ? [] : yield* prepareHistoryBeforeStart([...missedRunIds]);
-          if (missedHistory === undefined) return undefined;
+          if (missedRunHistory === undefined) return undefined;
+          const missedHistory = missedRunHistory.filter(
+            (item) => item.runId !== null && missedRunIds.has(item.runId),
+          );
           const missedItems = missedHistory.filter(
-            (item) =>
-              item.runId !== null &&
-              missedRunIds.has(item.runId) &&
-              !coveredItemIds.has(item.id) &&
-              isContextHistoryItem(item),
+            (item) => !coveredItemIds.has(item.id) && isContextHistoryItem(item),
           );
           // SCIENT-FORK:END
-          const retryHandoff =
-            missedItems.length === 0
+          // The resume fallback summary already covers every earlier run in order. A
+          // retry copy after it would rank older missed requests as the newest history.
+          const handoffs =
+            missedItems.length === 0 || resumeFellBack
               ? []
               : [
                   yield* contextHandoffService.prepareProviderHandoff({
@@ -1289,7 +1343,49 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
-          return retryHandoff;
+          // History delivery (inline or injected) is text only, so missed images ride on prompts
+          // until a later run's is accepted. Compaction and /goal starts carry none. A missed run's
+          // own accepted attempt predates its unsent steering input, so it does not count.
+          const lastPromptOrdinal = Math.max(
+            0,
+            ...acceptedAttempts.flatMap((attempt) => {
+              if (missedRunIds.has(attempt.runId)) return [];
+              const source = projection.runs.find((candidate) => candidate.id === attempt.runId);
+              const message = projection.messages.find(
+                (candidate) => candidate.id === source?.userMessageId,
+              );
+              return source === undefined ||
+                (message !== undefined &&
+                  (isCompactionCommandMessage(message) ||
+                    (goalDriver && parseGoalCommand(message) !== null)))
+                ? []
+                : [source.ordinal];
+            }),
+          );
+          const promptRunIds = missedRuns
+            .filter((source) => source.ordinal > lastPromptOrdinal)
+            .map((source) => source.id);
+          // SCIENT-FORK:START — reference-only history carries no images; read those prompts whole.
+          const promptHistory = missedHistory.some(
+            (item) =>
+              "sourceOnly" in item &&
+              item.type === "user_message" &&
+              item.runId !== null &&
+              promptRunIds.includes(item.runId),
+          )
+            ? yield* prepareFullHistoryBeforeStart(promptRunIds)
+            : missedHistory;
+          if (promptHistory === undefined) return undefined;
+          // SCIENT-FORK:END
+          const attachments = promptHistory.flatMap((item) =>
+            !("sourceOnly" in item) &&
+            item.type === "user_message" &&
+            item.runId !== null &&
+            promptRunIds.includes(item.runId)
+              ? item.attachments
+              : [],
+          );
+          return { handoffs, attachments };
         },
       );
       const prepareRecoveryHandoff = Effect.fn("ProviderTurnStartService.prepareRecoveryHandoff")(
@@ -1303,6 +1399,24 @@ export const layer: Layer.Layer<
           // SCIENT-FORK:START — portable history excludes rolled-back runs.
           const history = yield* prepareHistoryBeforeStart();
           if (history === undefined) return undefined;
+          // SCIENT-FORK:END
+          // SCIENT-FORK:START — history may be body-less candidates; only a fresh run sets a boundary.
+          const boundary = projection.runs.some((source) => source.freshContext === true)
+            ? contextBoundaryOrdinal({
+                runs: projection.runs,
+                turnItems: yield* projectionStore.getTurnStartHistory(projection.thread.id),
+              })
+            : 0;
+          // SCIENT-FORK:END
+          const inherited =
+            boundary === 0
+              ? yield* ContextHandoffService.readInheritedHandoffItems(
+                  projectionStore,
+                  projection.thread,
+                )
+              : [];
+          // SCIENT-FORK:START — copied frozen rows are also the thread's own runless rows.
+          const inheritedIds = new Set<string>(inherited.map((item) => item.id));
           // SCIENT-FORK:END
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
@@ -1320,15 +1434,20 @@ export const layer: Layer.Layer<
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
-            // SCIENT-FORK:START — portable history read above.
-            items: history.filter(
-              // SCIENT-FORK:END
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
-            ),
+            items: [
+              ...inherited,
+              ...history.filter((item) =>
+                item.runId === null
+                  ? boundary === 0 && !inheritedIds.has(item.id)
+                  : projection.runs.some(
+                      (source) =>
+                        source.id === item.runId &&
+                        source.ordinal >= boundary &&
+                        source.ordinal < run.ordinal &&
+                        source.status !== "rolled_back",
+                    ),
+              ),
+            ],
             createdAt,
           });
           return { handoff, transferId, createdAt };
@@ -1345,7 +1464,7 @@ export const layer: Layer.Layer<
           ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
         ];
       };
-      let resumedRetryHandoff: ReadonlyArray<OrchestrationV2ContextHandoff> | undefined;
+      let resumedRetryHandoff: Effect.Success<ReturnType<typeof prepareRetryHandoff>> | undefined;
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
       let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
@@ -1418,11 +1537,13 @@ export const layer: Layer.Layer<
               cause: `Native fork transfer ${nativeForkTransfer.id} has no source provider execution.`,
             });
           }
-          // Providers refuse to fork a busy thread, so a source that started a turn after
+          // Most providers refuse to fork a busy thread, so a source that started a turn after
           // dispatch planned this fork gets the portable context dispatch gives a busy source.
-          const sourceBusy = sourceProjection.runs.some(
-            (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
-          );
+          const sourceBusy =
+            session.providerSession.capabilities.threads.canForkWhileSourceRunning !== true &&
+            sourceProjection.runs.some(
+              (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
+            );
           let nativeForkFailure: string | undefined;
           if (!sourceBusy) {
             const forked = yield* Effect.result(
@@ -1595,6 +1716,7 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        // SCIENT-FORK:START — rolled-back carrying history forces a fresh native session.
         const removedDelivery = projection.contextHandoffs.some(
           (handoff) =>
             handoff.toProviderThreadId === providerThread.id &&
@@ -1603,8 +1725,13 @@ export const layer: Layer.Layer<
               (source) => source.id === handoff.targetRunId && source.status === "rolled_back",
             ),
         );
+        // SCIENT-FORK:END
+        // A provider that cannot truncate rolls back into a fresh native session holding none of the kept turns.
+        const nativeSessionLacksKeptTurns =
+          !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
+          nativeSessionMissesKeptTurns(projection, providerThread, run);
         const resumed = yield* Effect.result(
-          uncertainDelivery || removedDelivery
+          uncertainDelivery || removedDelivery || nativeSessionLacksKeptTurns
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
@@ -1613,7 +1740,9 @@ export const layer: Layer.Layer<
                   runId,
                   cause: removedDelivery
                     ? "Carrying history run was rolled back"
-                    : "Uncertain native history injection",
+                    : uncertainDelivery
+                      ? "Uncertain native history injection"
+                      : "Native session holds none of the kept conversation",
                 }),
               )
             : session.resumeThread({
@@ -1631,7 +1760,7 @@ export const layer: Layer.Layer<
           if (resumedRetryHandoff === undefined) return undefined;
           // SCIENT-FORK:END
           const fits = yield* deliverContextHandoffs({
-            handoffs: [...handoffs, ...resumedRetryHandoff],
+            handoffs: [...handoffs, ...resumedRetryHandoff.handoffs],
             providerThread: { ...resumed.success, id: providerThread.id },
             // SCIENT-FORK:START — Scient policy, source resolver, and provenance.
             budget: context.budget(handoffs),
@@ -1690,7 +1819,7 @@ export const layer: Layer.Layer<
           }
         }
         resumedHandoffContext = undefined;
-        resumedRetryHandoff = [];
+        resumedRetryHandoff = undefined;
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
         // Another client is still writing to the native thread. A fresh
         // session here would silently split the conversation from it.
@@ -1710,9 +1839,11 @@ export const layer: Layer.Layer<
             ? "history_delivery_rolled_back"
             : uncertainDelivery
               ? "uncertain_history_delivery"
-              : resumed._tag === "Success"
-                ? "handoff_budget_exhausted"
-                : "resume_failed",
+              : nativeSessionLacksKeptTurns
+                ? "native_session_lacks_kept_turns"
+                : resumed._tag === "Success"
+                  ? "handoff_budget_exhausted"
+                  : "resume_failed",
           // SCIENT-FORK:END
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
@@ -2081,7 +2212,7 @@ export const layer: Layer.Layer<
               );
           const prepareDelivery = () =>
             deliverContextHandoffs({
-              handoffs: [...effectiveHandoffs, ...retryHandoff],
+              handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
               deferInline: compact || goalCommand,
               providerThread: runningProviderThread,
               // SCIENT-FORK:START — the skill-prepared current input spends the allowance.
@@ -2145,15 +2276,27 @@ export const layer: Layer.Layer<
           const startInput = noteContinuation ? promptedInput : turnInput;
           const { resume: _resume, ...contextInput } = startInput;
           const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
+          const missedAttachments =
+            compact || goalCommand
+              ? []
+              : retryHandoff.attachments.filter(
+                  (missed) =>
+                    !turnInput.message.attachments.some((current) => current.id === missed.id),
+                );
+          // Like pending history, pending images need a prompt; native resume carries none.
+          const prompted = context !== "" || missedAttachments.length > 0;
           const operation =
-            turnInput.resume && context === "" && session.resumeTurn !== undefined
+            turnInput.resume && !prompted && session.resumeTurn !== undefined
               ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
               : start({
-                  ...(context === "" ? startInput : contextInput),
+                  ...(prompted ? contextInput : startInput),
                   message: {
                     ...turnInput.message,
                     ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
                     text,
+                    ...(missedAttachments.length === 0
+                      ? {}
+                      : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
                   },
                   ...(text === preparedUserText
                     ? {}

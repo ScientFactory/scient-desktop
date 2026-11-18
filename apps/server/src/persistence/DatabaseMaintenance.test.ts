@@ -43,6 +43,8 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const legacy = path.join(userdata, "state.sqlite");
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY)`;
+          yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY)`;
           yield* sql`CREATE TABLE retained_data (value TEXT)`;
           yield* sql`INSERT INTO retained_data VALUES ('keep')`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
@@ -51,7 +53,9 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`CREATE TABLE v1_data (value TEXT)`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
 
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+        const inspected = yield* maintenance.inspect(dbPath);
+        assert.isNull(inspected.legacyDatabaseBytes);
+        assert.isNull(inspected.legacyOnlyRecords);
         const refused = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
         assert.equal(refused._tag, "LegacyDatabaseRemoveError");
         assert.isTrue(yield* fs.exists(legacy));

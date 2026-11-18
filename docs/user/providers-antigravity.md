@@ -127,6 +127,11 @@ Questions with fixed choices still need one of the offered answers, even in
 The model picker also refreshes when a running session reports new model choices.
 Models available in other Antigravity apps may not be available through the ACP agent.
 
+On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
+Antigravity. Antigravity cannot rewind its own conversation, so the next turn
+starts a fresh Antigravity session and Scient sends it the kept conversation,
+without the turns you removed.
+
 For supported Gemini variants, choose the model once and use **Reasoning** to
 select an available level. On mobile, open **Model and reasoning settings**.
 Changing the level selects Google's corresponding model variant; it does not

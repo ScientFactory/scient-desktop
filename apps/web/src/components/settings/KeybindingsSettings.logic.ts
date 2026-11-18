@@ -49,6 +49,7 @@ export interface KeybindingRow {
   readonly key: string;
   readonly when: string;
   readonly source: KeybindingSource;
+  readonly isUnassigned: boolean;
   readonly defaultKey: string | null;
   readonly defaultWhen: string;
   readonly binding: ResolvedKeybindingRule;
@@ -167,6 +168,13 @@ function defaultBindingForBinding(
         shortcutToKeybindingInput(entry.shortcut) === bindingKey &&
         whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
+    (bindingWhen === "false"
+      ? DEFAULT_RESOLVED_KEYBINDINGS.find(
+          (entry) =>
+            entry.command === binding.command &&
+            shortcutToKeybindingInput(entry.shortcut) === bindingKey,
+        )
+      : undefined) ??
     DEFAULT_RESOLVED_KEYBINDINGS.find(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
@@ -267,6 +275,10 @@ export function buildKeybindingRows(
       key,
       when,
       source: sourceForBinding(binding),
+      isUnassigned:
+        when === "false" &&
+        defaultBinding !== undefined &&
+        key === shortcutToKeybindingInput(defaultBinding.shortcut),
       defaultKey: defaultBinding ? shortcutToKeybindingInput(defaultBinding.shortcut) : null,
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,

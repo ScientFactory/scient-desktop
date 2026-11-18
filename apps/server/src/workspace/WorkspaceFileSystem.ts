@@ -57,7 +57,7 @@ import {
 } from "../scient/workspace/WorkspaceFileWatch.ts";
 // SCIENT-FORK:END
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
-import { toWslDrivePath } from "./wslDrivePath.ts";
+import { toHostDrivePath } from "./hostDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -334,7 +334,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const toHostPath = (requestedPath: string) =>
-    toWslDrivePath(requestedPath).pipe(
+    toHostDrivePath(requestedPath).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 

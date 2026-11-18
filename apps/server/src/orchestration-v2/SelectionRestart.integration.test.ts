@@ -1083,8 +1083,17 @@ it.live("detaches the old provider session after an active provider handoff", ()
   ),
 );
 
+const accountSwitchModes = [
+  "active",
+  "idle",
+  "selection-command",
+  "pooled",
+  "separate-home",
+  "active-separate-home",
+] as const;
+
 it.live.each(
-  (["active", "idle", "selection-command", "pooled", "separate-home"] as const).map((mode) => ({
+  accountSwitchModes.map((mode) => ({
     caseTitle: `preserves native history only for compatible account switches (${mode})`,
     mode,
   })),
@@ -1092,6 +1101,8 @@ it.live.each(
   Effect.scoped(
     Effect.gen(function* () {
       const name = `shared-home-${mode}`;
+      const active = mode === "active" || mode === "active-separate-home";
+      const separateHome = mode === "separate-home" || mode === "active-separate-home";
       const cwd = yield* checkpointWorkspace(name);
       const threadId = ThreadId.make(`thread:${name}`);
       const targetId = ProviderInstanceId.make("codex-shadow-account");
@@ -1140,8 +1151,7 @@ it.live.each(
         getMetadata: (instanceId) =>
           Effect.succeed({
             driver,
-            continuationKey:
-              mode === "separate-home" ? `codex:home:/${instanceId}` : "codex:home:/shared",
+            continuationKey: separateHome ? `codex:home:/${instanceId}` : "codex:home:/shared",
             enabled: true,
             capabilities,
           }),
@@ -1151,7 +1161,7 @@ it.live.each(
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const selection = {
           ...initialSelection,
-          model: mode === "active" ? initialSelection.model : "complete",
+          model: active ? initialSelection.model : "complete",
         };
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -1171,7 +1181,7 @@ it.live.each(
           Effect.gen(function* () {
             const terminal = yield* orchestrator.streamDomainEvents.pipe(
               Stream.filter((event) =>
-                mode === "active" && step === "first"
+                active && step === "first"
                   ? event.type === "provider-turn.updated" && event.payload.status === "running"
                   : event.type === "run.updated" && event.payload.status === "completed",
               ),
@@ -1216,14 +1226,20 @@ it.live.each(
         const second = yield* dispatch(
           "second",
           targetSelection,
-          mode === "active" ? first.runs[0]!.id : undefined,
+          active ? first.runs[0]!.id : undefined,
         );
         const targetThread = second.providerThreads.find(
           (thread) => thread.id === second.thread.activeProviderThreadId,
         )!;
-        if (mode === "separate-home") {
+        if (separateHome) {
           assert.notEqual(targetThread.id, originalThread.id);
           assert.lengthOf(second.contextHandoffs, 1);
+          assert.deepEqual(
+            second.turnItems.flatMap((item) =>
+              item.type === "handoff" ? [item.contextHandoffId] : [],
+            ),
+            [second.contextHandoffs[0]!.id],
+          );
           assert.lengthOf(second.contextTransfers, 1);
           assert.isEmpty(resumes);
           assert.notEqual(messages[1], "second");
