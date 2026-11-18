@@ -23,8 +23,6 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
-  // SCIENT-FORK:START
-  // SCIENT-FORK:END
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
