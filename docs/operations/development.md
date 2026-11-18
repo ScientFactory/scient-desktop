@@ -353,7 +353,10 @@ Workspace package tests run on six runners. Part 1 keeps the `Test` name that
 package always runs; it alone sets up Electron and the browser secret helper.
 
 Server tests use sixteen sequential-file shards with a 20-minute ceiling. Web uses twelve shards
-with a 15-minute ceiling. All run on standard GitHub-hosted 4-vCPU Ubuntu runners.
+with a 15-minute ceiling. Trials on 11-18 (PR #1017) kept twelve: ten shards saved 3.0
+runner-minutes but lengthened the slowest job from 251 s to 304 s; weighting browser files by
+page time, module load included, left two shards about 70 s behind the rest, so per-run contention
+outweighs the weights; and installing only `@t3tools/web...` broke the root Vite config. All run on standard GitHub-hosted 4-vCPU Ubuntu runners.
 Both use longest-file-first allocation with package-relative path tie breaking and
 the lowest shard index on equal load. New files receive the sequencer's fallback
 weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
