@@ -83,8 +83,16 @@ async function fixture(
   const action = (id: string) =>
     controlsFor(registration.element).actions.find((item) => item.id === id)!;
   const pickFile = async () => {
-    await act(() => action("replace-image").run());
     const picker = registration.element.querySelector<HTMLInputElement>("input[type=file]")!;
+    // A real click opens the native file chooser. Headless Chromium dismisses it with a
+    // `cancel` event, which clears the pending replacement before this test's `change`.
+    const click = vi.spyOn(picker, "click").mockImplementation(() => {});
+    try {
+      await act(() => action("replace-image").run());
+      expect(click).toHaveBeenCalledTimes(1);
+    } finally {
+      click.mockRestore();
+    }
     Object.defineProperty(picker, "files", {
       configurable: true,
       value: [new File(["image"], "new.png", { type: "image/png" })],
