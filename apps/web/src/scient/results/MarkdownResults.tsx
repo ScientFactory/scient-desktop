@@ -12,7 +12,7 @@ import {
   resultHasNewer,
   resultReferenceState as resultMarkState,
 } from "@t3tools/shared/computeResults";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -77,6 +77,7 @@ export function MarkdownResults(props: {
   const [refreshTick, setRefreshTick] = useState(0);
   const [card, setCard] = useState<{ href: string; anchor: HTMLElement } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const resolveCommand = useAtomCommand(computeEnvironment.resultsResolve, {
     reportFailure: false,
   });
@@ -168,18 +169,31 @@ export function MarkdownResults(props: {
         }}
       >
         {card !== null && cardReference !== undefined ? (
-          <PopoverPopup anchor={card.anchor} side="bottom" align="start" className="w-80">
-            <ResultCard
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              documentPath={props.documentPath}
-              controller={controller}
-              reference={cardReference}
-              references={references}
-              resolutions={resolutions}
-              onChanged={() => setRefreshTick((tick) => tick + 1)}
-              onClose={() => setCard(null)}
-            />
+          <PopoverPopup
+            ref={cardRef}
+            anchor={card.anchor}
+            side="bottom"
+            align="start"
+            // A click in the editor counts as keyboard focus to Chromium; focusing the first button
+            // would draw its focus ring. Tab still reaches the buttons.
+            initialFocus={cardRef}
+            className="w-80"
+            padding="none"
+          >
+            {/* Solid, not glass: the card often sits over the paper's figures, which blur into smudges. */}
+            <div className="rounded-[calc(var(--radius-lg)-1px)] bg-popover p-4">
+              <ResultCard
+                environmentId={props.environmentId}
+                cwd={props.cwd}
+                documentPath={props.documentPath}
+                controller={controller}
+                reference={cardReference}
+                references={references}
+                resolutions={resolutions}
+                onChanged={() => setRefreshTick((tick) => tick + 1)}
+                onClose={() => setCard(null)}
+              />
+            </div>
           </PopoverPopup>
         ) : null}
       </Popover>
