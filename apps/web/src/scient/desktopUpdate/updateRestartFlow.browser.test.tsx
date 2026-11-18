@@ -5,7 +5,7 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import type { UpdateEverythingRun } from "../../components/sidebar/updateEverything.logic";
 
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 const updateStore = vi.hoisted(() => {
   let state: DesktopUpdateState | null = null;
@@ -139,6 +139,7 @@ const cornerNotice = () => {
   const viewport = document.querySelector<HTMLElement>('[data-slot="toast-viewport"]');
   return viewport && viewport.textContent !== "" ? viewport : null;
 };
+const tooltipText = () => document.querySelector('[data-slot="tooltip-popup"]')?.textContent ?? "";
 const restartNow = (notice: HTMLElement) =>
   [...notice.querySelectorAll("button")].find((button) => button.textContent === "Restart now");
 
@@ -276,6 +277,38 @@ describe("update restart flow", () => {
     expect(cornerNotice()).toBeNull();
   });
 
+  it("shows native preparation beside the compact control without hover and blocks another restart or check", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    const pending = Promise.withResolvers<DesktopUpdateActionResult>();
+    bridge.installUpdate.mockImplementationOnce(() => {
+      updateStore.set({
+        ...downloaded(),
+        status: "preparing",
+        message: "Preparing update… Verifying the authorized release.",
+      });
+      return pending.promise;
+    });
+    await userEvent.click(footerButton(_fixture));
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    await userEvent.click(restartNow(anchoredNotice()!)!);
+    await vi.waitFor(() => expect(footerButton(_fixture).getAttribute("aria-busy")).toBe("true"));
+    expect(footerButton(_fixture).textContent).toBe("");
+    expect(footerButton(_fixture).getAttribute("aria-disabled")).toBe("true");
+    expect(footerButton(_fixture).getAttribute("aria-label")).toContain("Preparing update");
+    // Nobody has to hover: the progress stays open beside the control, and leaving keeps it.
+    await vi.waitFor(() => expect(tooltipText()).toContain("Preparing update"));
+    await userEvent.unhover(footerButton(_fixture).parentElement!);
+    expect(tooltipText()).toContain("Preparing update");
+    footerButton(_fixture).click();
+    expect(bridge.installUpdate).toHaveBeenCalledOnce();
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+    pending.resolve(result(downloaded(), false));
+  });
+
   it("a retried download offers Restart even when nothing here is working", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -349,6 +382,26 @@ describe("update restart flow", () => {
     expect(bridge.installUpdate).not.toHaveBeenCalled();
   });
 
+  it("with the sidebar closed, preparation is one corner toast that follows its progress", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const preparing = (message: string): DesktopUpdateState => ({
+      ...downloaded(),
+      status: "preparing",
+      message,
+    });
+    updateStore.set(preparing("Preparing update… You can keep working."));
+    await mount(_fixture, "position:fixed;left:-600px;bottom:24px;width:240px");
+
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("Preparing update"));
+    await act(() => updateStore.set(preparing("Saving your work before restarting…")));
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("Saving your work"));
+    expect(cornerNotice()?.textContent).not.toContain("Preparing update");
+    await act(() => updateStore.set(downloaded()));
+    await vi.waitFor(() => expect(cornerNotice()).toBeNull());
+  });
+
   it("a failed install releases the footer so Update can be tried again", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -364,7 +417,10 @@ describe("update restart flow", () => {
     footerButton(_fixture).click();
     await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
     restartNow(anchoredNotice()!)?.click();
-    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("IPC closed"));
+    // The reason stays where the user was looking, not in a corner toast.
+    await vi.waitFor(() => expect(tooltipText()).toContain("IPC closed"));
+    expect(tooltipText()).toContain("Could not install update");
+    expect(cornerNotice()).toBeNull();
     await vi.waitFor(() => expect(footerButton(_fixture).getAttribute("aria-disabled")).toBeNull());
 
     footerButton(_fixture).click();

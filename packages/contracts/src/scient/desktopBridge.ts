@@ -33,6 +33,24 @@ export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
+  /** Local restart measurement; absent when no matching update restart is pending. */
+  getRestartReadinessToken?: () => Promise<{
+    readonly attemptId: string;
+    readonly launchId: string;
+  } | null>;
+  reportWorkspaceReady?: (input: {
+    readonly attemptId: string;
+    readonly launchId: string;
+    readonly projectRestored: boolean;
+  }) => Promise<boolean>;
+  onPrepareUpdateSave?: (
+    listener: (input: { readonly requestId: string; readonly lockForRestart: boolean }) => void,
+  ) => () => void;
+  onReleaseUpdateSave?: (listener: (requestId: string) => void) => () => void;
+  completeUpdateSave?: (input: {
+    readonly requestId: string;
+    readonly saved: boolean;
+  }) => Promise<boolean>;
   /** Scient: reads the keep-awake state, after applying a thread's choice when one is given. */
   keepAwake?: (choice?: KeepAwakeChoice) => Promise<KeepAwakeState>;
   /**

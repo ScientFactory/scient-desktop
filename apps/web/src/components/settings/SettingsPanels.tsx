@@ -1,6 +1,6 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
 import { NotificationSettings } from "./NotificationSettings";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, LoaderCircleIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
@@ -182,6 +182,7 @@ function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
+  const isPreparingUpdate = updateState?.status === "preparing";
   const checkProviderUpdates = useCheckProviderUpdates();
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
@@ -199,6 +200,7 @@ function AboutVersionSection() {
     const bridge = window.desktopBridge;
     if (
       !bridge ||
+      isPreparingUpdate ||
       typeof bridge.setUpdateChannel !== "function" ||
       channel === selectedUpdateChannel
     ) {
@@ -224,7 +226,7 @@ function AboutVersionSection() {
 
   const handleButtonClick = async () => {
     const bridge = window.desktopBridge;
-    if (!bridge) return;
+    if (!bridge || isPreparingUpdate) return;
 
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
@@ -289,8 +291,9 @@ function AboutVersionSection() {
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
-  const description =
-    action === "download" || action === "install"
+  const description = isPreparingUpdate
+    ? (updateState.message ?? "Preparing update…")
+    : action === "download" || action === "install"
       ? "Update available."
       : (getDesktopUpdateDisabledReason(updateState, updatesDenial) ??
         "Current version of the application.");
@@ -310,9 +313,18 @@ function AboutVersionSection() {
                   size="sm"
                   variant="outline"
                   disabled={buttonDisabled || isUpdateActionPending}
+                  aria-busy={isPreparingUpdate || undefined}
+                  aria-label={isPreparingUpdate ? (buttonTooltip ?? "Preparing update") : undefined}
                   onClick={handleButtonClick}
                 >
-                  {buttonLabel}
+                  {isPreparingUpdate ? (
+                    <LoaderCircleIcon
+                      aria-hidden
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                    />
+                  ) : (
+                    buttonLabel
+                  )}
                 </Button>
               }
             />
@@ -336,7 +348,7 @@ function AboutVersionSection() {
                 size="sm"
                 className="w-full sm:w-40"
                 aria-label="Update track"
-                disabled={isChangingUpdateChannel}
+                disabled={isChangingUpdateChannel || isPreparingUpdate}
               >
                 <SelectValue>{selectedUpdateChannel === "beta" ? "Beta" : "Stable"}</SelectValue>
               </SelectTrigger>

@@ -103,7 +103,11 @@ describe("app startup failures", () => {
 
   it("keeps native reload and a pending-file restart veto at the boot boundary", async () => {
     vi.useFakeTimers();
-    const state = { enabled: true, status: "downloaded" } as DesktopUpdateState;
+    const state = {
+      enabled: true,
+      status: "downloaded",
+      downloadedVersion: "1.2.4",
+    } as DesktopUpdateState;
     const reload = vi.fn();
     const reloadMainWindow = vi.fn(async () => true);
     const installUpdate = vi.fn(async () => ({
@@ -138,12 +142,10 @@ describe("app startup failures", () => {
     expect(update).toBeDefined();
     update?.dispatchEvent(new Event("click"));
     expect(installUpdate).not.toHaveBeenCalled();
-    expect(bootShell?.text).toContain("Restart paused");
     host.removeEventListener("beforeunload", veto);
     update?.dispatchEvent(new Event("click"));
-    expect(installUpdate).toHaveBeenCalledOnce();
+    expect(installUpdate).toHaveBeenCalledExactlyOnceWith("1.2.4");
     await installUpdate.mock.results[0]!.value;
-    expect(bootShell?.text).not.toContain("The update install failed");
   });
 
   it.each(["download", "install"] as const)(

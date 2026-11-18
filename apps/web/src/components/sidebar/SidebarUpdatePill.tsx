@@ -70,6 +70,7 @@ import { useLocalWorkBlocksRestart } from "../../scient/desktopUpdate/restartWhe
 // SCIENT-FORK:START — replaces upstream's UpdateEverythingDialog: a pass asks beside the pill,
 // and only when it would stop running threads.
 import { UpdateEverythingAsk } from "../../scient/desktopUpdate/UpdateEverythingAsk";
+import { useRestartProgressNotice } from "../../scient/desktopUpdate/useRestartProgressNotice";
 import { confirmServerStops } from "../../scient/desktopUpdate/useOtherUpdates";
 // SCIENT-FORK:END
 
@@ -224,6 +225,8 @@ function SidebarUpdateControl() {
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
+  // Restart progress and the reason a restart stopped show beside it without hover.
+  const restartNotice = useRestartProgressNotice(state, releaseNotesTriggerId);
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
   // The card Update opens stays until Restart or dismissal; a second press closes it.
   const restartCardOpenRef = useRef(false);
@@ -241,9 +244,11 @@ function SidebarUpdateControl() {
   ) => {
     updateReadyNoticeRef.current?.close();
     setIsActionPending(true);
-    return installDesktopUpdateNow(bridge, reportError, expectedVersion).finally(() =>
-      setIsActionPending(false),
-    );
+    return installDesktopUpdateNow(
+      bridge,
+      reportError ?? restartNotice.reportFailure,
+      expectedVersion,
+    ).finally(() => setIsActionPending(false));
   };
   // SCIENT-FORK:END
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -283,6 +288,7 @@ function SidebarUpdateControl() {
   const updaterAction = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const action = backgroundUpdate ? "none" : updaterAction;
   const isDownloading = state?.status === "downloading" && !backgroundUpdate;
+  const isPreparing = state?.status === "preparing";
   const localUpdateVersion =
     state && updaterAction !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   // SCIENT-FORK:END
@@ -342,15 +348,18 @@ function SidebarUpdateControl() {
         ? { title: getDesktopUpdateBackgroundTooltip(state), detail: null }
         : getDesktopUpdateIdleTooltip(state, updatesDenial)
       : null;
-  const tooltip = runsEverything
-    ? everything.summary
-    : showUpdateDetails
-      ? state
-        ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
-      : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+  const tooltip =
+    isPreparing && state
+      ? getDesktopUpdateButtonTooltip(state)
+      : runsEverything
+        ? everything.summary
+        : showUpdateDetails
+          ? state
+            ? getDesktopUpdateButtonTooltip(state)
+            : "Update available"
+          : showCheckIcon
+            ? "Checking for updates…"
+            : (idleTooltip?.title ?? "Check for updates");
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -358,9 +367,12 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
+  const isInteractionDisabled = isPreparing || disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
-    !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
+    !restartNotice.open &&
+    !isPreparing &&
+    !isRunningEverything &&
+    shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [releaseNotesTriggerFocusVisible, setReleaseNotesTriggerFocusVisible] = useState(false);
@@ -548,7 +560,7 @@ function SidebarUpdateControl() {
   // SCIENT-FORK:START — compact labels for this app's own update. Other machines and providers
   // have their own circle, which is all a browser shows.
   const updateLabel =
-    showUpdateIconState && state
+    !isPreparing && showUpdateIconState && state
       ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
       : null;
   const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
@@ -581,10 +593,11 @@ function SidebarUpdateControl() {
             : tooltip
       }
       aria-disabled={isInteractionDisabled || undefined}
+      aria-busy={isPreparing || undefined}
       className={cn(
         "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        showUpdateIconState
+        showUpdateIconState || isPreparing
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
               "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
@@ -622,7 +635,13 @@ function SidebarUpdateControl() {
         );
       }}
     >
-      {iconStatus === "available" ? (
+      {isPreparing ? (
+        <LoaderCircleIcon
+          aria-hidden="true"
+          className="size-[13px] shrink-0 animate-spin motion-reduce:animate-none"
+          strokeWidth={2.25}
+        />
+      ) : iconStatus === "available" ? (
         <DownloadIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
       ) : iconStatus === "downloaded" ? (
         // SCIENT-FORK: the clean ready-to-restart state is text-only, but the
@@ -658,6 +677,17 @@ function SidebarUpdateControl() {
     </button>
   );
 
+  // SCIENT-FORK:START — progress, then the reason a restart stopped, announced as they change.
+  const restartNoticeContent = restartNotice.open ? (
+    <div aria-live="polite" className="text-left" role="status">
+      {restartNotice.title ? <div className="font-medium">{restartNotice.title}</div> : null}
+      <div className={restartNotice.title ? "text-muted-foreground" : undefined}>
+        {restartNotice.description}
+      </div>
+    </div>
+  ) : null;
+  // SCIENT-FORK:END
+
   return (
     <SidebarMenuItem
       // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
@@ -681,41 +711,58 @@ function SidebarUpdateControl() {
           if (!details.isCanceled) setReleaseNotesOpen(open);
         }}
       >
-        <Tooltip disabled={showReleaseNotesPopover}>
+        <Tooltip
+          // SCIENT-FORK: the restart notice holds the tooltip open; hover cannot close it.
+          key={restartNotice.open ? "restart-notice" : isPreparing ? "preparing" : "update"}
+          disabled={showReleaseNotesPopover}
+          {...(restartNotice.open ? { open: true } : {})}
+        >
           <TooltipTrigger
             id={releaseNotesTriggerId}
             render={
-              <PopoverTrigger
-                {...(!showReleaseNotesPopover
-                  ? {
-                      "aria-controls": undefined,
-                      "aria-expanded": undefined,
-                      "aria-haspopup": undefined,
-                    }
-                  : {})}
-                closeDelay={150}
-                handle={releaseNotesPopoverHandle}
-                id={releaseNotesTriggerId}
-                openOnHover={showReleaseNotesPopover}
-                render={updateButton}
-              />
+              isPreparing ? (
+                <span className="inline-flex">{updateButton}</span>
+              ) : (
+                <PopoverTrigger
+                  {...(!showReleaseNotesPopover
+                    ? {
+                        "aria-controls": undefined,
+                        "aria-expanded": undefined,
+                        "aria-haspopup": undefined,
+                      }
+                    : {})}
+                  closeDelay={150}
+                  handle={releaseNotesPopoverHandle}
+                  id={releaseNotesTriggerId}
+                  openOnHover={showReleaseNotesPopover}
+                  render={updateButton}
+                />
+              )
             }
           />
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
-              className={showUpdateDetails ? "max-w-48 text-left" : undefined}
+              className={
+                // SCIENT-FORK: an off-screen control's notice is a corner toast instead.
+                restartNotice.open
+                  ? "max-w-56 text-left in-data-[anchor-hidden]:invisible"
+                  : showUpdateDetails
+                    ? "max-w-48 text-left"
+                    : undefined
+              }
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              {idleTooltip?.detail ? (
-                <div className="text-left">
-                  <div className="font-medium">{idleTooltip.title}</div>
-                  <div className="text-muted-foreground">{idleTooltip.detail}</div>
-                </div>
-              ) : (
-                <span className="whitespace-pre-line">{tooltip}</span>
-              )}
+              {restartNoticeContent ??
+                (!isPreparing && idleTooltip?.detail ? (
+                  <div className="text-left">
+                    <div className="font-medium">{idleTooltip.title}</div>
+                    <div className="text-muted-foreground">{idleTooltip.detail}</div>
+                  </div>
+                ) : (
+                  <span className="whitespace-pre-line">{tooltip}</span>
+                ))}
             </TooltipPopup>
           ) : null}
         </Tooltip>

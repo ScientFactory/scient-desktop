@@ -19,7 +19,8 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 const DESKTOP_UPDATE_TIMEOUT = Duration.minutes(20);
-const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
+// Budget: 90s check admission + 5m native preparation + two 20s saves + 7s backend stop, with margin.
+const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(8);
 
 function desktopUpdateProgressStage(
   state: DesktopUpdateState,
@@ -30,6 +31,7 @@ function desktopUpdateProgressStage(
     case "downloading":
       return "downloading";
     case "downloaded":
+    case "preparing":
       return "installing";
     default:
       return null;

@@ -832,7 +832,9 @@ reports the transport cause. `targetVersion`, `sourceKind` (`github`, `scient_mi
 `administrator`), `packageKind` (`zip`, `nsis`, `appimage`, `deb`; omitted when unknown), a random
 per-attempt `attemptRef` and `durationBucket` complete it. The rejected promise, not the updater's
 matching `error` event, is a check's or download's outcome; an install records one failure
-however many paths report it. `handoff-attempted` is recorded just before the installer takes
+however many paths report it. An install attempt starts at Restart now: a failed native
+preparation is its `failed`, while a restart paused because a window could not save records
+nothing. `handoff-attempted` is recorded just before the installer takes
 over; the next launch reports `apply` with the same `attemptRef`: `completed` when the target
 runs, `not-applied` when the old version runs again (once, not at every launch), `superseded`
 when another build runs. A handoff without a later outcome is unresolved, not a failure; there is
@@ -841,8 +843,9 @@ An `apply` outcome omits `sourceKind`: the install record does not retain the pr
 process's feed. Its `attemptRef` links to the original handoff instead of guessing from
 the new process's configured feed.
 
-`app.update.summary` is sent at launch, when the status settles somewhere new (a check in
-progress is not a change) and daily while running: `reason`, `status`, `channel`, `behind`
+`app.update.summary` is sent at launch, when the status settles somewhere new (a check or a
+restart's preparation in progress is not a change, and a daily summary due during a
+preparation is skipped) and daily while running: `reason`, `status`, `channel`, `behind`
 (`yes` when a newer offer is known, `no` for an approved older/equal target or a
 successful check that found none, and `unknown` after a failed check even if an older
 offer remains retained), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),

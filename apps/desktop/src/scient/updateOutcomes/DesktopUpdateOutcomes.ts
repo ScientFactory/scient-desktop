@@ -85,9 +85,10 @@ function disabledClass(state: DesktopUpdateState, policyOff: boolean): string {
   return "other";
 }
 
-/** Status that a summary reports a change of; a check in progress is not a change. */
+/** Status that a summary reports a change of; a check or a restart's preparation in progress is
+ * not a change. */
 function summaryKey(state: DesktopUpdateState): string | undefined {
-  if (state.status === "checking") return undefined;
+  if (state.status === "checking" || state.status === "preparing") return undefined;
   return state.status === "error" ? `error:${state.errorContext ?? ""}` : state.status;
 }
 
@@ -308,7 +309,10 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
       yield* Effect.sleep(SUMMARY_INTERVAL).pipe(
         Effect.andThen(
           Effect.all([Ref.get(stateRef), Ref.get(timesRef)]).pipe(
-            Effect.flatMap(([state, times]) => summary("daily", state, times)),
+            // A restart's preparation is not a status analytics knows; the next day reports.
+            Effect.flatMap(([state, times]) =>
+              state.status === "preparing" ? Effect.void : summary("daily", state, times),
+            ),
           ),
         ),
         Effect.forever,

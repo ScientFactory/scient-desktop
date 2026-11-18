@@ -47,6 +47,10 @@ import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+import * as DesktopRestartTiming from "./app/DesktopRestartTiming.ts";
+import * as DesktopUpdateSave from "./app/DesktopUpdateSave.ts";
+// SCIENT-FORK:END
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
@@ -182,6 +186,8 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
   DesktopPrimaryPaste.layer,
+  // SCIENT-FORK: restart receipts for consented update restarts.
+  DesktopRestartTiming.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,
 ).pipe(Layer.provideMerge(layerDesktopEnvironment));
@@ -265,6 +271,8 @@ const layerDesktopApplication = Layer.mergeAll(
       Layer.provide(DesktopManagedPolicy.layer),
     ),
   ),
+  // SCIENT-FORK: every window saves before a consented update restart.
+  Layer.provideMerge(DesktopUpdateSave.layer.pipe(Layer.provide(layerDesktopWindow))),
   // Updates closes the same tunnels the SSH IPC opens before quitAndInstall.
   Layer.provideMerge(layerDesktopSsh),
   Layer.provideMerge(layerDesktopWslBackend),

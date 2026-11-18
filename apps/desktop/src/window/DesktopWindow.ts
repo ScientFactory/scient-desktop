@@ -42,6 +42,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
 // SCIENT-FORK:START — near-full default size and one-time size updates for older profiles.
 import { applyOneTimeMainWindowSizing, nearFullMainWindowSize } from "./scientMainWindowSizing.ts";
 export {
@@ -436,6 +437,7 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const telemetry = yield* Effect.serviceOption(DesktopTelemetryPublisher);
+  const restartTiming = yield* Effect.serviceOption(DesktopRestartTiming.DesktopRestartTiming);
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
   let mainClosedDuringStartup = false;
@@ -1293,6 +1295,7 @@ export const make = Effect.gen(function* () {
       backendHasStarted = true;
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
+      if (Option.isSome(restartTiming)) yield* restartTiming.value.backendReady;
       if (!mainClosedDuringStartup) yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(

@@ -219,7 +219,31 @@ call live in `apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; callers 
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
 callers; do not reintroduce the confirmation during alignment. A managed policy's feed stays the
 update source on every channel. Install-on-quit and early native (Squirrel.Mac) preparation stay
-off: they need native-readiness tracking and packaged-build tests first.
+off. Electron 44.10.1 pins Squirrel.Mac `fffea30e4a339a7f7d69a3391314b72548d209bd`,
+whose `downloadAndPrepareUpdate` arms installation after ordinary termination. Electron's
+public API has no prepare-without-arming or cancellation operation; changing
+`electron-updater.autoInstallOnAppQuit` cannot change that native guarantee.
+Keep native preparation behind explicit consent unless a qualified native adapter separates
+staging from commit. Outer `update-downloaded` proves only the archive download.
+After explicit consent, `MacUpdatePreparation.ts` uses Electron's public updater API and
+matches native `update-downloaded.updateURL` to the exact random loopback ZIP URL emitted
+by the pinned electron-updater patch (`nativeUpdateUrl`). Never replace this receipt with
+MacUpdater's unversioned `squirrelDownloadedUpdate` boolean. Preparation waits five minutes;
+a timeout retry rejoins that native operation. A terminal native error invalidates the
+download's install eligibility; retry refreshes the feed before reusing cached bytes and
+uses the normal download retry schedule. Preparing again requires fresh explicit consent.
+The install reservation spans `preparing`, both all-window save acknowledgements
+(`DesktopUpdateSave.prepare` then `prepareForRestart`), concurrent backend shutdown and native
+handoff. Backends remain running until the final acknowledgement. `quitting` becomes true
+before the final barrier to prevent new windows, and that barrier locks renderer input before
+saving; failure/interruption releases every lock before returning control.
+The compact control shows only a state-specific, reduced-motion-aware spinner, never long
+button copy. Its tooltip opens by itself with the progress, then for a few seconds with the reason
+a restart stopped (`apps/web/src/scient/desktopUpdate/useRestartProgressNotice.ts`); with the
+sidebar closed, progress is a corner toast.
+The version shown by an install caller remains binding even when its final feed check
+discovers and downloads a newer release. Late download events cannot replace the current
+offer, and update events cannot mutate an install's reserved release.
 Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
 `apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
 `DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`

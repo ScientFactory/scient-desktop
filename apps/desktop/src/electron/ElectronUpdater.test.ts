@@ -103,7 +103,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         );
 
         const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
-        yield* electronUpdater.quitAndInstall({ isSilent: true, isForceRunAfter: true });
+        yield* electronUpdater.quitAndInstall({
+          expectedVersion: "1.0.1",
+          isSilent: true,
+          isForceRunAfter: true,
+        });
         yield* Deferred.await(relaunched);
 
         const descriptors = (yield* fileSystem.readFileString(fdReportPath)).trim().split("\n");

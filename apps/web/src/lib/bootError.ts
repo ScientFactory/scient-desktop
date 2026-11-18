@@ -1,4 +1,5 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { installBootErrorUpdateSaveHandling } from "./desktopUpdateSaveBridge";
 
 // SCIENT-FORK:START — recovery stays dependency-free and uses Scient's installed distribution.
 const FALLBACK_TRIAGE_COMMAND = "scient triage";
@@ -50,6 +51,8 @@ export function updateActionFor(state: DesktopUpdateState | null | undefined) {
       return { kind: "download" } as const;
     case "downloading":
       return { kind: "downloading", percent: Math.round(state.downloadPercent ?? 0) } as const;
+    case "preparing":
+      return { kind: "preparing" } as const;
     case "downloaded":
       return { kind: "install" } as const;
     // SCIENT-FORK:START — failed actions keep the same retry available as the desktop update owner.
@@ -233,15 +236,22 @@ function mountUpdateButton(
   announce: (text: string) => void,
 ) {
   let action: ReturnType<typeof updateActionFor> = null;
+  let installVersion: string | undefined;
   const render = (state: DesktopUpdateState) => {
     action = updateActionFor(state);
+    installVersion = state.downloadedVersion ?? undefined;
     button.hidden = action === null;
     // aria-disabled keeps keyboard focus on the button while the download runs.
-    button.setAttribute("aria-disabled", String(action?.kind === "downloading"));
+    button.setAttribute(
+      "aria-disabled",
+      String(action?.kind === "downloading" || action?.kind === "preparing"),
+    );
+    button.setAttribute("aria-busy", String(action?.kind === "preparing"));
     if (action?.kind === "download") button.textContent = "Download update";
     if (action?.kind === "downloading")
       button.textContent = `Downloading update (${action.percent}%)`;
     if (action?.kind === "install") button.textContent = "Restart to update";
+    if (action?.kind === "preparing") button.textContent = "Preparing update…";
     const failure = !action
       ? ""
       : state.errorContext === "download"
@@ -256,8 +266,10 @@ function mountUpdateButton(
   };
   let pending = false;
   button.addEventListener("click", () => {
-    if (pending || !action || action.kind === "downloading") return;
+    if (pending || !action || action.kind === "downloading" || action.kind === "preparing") return;
     const kind = action.kind;
+    const expectedVersion = installVersion;
+    if (kind === "install" && expectedVersion === undefined) return;
     // SCIENT-FORK:START — existing file owners may veto departure even after a partial boot.
     if (
       kind === "install" &&
@@ -272,7 +284,8 @@ function mountUpdateButton(
     // SCIENT-FORK:END
     pending = true;
     const failure = kind === "install" ? UPDATE_INSTALL_FAILED : UPDATE_DOWNLOAD_FAILED;
-    const run = kind === "install" ? bridge.installUpdate() : bridge.downloadUpdate();
+    const run =
+      kind === "install" ? bridge.installUpdate(expectedVersion) : bridge.downloadUpdate();
     void run
       .then(
         (result) => {
@@ -314,6 +327,7 @@ function mountUpdateButton(
 }
 
 export function showBootError(error: unknown) {
+  installBootErrorUpdateSaveHandling();
   console.error("Scient failed to start.", error);
   const bootShell = document.getElementById("boot-shell") ?? restoreBootShell();
 

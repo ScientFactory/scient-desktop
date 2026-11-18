@@ -95,6 +95,7 @@ export type DesktopUpdateStatus =
   | "available"
   | "downloading"
   | "downloaded"
+  | "preparing"
   | "error";
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
@@ -112,6 +113,7 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
   "available",
   "downloading",
   "downloaded",
+  "preparing",
   "error",
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);

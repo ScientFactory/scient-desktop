@@ -101,6 +101,7 @@ export function isWslSettingsRowVisible(input: {
  */
 export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null): string {
   if (!state) return "Up to date";
+  if (state.status === "preparing") return state.message ?? "Preparing update…";
   if (state.status === "downloading") {
     return state.availableVersion
       ? `Downloading update ${state.availableVersion}`

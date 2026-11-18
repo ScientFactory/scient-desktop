@@ -116,7 +116,11 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       defaultId: 0,
       cancelId: 1,
     });
-    if (response === 0) yield* updates.install;
+    // SCIENT-FORK: Restart installs the version this dialog named, never one that replaced it.
+    if (response === 0) {
+      const shown = updateState.downloadedVersion;
+      yield* shown === null ? updates.install : updates.installPrepared(shown);
+    }
   } else if (updateState.status === "error") {
     yield* electronDialog.showMessageBox({
       type: "warning",
