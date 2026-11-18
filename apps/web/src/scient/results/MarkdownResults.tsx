@@ -6,6 +6,7 @@ import type {
 import { useAtomValue } from "@effect/atom-react";
 import {
   formatResultTarget,
+  isResultTableOutput,
   parseResultTarget,
   resultHasNewer,
   resultReferenceState as resultMarkState,
@@ -244,7 +245,12 @@ function ResultCard(props: {
   const canRerun = useAtomValue(
     computeEnvironment.resultsRerun.permissionAtom(props.environmentId),
   );
-  const shown = reference.kind === "value" ? reference.text : reference.alt || "Figure";
+  const shown =
+    reference.kind === "value"
+      ? reference.text
+      : reference.kind === "table"
+        ? reference.caption || "Table"
+        : reference.alt || "Figure";
 
   if (resolution === undefined || resolution._tag === "unrecorded")
     return (
@@ -333,6 +339,15 @@ function ResultCard(props: {
           href,
           text: match.newer.value,
         });
+      else if (current.kind === "table" && match.newer.table != null)
+        updates.push({
+          kind: "table",
+          position: current.position,
+          captionPosition: current.captionPosition,
+          previousHref: current.href,
+          href,
+          rows: match.newer.table,
+        });
       else if (current.kind === "figure" && placed.has(current.href))
         updates.push({
           kind: "figure",
@@ -394,6 +409,9 @@ function ResultCard(props: {
       {reference.kind === "value" && state === "edited" ? (
         <span>The run gave {resolution.value}.</span>
       ) : null}
+      {reference.kind === "table" && state === "edited" ? (
+        <span>Cells differ from what the run wrote.</span>
+      ) : null}
       {resolution.summary.causes.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
           {resolution.summary.causes.map((cause) => (
@@ -415,6 +433,8 @@ function ResultCard(props: {
                 {" "}
                 gives <span className="font-medium text-foreground">{newer.value}</span>
               </>
+            ) : reference.kind === "table" ? (
+              " has a new table"
             ) : (
               " has a new figure"
             )}
@@ -444,6 +464,33 @@ function ResultCard(props: {
             Use {resolution.value}
           </Button>
         ) : null}
+        {editable &&
+        reference.kind === "table" &&
+        state === "edited" &&
+        resolution.table != null ? (
+          <Button
+            size="xs"
+            disabled={busy !== null}
+            onClick={() => {
+              const rows = resolution.table;
+              if (rows == null) return;
+              props.controller.updateResults([
+                {
+                  kind: "table",
+                  position: reference.position,
+                  captionPosition: reference.captionPosition,
+                  previousHref: reference.href,
+                  href: reference.href,
+                  rows,
+                },
+              ]);
+              props.onChanged();
+              props.onClose();
+            }}
+          >
+            Use the run's table
+          </Button>
+        ) : null}
         {editable && canPlace && updateCount > 0 ? (
           <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
             {busy === "update"
@@ -468,6 +515,14 @@ function ResultCard(props: {
   );
 }
 
+/** `tables/table1.csv` → `Table 1`, a caption to start from. */
+const tableCaption = (output: string) =>
+  (output.split("/").at(-1) ?? output)
+    .replace(/\.[^.]+$/u, "")
+    .replace(/[-_]+/gu, " ")
+    .replace(/(?<=[a-z])(?=[0-9])/gu, " ")
+    .replace(/^./u, (first) => first.toUpperCase());
+
 /** Markdown shows PNG, JPEG and SVG figures; PDF figures are for LaTeX papers. */
 const MARKDOWN_FIGURE = /\.(?:png|jpe?g|svg)$/iu;
 
@@ -484,6 +539,7 @@ function MarkdownResultPicker(props: {
   const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
     reportFailure: false,
   });
+  const resolve = useAtomCommand(computeEnvironment.resultsResolve, { reportFailure: false });
 
   const pick = async (choice: ResultChoice): Promise<string | null> => {
     const revision = choice.script.latest.revision;
@@ -499,7 +555,28 @@ function MarkdownResultPicker(props: {
       });
       return null;
     }
-    if (choice.kind !== "figure") return "Markdown papers take values and figures.";
+    if (choice.kind === "table") {
+      const at = props.controller.insertionPoint();
+      const target = { revision, output: choice.output, pointer: null };
+      const result = await resolve({
+        environmentId: props.environmentId,
+        input: { cwd: props.cwd, references: [target] },
+      });
+      const resolution = result._tag === "Success" ? result.value.resolutions[0] : undefined;
+      const rows = resolution?._tag === "resolved" ? resolution.table : null;
+      if (rows == null) return `${choice.output} is not a table Scient can show.`;
+      props.onClose();
+      props.controller.insertResult(
+        {
+          kind: "table",
+          href: formatResultTarget(target),
+          caption: tableCaption(choice.output),
+          rows,
+        },
+        at,
+      );
+      return null;
+    }
     const at = props.controller.insertionPoint();
     const result = await placeFigure({
       environmentId: props.environmentId,
@@ -525,7 +602,7 @@ function MarkdownResultPicker(props: {
       environmentId={props.environmentId}
       cwd={props.cwd}
       figures={(output) => canPlace && MARKDOWN_FIGURE.test(output)}
-      tables={false}
+      tables={isResultTableOutput}
       onPick={pick}
       onClose={props.onClose}
     />

@@ -101,7 +101,16 @@ export type MarkdownResultReference = ResultTarget &
   (
     | { readonly kind: "value"; readonly text: string }
     | { readonly kind: "figure"; readonly alt: string; readonly src: string }
+    /** A table's caption link; the table itself is the block before the caption. */
+    | { readonly kind: "table"; readonly caption: string }
   ) & { readonly start: number; readonly end: number };
+
+/** Tables are linked from their caption, `Table: [Table 1](scient-result:<revision>/table1.csv)`. */
+export const isResultTableOutput = (output: string) => /\.csv$/iu.test(output);
+
+export function formatResultTableCaption(caption: string, target: ResultTarget): string {
+  return `Table: [${escapeMarkdownLabel(caption)}](${formatResultTarget(target)})`;
+}
 
 const FIGURE_LABEL = /^!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|[^\s)]*)(?:\s+"[^"]*")?\s*\)$/su;
 
@@ -123,22 +132,30 @@ export function findMarkdownResultReferences(
     const label = source.slice(open + 1, at);
     const figure = FIGURE_LABEL.exec(label);
     references.push(
-      figure
+      !figure && target.pointer === null && isResultTableOutput(target.output)
         ? {
             ...target,
-            kind: "figure",
-            alt: unescapeMarkdownLabel(figure[1] ?? ""),
-            src: (figure[2] ?? "").replace(/^<|>$/gu, ""),
+            kind: "table",
+            caption: unescapeMarkdownLabel(label),
             start: open,
             end: close + 1,
           }
-        : {
-            ...target,
-            kind: "value",
-            text: unescapeMarkdownLabel(label),
-            start: open,
-            end: close + 1,
-          },
+        : figure
+          ? {
+              ...target,
+              kind: "figure",
+              alt: unescapeMarkdownLabel(figure[1] ?? ""),
+              src: (figure[2] ?? "").replace(/^<|>$/gu, ""),
+              start: open,
+              end: close + 1,
+            }
+          : {
+              ...target,
+              kind: "value",
+              text: unescapeMarkdownLabel(label),
+              start: open,
+              end: close + 1,
+            },
     );
   }
   return references;
@@ -238,26 +255,57 @@ export type ResultReferenceState =
   | "missing"
   | "unrecorded";
 
+const sameRows = (
+  left: ReadonlyArray<ReadonlyArray<string>>,
+  right: ReadonlyArray<ReadonlyArray<string>>,
+) =>
+  left.length === right.length &&
+  left.every(
+    (row, index) =>
+      row.length === right[index]!.length &&
+      row.every((cell, column) => cell === right[index]![column]),
+  );
+
 export function resultReferenceState(
-  reference: { readonly kind: "value"; readonly text: string } | { readonly kind: "figure" },
+  reference:
+    | { readonly kind: "value"; readonly text: string }
+    | { readonly kind: "figure" }
+    /** Null rows when the caller cannot read the table, so only its run is compared. */
+    | { readonly kind: "table"; readonly rows: ReadonlyArray<ReadonlyArray<string>> | null },
   resolution: ComputeResultResolution | undefined,
 ): ResultReferenceState {
   if (resolution === undefined || resolution._tag === "unrecorded") return "unrecorded";
-  if (!(reference.kind === "value" ? resolution.value !== null : resolution.figure))
-    return "missing";
+  const present =
+    reference.kind === "value"
+      ? resolution.value !== null
+      : reference.kind === "figure"
+        ? resolution.figure
+        : resolution.table != null;
+  if (!present) return "missing";
   if (resolution.summary.causes.length > 0) return "stale";
   if (reference.kind === "value" && reference.text !== resolution.value) return "edited";
+  if (
+    reference.kind === "table" &&
+    reference.rows !== null &&
+    resolution.table != null &&
+    !sameRows(reference.rows, resolution.table)
+  )
+    return "edited";
   if (resultHasNewer(reference, resolution)) return "newer";
   return "current";
 }
 
 export function resultHasNewer(
-  reference: { readonly kind: "value" | "figure" },
+  reference: { readonly kind: "value" | "figure" | "table" },
   resolution: Extract<ComputeResultResolution, { readonly _tag: "resolved" }>,
 ): boolean {
   const newer = resolution.newer;
   if (newer === null) return false;
-  return reference.kind === "figure" ? newer.figure : newer.value !== null;
+  return reference.kind === "figure"
+    ? newer.figure
+    : reference.kind === "table"
+      ? newer.table != null
+      : newer.value !== null;
 }
 
 class LiteralNumber {

@@ -125,6 +125,10 @@ export const ComputeResultValue = Schema.Struct({
 });
 export type ComputeResultValue = typeof ComputeResultValue.Type;
 
+const ResultTableRows = Schema.Array(Schema.Array(Text).check(Schema.isMaxLength(40))).check(
+  Schema.isMaxLength(501),
+);
+
 export const ComputeResultResolution = Schema.Union([
   Schema.TaggedStruct("unrecorded", {}),
   Schema.TaggedStruct("resolved", {
@@ -132,12 +136,15 @@ export const ComputeResultResolution = Schema.Union([
     /** Null when the revision has no such output or value. */
     value: Schema.NullOr(Text),
     figure: Schema.Boolean,
+    /** A CSV table's rows, header first; absent or null for anything else. */
+    table: Schema.optional(Schema.NullOr(ResultTableRows)),
     /** The newest revision of the same script, when it is newer than this one. */
     newer: Schema.NullOr(
       Schema.Struct({
         summary: ComputeResultSummary,
         value: Schema.NullOr(Text),
         figure: Schema.Boolean,
+        table: Schema.optional(Schema.NullOr(ResultTableRows)),
       }),
     ),
   }),

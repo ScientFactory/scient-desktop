@@ -20,6 +20,8 @@ import { ComputeResultRevision as ComputeResultRevisionSchema } from "@t3tools/c
 import { readResultValues, resultValueAt } from "@t3tools/shared/computeResults";
 import * as Schema from "effect/Schema";
 
+import { parseCsv } from "./latexOutputs.ts";
+
 const MAXIMUM_OUTPUT_FILES = 64;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_VALUES_FILE_BYTES = 4 * 1024 * 1024;
@@ -380,10 +382,20 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     revision: ComputeResultRevision,
     outputName: string,
     pointer: string | null,
-  ): Promise<{ value: string | null; figure: boolean }> => {
+  ): Promise<{
+    value: string | null;
+    figure: boolean;
+    table?: ReadonlyArray<ReadonlyArray<string>> | null;
+  }> => {
     const output = revision.outputs.find((candidate) => candidate.name === outputName);
     if (output === undefined) return { value: null, figure: false };
     if (output.kind === "figure") return { value: null, figure: pointer === null };
+    if (output.kind === "table") {
+      if (pointer !== null || output.pruned === true) return { value: null, figure: false };
+      const path = revisionOutputPath(layout, projectId, revision.revision, output.name);
+      const text = path === null ? null : await NodeFSP.readFile(path, "utf8").catch(() => null);
+      return { value: null, figure: false, table: text === null ? null : parseCsv(text) };
+    }
     if (output.kind !== "values" || pointer === null) return { value: null, figure: false };
     const key = `${revision.revision}/${output.name}`;
     let text = valuesText.get(key);

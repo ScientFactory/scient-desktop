@@ -75,7 +75,7 @@ export function LatexResultPicker(props: {
       environmentId={props.environmentId}
       cwd={props.cwd}
       figures={() => true}
-      tables
+      tables={() => true}
       onPick={pick}
       onClose={props.onClose}
     />

@@ -1,10 +1,11 @@
 import {
+  isResultTableOutput,
   parseResultTarget,
   RESULT_PROTOCOL,
   type ResultReferenceState,
   type ResultTarget,
 } from "@t3tools/shared/computeResults";
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import { Fragment, type Mark, type Node as ProseMirrorNode, Slice } from "prosemirror-model";
 import { type EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
 import { closeHistory } from "prosemirror-history";
 import { Decoration, DecorationSet } from "prosemirror-view";
@@ -18,6 +19,16 @@ export type EditorResultReference = ResultTarget & {
 } & (
     | { readonly kind: "value"; readonly text: string }
     | { readonly kind: "figure"; readonly src: string; readonly alt: string }
+    /**
+     * A table linked from the caption paragraph right after it. `position` is the table's;
+     * `captionPosition` the caption paragraph's.
+     */
+    | {
+        readonly kind: "table";
+        readonly rows: ReadonlyArray<ReadonlyArray<string>>;
+        readonly caption: string;
+        readonly captionPosition: number;
+      }
   );
 
 /** The one mark a result shows; current shows none. */
@@ -30,13 +41,59 @@ const resultLink = (marks: ReadonlyArray<Mark>) =>
       String(mark.attrs.href).startsWith(RESULT_PROTOCOL),
   );
 
+const isTableTarget = (href: string) => {
+  const target = parseResultTarget(href);
+  return target !== null && target.pointer === null && isResultTableOutput(target.output);
+};
+
+/**
+ * The caption's link to a CSV table. Markdown reads `[Table 1](scient-result:…)` as a result atom,
+ * so the caption holds one, labelled with the caption text.
+ */
+function tableCaptionLink(paragraph: ProseMirrorNode) {
+  let found: { href: string; caption: string } | null = null;
+  paragraph.forEach((child) => {
+    if (found !== null || child.type !== scientMarkdownSchema.nodes.result_value) return;
+    const href = String(child.attrs.target);
+    if (isTableTarget(href)) found = { href, caption: String(child.attrs.text) };
+  });
+  return found as { href: string; caption: string } | null;
+}
+
+const tableRows = (table: ProseMirrorNode): ReadonlyArray<ReadonlyArray<string>> => {
+  const rows: string[][] = [];
+  table.forEach((row) => {
+    const cells: string[] = [];
+    row.forEach((cell) => cells.push(cell.textContent));
+    rows.push(cells);
+  });
+  return rows;
+};
+
 export function editorResultReferences(doc: ProseMirrorNode): ReadonlyArray<EditorResultReference> {
   const references: EditorResultReference[] = [];
-  doc.descendants((node, position) => {
+  doc.descendants((node, position, parent, index) => {
+    if (node.type === scientMarkdownSchema.nodes.paragraph && parent !== null && index > 0) {
+      const table = parent.child(index - 1);
+      const link = table.type === scientMarkdownSchema.nodes.table ? tableCaptionLink(node) : null;
+      const target = link === null ? null : parseResultTarget(link.href);
+      if (link !== null && target !== null)
+        references.push({
+          ...target,
+          href: link.href,
+          position: position - table.nodeSize,
+          kind: "table",
+          rows: tableRows(table),
+          caption: link.caption,
+          captionPosition: position,
+        });
+      // Values can sit in a caption too, so its children are still read.
+    }
     if (node.type === scientMarkdownSchema.nodes.result_value) {
       const href = String(node.attrs.target);
       const target = parseResultTarget(href);
-      if (target !== null)
+      // A table's caption atom stands for the table, found with its caption paragraph.
+      if (target !== null && !isTableTarget(href))
         references.push({
           ...target,
           href,
@@ -75,7 +132,11 @@ interface ResultsPluginState {
 
 /** Keyed by the reference's href and, for a value, its shown text. */
 export const resultMarkKey = (reference: EditorResultReference) =>
-  reference.kind === "value" ? `${reference.href}\u0000${reference.text}` : reference.href;
+  reference.kind === "value"
+    ? `${reference.href}\u0000${reference.text}`
+    : reference.kind === "table"
+      ? `${reference.href}\u0000${JSON.stringify(reference.rows)}`
+      : reference.href;
 
 function decorate(doc: ProseMirrorNode, states: ReadonlyMap<string, ResultMarkState>) {
   const decorations = editorResultReferences(doc).flatMap((reference) => {
@@ -132,6 +193,14 @@ export type ResultUpdate =
       readonly position: number;
       readonly href: string;
       readonly src: string;
+    }
+  | {
+      readonly kind: "table";
+      readonly position: number;
+      readonly captionPosition: number;
+      readonly previousHref: string;
+      readonly href: string;
+      readonly rows: ReadonlyArray<ReadonlyArray<string>>;
     };
 
 /** Moves results to new revisions in one transaction, so one undo reverts the whole update. */
@@ -146,6 +215,28 @@ export function updateResults(
   for (const update of updates.toSorted((left, right) => right.position - left.position)) {
     const node = transaction.doc.nodeAt(update.position);
     if (node === null) continue;
+    if (update.kind === "table") {
+      // The caption comes after the table, so it is relinked first and the table's position holds.
+      const caption = transaction.doc.nodeAt(update.captionPosition);
+      const table = resultTableNode(update.rows);
+      if (caption === null || node.type !== scientMarkdownSchema.nodes.table || table === null)
+        continue;
+      caption.forEach((child, offset) => {
+        if (child.type !== valueType || child.attrs.target !== update.previousHref) return;
+        const from = update.captionPosition + 1 + offset;
+        transaction = transaction.replaceWith(
+          from,
+          from + child.nodeSize,
+          valueType.create({ ...child.attrs, target: update.href }, null, child.marks),
+        );
+      });
+      transaction = transaction.replaceWith(
+        update.position,
+        update.position + node.nodeSize,
+        table,
+      );
+      continue;
+    }
     if (update.kind === "value" && node.type === valueType) {
       transaction = transaction.replaceWith(
         update.position,
@@ -166,6 +257,56 @@ export function updateResults(
   }
   // Its own undo step, never merged with the typing before it.
   return transaction.docChanged ? closeHistory(transaction) : null;
+}
+
+const NUMBER_CELL = /^\s*[+\-\u2212]?(?:\d[\d,]*(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*%?\s*$/u;
+
+/** A table of a CSV's cells as written, header first, numeric columns right-aligned. */
+function resultTableNode(rows: ReadonlyArray<ReadonlyArray<string>>) {
+  const {
+    table,
+    table_row: row,
+    table_header: header,
+    table_cell: cell,
+  } = scientMarkdownSchema.nodes;
+  if (!table || !row || !header || !cell || rows.length === 0) return null;
+  const body = rows.slice(1);
+  const alignments = rows[0]!.map((_, column) =>
+    body.length > 0 &&
+    body.every(
+      (values) => (values[column] ?? "").trim() === "" || NUMBER_CELL.test(values[column]!),
+    )
+      ? "right"
+      : null,
+  );
+  return table.create(
+    null,
+    rows.map((values, index) =>
+      row.create(
+        null,
+        values.map((value, column) =>
+          (index === 0 ? header : cell).create(
+            { alignment: alignments[column] },
+            value.trim() === "" ? null : scientMarkdownSchema.text(value.trim()),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/** A table and its caption, `Table: <linked caption>`, as two blocks for one insertion. */
+export function resultTableSlice(input: {
+  readonly href: string;
+  readonly caption: string;
+  readonly rows: ReadonlyArray<ReadonlyArray<string>>;
+}) {
+  const table = resultTableNode(input.rows);
+  const paragraph = scientMarkdownSchema.nodes.paragraph;
+  const value = resultValueNode(input.href, input.caption || "Table");
+  if (table === null || !paragraph || value === null) return null;
+  const caption = paragraph.create(null, [scientMarkdownSchema.text("Table: "), value]);
+  return new Slice(Fragment.from([table, caption]), 0, 0);
 }
 
 export function resultValueNode(href: string, text: string) {

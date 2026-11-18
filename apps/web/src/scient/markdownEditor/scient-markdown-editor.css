@@ -1337,17 +1337,20 @@ textarea.scient-markdown-math-source {
 .scient-markdown-document [data-scient-result-value][data-result-state="unrecorded"]::after {
   display: none;
 }
-.scient-markdown-document .scient-result[data-result-state]:not([data-scient-result-value]) img {
+/* Figures and tables show their state as an outline. */
+.scient-markdown-document
+  .scient-result[data-result-state]:not([data-scient-result-value])
+  :is(img, table) {
   outline: 1px dashed var(--warning);
   outline-offset: 3px;
 }
 .scient-markdown-document
   .scient-result[data-result-state="newer"]:not([data-scient-result-value])
-  img {
+  :is(img, table) {
   outline-color: var(--info);
 }
 .scient-markdown-document
   .scient-result[data-result-state="unrecorded"]:not([data-scient-result-value])
-  img {
+  :is(img, table) {
   outline: none;
 }

@@ -40,7 +40,7 @@ export function ResultPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly figures: (output: string) => boolean;
-  readonly tables: boolean;
+  readonly tables: (output: string) => boolean;
   readonly onPick: (choice: ResultChoice) => Promise<string | null>;
   readonly onClose: () => void;
 }) {
@@ -119,8 +119,8 @@ export function ResultPicker(props: {
         <DialogHeader>
           <DialogTitle>Insert a result</DialogTitle>
           <DialogDescription>
-            Values, {props.tables ? "tables " : ""}and figures from scripts run from scratch. Each
-            one stays tied to its run.
+            Values, tables and figures from scripts run from scratch. Each one stays tied to its
+            run.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -137,9 +137,9 @@ export function ResultPicker(props: {
             )}
             {scripts !== null && scripts.length === 0 && message === null ? (
               <p className="text-xs text-muted-foreground">
-                No results yet. Have a script write a JSON file of values,
-                {props.tables ? " CSV tables" : ""} or figures into the folder named by the
-                SCIENT_RESULTS_DIR environment variable, then run it in a fresh session.
+                No results yet. Have a script write a JSON file of values, CSV tables or figures
+                into the folder named by the SCIENT_RESULTS_DIR environment variable, then run it in
+                a fresh session.
               </p>
             ) : null}
             <div className="flex max-h-80 flex-col overflow-y-auto" role="list">
@@ -158,8 +158,11 @@ export function ResultPicker(props: {
                       { kind: "value", script, value },
                     ),
                   ),
-                ...(props.tables ? (script.tables ?? []) : [])
-                  .filter((table) => matches(`${script.latest.scriptPath} ${table}`))
+                ...(script.tables ?? [])
+                  .filter(
+                    (table) =>
+                      props.tables(table) && matches(`${script.latest.scriptPath} ${table}`),
+                  )
                   .map((table) =>
                     row(
                       `${script.latest.revision}:${table}`,
