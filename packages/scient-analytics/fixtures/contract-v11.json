@@ -666,6 +666,7 @@
         "provider": "antigravity",
         "modelKey": "gpt-5.6-sol",
         "retryAttempts": 2,
+        "toolServerOwner": "connector",
         "failureCode": "retry_stalled",
         "httpStatus": 400,
         "failureClass": "permission",

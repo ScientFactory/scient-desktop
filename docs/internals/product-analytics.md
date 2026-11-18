@@ -791,7 +791,10 @@ failed without a process exit. Builds up to 0.6.30 dropped these codes.
   an ACP agent that sent nothing until the inactivity watchdog stopped it is `prompt_inactivity`.
   Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
   ChatGPT sharing codes come from those adapters. Antigravity reports Google's RPC status (with
-  `httpStatus`), `mcp_load_failed` when a tool server failed to start and aborted the turn, and
+  `httpStatus`), `mcp_load_failed` when a tool server failed to start and aborted the turn (with
+  `toolServerOwner`: `scient` for Scient's own server, `connector` for one Scient delivered to the
+  session, `user` for one in the profile's own `mcp_config.json`, or `unknown` when no single
+  source lists the name; and `httpStatus` when Scient's bridge reported one), and
   `harness_error` for another harness error; Droid reports its turn-end reason
   (`model_usage_exhausted`, `model_rate_limited`, …) and `no_active_subscription`.
   [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each

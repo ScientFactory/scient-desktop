@@ -79,6 +79,7 @@ const representativeProperties = {
   failedCheck: "rpc_start",
   failureReason: "no_signin_page",
   signInPage: "manual_fallback",
+  toolServerOwner: "connector",
   progressPercent: 37,
   bytesPerSecond: 410_000,
   resumedBytes: 41_000_000,

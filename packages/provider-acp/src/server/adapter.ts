@@ -480,6 +480,8 @@ export interface AcpAdapterV2Flavor {
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
+    // SCIENT-FORK: the Scient connectors delivered to this session, by server name.
+    delivery: { readonly connectorServerNames: ReadonlySet<string> },
   ) => Effect.Effect<
     (
       result: EffectAcpSchema.PromptResponse,
@@ -9520,7 +9522,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const checkPromptOutcome =
               flavor.watchPromptOutcome === undefined
                 ? undefined
-                : yield* flavor.watchPromptOutcome(requestedSessionId);
+                : yield* flavor.watchPromptOutcome(requestedSessionId, {
+                    // SCIENT-FORK: which tool servers were Scient connectors.
+                    connectorServerNames: new Set(
+                      (yield* mcpSessions.read(turnInput.threadId))?.connectors.map(
+                        (connector) => connector.serverName,
+                      ) ?? [],
+                    ),
+                  });
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = {
               dispatched: context.promptDispatched,

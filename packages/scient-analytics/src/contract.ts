@@ -296,6 +296,7 @@ const SIGN_IN_FAILURE_REASONS = new Set([
   "unknown",
 ]);
 const SIGN_IN_PAGES = new Set(["primary", "manual_fallback", "none"]);
+const TOOL_SERVER_OWNERS = new Set(["scient", "connector", "user", "unknown"]);
 const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
@@ -1722,6 +1723,8 @@ function normalizeEvent(
             retryAttempts: "count",
             // False when the run failed before its provider session started.
             started: "boolean",
+            // Whose tool server failed to start, for a failure caused by one.
+            toolServerOwner: TOOL_SERVER_OWNERS,
           }),
           ...turnRunProperties(input),
           ...failureCodeProperty(provider, input),
