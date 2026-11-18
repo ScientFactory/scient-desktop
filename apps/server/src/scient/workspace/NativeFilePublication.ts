@@ -888,13 +888,6 @@ function nativeFilePublicationArguments(
     destinationName,
   ];
 }
-export async function runNativeFilePublication(
-  helperPath: string,
-  request: NativeFilePublicationRequest,
-) {
-  return parseResult(await invokeNativeHelper(helperPath, nativeFilePublicationArguments(request)));
-}
-
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {
   readonly processId?: number;
