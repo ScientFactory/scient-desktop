@@ -989,7 +989,12 @@ the TinyTeX manifest pin, checks byte count and SHA-256, expands it with the
 host path the app relies on, applies POSIX execute permissions, starts the real
 `latexmk`, compiles a multi-file PDF/index, forward-searches into the included
 child source with the bundled helper, and exercises inverse navigation against
-the retained-index layout. The stable release workflow separately builds the
+the retained-index layout. On the Linux x64 leg it then runs the build service's
+nested-root and edit/rebuild scenarios (`latexRealEngine.testkit.ts`) against
+that verified payload, with Poppler for reading the published PDFs.
+`LatexRealEngine.test.ts` runs the same scenarios locally against an engine on
+PATH; its Tectonic root case and optional LuaLaTeX case
+(`SCIENT_LATEX_REAL_MANAGED_ROOT`) stay local. The stable release workflow separately builds the
 four helper artifacts, injects the matching one into every desktop package,
 injects Linux x64 into the Windows WSL sidecar, includes all four in the remote
 server asset, and verifies the nested helper's macOS signature.
