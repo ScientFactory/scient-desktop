@@ -294,7 +294,7 @@ async function fileChanged(root: string, input: ComputeResultInput): Promise<boo
   if (
     Number(status.size) === input.size &&
     status.mtimeNs.toString() === input.modifiedAtNs &&
-    status.ctimeNs.toString() === input.changedAtNs
+    (input.changedAtNs === undefined || status.ctimeNs.toString() === input.changedAtNs)
   )
     return false;
   if (input.sha256 === null) return true;
