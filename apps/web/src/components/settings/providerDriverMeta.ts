@@ -1,4 +1,5 @@
 import { compareProviderDriverKinds, ProviderDriverKind } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { providerClients } from "@t3tools/client-runtime/scient-provider-clients";
 import type { ProviderClientDefinition as CoreProviderClientDefinition } from "@t3tools/provider-core/client";
 import type * as Schema from "effect/Schema";
@@ -49,19 +50,21 @@ const metadataByDriver: Readonly<
 > = {
   codex: {
     vendorLabel: "OpenAI",
-    accountLabel: "ChatGPT subscription",
+    accountLabel: msg("ChatGPT subscription"),
     searchAliases: ["openai", "chatgpt", "gpt"],
   },
   claudeAgent: {
     vendorLabel: "Anthropic",
-    accountLabel: "Claude subscription",
+    accountLabel: msg("Claude subscription"),
     searchAliases: ["anthropic"],
   },
   grok: { vendorLabel: "xAI", searchAliases: ["xai"] },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- company name
   droid: { vendorLabel: "Factory", searchAliases: ["factory"], supportsCustomModels: false },
   antigravity: {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- company name
     vendorLabel: "Google",
-    accountLabel: "Gemini subscription",
+    accountLabel: msg("Gemini subscription"),
     searchAliases: ["google", "gemini"],
     supportsCustomModels: false,
   },
@@ -69,7 +72,7 @@ const metadataByDriver: Readonly<
   omp: { supportsCustomModels: false },
   scient: { supportsCustomModels: false },
   acpRegistry: { hasDefaultInstance: false, supportsCustomModels: false },
-  muse: { badgeLabel: "Beta" },
+  muse: { badgeLabel: msg("Beta") },
 };
 
 const providerOptionsUnordered: readonly DriverOption[] = providerClients.definitions.map(

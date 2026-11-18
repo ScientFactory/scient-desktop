@@ -238,28 +238,3 @@ export function scientMcpToolTarget(
   if (!skill) return undefined;
   return namesSkill ? skill : `a file of ${skill}`;
 }
-
-/** Collapsed-group label for calls to one family of Scient's tools. */
-export function scientMcpToolSummaryLabel(
-  action: ScientMcpToolSummaryAction,
-  phrase: (past: string, infinitive: string, object: string) => string,
-  times: string,
-): string {
-  switch (action) {
-    // SCIENT-FORK:START — Scient Accounts: summarize grouped account calls.
-    case "scient-accounts":
-      return phrase("Used", "use", `accounts ${times}`);
-    // SCIENT-FORK:END
-    case "scient-skills":
-      return phrase("Used", "use", `skills ${times}`);
-    case "scient-sources":
-      return phrase("Used", "use", `sources ${times}`);
-    case "scient-documents":
-      // One verb for PDF/LaTeX builds and exports alike.
-      return phrase("Prepared", "prepare", `documents ${times}`);
-    case "scient-overleaf":
-      return phrase("Used", "use", `Overleaf ${times}`);
-    case "scient-compute":
-      return phrase("Used", "use", `Compute ${times}`);
-  }
-}

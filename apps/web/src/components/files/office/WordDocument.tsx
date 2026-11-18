@@ -1,7 +1,9 @@
 /* oxlint-disable react/no-array-index-key -- Text spans retain their order within an immutable page. */
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
+import { msg } from "gt-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { m } from "~/i18n/messages";
 import { FileSurfaceLoading } from "../fileSurfaceChrome";
 import type { PaintPage } from "./OfficePages";
 // SCIENT-FORK:START
@@ -169,7 +171,13 @@ export default function WordDocument(props: {
       if (state.opened) {
         const { pages, complete } = state.opened;
         onDetails(
-          `${pages.length}${complete ? "" : "+"} page${pages.length === 1 && complete ? "" : "s"}`,
+          complete
+            ? m(
+                msg("{count, plural, one {{count} page} other {{count} pages}}", {
+                  count: pages.length,
+                }),
+              )
+            : m(msg("{count}+ pages", { count: String(pages.length) })),
         );
       }
     };

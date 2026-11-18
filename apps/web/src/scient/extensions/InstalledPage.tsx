@@ -7,7 +7,7 @@ import { RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import type { SettingsSearchItemId } from "../../components/settings/settingsSearch";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { actOnProviderPlugin } from "./extensionsState";
 import { openAuthorizationPage } from "./openAuthorizationPage";
@@ -205,7 +205,7 @@ function YoursTable({
   };
   return (
     <SettingsSearchTarget
-      id={searchableSetting("extensions-connected-services").id}
+      id={"extensions-connected-services" satisfies SettingsSearchItemId}
       className="grid gap-10 outline-none"
     >
       <ExtensionsSection
@@ -266,7 +266,7 @@ function YoursTable({
       </ExtensionsSection>
       {builtIn.length > 0 ? (
         <ExtensionsSection
-          id={searchableSetting("extensions-scient-plugins").id}
+          id={"extensions-scient-plugins" satisfies SettingsSearchItemId}
           title="Built into Scient"
         >
           <ExtensionTable label="Built into Scient">

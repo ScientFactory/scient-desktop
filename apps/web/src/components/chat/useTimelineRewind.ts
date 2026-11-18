@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
@@ -98,8 +100,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
-        error:
-          "This provider does not support reverting conversation history. Start a new thread instead.",
+        error: m(
+          msg(
+            "This provider does not support reverting conversation history. Start a new thread instead.",
+          ),
+        ),
       });
       return;
     }
@@ -107,7 +112,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
-        error: `Reconnect ${activeEnvironmentUnavailableLabel} before rewinding.`,
+        error: m(
+          msg("Reconnect {environment} before rewinding.", {
+            environment: activeEnvironmentUnavailableLabel,
+          }),
+        ),
       });
       return;
     }
@@ -115,7 +124,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
-        error: "Stop the current turn before rewinding.",
+        error: m(msg("Stop the current turn before rewinding.")),
       });
       return;
     }

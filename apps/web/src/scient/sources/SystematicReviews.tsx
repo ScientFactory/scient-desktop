@@ -30,7 +30,7 @@ import {
 import { Textarea } from "../../components/ui/textarea";
 import { toastManager } from "../../components/ui/toast";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { PrismaDiagram } from "./PrismaDiagram";
 import { CombineReportNotice, ReviewVersionsLine } from "./ReviewVersions";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
@@ -541,7 +541,9 @@ function RecordsTab(props: {
 
 function PrismaTab(props: { readonly reviews: SystematicReviews }) {
   const detail = props.reviews.detail!;
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "PRISMA diagram" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("PRISMA diagram"),
+  });
   return (
     <div className="space-y-3">
       <PrismaDiagram prisma={detail.prisma} />

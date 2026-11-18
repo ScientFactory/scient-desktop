@@ -39,6 +39,7 @@ import {
 } from "~/scient/office/officeQuote";
 // SCIENT-FORK:END
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 // SCIENT-FORK:START — a composer chip can be removed.
 import { PencilIcon, QuoteIcon, XIcon } from "lucide-react";
 // SCIENT-FORK:END
@@ -201,6 +202,7 @@ export function AssistantCitationEmbed({
   leading: boolean;
   trailing: boolean;
 }) {
+  const gt = useGT();
   const wholeResponse = citation.prefix === "" && citation.suffix === "";
   const { comment, ...quoted } = citation;
   return (
@@ -208,7 +210,7 @@ export function AssistantCitationEmbed({
       citation={citation}
       copyMarkdown={serializeAssistantCitation(citation)}
       cardCopyMarkdown={serializeAssistantCitation(quoted)}
-      label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
+      label={gt("Go to quoted response: {label}", { label: assistantCitationLabel(quoted) })}
       comment={comment}
       leading={leading}
       trailing={trailing}
@@ -241,11 +243,12 @@ export function ResponseReplyCard({
   leading: boolean;
   trailing: boolean;
 }) {
+  const gt = useGT();
   return (
     <ResponseCard
       citation={record.citation}
       copyMarkdown={copyMarkdown}
-      label={`Go to the response this replies to: ${record.label}`}
+      label={gt("Go to the response this replies to: {label}", { label: record.label })}
       title={record.subagents?.map((subagent) => subagent.title).join(", ")}
       preview={flat(record.citation.text)}
       leading={leading}
@@ -282,6 +285,7 @@ export function AssistantCitationChip({
     onRestoreFocus?: () => void;
   };
 }) {
+  const gt = useGT();
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
@@ -366,14 +370,18 @@ export function AssistantCitationChip({
         ? computeCitationPlaceLabel(citation)
         : isOfficeCitation(citation)
           ? officeCitationPlaceLabel(citation)
-          : "assistant text";
+          : null;
+  const viewCitedLabel =
+    sourceName === null
+      ? gt("View cited assistant text: {label}", { label })
+      : gt("View cited {source}: {label}", { source: sourceName, label });
   // SCIENT-FORK:END
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
       className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
       // SCIENT-FORK:START — a file or PDF quote names its document.
-      aria-label={`View cited ${sourceName}: ${label}`}
+      aria-label={viewCitedLabel}
       // SCIENT-FORK:END
     >
       <QuoteIcon aria-hidden="true" />
@@ -387,7 +395,7 @@ export function AssistantCitationChip({
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-(--context-chip-accent)/17 focus-visible:outline-2 focus-visible:outline-foreground"
-      aria-label={`View cited ${sourceName}: ${label}`}
+      aria-label={viewCitedLabel}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
@@ -430,7 +438,9 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={
+              citation.comment ? gt("Edit citation comment") : gt("Add comment to citation")
+            }
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
@@ -474,7 +484,9 @@ export function AssistantCitationChip({
               ref={commentPopupRef}
               // SCIENT-FORK:START — the Markdown editor creates a citation from the same popover.
               aria-label={
-                commentEditor.mode === "create" ? "Add citation to chat" : "Edit citation comment"
+                commentEditor.mode === "create"
+                  ? gt("Add citation to chat")
+                  : gt("Edit citation comment")
               }
               // SCIENT-FORK:END
               width="md"
@@ -525,14 +537,14 @@ export function AssistantCitationChip({
           onClick={onRemove}
           aria-label={
             isPdfCitation(citation)
-              ? "Remove PDF citation"
+              ? gt("Remove PDF citation")
               : isComputeCitation(citation)
-                ? "Remove Compute citation"
+                ? gt("Remove Compute citation")
                 : isOfficeCitation(citation)
-                  ? "Remove Office citation"
+                  ? gt("Remove Office citation")
                   : isFileCitation(citation)
-                    ? "Remove file citation"
-                    : "Remove assistant citation"
+                    ? gt("Remove file citation")
+                    : gt("Remove assistant citation")
           }
         >
           <XIcon aria-hidden="true" className="size-[0.85em]" />

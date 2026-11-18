@@ -27,6 +27,7 @@ import { createBitmapImageResolver } from "./word-images";
 import { layerFont, type WordPageSize, type WordSpan } from "./word-protocol";
 import { pageText, positionTarget, type TextMeasure } from "./word-text";
 import { wordFindHits } from "~/scient/office/wordFind"; // SCIENT-FORK
+import { PreviewError } from "../previewFailure";
 
 // An open Word document: its engine session, fonts, layout, built pages and painting. The document worker holds one.
 
@@ -112,7 +113,7 @@ export async function openWordDocument(bytes: Uint8Array, fonts: FontFaceSet | u
 
   const measurement = measure.measurementConfigForRequirements(requirements);
 
-  if (!measurement) throw new Error("The document's fonts could not be prepared");
+  if (!measurement) throw new PreviewError({ code: "word-fonts-unprepared" });
 
   const input = JSON.stringify({ ...request, measurement });
 
@@ -153,7 +154,7 @@ export async function openWordDocument(bytes: Uint8Array, fonts: FontFaceSet | u
   const retained = { frame: display(null, prefix) };
 
   if (retained.frame.displayList.pages.length === 0)
-    throw new Error("The document produced no pages");
+    throw new PreviewError({ code: "word-no-pages" });
 
   // The region layout that finishes the document: begun on the first step, `cost` the running average milliseconds a
   // body block takes.

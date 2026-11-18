@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { buildShare, fetchShareBlob } from "./serverCloud";
@@ -196,7 +196,9 @@ function ShareLinkDialog({
   );
   const build: BuildState = built?.key === buildKey ? built.state : { status: "building" };
   const [publish, setPublish] = useState<PublishState>({ status: "idle" });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "share link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("share link"),
+  });
 
   const adoptShare = (share: ShareRecord | null, published?: ShareSelection) => {
     const selection = published ?? (share === null ? null : readShareSelection(share.id));

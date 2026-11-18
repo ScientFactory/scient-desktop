@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import { MessageId } from "@t3tools/contracts";
@@ -468,7 +471,7 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add({
         type: "info",
         title: notice,
-        description: "Send again when it's ready.",
+        description: m(msg("Send again when it's ready.")),
       });
     }
     return false;
@@ -541,8 +544,10 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "info",
-            title: "Annotation attached to draft",
-            description: "Sending is unavailable right now. Finish the current action, then send.",
+            title: m(msg("Annotation attached to draft")),
+            description: m(
+              msg("Sending is unavailable right now. Finish the current action, then send."),
+            ),
           }),
         );
       };
@@ -565,8 +570,8 @@ export function useComposerSend(input: ComposerSendInput) {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Still sending your previous message.",
-              description: "Send again once it goes through or fails.",
+              title: m(msg("Still sending your previous message.")),
+              description: m(msg("Send again once it goes through or fails.")),
             }),
           );
         }
@@ -578,7 +583,7 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Side chat not started",
+            title: m(msg("Side chat not started")),
             description: sideChatDisabledReason,
           }),
         );
@@ -598,8 +603,8 @@ export function useComposerSend(input: ComposerSendInput) {
           toastManager.add(
             stackedThreadToast({
               type: "warning",
-              title: "Side chats take text only",
-              description: "Remove the attachments and context, then send it again.",
+              title: m(msg("Side chats take text only")),
+              description: m(msg("Remove the attachments and context, then send it again.")),
             }),
           );
           return;
@@ -671,8 +676,10 @@ export function useComposerSend(input: ComposerSendInput) {
             toastManager.add({
               ...stackedThreadToast({
                 type: "warning",
-                title: "Not connected: message not sent",
-                description: "Reconnecting to the environment. Try again once it is connected.",
+                title: m(msg("Not connected: message not sent")),
+                description: m(
+                  msg("Reconnecting to the environment. Try again once it is connected."),
+                ),
               }),
               id: `chat-send-environment-unavailable:${toastSlot}`,
             });
@@ -706,16 +713,22 @@ export function useComposerSend(input: ComposerSendInput) {
                   branch: activeThreadBranch,
                 });
           if (multipleModelBlock === "server-outdated") {
-            setThreadError(activeThread.id, "Update this server before starting multiple models.");
+            setThreadError(
+              activeThread.id,
+              m(msg("Update this server before starting multiple models.")),
+            );
             return;
           }
           if (multipleModelBlock === "needs-new-git-thread") {
             toastManager.add(
               stackedThreadToast({
                 type: "warning",
-                title: "Choose models and a base branch",
-                description:
-                  "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+                title: m(msg("Choose models and a base branch")),
+                description: m(
+                  msg(
+                    "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+                  ),
+                ),
               }),
             );
             return;
@@ -778,13 +791,25 @@ export function useComposerSend(input: ComposerSendInput) {
           })[0];
           if (strandedThread) {
             const owner =
-              readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ??
-              "its machine";
+              readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ?? null;
             toastManager.add(
               stackedThreadToast({
                 type: "warning",
-                title: "Attached thread is on another machine",
-                description: `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
+                title: m(msg("Attached thread is on another machine")),
+                description:
+                  owner === null
+                    ? m(
+                        msg(
+                          "This machine's agent can't read \"{title}\". Remove it, or switch back to its machine to send.",
+                          { title: strandedThread.title },
+                        ),
+                      )
+                    : m(
+                        msg(
+                          "This machine's agent can't read \"{title}\". Remove it, or switch back to {owner} to send.",
+                          { title: strandedThread.title, owner },
+                        ),
+                      ),
               }),
             );
             return;
@@ -795,9 +820,12 @@ export function useComposerSend(input: ComposerSendInput) {
               toastManager.add(
                 stackedThreadToast({
                   type: "warning",
-                  title: "Queued message not updated",
-                  description:
-                    "A queued message can't move to a side chat. Remove /side or /btw to save it.",
+                  title: m(msg("Queued message not updated")),
+                  description: m(
+                    msg(
+                      "A queued message can't move to a side chat. Remove /side or /btw to save it.",
+                    ),
+                  ),
                 }),
               );
               return;
@@ -889,9 +917,12 @@ export function useComposerSend(input: ComposerSendInput) {
             toastManager.add(
               stackedThreadToast({
                 type: "warning",
-                title: "Remove the attachments to send feedback",
-                description:
-                  "/feedback opens Send feedback to Scient, where you can add a screenshot or logs.",
+                title: m(msg("Remove the attachments to send feedback")),
+                description: m(
+                  msg(
+                    "/feedback opens Send feedback to Scient, where you can add a screenshot or logs.",
+                  ),
+                ),
               }),
             );
             return;
@@ -931,43 +962,48 @@ export function useComposerSend(input: ComposerSendInput) {
               toastManager.add(
                 stackedThreadToast({
                   type: "warning",
-                  title: "Start a Codex thread first",
-                  description: "Send a message before you submit feedback.",
+                  title: m(msg("Start a Codex thread first")),
+                  description: m(msg("Send a message before you submit feedback.")),
                 }),
               );
               return;
             }
             feedbackUploadsInFlightRef.current.add(routeThreadKey);
             const feedbackAttempt = await settlePromise(async () => {
-              await submitCodexFeedback({
-                submission: {
-                  id: newMessageId(),
-                  command: trimmed,
-                  createdAt: new Date().toISOString(),
+              await submitCodexFeedback(
+                {
+                  submission: {
+                    id: newMessageId(),
+                    command: trimmed,
+                    createdAt: new Date().toISOString(),
+                  },
+                  clearDraft: () => {
+                    promptRef.current = "";
+                    clearComposerDraftContent(composerDraftTarget);
+                    composerRef.current?.resetCursorState();
+                  },
+                  onUpdate: (submission) => {
+                    setFeedbackSubmissionsByThreadKey((current) => {
+                      const existing = current[routeThreadKey] ?? [];
+                      const found = existing.some((entry) => entry.id === submission.id);
+                      return {
+                        ...current,
+                        [routeThreadKey]: found
+                          ? existing.map((entry) =>
+                              entry.id === submission.id ? submission : entry,
+                            )
+                          : [...existing, submission],
+                      };
+                    });
+                  },
+                  upload: () =>
+                    uploadThreadFeedback({
+                      environmentId: activeThread.environmentId,
+                      input: { threadId: activeThread.id, ...feedbackCommand },
+                    }),
                 },
-                clearDraft: () => {
-                  promptRef.current = "";
-                  clearComposerDraftContent(composerDraftTarget);
-                  composerRef.current?.resetCursorState();
-                },
-                onUpdate: (submission) => {
-                  setFeedbackSubmissionsByThreadKey((current) => {
-                    const existing = current[routeThreadKey] ?? [];
-                    const found = existing.some((entry) => entry.id === submission.id);
-                    return {
-                      ...current,
-                      [routeThreadKey]: found
-                        ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                        : [...existing, submission],
-                    };
-                  });
-                },
-                upload: () =>
-                  uploadThreadFeedback({
-                    environmentId: activeThread.environmentId,
-                    input: { threadId: activeThread.id, ...feedbackCommand },
-                  }),
-              });
+                m,
+              );
             });
             feedbackUploadsInFlightRef.current.delete(routeThreadKey);
             if (feedbackAttempt._tag === "Failure") {
@@ -1003,8 +1039,8 @@ export function useComposerSend(input: ComposerSendInput) {
             toastManager.add(
               stackedThreadToast({
                 type: "warning",
-                title: "Choose a project first",
-                description: "This draft no longer points to an available project.",
+                title: m(msg("Choose a project first")),
+                description: m(msg("This draft no longer points to an available project.")),
               }),
             );
             return;
@@ -1068,7 +1104,7 @@ export function useComposerSend(input: ComposerSendInput) {
           if (missingWorktreeBaseBranch) {
             setThreadError(
               threadIdForSend,
-              "Select a base branch before sending in New worktree mode.",
+              m(msg("Select a base branch before sending in New worktree mode.")),
             );
             return;
           }
@@ -1129,7 +1165,10 @@ export function useComposerSend(input: ComposerSendInput) {
               (entry) => entry.instanceId === selection.instanceId,
             );
             if (!provider?.enabled || !provider.isAvailable || provider.status !== "ready") {
-              setThreadError(threadIdForSend, `Provider for ${selection.model} is unavailable.`);
+              setThreadError(
+                threadIdForSend,
+                m(msg("Provider for {model} is unavailable.", { model: selection.model })),
+              );
               return;
             }
             const providerBlockReason = getAntigravitySendBlockReason(
@@ -1179,7 +1218,7 @@ export function useComposerSend(input: ComposerSendInput) {
             ) {
               setThreadError(
                 activeThread.id,
-                "Send approval feedback without attachments or added context.",
+                m(msg("Send approval feedback without attachments or added context.")),
               );
               return;
             }
@@ -1291,7 +1330,7 @@ export function useComposerSend(input: ComposerSendInput) {
               setThreadError(
                 threadIdForSend,
                 attachmentCapabilitiesBeforeDispatch.fileBlockReason ??
-                  "This connection cannot change threads.",
+                  m(msg("This connection cannot change threads.")),
               );
               setDockedDraftHeroThreadKey((currentThreadKey) =>
                 currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -1314,7 +1353,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 readLiveAttachmentCapabilities().fileBlockReason ??
                 (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) ===
                 null
-                  ? "Retry or remove failed uploads before sending."
+                  ? m(msg("Retry or remove failed uploads before sending."))
                   : null);
               if (uploadBlockReason !== null) {
                 setThreadError(threadIdForSend, uploadBlockReason);
@@ -1484,18 +1523,24 @@ export function useComposerSend(input: ComposerSendInput) {
                 const recoveryToastId = toastManager.add(
                   stackedThreadToast({
                     type: "error",
-                    title: interrupted ? "Message may not have been sent" : "Message not sent",
-                    description:
-                      "Your new draft was kept. Restore the failed message to that conversation once the draft is sent or cleared.",
+                    title: interrupted
+                      ? m(msg("Message may not have been sent"))
+                      : m(msg("Message not sent")),
+                    description: m(
+                      msg(
+                        "Your new draft was kept. Restore the failed message to that conversation once the draft is sent or cleared.",
+                      ),
+                    ),
                     timeout: 0,
                     actionProps: {
-                      children: "Restore message",
+                      children: m(msg("Restore message")),
                       // Reads only state that outlives this composer, so it still works after a remount.
                       onClick: () => {
                         if (sendInFlightRef.current || composerHasDraft()) {
                           toastManager.update(recoveryToastId, {
-                            description:
-                              "Send, stash or clear that conversation's current draft first.",
+                            description: m(
+                              msg("Send, stash or clear that conversation's current draft first."),
+                            ),
                           });
                           return;
                         }
@@ -1522,11 +1567,14 @@ export function useComposerSend(input: ComposerSendInput) {
               );
             }
 
-            const title = deriveThreadTitleSeed({
-              text: composerCitationsToPlainText(stripInlineContextReferences(trimmed)),
-              attachments: composerAttachmentsSnapshot,
-              fallbackLabels: sendTitleFallbackLabels(sendSnapshot),
-            });
+            const title = deriveThreadTitleSeed(
+              {
+                text: composerCitationsToPlainText(stripInlineContextReferences(trimmed)),
+                attachments: composerAttachmentsSnapshot,
+                fallbackLabels: sendTitleFallbackLabels(sendSnapshot),
+              },
+              m,
+            );
             const threadCreateModelSelection = createModelSelection(
               ctxSelectedModelSelection.instanceId,
               ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
@@ -1736,8 +1784,8 @@ export function useComposerSend(input: ComposerSendInput) {
                     toastManager.add(
                       stackedThreadToast({
                         type: "warning",
-                        title: "Could not open a fresh composer",
-                        description: error instanceof Error ? error.message : undefined,
+                        title: m(msg("Could not open a fresh composer")),
+                        description: thrownErrorMessage(error, m) ?? undefined,
                       }),
                     );
                   }
@@ -1795,10 +1843,10 @@ export function useComposerSend(input: ComposerSendInput) {
                   if (backgroundDraftOpened) {
                     toastManager.add({
                       type: "success",
-                      title: "Started in background",
+                      title: m(msg("Started in background")),
                       timeout: 5_000,
                       actionProps: {
-                        children: "Open",
+                        children: m(msg("Open", { $context: "verb, opens the background thread" })),
                         onClick: () => {
                           void navigate({
                             to: "/$environmentId/$threadId",
@@ -1862,17 +1910,17 @@ export function useComposerSend(input: ComposerSendInput) {
                 }
                 setThreadError(
                   threadIdForSend,
-                  error instanceof Error ? error.message : "Failed to send message.",
+                  thrownErrorMessage(error, m) ?? m(msg("Failed to send message.")),
                 );
                 if (backgroundDraftOpened && draftId) {
                   toastManager.add(
                     stackedThreadToast({
                       type: "error",
-                      title: "Background task failed",
+                      title: m(msg("Background task failed")),
                       description:
-                        error instanceof Error ? error.message : "Failed to send message.",
+                        thrownErrorMessage(error, m) ?? m(msg("Failed to send message.")),
                       actionProps: {
-                        children: "Open draft",
+                        children: m(msg("Open draft")),
                         onClick: () => {
                           void navigate({ to: "/draft/$draftId", params: { draftId } });
                         },

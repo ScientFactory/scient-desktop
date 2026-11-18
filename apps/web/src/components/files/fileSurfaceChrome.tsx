@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 
+import { T, useGT } from "gt-react";
 import { Spinner } from "~/components/ui/spinner";
 import { Button } from "~/components/ui/button";
 import { Toggle } from "~/components/ui/toggle";
@@ -118,10 +119,11 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
 }
 
 export function FileSurfaceLoading(props: { readonly className?: string }) {
+  const gt = useGT();
   return (
     <div
       role="status"
-      aria-label="Loading file"
+      aria-label={gt("Loading file")}
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center text-muted-foreground",
         props.className,
@@ -177,7 +179,7 @@ export function FileSurfaceMessage(props: {
                 aria-busy={retrying}
               >
                 <RefreshIcon size="xs" refreshing={retrying} />
-                Try again
+                <T>Try again</T>
               </Button>
             ) : null}
             {props.children}
@@ -191,7 +193,7 @@ export function FileSurfaceMessage(props: {
                   className="size-3 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
                   aria-hidden="true"
                 />
-                Details
+                <T>Details</T>
               </CollapsibleTrigger>
               <CollapsiblePanel motion="fast" className="w-full">
                 <pre

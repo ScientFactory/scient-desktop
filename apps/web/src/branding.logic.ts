@@ -13,6 +13,7 @@ export function formatAppDisplayName(input: {
 
 export function resolveHostedAppChannelLabel(channel: string | null | undefined): string | null {
   const normalized = channel?.trim().toLowerCase();
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
   return normalized === "nightly" ? "Nightly" : normalized === "latest" ? "Latest" : null;
 }
 
@@ -24,6 +25,7 @@ export function resolveWebAppStageLabel(input: {
   return (
     resolveHostedAppChannelLabel(input.hostedAppChannel) ??
     // SCIENT-FORK:START desktop-release-channels — upstream T3's Alpha-to-Beta rename is not adopted.
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
     (input.development ? "Dev" : "Alpha")
     // SCIENT-FORK:END desktop-release-channels
   );
@@ -34,10 +36,12 @@ export function resolveServerBackedAppStageLabel(input: {
   readonly fallbackStageLabel: string;
 }): string {
   if (input.primaryServerVersion && /-beta\.\d{8}\.\d+$/u.test(input.primaryServerVersion))
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
     return "Beta";
   return input.primaryServerVersion &&
     NIGHTLY_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)
-    ? "Nightly"
+    ? // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
+      "Nightly"
     : input.fallbackStageLabel;
 }
 

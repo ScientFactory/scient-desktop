@@ -1,4 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
+import { useGT } from "gt-react";
 import { observeResize } from "~/lib/observeResize";
 import {
   useEffect,
@@ -27,7 +28,7 @@ export type PaintPage = (
 export function OfficePages(props: {
   pages: readonly PageSize[];
   paint: PaintPage;
-  label: string;
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   scrollRef?: RefObject<((index: number, y?: number) => void) | null>;
@@ -223,24 +224,14 @@ function OfficePage(props: {
   scale: number;
   rasterScale: number;
   paint: PaintPage;
-  label: string;
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   onError: (error: unknown) => void;
 }) {
-  const {
-    root,
-    rasterScale,
-    index,
-    onError,
-    page,
-    paint,
-    scale,
-    register,
-    label,
-    overlay,
-    footer,
-  } = props;
+  const { root, rasterScale, index, onError, page, paint, scale, register, kind, overlay, footer } =
+    props;
+  const gt = useGT();
   const row = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
@@ -292,7 +283,11 @@ function OfficePage(props: {
           register(el);
         }}
         role="group"
-        aria-label={`${label} ${index + 1}`}
+        aria-label={
+          kind === "slide"
+            ? gt("Slide {number}", { number: String(index + 1) })
+            : gt("Page {number}", { number: String(index + 1) })
+        }
         className="relative shrink-0 shadow-md"
         style={{
           width: page.width * scale,

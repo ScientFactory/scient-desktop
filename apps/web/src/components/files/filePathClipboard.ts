@@ -1,6 +1,7 @@
 import {
   ClipboardApiUnavailableError,
   ClipboardWriteError,
+  namedClipboardTarget,
   writeTextToClipboard,
 } from "~/hooks/useCopyToClipboard";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
@@ -84,7 +85,7 @@ export async function copyFilePathToClipboard(input: {
 }): Promise<boolean> {
   const title = filePathCopyTitle(input.format);
   try {
-    return await writeTextToClipboard(input.value, title.toLowerCase());
+    return await writeTextToClipboard(input.value, namedClipboardTarget(title.toLowerCase()));
   } catch (error) {
     input.onError?.(error);
     toastManager.add(

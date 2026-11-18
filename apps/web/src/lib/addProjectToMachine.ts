@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   executeAtomQuery,
   runAtomCommand,
@@ -11,11 +12,13 @@ import type {
   ScopedProjectRef,
 } from "@t3tools/contracts";
 import { ProjectWriteFileInput } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { create } from "zustand";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import * as Schema from "effect/Schema";
 
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
@@ -63,7 +66,7 @@ export interface AddProjectToMachineInput {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 /**
@@ -94,7 +97,12 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
 
 export type ProjectFileCopy =
   | { readonly phase: "copying" }
-  | { readonly phase: "failed"; readonly title: string; readonly failures: ReadonlyArray<string> };
+  | {
+      readonly phase: "failed";
+      /** A `msg()`, resolved where it is shown so it follows the UI language. */
+      readonly title: string;
+      readonly failures: ReadonlyArray<string>;
+    };
 
 /** Ignored-file copies still owed to a cloned project, keyed by its scoped project key. */
 const useFileCopies = create<{ copies: Readonly<Record<string, ProjectFileCopy>> }>(() => ({
@@ -134,7 +142,9 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           !isWritableFilePath(subdirectory ? `${subdirectory}/${path}` : path),
       ))
   ) {
-    throw new Error("Files to copy must stay inside the selected workspace and repository.");
+    throw new Error(
+      m(msg("Files to copy must stay inside the selected workspace and repository.")),
+    );
   }
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
@@ -148,13 +158,16 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
       if (result._tag === "Failure") throw new Error(`${relativePath}: ${failureMessage(result)}`);
-      if (result.value.exists === false) throw new Error(`${relativePath}: File no longer exists.`);
+      if (result.value.exists === false)
+        throw new Error(m(msg("{path}: File no longer exists.", { path: relativePath })));
       if (result.value.outsideWorkspace)
-        throw new Error(`${relativePath}: File is outside the selected workspace.`);
+        throw new Error(
+          m(msg("{path}: File is outside the selected workspace.", { path: relativePath })),
+        );
       if (result.value.relativePath !== relativePath)
-        throw new Error(`${relativePath}: The source file path changed.`);
+        throw new Error(m(msg("{path}: The source file path changed.", { path: relativePath })));
       if (result.value.truncated || result.value.byteLength > COPYABLE_FILE_MAX_BYTES)
-        throw new Error(`${relativePath}: Too large to copy.`);
+        throw new Error(m(msg("{path}: Too large to copy.", { path: relativePath })));
       const bytes = new TextEncoder().encode(result.value.contents);
       // The server decodes non-fatally but hashes original bytes. A size check
       // alone misses equally sized UTF-8 replacement characters. Refuse BOM
@@ -165,7 +178,11 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         `sha256:${bytesToHex(sha256(bytes))}` !== result.value.revision
       ) {
         throw new Error(
-          `${relativePath}: Cannot copy as UTF-8 without changing the original bytes.`,
+          m(
+            msg("{path}: Cannot copy as UTF-8 without changing the original bytes.", {
+              path: relativePath,
+            }),
+          ),
         );
       }
       return { relativePath, contents: result.value.contents };
@@ -242,15 +259,20 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: msg(
+              "Could not copy {count, plural, one {{count} file} other {{count} files}} to {target}",
+              { count: failed.length, target: input.target.label },
+            ),
             failures: failed,
           },
     );
   })().catch(() => {
     setFileCopy(copyKey, {
       phase: "failed",
-      title: `Could not finish copying files to ${input.target.label}`,
-      failures: ["The file transfer was interrupted. Check the destination before sending."],
+      title: msg("Could not finish copying files to {target}", { target: input.target.label }),
+      failures: [
+        m(msg("The file transfer was interrupted. Check the destination before sending.")),
+      ],
     });
   });
   return projectId;

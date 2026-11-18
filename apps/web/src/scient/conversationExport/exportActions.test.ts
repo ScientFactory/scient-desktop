@@ -9,7 +9,10 @@ const addToast = vi.fn();
 vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({ documents: { saveAssetCopy } }),
 }));
-vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard }));
+vi.mock("../../hooks/useCopyToClipboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useCopyToClipboard")>()),
+  writeTextToClipboard,
+}));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: addToast } }));
 vi.mock("./client", () => ({
   exportConversation,
@@ -64,7 +67,10 @@ describe("conversation export delivery", () => {
         },
       }),
     );
-    expect(writeTextToClipboard).toHaveBeenCalledWith("# Study", "conversation Markdown");
+    expect(writeTextToClipboard).toHaveBeenCalledWith(
+      "# Study",
+      expect.objectContaining({ target: "conversation Markdown" }),
+    );
     expect(addToast).toHaveBeenCalledWith({ type: "success", title: "Markdown copied" });
   });
 

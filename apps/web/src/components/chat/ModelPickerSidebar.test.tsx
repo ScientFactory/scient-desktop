@@ -1,9 +1,13 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 

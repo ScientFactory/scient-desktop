@@ -70,6 +70,7 @@ it("lets a waiting tab in once a stalled operation is aborted and the copy gives
     profilesDir: "/test/profiles",
     executable: async () => "/test/chromium",
     env: {},
+    chrome: { version: "157.0.8103.78", platform: "linux" as NodeJS.Platform },
   });
   const lease = await pool.leases.lease("work");
   const { jar, close } = await openProfileCookieJar(lease.context, lease.stopping, 30_000);
@@ -120,6 +121,7 @@ it("discards a context whose helper never closes, and the waiting tab opens a fr
     profilesDir: "/test/profiles",
     executable: async () => "/test/chromium",
     env: {},
+    chrome: { version: "157.0.8103.78", platform: "linux" as NodeJS.Platform },
   });
   const lease = await pool.leases.lease("work");
   const { jar, close } = await openProfileCookieJar(lease.context, lease.stopping, 30_000);

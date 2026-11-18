@@ -1,4 +1,6 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
@@ -62,9 +64,9 @@ const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
-  reviewRequested: "Review requested",
-  authored: "Authored",
-  others: "Others",
+  reviewRequested: msg("Review requested"),
+  authored: msg("Authored"),
+  others: msg("Others"),
 };
 
 function normalize(value: string | null | undefined): string | null {
@@ -203,21 +205,38 @@ export function pullRequestLabelChoices(
   return [...loaded, ...added];
 }
 
-export function pullRequestFilterOptionNotice(input: {
-  readonly kind: "authors" | "labels";
-  readonly visibleCount: number;
-  readonly isPending: boolean;
-  readonly error: string | null;
-  readonly truncated: boolean;
-}): string | null {
+export function pullRequestFilterOptionNotice(
+  input: {
+    readonly kind: "authors" | "labels";
+    readonly visibleCount: number;
+    readonly isPending: boolean;
+    readonly error: string | null;
+    readonly truncated: boolean;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   if (input.isPending) return null;
   if (input.error !== null) {
-    const failure =
-      input.visibleCount === 0 ? input.error : `Results are incomplete: ${input.error}`;
-    return input.truncated ? `${failure}. More matches are available; refine your search` : failure;
+    const error = input.error;
+    if (input.visibleCount === 0) {
+      return input.truncated
+        ? resolve(msg("{error}. More matches are available; refine your search", { error }))
+        : error;
+    }
+    return input.truncated
+      ? resolve(
+          msg("Results are incomplete: {error}. More matches are available; refine your search", {
+            error,
+          }),
+        )
+      : resolve(msg("Results are incomplete: {error}", { error }));
   }
-  if (input.truncated) return "More matches are available; refine your search";
-  if (input.visibleCount === 0) return `No ${input.kind} found`;
+  if (input.truncated) return resolve(msg("More matches are available; refine your search"));
+  if (input.visibleCount === 0) {
+    return input.kind === "authors"
+      ? resolve(msg("No authors found"))
+      : resolve(msg("No labels found"));
+  }
   return null;
 }
 

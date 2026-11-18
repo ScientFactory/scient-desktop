@@ -1479,10 +1479,12 @@ export function shouldPrepareLegacyImportHandoff(input: {
   readonly legacyImportItemCount: number;
 }): boolean {
   return (
-    (input.historyOrigin === "v1_import" ||
-      input.historyOrigin === "scient_fork" ||
-      input.historyOrigin === "conversation_import") &&
-    !input.hasNativeHistory &&
+    // SCIENT-FORK:START — a fork or conversation import keeps its history in the app, so only a
+    // v1 import's native session can hold it; a fork's native clone is decided at dispatch.
+    (input.historyOrigin === "v1_import"
+      ? !input.hasNativeHistory
+      : input.historyOrigin === "scient_fork" || input.historyOrigin === "conversation_import") &&
+    // SCIENT-FORK:END
     !input.hasCompletedRun &&
     input.legacyImportItemCount > 0
   );
@@ -9020,8 +9022,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         latestCompletedRun === undefined &&
         shouldPrepareLegacyImportHandoff({
           hasNativeHistory:
-            activeProviderThread?.driver === "acpRegistry" &&
-            activeProviderThread.nativeThreadRef !== null,
+            activeProviderThread !== undefined && activeProviderThread.nativeThreadRef !== null,
           historyOrigin: projection.thread.historyOrigin,
           hasCompletedRun: false,
           legacyImportItemCount: (yield* legacyImportItemsRead).length,
@@ -9814,6 +9815,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const legacyImportRecoveryHandoff =
       isProviderSwitch &&
       !canResumeAcrossInstances &&
+      ensuredProviderThread.nativeThreadRef === null &&
       latestCompletedRun === undefined &&
       (yield* legacyImportItemsRead).length > 0
         ? yield* contextHandoffService

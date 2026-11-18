@@ -1,6 +1,7 @@
 import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { EnvironmentId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { T, useGT } from "gt-react";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
 import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 
@@ -124,19 +125,20 @@ export function SkillChipPopover(props: {
   copyMarkdown?: string | undefined;
   onViewInstructions: (() => void) | undefined;
 }) {
+  const gt = useGT();
   return (
     <ContextChipPopover
       kind="skill"
       icon={<SkillChipIcon />}
       label={props.label}
-      accessibleLabel={`Skill ${props.label}`}
+      accessibleLabel={gt("Skill {label}", { label: props.label })}
       copyMarkdown={props.copyMarkdown}
     >
       {/* SCIENT-FORK:START — Scient's skill details look and View Skill action. */}
       <div className="space-y-2 p-1.5 text-sm">
         <p className="font-medium leading-none">{props.label}</p>
         <p className="rounded-md border border-border/60 bg-muted/35 px-2.5 py-2 font-mono text-2xs leading-relaxed text-muted-foreground select-text">
-          {props.description || "No description is available for this skill."}
+          {props.description || gt("No description is available for this skill.")}
         </p>
         {props.onViewInstructions ? (
           <div className="flex justify-end">
@@ -144,7 +146,7 @@ export function SkillChipPopover(props: {
               render={<Button variant="ghost-muted" size="micro" />}
               onClick={props.onViewInstructions}
             >
-              View Skill
+              <T>View Skill</T>
             </PopoverClose>
           </div>
         ) : null}

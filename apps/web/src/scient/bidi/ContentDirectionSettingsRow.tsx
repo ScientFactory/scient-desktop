@@ -3,7 +3,7 @@ import type { ScientAnalyticsUiEvent } from "@t3tools/contracts";
 import { type ContentDirection, DEFAULT_CONTENT_DIRECTION } from "@t3tools/contracts/settings";
 
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import { useSearchableSetting } from "../../components/settings/settingsSearch";
 import {
   Select,
   SelectItem,
@@ -31,14 +31,15 @@ export function ContentDirectionSettingsRow({
   readonly updateSettings: (patch: { readonly contentDirection: ContentDirection }) => void;
   readonly recordAnalytics: (event: ScientAnalyticsUiEvent) => void;
 }) {
+  const setting = useSearchableSetting();
   return (
     <SettingsRow
-      {...searchableSetting("conversation-text-direction")}
+      {...setting("conversation-text-direction")}
       description="Control chat prose, lists, and tables without mirroring the application shell."
       resetAction={
         contentDirection !== DEFAULT_CONTENT_DIRECTION ? (
           <SettingResetButton
-            label="conversation text direction"
+            ariaLabel="Reset conversation text direction to default"
             onClick={() => updateSettings({ contentDirection: DEFAULT_CONTENT_DIRECTION })}
           />
         ) : null

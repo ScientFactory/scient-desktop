@@ -15,7 +15,7 @@ import {
   SettingsSearchTarget,
   useSettingsSearchTargetId,
 } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import type { SettingsSearchItemId } from "../../components/settings/settingsSearch";
 import { Button } from "../../components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { useDebouncedValue } from "../../state/queries";
@@ -54,9 +54,9 @@ import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLi
 
 /** Search results that live on Installed; Discover forwards them there. */
 const INSTALLED_SEARCH_TARGETS: Readonly<Record<string, true>> = {
-  [searchableSetting("extensions-connected-services").id]: true,
-  [searchableSetting("extensions-scient-plugins").id]: true,
-  [searchableSetting("extensions-provider-plugins").id]: true,
+  ["extensions-connected-services" satisfies SettingsSearchItemId]: true,
+  ["extensions-scient-plugins" satisfies SettingsSearchItemId]: true,
+  ["extensions-provider-plugins" satisfies SettingsSearchItemId]: true,
 };
 
 function SearchField({
@@ -229,7 +229,7 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const builtIns = inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? [];
   return (
     <SettingsSearchTarget
-      id={searchableSetting("extensions-discover").id}
+      id={"extensions-discover" satisfies SettingsSearchItemId}
       className="grid gap-10 outline-none"
     >
       {!showsKind(kind, "plugins") ? null : catalogError ? (
@@ -408,7 +408,10 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
   }
   return (
     <>
-      <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
+      <SettingsSearchTarget
+        id={"extensions" satisfies SettingsSearchItemId}
+        className="outline-none"
+      >
         <ExtensionsTopBar tab="discover" kind={kind}>
           <span className="flex w-full items-center gap-2 sm:w-auto">
             <AddYourOwn kind={kind} />

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { MoreHorizontalIcon } from "lucide-react";
 import type { ComputeLanguageId, EnvironmentId } from "@t3tools/contracts";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { SettingsRow } from "~/components/settings/settingsLayout";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
@@ -40,7 +40,7 @@ export function ComputeInstallationRow({
 }) {
   const [copyError, setCopyError] = useState<string | null>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: "runtime path",
+    target: namedClipboardTarget("runtime path"),
     onCopy: () => setCopyError(null),
     onError: () => setCopyError("The path could not be copied. Try again."),
   });

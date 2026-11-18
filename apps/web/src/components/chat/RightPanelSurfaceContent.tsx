@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type {
   EditorId,
   EnvironmentId,
@@ -92,6 +93,7 @@ export function RightPanelSurfaceContent(props: {
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
+  const gt = useGT();
   if (surface === null) return null;
   switch (surface.kind) {
     case "preview":
@@ -134,9 +136,9 @@ export function RightPanelSurfaceContent(props: {
       if (!pullRequest.supported) {
         return (
           <PullRequestsUnavailableState
-            title="Pull requests unavailable"
+            title={gt("Pull requests unavailable")}
             // SCIENT-FORK:START — product language stays Scient.
-            error="Update this environment's Scient server to browse pull requests."
+            error={gt("Update this environment's Scient server to browse pull requests.")}
             // SCIENT-FORK:END
           />
         );
@@ -189,14 +191,14 @@ export function RightPanelSurfaceContent(props: {
       if (!props.issuesSupported) {
         return (
           <PullRequestsUnavailableState
-            title="Issues unavailable"
-            error="Update this environment's Scient server to browse issues."
+            title={gt("Issues unavailable")}
+            error={gt("Update this environment's Scient server to browse issues.")}
           />
         );
       }
       return (
         <IssueDetailPanel
-          key={surface.id}
+          key={`${surface.environmentId ?? props.environmentId}:${surface.id}`}
           environmentId={
             (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
           }

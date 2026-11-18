@@ -17,7 +17,7 @@ import { Button, InlineButton } from "../../components/ui/button";
 import { Label } from "../../components/ui/label";
 import { NativeSelect } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAccountBrowser } from "../accounts/useAccountBrowser";
@@ -70,7 +70,7 @@ export function GitHubConnect({
   const openInBrowser = useAccountBrowser(environmentId);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     timeout: 1500,
-    target: "sign-in code",
+    target: namedClipboardTarget("sign-in code"),
   });
   const [chosen, setChosen] = useState("");
   const [signIn, setSignIn] = useState<SignIn>({ status: "idle" });

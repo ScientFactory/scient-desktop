@@ -51,6 +51,7 @@ import {
 } from "../../attachmentStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
@@ -896,6 +897,7 @@ const runConjunction = (refusal = false) =>
           ),
           idAllocatorLayer,
           McpProviderSessions.layer,
+          McpAppModelContext.layerEmpty,
         ),
       ),
     ),

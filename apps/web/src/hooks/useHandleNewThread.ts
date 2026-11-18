@@ -54,6 +54,8 @@ import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { toastManager } from "../components/ui/toast";
 // SCIENT-FORK:START
 import { readCarriedModelSelection } from "../scient/newThread/carriedModelSelection";
@@ -204,8 +206,13 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (remainingCount > 0) {
           toastManager.add({
             type: "warning",
-            title: `${remainingCount} attachment${remainingCount === 1 ? " stayed" : "s stayed"} in the original draft`,
-            description: "Return to the original draft or attach the files again.",
+            title: m(
+              msg(
+                "{count, plural, one {{count} attachment stayed in the original draft} other {{count} attachments stayed in the original draft}}",
+                { count: remainingCount },
+              ),
+            ),
+            description: m(msg("Return to the original draft or attach the files again.")),
           });
         }
       }

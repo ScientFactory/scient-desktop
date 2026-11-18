@@ -891,7 +891,8 @@ export const layer = Layer.effect(
 
     // A dispatch is recorded once the message is accepted; the provider can still
     // reject the turn after that, so follow the run and record its failure. A one-time
-    // task whose turn completed is spent, so it is removed; its thread stays.
+    // task whose turn completed at or after its runAt is spent, so it is removed; its
+    // thread stays. A paused task always has a NULL next_run_at, so that alone proves nothing.
     const recordRunOutcome = Effect.fn("ScheduledTaskService.recordRunOutcome")(function* (
       taskId: ScheduledTaskId,
       startedAtIso: string,
@@ -922,10 +923,8 @@ export const layer = Layer.effect(
           DELETE FROM scheduled_tasks
           WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
             AND last_run_status = 'succeeded' AND next_run_at IS NULL
-            -- SCIENT-FORK: a paused task has no next run either. Only a run that started at or
-            -- after the task's time used it up, so Run now before then keeps the task.
-            AND julianday(json_extract(schedule_json, '$.runAt')) <= julianday(${startedAtIso})
             AND json_extract(schedule_json, '$.type') = 'once'
+            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
           RETURNING task_id
         `;
         if (removed.length > 0) yield* notifyChanged;

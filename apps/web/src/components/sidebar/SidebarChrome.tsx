@@ -10,6 +10,7 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -73,6 +74,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const gt = useGT();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
     environmentIdentificationMode,
@@ -96,7 +98,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           className="relative top-auto translate-y-0"
           {...(backdropVariant ? { stage: backdropVariant } : {})}
           data-stage-variant={backdropVariant ?? undefined}
-          aria-label="Toggle main sidebar"
+          aria-label={gt("Toggle main sidebar")}
         />
       </div>
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
@@ -156,7 +158,8 @@ export function SidebarBrandWidthProbe({
 function HistoryNavigationButton({ direction }: { direction: HistoryDirection }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const enabled = useCanNavigateHistory(direction);
-  const label = direction === "back" ? "Go back" : "Go forward";
+  const gt = useGT();
+  const label = direction === "back" ? gt("Go back") : gt("Go forward");
   const shortcutLabel = shortcutLabelForCommand(
     keybindings,
     direction === "back" ? "navigation.back" : "navigation.forward",
@@ -196,9 +199,10 @@ function SidebarBrand({
   readonly stageVariant: SidebarStageBackdropVariant | null;
   readonly stageLabel: string | null;
 }) {
+  const gt = useGT();
   return (
     <Link
-      aria-label={`${APP_BASE_NAME} home`}
+      aria-label={gt("{name} home", { name: APP_BASE_NAME })}
       className={cn(
         "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset group-data-[collapsible=icon]:hidden",
         onBackdrop ? "sidebar-brand-on-stage" : "text-foreground",
@@ -260,6 +264,7 @@ function SidebarUtilityItem({
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
+  const gt = useGT();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
@@ -328,39 +333,41 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           <SidebarMenuItem className="min-w-0 flex-1">
             <SidebarMenuButton onClick={handleBackClick}>
               <ArrowLeftIcon />
-              <span>Back</span>
+              <span>
+                <T>Back</T>
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         ) : (
           <>
             <SidebarUtilityItem
               icon={<ImportIcon />}
-              label="Import conversation"
+              label={gt("Import conversation")}
               onClick={handleImportClick}
               secondary
             />
             <SidebarUtilityItem
               icon={<SettingsIcon />}
-              label="Settings"
+              label={gt("Settings")}
               onClick={handleSettingsClick}
             />
             {pullRequestsSupported ? (
               <SidebarUtilityItem
                 icon={<PullRequestGlyph.pullRequest />}
-                label="Pull Requests"
+                label={gt("Pull Requests")}
                 onClick={handlePullRequestsClick}
               />
             ) : null}
             {issuesSupported ? (
               <SidebarUtilityItem
                 icon={<IssueGlyph.issue />}
-                label="Issues"
+                label={gt("Issues", { $context: "sidebar link to the list of issues" })}
                 onClick={handleIssuesClick}
               />
             ) : null}
             <SidebarUtilityItem
               icon={<ChartNoAxesColumnIcon />}
-              label="Usage"
+              label={gt("Usage")}
               onClick={handleUsageClick}
               secondary
             />
@@ -368,7 +375,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             {cloudAvailable ? (
               <SidebarUtilityItem
                 icon={<CloudIcon />}
-                label="Cloud conversations"
+                label={gt("Cloud conversations")}
                 onClick={handleCloudClick}
                 secondary
               />
@@ -378,7 +385,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             {canSendFeedback ? (
               <SidebarUtilityItem
                 icon={<FeedbackIcon />}
-                label="Send feedback"
+                label={gt("Send feedback")}
                 onClick={handleFeedbackClick}
                 secondary
               />
@@ -387,24 +394,24 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             <SidebarMenuItem className="hidden shrink-0" data-sidebar-utility="overflow">
               <Menu>
                 <MenuTrigger
-                  render={<SidebarMenuButton size="icon" aria-label="More sidebar actions" />}
+                  render={<SidebarMenuButton size="icon" aria-label={gt("More sidebar actions")} />}
                 >
                   <EllipsisVerticalIcon />
                 </MenuTrigger>
                 <MenuPopup side="top" align="start">
                   <MenuItem onClick={handleImportClick}>
                     <ImportIcon />
-                    Import conversation
+                    <T>Import conversation</T>
                   </MenuItem>
                   <MenuItem onClick={handleUsageClick}>
                     <ChartNoAxesColumnIcon />
-                    Usage
+                    <T>Usage</T>
                   </MenuItem>
                   {/* SCIENT-FORK:START — Scient Cloud conversations. */}
                   {cloudAvailable ? (
                     <MenuItem onClick={handleCloudClick}>
                       <CloudIcon />
-                      Cloud conversations
+                      <T>Cloud conversations</T>
                     </MenuItem>
                   ) : null}
                   {/* SCIENT-FORK:END */}
@@ -412,7 +419,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                   {canSendFeedback ? (
                     <MenuItem onClick={handleFeedbackClick}>
                       <FeedbackIcon />
-                      Send feedback
+                      <T>Send feedback</T>
                     </MenuItem>
                   ) : null}
                   {/* SCIENT-FORK:END */}
