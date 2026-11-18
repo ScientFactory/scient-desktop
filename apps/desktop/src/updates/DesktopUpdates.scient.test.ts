@@ -773,3 +773,50 @@ it.effect("releases the final workspace lock when an install is interrupted befo
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   }),
 );
+
+describe("DesktopUpdates reading a check's result", () => {
+  const checkThatOffers = (info: Record<string, unknown>) => {
+    let harness: ReturnType<typeof makeHarness> | undefined;
+    harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness?.emit("update-available", info)),
+    });
+    return harness;
+  };
+
+  it.effect("offers an update whose feed wrote its release date unquoted", () => {
+    // electron-updater reads feeds as YAML 1.1, where an unquoted date becomes a Date.
+    const harness = checkThatOffers({
+      version: "1.2.4",
+      // @effect-diagnostics-next-line globalDate:off -- electron-updater hands over a plain Date.
+      releaseDate: new Date("2026-11-18T05:00:00Z"),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("menu");
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        // Offered, so the background download has already taken it.
+        assert.include(["available", "downloading"], state.status);
+        assert.equal(state.availableVersion, "1.2.4");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("ends a check whose offer cannot be read as a failed check, not checking", () => {
+    const harness = checkThatOffers({ version: 4 });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("menu");
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        assert.equal(state.status, "error");
+        assert.equal(state.errorContext, "check");
+        assert.include(state.message ?? "", "could not read the update information");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+});
