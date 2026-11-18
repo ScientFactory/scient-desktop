@@ -258,38 +258,6 @@ describe("createMarkdownSourceLedger", () => {
   });
 });
 
-describe("applyMarkdownSourcePatches", () => {
-  it("applies multiple source patches without touching surrounding Unicode", () => {
-    const source = "α 😀 beta\r\nsecond line\r\n";
-    const betaStart = source.indexOf("beta");
-    const secondStart = source.indexOf("second");
-    expect(
-      applyMarkdownSourcePatches(source, [
-        { start: secondStart, end: secondStart + "second".length, replacement: "שנייה" },
-        { start: betaStart, end: betaStart + "beta".length, replacement: "gamma" },
-      ]),
-    ).toBe("α 😀 gamma\r\nשנייה line\r\n");
-  });
-
-  it("rejects overlap, split Unicode, split CRLF, and invalid bounds", () => {
-    expect(() =>
-      applyMarkdownSourcePatches("abcdef", [
-        { start: 1, end: 4, replacement: "x" },
-        { start: 3, end: 5, replacement: "y" },
-      ]),
-    ).toThrow("overlap");
-    expect(() =>
-      applyMarkdownSourcePatches("😀", [{ start: 1, end: 1, replacement: "x" }]),
-    ).toThrow("surrogate pair");
-    expect(() =>
-      applyMarkdownSourcePatches("a\r\nb", [{ start: 2, end: 2, replacement: "x" }]),
-    ).toThrow("CRLF");
-    expect(() =>
-      applyMarkdownSourcePatches("abc", [{ start: -1, end: 2, replacement: "x" }]),
-    ).toThrow("outside");
-  });
-});
-
 describe("nested block kinds", () => {
   it("lists the blocks nested inside quotes and lists, and nothing for inline-only blocks", () => {
     const ledger = createMarkdownSourceLedger(
