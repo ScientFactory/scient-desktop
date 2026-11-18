@@ -8535,19 +8535,21 @@ function LatexVisualEditorReady(
           ? captureInsertion() && setFigureOpen(true)
           : setNotice("Choose a root document before inserting a figure."),
     },
-    {
-      id: "result",
-      label: "Result",
-      description: "A value, table or figure from a script run",
-      group: "Objects",
-      ...(props.environmentId && props.cwd
-        ? {}
-        : { disabledReason: "Results need a project folder on this computer." }),
-      run: () =>
-        props.rootRelativePath
-          ? captureInsertion() && setResultOpen(true)
-          : setNotice("Choose a root document before inserting a result."),
-    },
+    // Results live in a project's Compute record, so a document outside one has none to insert.
+    ...(props.environmentId && props.cwd
+      ? [
+          {
+            id: "result",
+            label: "Result",
+            description: "A value, table or figure from a script run",
+            group: "Objects",
+            run: () =>
+              props.rootRelativePath
+                ? captureInsertion() && setResultOpen(true)
+                : setNotice("Choose a root document before inserting a result."),
+          },
+        ]
+      : []),
     ...[
       "theorem",
       "definition",
