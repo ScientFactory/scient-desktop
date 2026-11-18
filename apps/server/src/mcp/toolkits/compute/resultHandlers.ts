@@ -5,7 +5,9 @@ import type {
 } from "@t3tools/contracts";
 import {
   formatResultFigureMarkdown,
+  formatResultTableCaption,
   formatResultValueMarkdown,
+  isResultTableOutput,
   type ResultReferenceState,
 } from "@t3tools/shared/computeResults";
 import * as Duration from "effect/Duration";
@@ -58,6 +60,7 @@ const scriptForAgent = (script: ComputeResultScript) => ({
     }),
   })),
   figures: script.figures,
+  tables: script.tables ?? [],
 });
 
 export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (input: {
@@ -88,7 +91,11 @@ export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (i
     revision: summaryForAgent(outcome.value.summary),
     ...(script === undefined
       ? {}
-      : { values: scriptForAgent(script).values, figures: script.figures }),
+      : {
+          values: scriptForAgent(script).values,
+          figures: script.figures,
+          tables: script.tables ?? [],
+        }),
   };
 });
 
@@ -109,6 +116,41 @@ export const scientResultMarkdown = Effect.fn("ScientResultsTools.markdown")(fun
 }) {
   const scope = yield* agentScope();
   const target = { revision: input.revision, output: input.output, pointer: input.pointer ?? null };
+  if (/\.tex$/iu.test(input.document)) {
+    const placed = yield* scope.gateway
+      .placeLatexResult({ cwd: scope.cwd, documentPath: input.document, ...target })
+      .pipe(Effect.mapError(computeFailed));
+    return {
+      markdown: placed.insert.source,
+      preamble: [
+        ...placed.packages.map((name) => `\\usepackage{${name}}`),
+        ...(placed.preambleInput === null ? [] : [placed.preambleInput]),
+      ],
+    };
+  }
+  if (input.pointer === undefined && isResultTableOutput(input.output)) {
+    const { resolutions } = yield* scope.gateway
+      .resolveResults({ cwd: scope.cwd, references: [target] })
+      .pipe(Effect.mapError(computeFailed));
+    const resolution = resolutions[0];
+    const rows = resolution?._tag === "resolved" ? resolution.table : null;
+    if (rows == null || rows.length === 0)
+      return yield* computeFailed({
+        message: `Revision ${input.revision} has no table ${input.output} Scient can show.`,
+      });
+    const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("\n", " ");
+    const line = (row: ReadonlyArray<string>) => `| ${row.map(cell).join(" | ")} |`;
+    const caption = input.alt ?? input.output.replace(/^.*\//u, "").replace(/\.[^.]+$/u, "");
+    return {
+      markdown: [
+        line(rows[0]!),
+        `|${rows[0]!.map(() => " --- ").join("|")}|`,
+        ...rows.slice(1).map(line),
+        "",
+        formatResultTableCaption(caption, target),
+      ].join("\n"),
+    };
+  }
   if (input.pointer !== undefined) {
     const { resolutions } = yield* scope.gateway
       .resolveResults({ cwd: scope.cwd, references: [target] })
@@ -132,10 +174,40 @@ export const scientResultMarkdown = Effect.fn("ScientResultsTools.markdown")(fun
   return { markdown: formatResultFigureMarkdown({ alt, src }, target) };
 });
 
+const FILE_STATE_FOR_AGENT = {
+  current: "current",
+  "out-of-date": "out-of-date",
+  edited: "edited",
+  missing: "missing",
+} as const;
+
 export const checkScientResults = Effect.fn("ScientResultsTools.check")(function* (input: {
   readonly document: string;
 }) {
   const scope = yield* agentScope();
+  if (/\.tex$/iu.test(input.document)) {
+    const { scripts } = yield* scope.gateway
+      .latexResultFiles({ cwd: scope.cwd, documentPath: input.document, build: null })
+      .pipe(Effect.mapError(computeFailed));
+    return {
+      results: scripts.flatMap((script) =>
+        script.files.map((file) => ({
+          line: 0,
+          kind: "file" as const,
+          shown: file.path,
+          state:
+            file.state === "current" && script.newer !== null
+              ? STATE_FOR_AGENT.newer
+              : FILE_STATE_FOR_AGENT[file.state],
+          revision: script.summary.revision,
+          value: null,
+          newerRevision: script.newer?.revision ?? null,
+          newerValue: null,
+          outOfDate: describeCauses(script.summary.causes),
+        })),
+      ),
+    };
+  }
   const checked = yield* scope.gateway
     .checkResults({ cwd: scope.cwd, documentPath: input.document })
     .pipe(Effect.mapError(computeFailed));
@@ -145,7 +217,12 @@ export const checkScientResults = Effect.fn("ScientResultsTools.check")(function
       return {
         line,
         kind: reference.kind,
-        shown: reference.kind === "value" ? reference.text : reference.src,
+        shown:
+          reference.kind === "value"
+            ? reference.text
+            : reference.kind === "table"
+              ? reference.caption
+              : reference.src,
         state: STATE_FOR_AGENT[state],
         revision: reference.revision,
         value: resolved?.value ?? null,

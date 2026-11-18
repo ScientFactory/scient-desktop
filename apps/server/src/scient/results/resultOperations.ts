@@ -251,7 +251,11 @@ export function makeResultOperations(input: {
         reference,
         line: file.contents.slice(0, reference.start).split("\n").length,
         resolution,
-        state: resultReferenceState(reference, resolution),
+        // From source, a table's cells are not compared; only its run is.
+        state: resultReferenceState(
+          reference.kind === "table" ? { kind: "table", rows: null } : reference,
+          resolution,
+        ),
       };
     });
   });
