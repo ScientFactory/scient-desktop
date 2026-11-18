@@ -1,4 +1,5 @@
 import {
+  isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -65,7 +66,7 @@ export function useScientQueueParts(input: {
     setActionError(null);
     const settled = await settlePromise(action);
     const result = settled._tag === "Success" ? settled.value : settled;
-    if (result._tag === "Failure") {
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const cause = squashAtomCommandFailure(result);
       setActionError(
         cause instanceof Error ? cause.message : "The queued message action failed. Try again.",

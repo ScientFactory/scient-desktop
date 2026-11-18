@@ -238,6 +238,21 @@ it("says why a queue command failed", async () => {
   );
 });
 
+it("shows no notice when a queue command is interrupted", async () => {
+  setup(heldQueue({}));
+  const settled = Promise.withResolvers<unknown>();
+  state.command.mockReturnValue(settled.promise);
+  await using screen = await render(<QueuedRunsControl {...props} />);
+  const removeButton = screen
+    .getByRole("button", { name: "Remove queued message", exact: true })
+    .first();
+  await removeButton.click();
+  await vi.waitFor(() => expect(removeButton.element()).toBeDisabled());
+  settled.resolve({ _tag: "Failure", cause: Cause.interrupt() });
+  await vi.waitFor(() => expect(removeButton.element()).toBeEnabled());
+  expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+});
+
 it("previews a follow-up being admitted, saying Queuing… only when admission is slow", async () => {
   setup({ ...base, runs: [], messages: [] });
   const preview = (accepted: boolean) => [
