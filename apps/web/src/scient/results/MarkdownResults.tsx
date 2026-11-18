@@ -260,119 +260,119 @@ function ResultCard(props: {
   const scriptPath = resolution.summary.scriptPath;
   const editable = props.controller.getSnapshot().editable;
 
-  const updateFromScript = async () => {
-    setBusy("update");
-    setMessage(null);
-    try {
-      const group = props.references.flatMap((candidate) => {
-        const found = props.resolutions.get(candidate.href);
-        return found?._tag === "resolved" &&
-          found.summary.scriptPath === scriptPath &&
-          found.newer !== null &&
-          resultHasNewer(candidate, found)
-          ? [{ candidate, newer: found.newer }]
-          : [];
-      });
-      // One script's results move to one revision together, or not at all: a mix would put
-      // numbers from two different runs side by side.
-      const dropped = props.references.filter((candidate) => {
-        const found = props.resolutions.get(candidate.href);
-        return (
-          found?._tag === "resolved" &&
-          found.summary.scriptPath === scriptPath &&
-          found.newer !== null &&
-          !resultHasNewer(candidate, found)
-        );
-      });
-      if (dropped.length > 0) {
-        const names = [
-          ...new Set(dropped.map((item) => (item.pointer ?? item.output).replace(/^\//u, ""))),
-        ];
-        setMessage(
-          `The newest run of ${scriptPath} has no ${names.join(", ")}. Remove ${names.length === 1 ? "it" : "them"} from the document or have the script write ${names.length === 1 ? "it" : "them"} again, then update.`,
-        );
-        return;
-      }
-      const placed = new Map<string, string>();
-      for (const { candidate, newer } of group) {
-        if (candidate.kind !== "figure" || placed.has(candidate.href)) continue;
-        const result = await placeFigure({
-          environmentId: props.environmentId,
-          input: {
-            cwd: props.cwd,
-            documentPath: props.documentPath,
-            revision: newer.summary.revision,
-            output: candidate.output,
-          },
-        });
-        if (result._tag !== "Success") {
-          setMessage(errorMessage(result, "The new figure could not be copied."));
-          return;
-        }
-        placed.set(candidate.href, result.value.src);
-      }
-      // Results added or removed during the copies would be left on the old run, so start over.
-      const live = props.controller.resultReferences();
-      if (
-        live.map((reference) => reference.href).join("\n") !==
-        props.references.map((reference) => reference.href).join("\n")
-      ) {
-        setMessage("The document's results changed while updating. Update again.");
-        return;
-      }
-      // Positions are read after the copies, so edits made meanwhile are kept.
-      const updates: ResultUpdate[] = [];
-      for (const current of live) {
-        const match = group.find(({ candidate }) => candidate.href === current.href);
-        if (match === undefined) continue;
-        const href = formatResultTarget({
-          revision: match.newer.summary.revision,
-          output: current.output,
-          pointer: current.pointer,
-        });
-        if (current.kind === "value" && match.newer.value !== null)
-          updates.push({
-            kind: "value",
-            position: current.position,
-            href,
-            text: match.newer.value,
-          });
-        else if (current.kind === "figure" && placed.has(current.href))
-          updates.push({
-            kind: "figure",
-            position: current.position,
-            href,
-            src: placed.get(current.href)!,
-          });
-      }
-      if (!props.controller.updateResults(updates)) {
-        setMessage("Nothing to update.");
-        return;
-      }
-      props.onChanged();
-      props.onClose();
-    } finally {
-      setBusy(null);
+  const applyUpdate = async () => {
+    const group = props.references.flatMap((candidate) => {
+      const found = props.resolutions.get(candidate.href);
+      return found?._tag === "resolved" &&
+        found.summary.scriptPath === scriptPath &&
+        found.newer !== null &&
+        resultHasNewer(candidate, found)
+        ? [{ candidate, newer: found.newer }]
+        : [];
+    });
+    // One script's results move to one revision together, or not at all: a mix would put
+    // numbers from two different runs side by side.
+    const dropped = props.references.filter((candidate) => {
+      const found = props.resolutions.get(candidate.href);
+      return (
+        found?._tag === "resolved" &&
+        found.summary.scriptPath === scriptPath &&
+        found.newer !== null &&
+        !resultHasNewer(candidate, found)
+      );
+    });
+    if (dropped.length > 0) {
+      const names = [
+        ...new Set(dropped.map((item) => (item.pointer ?? item.output).replace(/^\//u, ""))),
+      ];
+      setMessage(
+        `The newest run of ${scriptPath} has no ${names.join(", ")}. Remove ${names.length === 1 ? "it" : "them"} from the document or have the script write ${names.length === 1 ? "it" : "them"} again, then update.`,
+      );
+      return;
     }
-  };
-
-  const rerunScript = async () => {
-    setBusy("rerun");
-    setMessage(null);
-    try {
-      const result = await rerun({
+    const placed = new Map<string, string>();
+    for (const { candidate, newer } of group) {
+      if (candidate.kind !== "figure" || placed.has(candidate.href)) continue;
+      const result = await placeFigure({
         environmentId: props.environmentId,
-        input: { cwd: props.cwd, scriptPath },
+        input: {
+          cwd: props.cwd,
+          documentPath: props.documentPath,
+          revision: newer.summary.revision,
+          output: candidate.output,
+        },
       });
       if (result._tag !== "Success") {
-        setMessage(errorMessage(result, "The script could not run."));
+        setMessage(errorMessage(result, "The new figure could not be copied."));
         return;
       }
-      if (result.value._tag === "failed") setMessage(result.value.message);
-      props.onChanged();
-    } finally {
-      setBusy(null);
+      placed.set(candidate.href, result.value.src);
     }
+    // Results added or removed during the copies would be left on the old run, so start over.
+    const live = props.controller.resultReferences();
+    if (
+      live.map((reference) => reference.href).join("\n") !==
+      props.references.map((reference) => reference.href).join("\n")
+    ) {
+      setMessage("The document's results changed while updating. Update again.");
+      return;
+    }
+    // Positions are read after the copies, so edits made meanwhile are kept.
+    const updates: ResultUpdate[] = [];
+    for (const current of live) {
+      const match = group.find(({ candidate }) => candidate.href === current.href);
+      if (match === undefined) continue;
+      const href = formatResultTarget({
+        revision: match.newer.summary.revision,
+        output: current.output,
+        pointer: current.pointer,
+      });
+      if (current.kind === "value" && match.newer.value !== null)
+        updates.push({
+          kind: "value",
+          position: current.position,
+          href,
+          text: match.newer.value,
+        });
+      else if (current.kind === "figure" && placed.has(current.href))
+        updates.push({
+          kind: "figure",
+          position: current.position,
+          href,
+          src: placed.get(current.href)!,
+        });
+    }
+    if (!props.controller.updateResults(updates)) {
+      setMessage("Nothing to update.");
+      return;
+    }
+    props.onChanged();
+    props.onClose();
+  };
+
+  const updateFromScript = () => {
+    setBusy("update");
+    setMessage(null);
+    return applyUpdate().finally(() => setBusy(null));
+  };
+
+  const runAgain = async () => {
+    const result = await rerun({
+      environmentId: props.environmentId,
+      input: { cwd: props.cwd, scriptPath },
+    });
+    if (result._tag !== "Success") {
+      setMessage(errorMessage(result, "The script could not run."));
+      return;
+    }
+    if (result.value._tag === "failed") setMessage(result.value.message);
+    props.onChanged();
+  };
+
+  const rerunScript = () => {
+    setBusy("rerun");
+    setMessage(null);
+    return runAgain().finally(() => setBusy(null));
   };
 
   const newer = resolution.newer;
