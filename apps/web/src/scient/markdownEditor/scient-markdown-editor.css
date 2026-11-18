@@ -1318,7 +1318,8 @@ textarea.scient-markdown-math-source {
   text-underline-offset: 3px;
 }
 .scient-markdown-document [data-scient-result-value].ProseMirror-selectednode {
-  background: var(--accent);
+  outline: none;
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
 }
 .scient-markdown-document [data-scient-result-value][data-result-state]::after {
   content: "";
