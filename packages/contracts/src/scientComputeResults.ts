@@ -45,7 +45,8 @@ export const ComputeResultRevision = Schema.Struct({
   revision: ComputeResultRevisionId,
   script: Schema.Struct({
     path: ProjectPath,
-    languageId: Text,
+    /** As people name it: "Python", "R". */
+    language: Text,
     /** Of the code that ran, which is the saved file unless it was run with unsaved changes. */
     sha256: Sha256,
   }),
@@ -88,7 +89,7 @@ export type ComputeResultCause = typeof ComputeResultCause.Type;
 export const ComputeResultSummary = Schema.Struct({
   revision: ComputeResultRevisionId,
   scriptPath: ProjectPath,
-  languageId: Text,
+  language: Text,
   finishedAt: Text,
   threadId: Schema.optional(Text),
   runtime: Schema.Struct({ executable: Schema.NullOr(Text), version: Schema.NullOr(Text) }),

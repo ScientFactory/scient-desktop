@@ -147,6 +147,29 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
     ),
   );
 
+  it.live("prints linked results as their pinned value and figure, without links", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const { docx } = yield* convertTo(converter, directory, "linked-results", {
+          bundle: makeBundle({
+            markdown: [
+              "Of all patients, [1178](scient-result:r0123456789ab/values.json#/cohort/n) were included (HR [\\<0.75](scient-result:r0123456789ab/values.json#/hr)).",
+              "",
+              "[![Survival](scient-asset:photo)](scient-result:r0123456789ab/km.png)",
+            ].join("\n"),
+            assets: [bytesAsset({ id: "photo", bytes: PNG_BYTES })],
+          }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).toContain("1178");
+        expect(xml).toContain("&lt;0.75");
+        expect(count(xml, /<pic:pic\b/gu)).toBe(1);
+        expect(xml).not.toContain("<w:hyperlink");
+        expect(xml).not.toContain("scient-result");
+      }),
+    ),
+  );
+
   it.live("keeps text inside a complete raw HTML details block in the Word file", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {

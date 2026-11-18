@@ -137,9 +137,7 @@ const make = Effect.gen(function* () {
         });
       return;
     }
-    const session = yield* compute
-      .getSession({ projectId: settled.projectId, sessionId: request.sessionId })
-      .pipe(Effect.orElseSucceed(() => null));
+    const { session } = settled;
     const outcome = yield* Effect.tryPromise({
       try: () =>
         publishScriptRun(layout, {
@@ -148,7 +146,7 @@ const make = Effect.gen(function* () {
           stagingFolder,
           succeeded: result.status === "succeeded",
           scriptPath: source.path,
-          languageId: session?.languageId ?? "unknown",
+          language: session.label,
           code: request.code,
           sessionId: request.sessionId,
           executionId: request.executionId,

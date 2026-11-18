@@ -14,6 +14,7 @@ import {
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
   Brackets,
+  ChartColumn,
   Columns3,
   Copy,
   CornerDownLeft,
@@ -178,6 +179,8 @@ function commandIcon(command: ScientMarkdownCommand): ReactNode {
       );
     case "image":
       return <ImageIcon className={className} />;
+    case "result":
+      return <ChartColumn className={className} />;
     case "wiki-link":
       return <Brackets className={className} />;
     case "horizontal-rule":
@@ -464,6 +467,7 @@ const INSERT_ITEMS: ReadonlyArray<{
   { command: "code-block", label: "Code block" },
   { command: "footnote", label: "Footnote" },
   { command: "image", label: "Image" },
+  { command: "result", label: "Result" },
   { command: "wiki-link", label: "Wiki link ([[note]])" },
   { command: "horizontal-rule", label: "Divider line" },
 ];
@@ -481,14 +485,16 @@ function markdownInsertActions(
       shortcut: scientMarkdownShortcut("link"),
       run: openLinkEditor,
     },
-    ...INSERT_ITEMS.map((item) => ({
-      id: item.command,
-      label: item.label,
-      icon: commandIcon(item.command),
-      run: () => {
-        controller.execute(item.command);
-      },
-    })),
+    ...INSERT_ITEMS.filter((item) => item.command !== "result" || controller.canInsertResults).map(
+      (item) => ({
+        id: item.command,
+        label: item.label,
+        icon: commandIcon(item.command),
+        run: () => {
+          controller.execute(item.command);
+        },
+      }),
+    ),
     {
       id: "hard-break",
       label: "Line break",
@@ -505,6 +511,7 @@ function markdownInsertActions(
 const markdownInsertLayout: InsertMenuLayout = (item, table) => (
   <>
     {item("image")}
+    {item("result")}
     {table}
     {item("code-block")}
     <MenuSeparator />
@@ -1223,7 +1230,9 @@ export function ScientMarkdownControls({
   const mathMenuAnchor = useRef<HTMLSpanElement>(null);
   const selectionLinkEditorTriggerId = `scient-markdown-link-selection-${useId()}`;
   const slashItems =
-    snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
+    snapshot.slashQuery === null
+      ? []
+      : filterScientMarkdownSlashCommands(snapshot.slashQuery, controller.canInsertResults);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the toolbar chrome when a link-edit request targets an empty selection
   useEffect(() => {

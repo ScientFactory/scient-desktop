@@ -208,7 +208,7 @@ function SummaryLines({ summary }: { readonly summary: ComputeResultSummary }) {
       </span>
       {summary.runtime.version === null ? null : (
         <span>
-          {summary.languageId} {summary.runtime.version}. Package changes are not checked.
+          {summary.language} {summary.runtime.version}. Package changes are not checked.
         </span>
       )}
     </div>
@@ -386,6 +386,26 @@ function ResultCard(props: {
       ) : null}
       {message === null ? null : <span className="text-destructive-foreground">{message}</span>}
       <div className="flex flex-wrap gap-1.5">
+        {editable &&
+        reference.kind === "value" &&
+        state === "edited" &&
+        resolution.value !== null ? (
+          <Button
+            size="xs"
+            disabled={busy !== null}
+            onClick={() => {
+              const value = resolution.value;
+              if (value === null) return;
+              props.controller.updateResults([
+                { kind: "value", position: reference.position, href: reference.href, text: value },
+              ]);
+              props.onChanged();
+              props.onClose();
+            }}
+          >
+            Use {resolution.value}
+          </Button>
+        ) : null}
         {editable && updateCount > 0 ? (
           <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
             {busy === "update"

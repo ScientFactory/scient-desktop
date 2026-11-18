@@ -45,7 +45,7 @@ async function run(
     stagingFolder,
     succeeded: true,
     scriptPath: "analysis.py",
-    languageId: "python",
+    language: "Python",
     code: await NodeFSP.readFile(NodePath.join(place.root, "analysis.py"), "utf8"),
     sessionId: "s",
     executionId,

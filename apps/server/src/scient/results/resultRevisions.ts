@@ -104,7 +104,7 @@ export interface SettledScriptRun {
   readonly stagingFolder: string;
   readonly succeeded: boolean;
   readonly scriptPath: string;
-  readonly languageId: string;
+  readonly language: string;
   readonly code: string;
   readonly sessionId: string;
   readonly executionId: string;
@@ -195,7 +195,7 @@ export async function publishScriptRun(
     }
     const revision: ComputeResultRevision = decodeRevision({
       revision: newRevisionId(),
-      script: { path: run.scriptPath, languageId: run.languageId, sha256: sha256Text(run.code) },
+      script: { path: run.scriptPath, language: run.language, sha256: sha256Text(run.code) },
       run: {
         sessionId: run.sessionId,
         executionId: run.executionId,
@@ -313,7 +313,7 @@ export function summarizeRevision(
   return {
     revision: revision.revision,
     scriptPath: revision.script.path,
-    languageId: revision.script.languageId,
+    language: revision.script.language,
     finishedAt: revision.run.finishedAt,
     ...(revision.run.threadId === undefined ? {} : { threadId: revision.run.threadId }),
     runtime: { executable: revision.runtime.executable, version: revision.runtime.version },

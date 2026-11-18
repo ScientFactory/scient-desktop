@@ -644,12 +644,15 @@ export function runScientMarkdownTableInsert(
   return runExplicitScientMarkdownCommand(insertTable(dimensions), state, dispatch);
 }
 
+/** `results` is false where the editor has no project whose results it could insert. */
 export function filterScientMarkdownSlashCommands(
   query: string,
+  results = false,
 ): ReadonlyArray<ScientSlashCommandItem> {
   const normalized = query.trim().toLocaleLowerCase();
-  if (normalized.length === 0) return SCIENT_MARKDOWN_SLASH_COMMANDS;
-  return SCIENT_MARKDOWN_SLASH_COMMANDS.filter((item) =>
-    `${item.label} ${item.keywords}`.toLocaleLowerCase().includes(normalized),
+  return SCIENT_MARKDOWN_SLASH_COMMANDS.filter(
+    (item) =>
+      (results || item.command !== "result") &&
+      `${item.label} ${item.keywords}`.toLocaleLowerCase().includes(normalized),
   );
 }

@@ -650,6 +650,11 @@ export class ScientMarkdownEditorView {
     return this.resultReferencesCache.references;
   }
 
+  /** Whether this editor has a project whose results it can insert. */
+  get canInsertResults(): boolean {
+    return this.options.selectResult !== undefined;
+  }
+
   resultReferences(): ReadonlyArray<EditorResultReference> {
     return this.resultReferencesOf(this.editorView?.state.doc ?? this.session.state.doc);
   }
@@ -1865,7 +1870,10 @@ export class ScientMarkdownEditorView {
     outlineItems.forEach((item, index) => {
       if (item.position <= selection.from) outlineActiveIndex = index;
     });
-    const slashItems = slashQuery === null ? [] : filterScientMarkdownSlashCommands(slashQuery);
+    const slashItems =
+      slashQuery === null
+        ? []
+        : filterScientMarkdownSlashCommands(slashQuery, this.canInsertResults);
     const citationItems = this.citationMenu()?.items ?? [];
     return {
       activeMarks,
@@ -2019,7 +2027,7 @@ export class ScientMarkdownEditorView {
   private handleSlashKeyDown(event: KeyboardEvent): boolean {
     const query = this.slashQuery();
     if (query === null) return false;
-    const items = filterScientMarkdownSlashCommands(query);
+    const items = filterScientMarkdownSlashCommands(query, this.canInsertResults);
     if (items.length === 0) return false;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();

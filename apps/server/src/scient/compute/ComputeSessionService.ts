@@ -337,6 +337,8 @@ export interface ComputeSettledRun {
   /** What reading the session back must be admitted with. */
   readonly workspace: ComputeWorkspaceReceipt | null;
   readonly execution: ComputeExecutionRecord;
+  /** The session as it was when the run settled: its language and runtime. */
+  readonly session: ComputeSessionRecord;
 }
 
 /** How much of a transcript is already spent, and what it is allowed to spend. */
@@ -1152,6 +1154,7 @@ const make = Effect.gen(function* () {
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
         workspace: live.workspaceReceipt,
         execution,
+        session: yield* Ref.get(live.recordRef),
       });
     }
     // Queue/phase changes must not recreate a start.
