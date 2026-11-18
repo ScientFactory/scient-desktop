@@ -41,7 +41,21 @@ jobs:
             --official-ref refs/remotes/upstream-verification/main
           # Every scient-*-seams.json manifest in one pass: each changed path
           # matching a seam's signals must be classified, and every owned path
-          # and mount anchor must hold.
+          # and mount anchor must hold. A PR's base can be newer than its branch,
+          # so a PR is checked as GitHub's merge of its head into the base, whose
+          # first parent can be newer than the event's base.
+          seam_base="$VERIFY_BASE"
+          seam_head="$VERIFY_HEAD"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git fetch --no-tags origin "$GITHUB_SHA"
+            read -r _ first second extra <<< "$(git rev-list --parents -n 1 "$GITHUB_SHA")"
+            if [ -z "$second" ] || [ -n "$extra" ] || [ "$second" != "$VERIFY_HEAD" ]; then
+              echo "$GITHUB_SHA is not a merge of $VERIFY_HEAD into its base." >&2
+              exit 1
+            fi
+            seam_base="$first"
+            seam_head="$GITHUB_SHA"
+          fi
           node scripts/scient-seam-check.mjs \
-            --base "$VERIFY_BASE" \
-            --head "$VERIFY_HEAD"
+            --base "$seam_base" \
+            --head "$seam_head"

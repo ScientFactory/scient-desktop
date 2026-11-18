@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
+  AccountsError,
   EnvironmentId,
   ExtensionsError,
+  OrchestratorMcpFailure,
   PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,
@@ -31,6 +33,8 @@ import {
   scientToolOutcome,
   type ToolFailureFacts,
   ToolFailureNote,
+  withFailureClass,
+  withRemoteFailureClass,
 } from "./ScientMcpAnalytics.ts";
 import { toolOutcome } from "./ProviderDimensions.ts";
 
@@ -94,6 +98,25 @@ describe("Scient MCP analytics input", () => {
   ])("closes the failure name %s as %s", (name, code) => {
     expect(closedErrorCode(name)).toBe(code);
   });
+
+  // SCIENT-FORK:START — exact owners for failures whose cause the code alone proves.
+  it("gives exact owners to merged or hostless pull requests, oversized results and a browser still installing", () => {
+    const failed = new McpSchema.CallToolResult({
+      isError: true,
+      content: [{ type: "text", text: "refused" }],
+    });
+    const owner = (tag: string, failureClass?: string) =>
+      scientToolOutcome(failed, { tag, ...(failureClass === undefined ? {} : { failureClass }) })
+        .failureOwner;
+    expect(owner("PullRequestNotOpenError")).toBe("input");
+    expect(owner("PullRequestHostRequiredError")).toBe("input");
+    expect(owner("PreviewAutomationResultTooLargeError")).toBe("input");
+    expect(owner("orchestration_error", "preview_browser_installing")).toBe("scient");
+    // A class's owner still wins over a code's, and other codes keep their pattern owner.
+    expect(owner("PreviewAutomationTimeoutError", "page_not_ready")).toBe("external");
+    expect(owner("orchestration_error")).toBe("unknown");
+  });
+  // SCIENT-FORK:END
 
   it("names a failure from its top-level tag or the call's failure note, never its message", () => {
     const tagged = scientMcpAnalyticsInput(
@@ -220,7 +243,8 @@ describe("Scient MCP analytics input", () => {
           failureClass: "stale_ref",
           failureOwner: "input",
         });
-        // A script that threw and a browser call that failed reach analytics with the same tag.
+        // A script that threw and a browser call that failed share a tag; only the page's own
+        // exception report, carried as a fixed detail, makes the failure the caller's code.
         const evaluated = (send: () => Promise<unknown>) =>
           Effect.promise(() =>
             ServerBrowserPage.evaluate(
@@ -232,29 +256,117 @@ describe("Scient MCP analytics input", () => {
               (cause: unknown) => ServerBrowserPage.toOperationError(cause),
             ),
           );
-        for (const failure of [
-          yield* evaluated(async () => ({
-            result: { type: "object" },
-            exceptionDetails: { text: "Uncaught", exception: { description: "Error: thrown" } },
-          })),
-          yield* evaluated(async () => {
-            throw new Error("Protocol error (Runtime.evaluate): Session closed.");
-          }),
-        ]) {
-          expect(
-            yield* recorded(
-              new PreviewAutomationExecutionError({
-                ...request,
-                remoteTag: failure!.tag,
-                remoteMessageLength: failure!.message.length,
-                cause: failure,
-                operation: "evaluate",
-              }),
+        const throwing = yield* evaluated(async () => ({
+          result: { type: "object" },
+          exceptionDetails: { text: "Uncaught", exception: { description: "Error: thrown" } },
+        }));
+        const broken = yield* evaluated(async () => {
+          throw new Error("Protocol error (Runtime.evaluate): Session closed.");
+        });
+        const asBrokerSees = (failure: NonNullable<typeof throwing>) =>
+          withRemoteFailureClass(
+            new PreviewAutomationExecutionError({
+              ...request,
+              remoteTag: failure.tag,
+              remoteMessageLength: failure.message.length,
+              cause: failure,
+              operation: "evaluate",
+            }),
+            { _tag: failure.tag, detail: failure.detail },
+          );
+        expect(yield* recorded(asBrokerSees(throwing!))).toEqual({
+          outcome: "error",
+          errorCode: "execution",
+          failureClass: "script_exception",
+          failureOwner: "code",
+        });
+        expect(yield* recorded(asBrokerSees(broken!))).toEqual({
+          outcome: "error",
+          errorCode: "execution",
+          failureOwner: "unknown",
+        });
+        // A look-alike detail from any other failure is ignored.
+        expect(
+          yield* recorded(
+            withRemoteFailureClass(
+              new PreviewAutomationExecutionError({ ...request, ...answered, operation: "click" }),
+              {
+                _tag: "PreviewAutomationTimeoutError",
+                detail: { failureClass: "script_exception" },
+              },
             ),
-          ).toEqual({ outcome: "error", errorCode: "execution", failureOwner: "unknown" });
-        }
+          ),
+        ).toMatchObject({ failureOwner: "unknown" });
       }),
   );
+
+  // SCIENT-FORK:START — broad failures that keep a specific cause, and Accounts' own reasons.
+  effectIt.effect("attributes a broad failure by the specific cause it was built from", () =>
+    Effect.gen(function* () {
+      const failed = new McpSchema.CallToolResult({
+        isError: true,
+        content: [{ type: "text", text: "refused" }],
+      });
+      const recorded = Effect.fn(function* (error: unknown) {
+        const facts: ToolFailureFacts = {};
+        yield* noteToolFailure(error).pipe(Effect.provideService(ToolFailureNote, facts));
+        return scientToolOutcome(failed, facts);
+      });
+      const orchestrator = (code: "thread_not_sendable" | "orchestration_error") =>
+        new OrchestratorMcpFailure({ code, message: "refused" });
+      const owner = function* (error: unknown) {
+        const outcome = yield* recorded(error);
+        return [outcome.errorCode, outcome.failureClass, outcome.failureOwner];
+      };
+      expect(
+        yield* owner(withFailureClass(orchestrator("thread_not_sendable"), "thread_archived")),
+      ).toEqual(["thread_not_sendable", "thread_archived", "input"]);
+      expect(
+        yield* owner(withFailureClass(orchestrator("thread_not_sendable"), "no_steerable_run")),
+      ).toEqual(["thread_not_sendable", "no_steerable_run", "input"]);
+      expect(
+        yield* owner(
+          withFailureClass(orchestrator("orchestration_error"), "task_projection_missing"),
+        ),
+      ).toEqual(["orchestration_error", "task_projection_missing", "scient"]);
+      expect(
+        yield* owner(
+          withFailureClass(orchestrator("orchestration_error"), "projection_load_failed"),
+        ),
+      ).toEqual(["orchestration_error", "projection_load_failed", "scient"]);
+      // Unmarked, the same broad failures stay unowned.
+      expect(yield* owner(orchestrator("orchestration_error"))).toEqual([
+        "orchestration_error",
+        undefined,
+        "unknown",
+      ]);
+      // Accounts: a connector's own class wins; otherwise its broad reason, and "unavailable"
+      // (the browser or the Accounts store) stays unowned.
+      const accounts = (reason: AccountsError["reason"]) =>
+        new AccountsError({ reason, message: "refused" });
+      expect(yield* owner(accounts("invalid-input"))).toEqual([
+        "accounts",
+        "accounts_invalid_input",
+        "input",
+      ]);
+      expect(yield* owner(accounts("denied"))).toEqual([
+        "accounts",
+        "accounts_denied",
+        "environment",
+      ]);
+      expect(yield* owner(accounts("unavailable"))).toEqual([
+        "accounts",
+        "accounts_unavailable",
+        "unknown",
+      ]);
+      expect(
+        (yield* recorded(
+          new AccountsError({ reason: "unavailable", message: "x", failureClass: "unreachable" }),
+        )).failureClass,
+      ).toBe("unreachable");
+    }),
+  );
+  // SCIENT-FORK:END
 
   effectIt.effect(
     "keeps a connector tool's own reason through the Accounts failure it travels in",

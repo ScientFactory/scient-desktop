@@ -28,10 +28,7 @@ import { observeLiveActivitySweep } from "./liveActivity";
 import { type ChatMessage } from "../../types";
 import { deriveTerminalAssistantMessageIds } from "./MessagesTimeline.logic";
 import { settledListThreadKey } from "../scient-fork/forkLanding";
-import type {
-  OrchestrationForkWorkspaceMode,
-  OrchestrationV2ContextTransfer,
-} from "@t3tools/contracts";
+import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
 import { ScanTextIcon } from "lucide-react";
 import type { CitationDestination } from "~/scient/chat/sideChatCitation";
 import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
@@ -319,14 +316,8 @@ interface MessagesTimelineProps {
   hasForkBaseline?: boolean;
   forkBaselineAssistantMessageId?: MessageId | null;
   forkOriginThreadId?: ThreadId | undefined;
-  onForkAssistantMessage?: (
-    messageId: MessageId,
-    workspaceMode?: OrchestrationForkWorkspaceMode,
-  ) => void;
-  onForkUserMessage?: (
-    message: ChatMessage,
-    workspaceMode?: OrchestrationForkWorkspaceMode,
-  ) => void;
+  onForkAssistantMessage?: (messageId: MessageId) => void;
+  onForkUserMessage?: (message: ChatMessage) => void;
   // SCIENT-FORK:END
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;

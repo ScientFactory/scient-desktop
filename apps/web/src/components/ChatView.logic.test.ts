@@ -69,6 +69,7 @@ import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures
 import {
   getAntigravitySendBlockReason,
   resolveComposerProviderSelection,
+  resolveForkTargetAfterAttempt,
   resolveThreadWorkspaceRoot,
   observeProactivePanelUserChoice,
   resolveWorktreeSetupProgress,
@@ -330,6 +331,27 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+describe("resolveForkTargetAfterAttempt", () => {
+  const attemptedTarget = {
+    messageId: "message-1",
+  };
+  it("preserves the attempted target when the fork fails before acceptance", () => {
+    expect(resolveForkTargetAfterAttempt(attemptedTarget, attemptedTarget, "not-accepted")).toBe(
+      attemptedTarget,
+    );
+  });
+  it("clears the attempted target once the fork is accepted", () => {
+    expect(resolveForkTargetAfterAttempt(attemptedTarget, attemptedTarget, "accepted")).toBeNull();
+  });
+  it("does not clear a newer target when an older attempt completes", () => {
+    const newerTarget = {
+      messageId: "message-2",
+    };
+    expect(resolveForkTargetAfterAttempt(newerTarget, attemptedTarget, "accepted")).toBe(
+      newerTarget,
+    );
   });
 });
 describe("resolveThreadWorkspaceRoot", () => {

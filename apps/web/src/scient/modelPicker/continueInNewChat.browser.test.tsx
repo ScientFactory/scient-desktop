@@ -24,6 +24,7 @@ import {
   hasCommittedConversationMessages,
   createComposerModelPickerFork,
 } from "../../components/chat/composerModelPickerFork";
+import { ScientForkWorkspaceModeDialog } from "../../components/chat/scient-fork/ScientForkWorkspaceModeDialog";
 import { DraftId, useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 
@@ -61,6 +62,7 @@ function ComposerPickerParent(props: {
   readonly onboarding?: boolean;
 }) {
   const [pickerOpen, setPickerOpen] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [selection, setSelection] = useState({ instanceId: codexId, model: "gpt-model" });
   const draft = useComposerThreadDraft(draftTarget);
   const continueInNewChat = createComposerModelPickerFork({
@@ -70,6 +72,7 @@ function ComposerPickerParent(props: {
       if (!settings?.preserveComposerDraft) {
         useComposerDraftStore.getState().setPrompt(draftTarget, "");
       }
+      setDialogOpen(true);
     },
   });
   return (
@@ -104,6 +107,16 @@ function ComposerPickerParent(props: {
           }}
         />
       )}
+      <ScientForkWorkspaceModeDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        disabled={false}
+        source="new-chat"
+        proposedTitle="Existing conversation (2)"
+        titleOverrideSupported
+        worktreeAvailability={{ available: false, reason: "no-git-repository" }}
+        onConfirm={() => {}}
+      />
     </>
   );
 }
@@ -114,6 +127,10 @@ const footer = () =>
 const provider = (id: ProviderInstanceId) =>
   document.querySelector<HTMLButtonElement>(`[data-model-picker-provider="${id}"] button`);
 const picker = () => document.querySelector("[data-model-picker-content]");
+const forkDialog = () =>
+  [...document.querySelectorAll('[role="dialog"]')].find((dialog) =>
+    dialog.textContent?.includes("Fork this chat"),
+  );
 
 async function _setupFixture0(_fixture: _Fixture) {
   forkRequested.mockClear();
@@ -178,7 +195,7 @@ describe("existing-conversation model picker continuation", () => {
   });
 
   it.each([false, true])(
-    "offers the footer with one provider and forks preserving the draft (%s)",
+    "offers the footer with one provider and opens Scient's dialog preserving the draft (%s)",
     async (singleProvider) => {
       await using _fixture = _createFixture();
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -189,7 +206,8 @@ describe("existing-conversation model picker continuation", () => {
       );
       await expect.poll(() => footer()).toBeTruthy();
       footer()!.click();
-      await expect.poll(() => forkRequested.mock.calls.length).toBe(1);
+      await expect.poll(() => forkDialog()?.textContent).toContain("Fork this chat");
+      expect(forkDialog()?.textContent).toContain("Continue in a new chat");
       expect(forkRequested).toHaveBeenCalledExactlyOnceWith({ preserveComposerDraft: true });
       await expect.poll(() => picker()).toBeNull();
       const draft = useComposerDraftStore.getState().getComposerDraft(draftTarget)!;
@@ -235,7 +253,7 @@ describe("existing-conversation model picker continuation", () => {
       .toBeTruthy();
     expect(footer()).not.toBeNull();
     footer()!.click();
-    await expect.poll(() => forkRequested.mock.calls.length).toBe(1);
+    await expect.poll(() => forkDialog()?.textContent).toContain("Fork this chat");
     expect(forkRequested).toHaveBeenCalledExactlyOnceWith({ preserveComposerDraft: true });
     await expect.poll(() => picker()).toBeNull();
     const draft = useComposerDraftStore.getState().getComposerDraft(draftTarget)!;
@@ -259,7 +277,7 @@ describe("existing-conversation model picker continuation", () => {
     expect(forkRequested).not.toHaveBeenCalled();
   });
 
-  it("shows the disabled footer while busy without starting a fork", async () => {
+  it("shows the disabled footer while busy without opening the fork dialog", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -269,6 +287,7 @@ describe("existing-conversation model picker continuation", () => {
     expect(footer()!.disabled).toBe(true);
     footer()!.click();
     expect(forkRequested).not.toHaveBeenCalled();
+    expect(forkDialog()).toBeUndefined();
   });
 });
 

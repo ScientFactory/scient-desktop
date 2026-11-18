@@ -14,7 +14,7 @@ import {
   type ForkOptions,
   type RunId,
 } from "@t3tools/contracts";
-import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   flushComposerDraftPersistence,
@@ -73,6 +73,10 @@ export type ForkSource =
     }
   // The running turn, including the work it has done so far.
   | { readonly kind: "running-turn"; readonly runId: RunId };
+const UNSUPPORTED_FORK_MESSAGE =
+  "Update Scient on the computer that runs this conversation, then fork again.";
+// The fork card's check is reused when its Fork button is pressed soon after.
+const CHECKED_FORK_OPTIONS_REUSE_MS = 30_000;
 
 function assertForkEligibility(
   source: ForkSource,
@@ -309,6 +313,22 @@ export function useScientThreadFork({
   const forkConversation = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const awaitFork = useAtomCommand(threadEnvironment.awaitFork, { reportFailure: false });
   const getForkOptions = useAtomCommand(threadEnvironment.getForkOptions, { reportFailure: false });
+  // What the open fork card shows: the checked options, and a saved fork to resume.
+  const [preview, setPreview] = useState<{
+    key: string;
+    options: ForkOptions | null;
+    checking: boolean;
+    locked: boolean;
+    retryTitle?: string;
+    retryWorkspaceMode?: "local" | "new-worktree";
+  } | null>(null);
+  const [errorUpdate, setErrorUpdate] = useState<{
+    readonly threadId: ThreadId;
+    readonly environmentId: EnvironmentId;
+    readonly message: string | null;
+    /** The fork point the error is about; another point's card does not show it. */
+    readonly key: string;
+  } | null>(null);
   const originId = origin?.id;
   const environmentId = origin?.environmentId;
   const originKey = JSON.stringify([environmentId, originId]);
@@ -330,6 +350,10 @@ export function useScientThreadFork({
       mounted.current = false;
     };
   }, []);
+  const previewSequence = useRef(0);
+  // The options the open fork card just checked. Submitting from it uses them
+  // once instead of checking again; the server checks the fork itself anyway.
+  const checkedOptions = useRef<{ key: string; options: ForkOptions; at: number } | null>(null);
 
   const resolveOptions = async (source: ForkSource): Promise<ForkOptions> => {
     if (!originId || !environmentId) throw new Error("The original conversation is unavailable.");
@@ -350,10 +374,76 @@ export function useScientThreadFork({
     return result.value;
   };
 
+  /** Checks a fork point for the fork card, or finds the saved fork it resumes. */
+  const prepareFork = async (source: ForkSource) => {
+    if (!originId || !environmentId) return;
+    const key = forkAttemptKey(environmentId, originId, sourceKey(source));
+    const sequence = ++previewSequence.current;
+    setErrorUpdate(null);
+    setPreview({ key, options: null, checking: true, locked: false });
+    const current = () =>
+      sequence === previewSequence.current && mounted.current && activeOrigin.current === originKey;
+    if (!supported) {
+      if (!current()) return;
+      setPreview({ key, options: null, checking: false, locked: false });
+      setErrorUpdate({ threadId: originId, environmentId, key, message: UNSUPPORTED_FORK_MESSAGE });
+      return;
+    }
+    try {
+      const pending = attemptStore.get(key);
+      const boundary = pending?.command.scient.boundary;
+      const options: ForkOptions = pending
+        ? {
+            available: true,
+            localAvailable: true,
+            reason: null,
+            newWorktree: pending.command.scient.workspaceMode === "new-worktree",
+            sourceAssistantMessageId:
+              boundary?.kind === "assistant-response" ? boundary.messageId : null,
+            sourceUserMessageId: boundary?.kind === "user-message" ? boundary.messageId : null,
+            sourceRunningRunId: boundary?.kind === "running-turn" ? boundary.runId : null,
+            ...(pending.workspaceNotice === undefined
+              ? {}
+              : { workspaceNotice: pending.workspaceNotice }),
+          }
+        : await resolveOptions(source);
+      if (current()) {
+        // Only the card being shown publishes its options for reuse.
+        if (!pending) checkedOptions.current = { key, options, at: Date.now() };
+        setPreview({
+          key,
+          options,
+          checking: false,
+          locked: pending !== null,
+          ...(pending?.displayTitle === undefined ? {} : { retryTitle: pending.displayTitle }),
+          ...(pending ? { retryWorkspaceMode: pending.command.scient.workspaceMode } : {}),
+        });
+      }
+    } catch (error) {
+      if (current()) {
+        setPreview({ key, options: null, checking: false, locked: false });
+        setErrorUpdate({
+          threadId: originId,
+          environmentId,
+          key,
+          message: userFacingForkError(error),
+        });
+      }
+    }
+  };
+
   const forkFromMessage = async (
     source: ForkSource,
     options: {
       readonly workspaceMode: "new-worktree" | "local";
+      /** An edited title from the fork card; without one the server numbers the fork. */
+      readonly titleOverride?: string;
+      /** The title the fork card showed, shown again if the fork is resumed. */
+      readonly displayTitle?: string;
+      /** Complete the fork card's exit before changing the conversation. */
+      readonly beforeNavigate?: () => Promise<boolean>;
+      /** The fork card shows errors itself; other forks report them as toasts. */
+      readonly fromCard?: boolean;
       readonly confirmSkippedImages?: (names: ReadonlyArray<string>) => Promise<boolean>;
       /** Move only portable unsent text/images after the fork command is accepted. */
       readonly composerDraftSource?: ScopedThreadRef;
@@ -361,12 +451,21 @@ export function useScientThreadFork({
     originWorkspaceRoot: string | undefined,
   ): Promise<ForkAcceptanceOutcome> => {
     if (!originId || !environmentId) return "not-accepted";
+    const fromCard = options.fromCard === true;
     if (!supported) {
-      toastManager.add({
-        type: "error",
-        title: "This conversation cannot be forked here",
-        description: "Update Scient on the computer that runs this conversation, then fork again.",
-      });
+      if (fromCard)
+        setErrorUpdate({
+          threadId: originId,
+          environmentId,
+          key: forkAttemptKey(environmentId, originId, sourceKey(source)),
+          message: UNSUPPORTED_FORK_MESSAGE,
+        });
+      else
+        toastManager.add({
+          type: "error",
+          title: "This conversation cannot be forked here",
+          description: UNSUPPORTED_FORK_MESSAGE,
+        });
       return "not-accepted";
     }
     const outcome = await withForkOriginLock(
@@ -374,11 +473,28 @@ export function useScientThreadFork({
       async (): Promise<ForkAcceptanceOutcome> => {
         const key = forkAttemptKey(environmentId, originId, sourceKey(source));
         let workspaceNotice: string | undefined;
+        // The notice the fork card already showed, so it is not said twice.
+        let cardNotice: string | undefined;
+        if (fromCard) setErrorUpdate(null);
         try {
           // A fork already under way from this point resumes with its saved command.
           let attempt = attemptStore.get(key);
+          if (attempt) cardNotice = attempt.workspaceNotice;
           if (!attempt) {
-            const eligibility = await resolveOptions(source);
+            const checked = checkedOptions.current;
+            if (checked?.key === key) cardNotice = checked.options.workspaceNotice;
+            checkedOptions.current = null;
+            // "Latest" names whatever response is newest now, so check it again.
+            const eligibility =
+              checked !== null &&
+              checked.key === key &&
+              !(
+                source.kind === "assistant-response" &&
+                (source.latest || source.messageId === null)
+              ) &&
+              Date.now() - checked.at < CHECKED_FORK_OPTIONS_REUSE_MS
+                ? checked.options
+                : await resolveOptions(source);
             assertForkEligibility(source, options.workspaceMode, eligibility);
             const id = newThreadId();
             if (
@@ -397,6 +513,7 @@ export function useScientThreadFork({
               environmentId,
               ready: false,
               handoffDone: false,
+              ...(options.displayTitle === undefined ? {} : { displayTitle: options.displayTitle }),
               ...(options.workspaceMode === "local" && eligibility.workspaceNotice !== undefined
                 ? { workspaceNotice: eligibility.workspaceNotice }
                 : {}),
@@ -407,6 +524,7 @@ export function useScientThreadFork({
                 commandId: CommandId.make(`client:thread-fork:${id}`),
                 sourceThreadId: originId,
                 targetThreadId: id,
+                ...(options.titleOverride === undefined ? {} : { title: options.titleOverride }),
                 scient: {
                   workspaceMode: options.workspaceMode,
                   boundary: eligibility.sourceRunningRunId
@@ -443,6 +561,8 @@ export function useScientThreadFork({
           });
           // Completing in the background must not steal navigation or a composer
           // from the conversation the user has since opened.
+          if (!mounted.current || activeOrigin.current !== originKey) return "accepted";
+          if (options.beforeNavigate && !(await options.beforeNavigate())) return "accepted";
           if (!mounted.current || activeOrigin.current !== originKey) return "accepted";
           if (!attempt.handoffDone) {
             if (
@@ -490,7 +610,8 @@ export function useScientThreadFork({
             params: { environmentId, threadId: attempt.command.targetThreadId },
           });
           attemptStore.delete(key);
-          if (workspaceNotice !== undefined)
+          // Said here unless the fork card showed this notice before the fork was made.
+          if (workspaceNotice !== undefined && !(fromCard && workspaceNotice === cardNotice))
             toastManager.add({ type: "info", title: "Forked", description: workspaceNotice });
           return "accepted";
         } catch (cause) {
@@ -500,6 +621,20 @@ export function useScientThreadFork({
               pending = attemptStore.get(key);
             } catch {
               /* Keep corrupt/unavailable storage untouched. */
+            }
+            if (fromCard) {
+              setErrorUpdate({
+                threadId: originId,
+                environmentId,
+                key,
+                message: pending?.ready
+                  ? "The fork is ready. Retry to open it; this will not create another conversation."
+                  : `${userFacingForkError(cause)}${pending ? " Retry to resume this same fork; your draft is saved." : ""}`,
+              });
+              setPreview((current) =>
+                current?.key === key ? { ...current, locked: pending !== null } : current,
+              );
+              return "not-accepted";
             }
             toastManager.add({
               type: "error",
@@ -514,6 +649,16 @@ export function useScientThreadFork({
       },
     );
     if (outcome === null && mounted.current && activeOrigin.current === originKey) {
+      if (fromCard) {
+        setErrorUpdate({
+          threadId: originId,
+          environmentId,
+          key: forkAttemptKey(environmentId, originId, sourceKey(source)),
+          message:
+            "A fork is already being prepared from this conversation. Wait for it to finish, then retry.",
+        });
+        return "not-accepted";
+      }
       toastManager.add({
         type: "warning",
         title: "A fork is already being prepared",
@@ -523,5 +668,5 @@ export function useScientThreadFork({
     return outcome ?? "not-accepted";
   };
 
-  return { isForking, forkFromMessage } as const;
+  return { errorUpdate, isForking, forkFromMessage, prepareFork, preview } as const;
 }

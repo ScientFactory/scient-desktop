@@ -289,6 +289,7 @@ it("resumes an unresolved fork journalled before the single fork path", () => {
         newThreadId: "old-destination",
         sourceUserMessageId: "user-3",
         workspaceMode: "new-worktree",
+        titleOverride: "Renamed",
       },
     }),
   );
@@ -298,6 +299,7 @@ it("resumes an unresolved fork journalled before the single fork path", () => {
     commandId: "client:thread-fork:old",
     sourceThreadId: "origin",
     targetThreadId: "old-destination",
+    title: "Renamed",
     scient: {
       boundary: { kind: "user-message", messageId: "user-3" },
       workspaceMode: "new-worktree",
@@ -305,6 +307,7 @@ it("resumes an unresolved fork journalled before the single fork path", () => {
   });
   expect(resumed?.ready).toBe(true);
   expect(resumed?.composerDraftFingerprint).toBe("draft");
+  expect(resumed?.displayTitle).toBe("Old title");
   expect(storage.getItem(`scient:fork-attempt:v1:${key}`)).toBeNull();
   expect(store.get(key)?.command.targetThreadId).toBe("old-destination");
 });
