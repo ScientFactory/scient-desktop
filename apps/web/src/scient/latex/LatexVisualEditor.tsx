@@ -8184,12 +8184,15 @@ function LatexVisualEditorReady(
   };
 
   const insertVisualSource = (source: string, wrap = false) => {
-    if (!editor || textReadOnly) return;
+    if (!editor || textReadOnly) return false;
     const nodes = projectLatexVisualDocument(source).content.content ?? [];
-    if (nodes.length && !insertLatexBlock(editor, nodes, wrap))
+    if (nodes.length && !insertLatexBlock(editor, nodes, wrap)) {
       setNotice(
         "This insertion cannot preserve the selected content here. Place the cursor in ordinary text or edit Source.",
       );
+      return false;
+    }
+    return nodes.length > 0;
   };
   const captureInsertion = () => {
     if (!editor || textReadOnly || !flushTypingRef.current()) return false;
@@ -10508,16 +10511,15 @@ function LatexVisualEditorReady(
                               environmentId={props.environmentId}
                               cwd={props.cwd}
                               rootPath={props.rootRelativePath}
+                              setup={() => currentSetupSource.current ?? ""}
                               prepareFiles={
                                 props.prepareIncludedFiles ?? (() => Promise.resolve(true))
                               }
                               ensurePreambleLine={ensureResultPreambleLine}
                               insertMacro={insertResultMacro}
-                              insertBlock={(source) => {
-                                if (!resultSelectionReady()) return false;
-                                insertVisualSource(source);
-                                return true;
-                              }}
+                              insertBlock={(source) =>
+                                resultSelectionReady() && insertVisualSource(source)
+                              }
                               onClose={() => {
                                 setResultOpen(false);
                                 if (insertionTarget.current !== null) restoreInsertion();

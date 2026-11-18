@@ -723,7 +723,22 @@ export function LatexProjectVisualEditor(props: Props) {
           new Promise<boolean>((resolve) => {
             const waiters = includeWaiters.current.get(path) ?? [];
             includeWaiters.current.set(path, [...waiters, resolve]);
-            globalThis.setTimeout(() => resolve(false), 8000);
+            globalThis.setTimeout(() => {
+              // A file that never arrived is not kept open for an insertion that gave up.
+              const left = (includeWaiters.current.get(path) ?? []).filter(
+                (item) => item !== resolve,
+              );
+              if (left.length > 0) includeWaiters.current.set(path, left);
+              else includeWaiters.current.delete(path);
+              if (left.length === 0)
+                setIncludePaths((previous) => {
+                  if (!previous.has(path)) return previous;
+                  const next = new Set(previous);
+                  next.delete(path);
+                  return next;
+                });
+              resolve(false);
+            }, 8000);
           }),
       ),
     ).then((loaded) => loaded.every(Boolean));

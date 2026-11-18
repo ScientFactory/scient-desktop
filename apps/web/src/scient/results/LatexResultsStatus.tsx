@@ -1,4 +1,5 @@
 import type {
+  ComputeResultFileDigest,
   ComputeResultPlacedFile,
   ComputeResultPlacedScript,
   ComputeResultsPlacementsResult,
@@ -28,18 +29,26 @@ const fileName = (path: string) => path.split("/").at(-1) ?? path;
 /** Sent when Insert ▸ Result places files, so the build row shows them at once. */
 export const RESULTS_PLACED_EVENT = "scient-latex-results-placed";
 
+/** Files the shown PDF read, or may have; a file it did not read cannot be wrong in it. */
+const usedFiles = (script: ComputeResultPlacedScript) =>
+  script.files.filter((file) => file.usedByBuild !== false);
+
 /** What a script's placed files need, most urgent first; null when nothing does. */
 function scriptAttention(script: ComputeResultPlacedScript): string | null {
-  if (script.files.some((file) => file.state === "missing")) return "missing";
+  if (script.interrupted) return "interrupted";
+  const used = usedFiles(script);
+  if (used.length === 0) return null;
+  if (used.some((file) => file.state === "missing")) return "missing";
   if (script.summary.causes.length > 0) return "out of date";
   if (script.newer !== null) return "newer run";
-  if (script.files.some((file) => file.state === "edited")) return "edited";
-  if (script.files.some((file) => file.differsFromBuild)) return "rebuild";
+  if (used.some((file) => file.state === "edited")) return "edited";
+  if (used.some((file) => file.differsFromBuild)) return "rebuild";
   return null;
 }
 
 function chipLabel(result: ComputeResultsPlacementsResult): string | null {
   const needs = result.scripts.map(scriptAttention).filter((need) => need !== null);
+  if (needs.includes("interrupted")) return "Results update unfinished";
   if (needs.includes("missing")) return "Result files missing";
   if (needs.includes("out of date")) return "Results out of date";
   if (needs.includes("newer run")) return "Newer results";
@@ -185,7 +194,8 @@ function ScriptResults(props: {
   );
   const [busy, setBusy] = useState<"rerun" | "update" | "undo" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [edited, setEdited] = useState<ReadonlyArray<string>>([]);
+  // Edited files the user was warned about, as they were then; confirming replaces only those.
+  const [edited, setEdited] = useState<ReadonlyArray<ComputeResultFileDigest>>([]);
 
   const act = (kind: "rerun" | "update" | "undo", run: () => Promise<void>) => {
     setBusy(kind);
@@ -206,10 +216,19 @@ function ScriptResults(props: {
     else if (response.value._tag === "failed") setMessage(response.value.message);
   };
 
-  const applyUpdate = async (replaceEdited: boolean) => {
+  const applyUpdate = async (
+    toRevision: string,
+    replaceEdited: ReadonlyArray<ComputeResultFileDigest>,
+  ) => {
     const response = await updateFiles({
       environmentId: props.environmentId,
-      input: { cwd: props.cwd, documentPath: props.rootPath, scriptPath, replaceEdited },
+      input: {
+        cwd: props.cwd,
+        documentPath: props.rootPath,
+        scriptPath,
+        toRevision,
+        replaceEdited,
+      },
     });
     if (response._tag !== "Success") {
       setMessage(resultErrorMessage(response, "The files could not be updated."));
@@ -234,7 +253,8 @@ function ScriptResults(props: {
   };
 
   const causes = script.summary.causes;
-  const rebuild = script.files.some((file) => file.differsFromBuild);
+  const rebuild = usedFiles(script).some((file) => file.differsFromBuild);
+  const missing = script.files.some((file) => file.state === "missing");
   return (
     <div className="flex flex-col gap-1.5" data-results-script={scriptPath}>
       <span className="font-medium text-foreground">{scriptPath}</span>
@@ -251,9 +271,15 @@ function ScriptResults(props: {
         {script.files.map((file) => (
           <li key={file.path}>
             {fileName(file.path)} · {FILE_STATE_TEXT[file.state]}
+            {file.usedByBuild === false ? " · not in this PDF" : ""}
           </li>
         ))}
       </ul>
+      {script.interrupted ? (
+        <span className="text-foreground">
+          The last update of these files stopped part way. Undo update puts the earlier files back.
+        </span>
+      ) : null}
       {script.newer === null ? null : (
         <span className="text-foreground">
           {script.updateBlocked ??
@@ -276,11 +302,26 @@ function ScriptResults(props: {
       ) : null}
       {message === null ? null : <span className="text-foreground">{message}</span>}
       <div className="flex flex-wrap gap-1.5">
-        {canWrite && script.newer !== null && script.updateBlocked === null ? (
+        {canWrite && !script.interrupted && script.newer === null && missing ? (
           <Button
             size="xs"
             disabled={busy !== null}
-            onClick={() => act("update", () => applyUpdate(edited.length > 0))}
+            onClick={() => act("update", () => applyUpdate(script.summary.revision, []))}
+          >
+            {busy === "update" ? "Restoring…" : "Restore missing files"}
+          </Button>
+        ) : null}
+        {canWrite &&
+        !script.interrupted &&
+        script.newer !== null &&
+        script.updateBlocked === null ? (
+          <Button
+            size="xs"
+            disabled={busy !== null}
+            onClick={() => {
+              const toRevision = script.newer?.revision;
+              if (toRevision !== undefined) act("update", () => applyUpdate(toRevision, edited));
+            }}
           >
             {busy === "update"
               ? "Updating…"
