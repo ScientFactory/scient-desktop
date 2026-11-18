@@ -425,9 +425,10 @@ function stopOwnedUpdatedProcess(pid, executable, platform) {
     }).trim();
   } else {
     const environment = NodeFS.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
+    const appImage = environment.find((entry) => entry.startsWith("APPIMAGE="))?.slice(9);
     NodeAssert.ok(
-      environment.includes(`APPIMAGE=${executable}`),
-      "Updated PID is not this qualification AppImage",
+      appImage !== undefined && NodeFS.realpathSync(appImage) === NodeFS.realpathSync(executable),
+      `Updated PID is not this qualification AppImage (APPIMAGE=${appImage ?? "unset"})`,
     );
     actual = executable;
   }
@@ -619,6 +620,7 @@ async function qualify(options) {
   NodeFS.mkdirSync(evidence, { recursive: true });
   const server = await serveFeed(targetRoot, port, corrupt, overrides, options["tls-dir"]);
   let app;
+  let keepConsole = () => {};
   let updatedPid;
   let receipt;
   try {
@@ -634,6 +636,15 @@ async function qualify(options) {
       NodePath.resolve(profiles.userData),
     );
     const page = await app.firstWindow({ timeout: TIMEOUT });
+    // The synthetic profile holds no user data; its console and logs explain a failed run.
+    const consoleLines = [];
+    page.on("console", (message) => consoleLines.push(`[${message.type()}] ${message.text()}`));
+    page.on("pageerror", (error) => consoleLines.push(`[pageerror] ${error.message}`));
+    keepConsole = () =>
+      NodeFS.writeFileSync(
+        NodePath.join(evidence, "renderer-console.log"),
+        consoleLines.join("\n"),
+      );
     await page.waitForFunction(
       () => typeof window.desktopBridge?.checkForUpdate === "function",
       undefined,
@@ -899,9 +910,20 @@ async function qualify(options) {
     }
     await video.saveAs(NodePath.join(evidence, "restart.webm"));
   } finally {
-    if (updatedPid !== undefined) stopOwnedUpdatedProcess(updatedPid, executable, platform);
-    else if (app !== undefined) await app.close().catch(() => {});
-    await new Promise((resolve) => server.close(resolve));
+    try {
+      keepConsole();
+      const logs = NodePath.join(profiles.baseDir, "userdata", "logs");
+      if (NodeFS.existsSync(logs))
+        NodeFS.cpSync(logs, NodePath.join(evidence, "desktop-logs"), { recursive: true });
+    } catch (error) {
+      console.error("Could not keep the run's console and logs", error);
+    }
+    try {
+      if (updatedPid !== undefined) stopOwnedUpdatedProcess(updatedPid, executable, platform);
+      else if (app !== undefined) await app.close().catch(() => {});
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   }
   NodeFS.mkdirSync(NodePath.dirname(NodePath.resolve(options.output)), { recursive: true });
   NodeFS.writeFileSync(options.output, `${JSON.stringify(receipt, null, 2)}\n`);
