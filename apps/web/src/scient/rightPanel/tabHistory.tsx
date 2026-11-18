@@ -386,16 +386,6 @@ export function renameInTabHistory(
   );
 }
 
-/** How many steps Back and Forward hold for a tab. */
-export function tabHistoryDepth(threadRef: ScopedThreadRef, surfaceId: string) {
-  const history =
-    useTabHistoryStore.getState().byThreadKey[scopedThreadKey(threadRef)] ?? EMPTY_HISTORY;
-  return {
-    back: history.back[surfaceId]?.length ?? 0,
-    forward: history.forward[surfaceId]?.length ?? 0,
-  };
-}
-
 /** ← and → for a file tab, always shown as in a browser, greyed out with nowhere to go. */
 export function TabHistoryButtons(props: {
   readonly className?: string;
