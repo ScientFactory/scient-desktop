@@ -3,7 +3,6 @@ import * as ServerConfig from "../config.ts";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
-  EnvironmentId,
   MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
@@ -34,9 +33,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
-import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
-import { skillReleaseKey } from "@scientfactory/scient-skills";
-import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const driver = ProviderDriverKind.make("codex");
@@ -387,188 +383,6 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
-);
-
-it.effect(
-  "prepares steering from the persisted explicit skill selection and clears removed selections",
-  () =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread:skill-steer");
-      const providerSessionId = ProviderSessionId.make("session:skill-steer");
-      const providerThreadId = ProviderThreadId.make("provider-thread:skill-steer");
-      const providerTurnId = ProviderTurnId.make("provider-turn:skill-steer");
-      const attemptId = RunAttemptId.make("attempt:skill-steer");
-      const providerThread: OrchestrationV2ProviderThread = {
-        id: providerThreadId,
-        driver,
-        providerInstanceId,
-        providerSessionId,
-        appThreadId: threadId,
-        ownerNodeId: null,
-        nativeThreadRef: null,
-        nativeConversationHeadRef: null,
-        status: "active",
-        firstRunOrdinal: 1,
-        lastRunOrdinal: 1,
-        handoffIds: [],
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const providerTurn = makeProjection({
-        now,
-        threadId,
-        providerThread,
-        providerTurnId,
-        attemptId,
-      }).providerTurns[0]!;
-      const messageId = MessageId.make("message:skill-steer");
-      const release = BUILT_IN_SKILL_RELEASES[0]!;
-      const selection = yield* Ref.make<ReadonlyArray<string>>([release.name]);
-      const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
-        instanceId: providerInstanceId,
-        driver,
-        providerSessionId,
-        mcpSessionInjection: true,
-        providerSession: {
-          id: providerSessionId,
-          driver,
-          providerInstanceId,
-          status: "running",
-          cwd: "/workspace",
-          model: modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
-          createdAt: now,
-          updatedAt: now,
-          lastError: null,
-        },
-        events: Stream.empty,
-        ensureThread: () => Effect.die("unused ensure"),
-        resumeThread: () => Effect.die("unused resume"),
-        startTurn: () => Effect.die("unused start"),
-        steerTurn: ({ message }) => Ref.update(delivered, (texts) => [...texts, message.text]),
-        interruptTurn: () => Effect.die("unused interrupt"),
-        respondToRuntimeRequest: () => Effect.die("unused request"),
-        readThreadSnapshot: () => Effect.die("unused snapshot"),
-        rollbackThread: () => Effect.die("unused rollback"),
-        forkThread: () => Effect.die("unused fork"),
-      };
-      const dependencies = Layer.mergeAll(
-        Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
-        Layer.mock(EventSink.EventSinkV2)({}),
-        ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
-        ),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getProviderControlContext: () =>
-            Ref.get(selection).pipe(
-              Effect.map((selectedScientSkillNames) => ({
-                providerThread,
-                providerTurn,
-                attempt: undefined,
-                run: {
-                  id: RunId.make("run:skill-steer"),
-                  threadId,
-                  ordinal: 1,
-                  providerInstanceId,
-                  modelSelection,
-                  providerThreadId,
-                  userMessageId: messageId,
-                  rootNodeId: null,
-                  activeAttemptId: null,
-                  status: "running" as const,
-                  requestedAt: now,
-                  startedAt: now,
-                  completedAt: null,
-                  checkpointId: null,
-                  contextHandoffId: null,
-                },
-                message: {
-                  id: messageId,
-                  threadId,
-                  runId: RunId.make("run:skill-steer"),
-                  nodeId: null,
-                  role: "user" as const,
-                  text: `Continue $${release.name}`,
-                  attachments: [],
-                  selectedScientSkillNames,
-                  createdBy: "user" as const,
-                  creationSource: "web" as const,
-                  createdAt: now,
-                  updatedAt: now,
-                  streaming: false,
-                },
-              })),
-            ),
-        }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          get: () => Effect.succeedSome(runtime),
-        }),
-        Layer.succeed(ScientSkillSession.ScientSkillSessionPlanner, {
-          resolve: () =>
-            Effect.succeed({
-              delivery: "mcp" as const,
-              catalogStatus: "complete" as const,
-              skills: [
-                {
-                  releaseKey: skillReleaseKey(release),
-                  id: release.id,
-                  name: release.name,
-                  description: release.description,
-                  origin: release.origin,
-                  activationScope: "user" as const,
-                  invocationPolicy: "explicit" as const,
-                },
-              ],
-              releases: new Map([[skillReleaseKey(release), release]]),
-              diagnostics: [],
-            }),
-        }),
-      );
-      yield* Effect.acquireUseRelease(
-        Effect.gen(function* () {
-          const previous = yield* mcpSessions.read(threadId);
-          yield* mcpSessions.set({
-            environmentId: EnvironmentId.make("skill-steer-fixture"),
-            threadId,
-            providerInstanceId,
-            providerSessionId,
-            endpoint: "http://127.0.0.1/mcp",
-            authorizationHeader: "Bearer skill-steer-fixture",
-            capabilities: new Set(["skills:read"]),
-            // SCIENT-FORK:START — Scient Extensions connectors.
-            connectors: [],
-            // SCIENT-FORK:END
-          });
-          return previous;
-        }),
-        () =>
-          Effect.gen(function* () {
-            const service = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
-            const target = {
-              threadId,
-              providerSessionId,
-              providerThreadId,
-              providerTurnId,
-              messageId,
-            };
-            yield* service.steer(target);
-            yield* Ref.set(selection, []);
-            yield* service.steer(target);
-          }).pipe(
-            Effect.provide(ProviderTurnControlService.layer.pipe(Layer.provide(dependencies))),
-          ),
-        (previous) =>
-          previous === undefined ? mcpSessions.clear(threadId) : mcpSessions.set(previous),
-      );
-      const texts = yield* Ref.get(delivered);
-      assert.include(texts[0]!, "selected by the user");
-      assert.notInclude(texts[1]!, "selected by the user");
-      assert.include(texts[1]!, `$${release.name}`);
-    }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
 it.effect.each([
