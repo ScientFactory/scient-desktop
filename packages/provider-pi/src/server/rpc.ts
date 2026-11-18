@@ -213,20 +213,20 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
  * deliver SIGKILL to an unrelated process.
  */
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
-  // SCIENT-FORK:START — signal 0 probes whether any member of the group is still alive.
-  kill: (signal: NodeJS.Signals | 0) => boolean,
-  // SCIENT-FORK:END
+  kill: (signal: NodeJS.Signals) => boolean,
   hasExited: () => boolean,
+  // SCIENT-FORK:START — the grace ends once the whole group is gone (sent upstream to T3).
+  groupGone: () => boolean,
+  // SCIENT-FORK:END
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  // SCIENT-FORK:START — the grace is an upper bound: stop waiting once no member of the group is
-  // left, extension children included. The escalation decision below is unchanged. A recycled
-  // group id can only make this wait the full grace.
-  yield* Effect.sleep(TERMINATION_EXIT_POLL).pipe(
-    Effect.repeat({ until: () => !kill(0) }),
+  // SCIENT-FORK:START — a group seen gone is never escalated; otherwise hasExited decides at 1 s.
+  const gone = yield* Effect.sleep(TERMINATION_EXIT_POLL).pipe(
+    Effect.repeat({ until: groupGone }),
     Effect.timeoutOption(TERMINATION_GRACE),
   );
+  if (Option.isSome(gone)) return;
   // SCIENT-FORK:END
   if (hasExited()) return;
   kill("SIGKILL");
@@ -260,9 +260,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   let childExited = false;
   let diagnosingStdoutClose = false;
 
-  // SCIENT-FORK:START — also takes signal 0, the group liveness probe.
-  const killProcessGroup = (signal: NodeJS.Signals | 0): boolean => {
-    // SCIENT-FORK:END
+  const killProcessGroup = (signal: NodeJS.Signals): boolean => {
     try {
       if (platform === "win32") {
         process.kill(Number(child.pid), signal);
@@ -286,6 +284,17 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
+  // SCIENT-FORK:START — only "no such process" proves the group empty; EPERM means a member runs.
+  const groupGone = (): boolean => {
+    try {
+      signalProcessGroup(Number(child.pid), 0);
+      return false;
+    } catch (cause) {
+      return (cause as NodeJS.ErrnoException).code === "ESRCH";
+    }
+  };
+  // SCIENT-FORK:END
+
   // Windows process.kill leaves extension children and pipes alive; taskkill /T reaps the tree.
   const terminateWindowsTree = Effect.gen(function* () {
     if (hasExited()) return;
@@ -295,8 +304,12 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     yield* taskkill.exitCode;
   }).pipe(Effect.scoped, Effect.ignore);
 
+  // SCIENT-FORK:START — POSIX teardown also takes the group probe.
   const terminateProcess =
-    platform === "win32" ? terminateWindowsTree : terminatePiProcess(killProcessGroup, hasExited);
+    platform === "win32"
+      ? terminateWindowsTree
+      : terminatePiProcess(killProcessGroup, hasExited, groupGone);
+  // SCIENT-FORK:END
 
   // Register teardown immediately after spawn so interrupted setup cannot leak a detached process.
   yield* Scope.addFinalizer(scope, terminateProcess.pipe(Effect.ignore, Effect.uninterruptible));

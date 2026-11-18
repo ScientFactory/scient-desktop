@@ -5,62 +5,79 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { terminatePiProcess } from "./rpc.ts";
 
-// Teardown sends SIGTERM, then waits at most one second for the whole process group before SIGKILL.
-// The group is Pi (the leader) plus any extension children it started.
-const group = (onSigterm: { readonly leaderExits: boolean; readonly childrenExit: boolean }) => {
+const group = (input: {
+  /** Whether Pi itself, the group leader, exits on SIGTERM. */
+  readonly leaderExits: boolean;
+  /** How many group probes after SIGTERM still find a member running. */
+  readonly probesUntilGone: number;
+  /** What `hasExited` reports, when it differs from the leader (a recycled id). */
+  readonly hasExited?: () => boolean;
+}) => {
   const signals: Array<NodeJS.Signals> = [];
-  let leader = true;
-  let children = true;
+  let terminated = false;
+  let probes = 0;
   return {
     signals,
-    kill: (signal: NodeJS.Signals | 0) => {
-      if (!leader && !children) return false;
-      if (signal === 0) return true;
+    kill: (signal: NodeJS.Signals) => {
       signals.push(signal);
-      if (signal === "SIGTERM") {
-        leader = !onSigterm.leaderExits;
-        children = !onSigterm.childrenExit;
-      }
+      if (signal === "SIGTERM") terminated = true;
       return true;
     },
-    // As in rpc.ts: true once the direct child has exited, whatever its group still holds.
-    hasExited: () => !leader,
+    hasExited: input.hasExited ?? (() => terminated && input.leaderExits),
+    groupGone: () => terminated && ++probes > input.probesUntilGone,
   };
 };
 
+const teardown = (pi: ReturnType<typeof group>) =>
+  Effect.forkChild(terminatePiProcess(pi.kill, pi.hasExited, pi.groupGone));
+
 describe("PiRpc teardown grace", () => {
-  it.effect("stops waiting once the whole group has exited after SIGTERM", () =>
+  it.effect("returns once the whole group has exited during the grace", () =>
     Effect.gen(function* () {
-      const pi = group({ leaderExits: true, childrenExit: true });
-      const teardown = yield* Effect.forkChild(terminatePiProcess(pi.kill, pi.hasExited));
-      yield* TestClock.adjust("100 millis");
-      assert.isDefined(teardown.pollUnsafe(), "teardown still waiting after the group exited");
-      yield* Fiber.join(teardown);
+      const pi = group({ leaderExits: true, probesUntilGone: 2 });
+      const fiber = yield* teardown(pi);
+      yield* TestClock.adjust("40 millis");
+      assert.isUndefined(fiber.pollUnsafe(), "teardown returned while the group still ran");
+      yield* TestClock.adjust("20 millis");
+      assert.isDefined(fiber.pollUnsafe(), "teardown still waiting after the group exited");
+      yield* Fiber.join(fiber);
       assert.deepEqual(pi.signals, ["SIGTERM"]);
     }),
   );
 
-  it.effect("keeps the grace for extension children when only Pi itself has exited", () =>
+  it.effect("waits the full grace for extension children after Pi itself exits", () =>
     Effect.gen(function* () {
-      const pi = group({ leaderExits: true, childrenExit: false });
-      const teardown = yield* Effect.forkChild(terminatePiProcess(pi.kill, pi.hasExited));
+      const pi = group({ leaderExits: true, probesUntilGone: Infinity });
+      const fiber = yield* teardown(pi);
       yield* TestClock.adjust("999 millis");
-      assert.isUndefined(teardown.pollUnsafe(), "teardown ended while the group was still alive");
+      assert.isUndefined(fiber.pollUnsafe(), "teardown ended while the group was still alive");
       yield* TestClock.adjust("1 millis");
-      yield* Fiber.join(teardown);
-      // Unchanged from T3: with the leader gone, its group id may be recycled, so no SIGKILL.
+      yield* Fiber.join(fiber);
+      // With the leader gone its group id may be recycled, so it is not escalated.
+      assert.deepEqual(pi.signals, ["SIGTERM"]);
+    }),
+  );
+
+  it.effect("never escalates a group it has seen gone", () =>
+    Effect.gen(function* () {
+      // The leader lookup succeeds again, as it would for a recycled id.
+      const pi = group({ leaderExits: false, probesUntilGone: 0, hasExited: () => false });
+      const fiber = yield* teardown(pi);
+      yield* TestClock.adjust("20 millis");
+      assert.isDefined(fiber.pollUnsafe(), "teardown still waiting after the group exited");
+      yield* Fiber.join(fiber);
       assert.deepEqual(pi.signals, ["SIGTERM"]);
     }),
   );
 
   it.effect("sends SIGKILL when Pi outlives the grace", () =>
     Effect.gen(function* () {
-      const pi = group({ leaderExits: false, childrenExit: false });
-      const teardown = yield* Effect.forkChild(terminatePiProcess(pi.kill, pi.hasExited));
+      const pi = group({ leaderExits: false, probesUntilGone: Infinity });
+      const fiber = yield* teardown(pi);
       yield* TestClock.adjust("999 millis");
       assert.deepEqual(pi.signals, ["SIGTERM"]);
       yield* TestClock.adjust("1 millis");
-      yield* Fiber.join(teardown);
+      yield* Fiber.join(fiber);
       assert.deepEqual(pi.signals, ["SIGTERM", "SIGKILL"]);
     }),
   );
