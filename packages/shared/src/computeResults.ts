@@ -101,7 +101,48 @@ export type MarkdownResultReference = ResultTarget &
   (
     | { readonly kind: "value"; readonly text: string }
     | { readonly kind: "figure"; readonly alt: string; readonly src: string }
+    /** A table's caption link; the table itself is the block before the caption. */
+    | { readonly kind: "table"; readonly caption: string }
   ) & { readonly start: number; readonly end: number };
+
+/**
+ * A caption to start from: `event-rates.png` → `Event rates`. A name such as `table1` says nothing
+ * a numbered caption does not, so those name the script instead: `Results of analysis.py`.
+ */
+export function resultCaption(output: string, scriptPath: string): string {
+  const words = (output.split("/").at(-1) ?? output)
+    .replace(/\.[^.]+$/u, "")
+    .replace(/[-_]+/gu, " ")
+    .replace(/(?<=[a-z])(?=[0-9])/gu, " ")
+    .trim();
+  if (words === "" || /^(?:table|tab|fig|figure|plot|chart)\s*\d*$/iu.test(words))
+    return `Results of ${scriptPath.split("/").at(-1) ?? scriptPath}`;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** What a caption line holds before its link: `Table: ` (Pandoc also reads a bare `: `). */
+const TABLE_CAPTION_START = /^\s{0,3}(?:Table)?:\s*$/u;
+
+/**
+ * A caption as the editor reads one: `Table: ` and the link alone on its line, right after a pipe
+ * table (one blank line between is allowed).
+ */
+function isTableCaption(source: string, open: number, close: number): boolean {
+  const lineStart = source.lastIndexOf("\n", open) + 1;
+  const lineEnd = source.indexOf("\n", close);
+  if (!TABLE_CAPTION_START.test(source.slice(lineStart, open))) return false;
+  if (source.slice(close + 1, lineEnd < 0 ? source.length : lineEnd).trim() !== "") return false;
+  const before = source.slice(0, Math.max(0, lineStart - 1)).split("\n");
+  while (before.length > 0 && before.at(-1)!.trim() === "") before.pop();
+  return before.at(-1)?.trim().startsWith("|") === true;
+}
+
+/** Tables are linked from their caption, `Table: [Table 1](scient-result:<revision>/table1.csv)`. */
+export const isResultTableOutput = (output: string) => /\.csv$/iu.test(output);
+
+export function formatResultTableCaption(caption: string, target: ResultTarget): string {
+  return `Table: [${escapeMarkdownLabel(caption)}](${formatResultTarget(target)})`;
+}
 
 const FIGURE_LABEL = /^!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|[^\s)]*)(?:\s+"[^"]*")?\s*\)$/su;
 
@@ -123,22 +164,33 @@ export function findMarkdownResultReferences(
     const label = source.slice(open + 1, at);
     const figure = FIGURE_LABEL.exec(label);
     references.push(
-      figure
+      !figure &&
+        target.pointer === null &&
+        isResultTableOutput(target.output) &&
+        isTableCaption(source, open, close)
         ? {
             ...target,
-            kind: "figure",
-            alt: unescapeMarkdownLabel(figure[1] ?? ""),
-            src: (figure[2] ?? "").replace(/^<|>$/gu, ""),
+            kind: "table",
+            caption: unescapeMarkdownLabel(label),
             start: open,
             end: close + 1,
           }
-        : {
-            ...target,
-            kind: "value",
-            text: unescapeMarkdownLabel(label),
-            start: open,
-            end: close + 1,
-          },
+        : figure
+          ? {
+              ...target,
+              kind: "figure",
+              alt: unescapeMarkdownLabel(figure[1] ?? ""),
+              src: (figure[2] ?? "").replace(/^<|>$/gu, ""),
+              start: open,
+              end: close + 1,
+            }
+          : {
+              ...target,
+              kind: "value",
+              text: unescapeMarkdownLabel(label),
+              start: open,
+              end: close + 1,
+            },
     );
   }
   return references;
@@ -238,26 +290,58 @@ export type ResultReferenceState =
   | "missing"
   | "unrecorded";
 
+/** Cells compared as a Markdown table keeps them: pipe tables trim the space around a cell. */
+const sameRows = (
+  left: ReadonlyArray<ReadonlyArray<string>>,
+  right: ReadonlyArray<ReadonlyArray<string>>,
+) =>
+  left.length === right.length &&
+  left.every(
+    (row, index) =>
+      row.length === right[index]!.length &&
+      row.every((cell, column) => cell.trim() === right[index]![column]!.trim()),
+  );
+
 export function resultReferenceState(
-  reference: { readonly kind: "value"; readonly text: string } | { readonly kind: "figure" },
+  reference:
+    | { readonly kind: "value"; readonly text: string }
+    | { readonly kind: "figure" }
+    /** Null rows when the caller cannot read the table, so only its run is compared. */
+    | { readonly kind: "table"; readonly rows: ReadonlyArray<ReadonlyArray<string>> | null },
   resolution: ComputeResultResolution | undefined,
 ): ResultReferenceState {
   if (resolution === undefined || resolution._tag === "unrecorded") return "unrecorded";
-  if (!(reference.kind === "value" ? resolution.value !== null : resolution.figure))
-    return "missing";
+  const present =
+    reference.kind === "value"
+      ? resolution.value !== null
+      : reference.kind === "figure"
+        ? resolution.figure
+        : resolution.table != null;
+  if (!present) return "missing";
   if (resolution.summary.causes.length > 0) return "stale";
   if (reference.kind === "value" && reference.text !== resolution.value) return "edited";
+  if (
+    reference.kind === "table" &&
+    reference.rows !== null &&
+    resolution.table != null &&
+    !sameRows(reference.rows, resolution.table)
+  )
+    return "edited";
   if (resultHasNewer(reference, resolution)) return "newer";
   return "current";
 }
 
 export function resultHasNewer(
-  reference: { readonly kind: "value" | "figure" },
+  reference: { readonly kind: "value" | "figure" | "table" },
   resolution: Extract<ComputeResultResolution, { readonly _tag: "resolved" }>,
 ): boolean {
   const newer = resolution.newer;
   if (newer === null) return false;
-  return reference.kind === "figure" ? newer.figure : newer.value !== null;
+  return reference.kind === "figure"
+    ? newer.figure
+    : reference.kind === "table"
+      ? newer.table != null
+      : newer.value !== null;
 }
 
 class LiteralNumber {

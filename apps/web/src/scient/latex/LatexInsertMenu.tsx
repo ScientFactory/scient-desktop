@@ -1,4 +1,4 @@
-import { BookOpen, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
+import { BookOpen, ChartColumn, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
@@ -31,6 +31,7 @@ const SUBMENU = { "data-latex-insert-menu": "", "data-dock-command-scope": "late
 const ICON = "size-4 text-muted-foreground";
 const ICONS: Readonly<Record<string, ReactNode>> = {
   figure: <ImageIcon className={ICON} />,
+  result: <ChartColumn className={ICON} />,
   citation: <BookOpen className={ICON} />,
   reference: <Tag className={ICON} />,
   footnote: <NotebookText className={ICON} />,
@@ -51,6 +52,7 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
       <>
         {item("figure")}
         {table}
+        {item("result")}
         {item("code")}
         {item("verbatim")}
         <MenuSeparator />

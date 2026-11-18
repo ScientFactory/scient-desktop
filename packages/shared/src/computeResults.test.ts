@@ -1,13 +1,16 @@
+import type { ComputeResultResolution, ComputeResultRevisionId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   findMarkdownResultReferences,
   formatResultFigureMarkdown,
+  formatResultTableCaption,
   formatResultTarget,
   formatResultValueMarkdown,
   parseResultTarget,
   readResultValues,
   resultPointer,
+  resultReferenceState,
   resultValueAt,
 } from "./computeResults.ts";
 
@@ -62,5 +65,74 @@ describe("linked result references", () => {
     // A value inside a sentence cannot hold a paragraph break.
     expect(readResultValues('{"note": "a\\n\\nb"}')).toEqual([]);
     expect(resultValueAt('{"a\\u0000b": "1", "a": {"b": "2"}}', "/a/b")).toBe("2");
+  });
+
+  it("finds a table by its caption link and compares its rows with the run", () => {
+    const caption = formatResultTableCaption("Table 1", {
+      revision,
+      output: "table1.csv",
+      pointer: null,
+    });
+    expect(caption).toBe(`Table: [Table 1](scient-result:${revision}/table1.csv)`);
+    const source = `| Arm | n |\n|---|--:|\n| A | 1 |\n\n${caption}\n`;
+    expect(findMarkdownResultReferences(source)).toMatchObject([
+      { kind: "table", caption: "Table 1", output: "table1.csv", pointer: null },
+    ]);
+    const rows = [
+      ["Arm", "n"],
+      ["A", "1"],
+    ];
+    const resolved = (
+      table: ReadonlyArray<ReadonlyArray<string>> | null,
+    ): ComputeResultResolution => ({
+      _tag: "resolved",
+      summary: {
+        revision: revision as ComputeResultRevisionId,
+        scriptPath: "analysis.py",
+        language: "Python",
+        finishedAt: "2026-11-18T00:00:00.000Z",
+        runtime: { executable: null, version: null },
+        inputTracking: "observed",
+        inputs: [],
+        inputsTruncated: false,
+        causes: [],
+      },
+      value: null,
+      figure: false,
+      table,
+      newer: null,
+    });
+    expect(resultReferenceState({ kind: "table", rows }, resolved(rows))).toBe("current");
+    expect(
+      resultReferenceState(
+        {
+          kind: "table",
+          rows: [
+            ["Arm", "n"],
+            ["A", "2"],
+          ],
+        },
+        resolved(rows),
+      ),
+    ).toBe("edited");
+    expect(resultReferenceState({ kind: "table", rows: null }, resolved(rows))).toBe("current");
+    expect(resultReferenceState({ kind: "table", rows }, resolved(null))).toBe("missing");
+  });
+
+  it("reads a CSV link as a table only on a caption line", () => {
+    const link = `[t](scient-result:${revision}/table1.csv)`;
+    expect(findMarkdownResultReferences(`See ${link} here.`).map((ref) => ref.kind)).toEqual([
+      "value",
+    ]);
+    expect(findMarkdownResultReferences(`Table: ${link}`).map((ref) => ref.kind)).toEqual([
+      "value",
+    ]);
+    const table = "| a |\n| --- |\n| 1 |\n\n";
+    expect(findMarkdownResultReferences(`${table}Table: ${link}`).map((ref) => ref.kind)).toEqual([
+      "table",
+    ]);
+    expect(
+      findMarkdownResultReferences(`${table}Table: ${link} and more`).map((ref) => ref.kind),
+    ).toEqual(["value"]);
   });
 });

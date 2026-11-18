@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
@@ -60,10 +61,24 @@ describe("Linked results client authorization", () => {
       scopes: [AuthOrchestrationOperateScope],
       permissions: [AuthOrchestrationOperateScope],
     };
-    for (const method of [WS_METHODS.computeResultsPlaceFigure, WS_METHODS.computeResultsRerun]) {
+    const writer = {
+      ...reader,
+      scopes: [AuthFilesystemWriteScope],
+      permissions: [AuthFilesystemWriteScope],
+    };
+    const rerun = clientRpcRequiredScopes(WS_METHODS.computeResultsRerun, {});
+    expect(rerun.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
+    expect(rerun.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);
+    // Placing, updating and undoing write project files, so they take the file-write grant.
+    for (const method of [
+      WS_METHODS.computeResultsPlaceFigure,
+      WS_METHODS.computeResultsPlaceLatex,
+      WS_METHODS.computeResultsUpdateFiles,
+      WS_METHODS.computeResultsUndoUpdate,
+    ]) {
       const scopes = clientRpcRequiredScopes(method, {});
-      expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
-      expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);
+      expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(false);
+      expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
     }
   });
 });
