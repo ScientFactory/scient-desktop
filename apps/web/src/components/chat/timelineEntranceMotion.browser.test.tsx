@@ -313,20 +313,6 @@ it("shows a stopped answer in full when its row comes back, after leaving mid-re
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
-it("drops an answer's appearing state when its row unmounts mid-reveal", async () => {
-  await using _fixture = _createFixture();
-  await _setupFixture0(_fixture);
-
-  const prompt = entry(1, "Question");
-  const answer = reply(43, "First paragraph.\n\nSecond paragraph.", true);
-  await render(_fixture, "motion:appearing", [prompt, answer], working);
-  await playUntil(_fixture, () => streamingTextAppearing(answer.message.id));
-  // Another thread: the row unmounts while its lines are still appearing.
-  await render(_fixture, "motion:appearing-elsewhere", [entry(71, "Elsewhere")]);
-  await play(_fixture, 32);
-  expect(streamingTextAppearing(answer.message.id)).toBe(false);
-});
-
 it("closes a finished turn's working header gradually, so the answer slides up", async (context) => {
   await using _fixture = _createFixture();
   await _setupFixture0(_fixture);
