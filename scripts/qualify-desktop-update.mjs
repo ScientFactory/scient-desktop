@@ -45,7 +45,12 @@ export function timingEvents(text) {
         fields?.component === "desktop-restart" &&
         typeof fields.event === "string"
       ) {
-        events.push(fields);
+        events.push({
+          ...fields,
+          ...(typeof event.timeUnixNano === "string"
+            ? { atMs: Number(BigInt(event.timeUnixNano) / 1_000_000n) }
+            : {}),
+        });
       }
     }
   }
@@ -409,6 +414,24 @@ function waitForTrace(filename, predicate, signal, timeout = TIMEOUT) {
   });
 }
 
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+async function waitForFileText(filename, pattern, timeout = TIMEOUT) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (NodeFS.existsSync(filename) && pattern.test(NodeFS.readFileSync(filename, "utf8"))) return;
+    NodeAssert.ok(Date.now() < deadline, `Timed out waiting for ${pattern} in ${filename}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 // Polls from Node: waitForFunction does not await an async predicate, so its promise passed at once.
 async function waitForUpdateState(page, predicate, timeout = TIMEOUT) {
   const deadline = Date.now() + timeout;
@@ -692,6 +715,8 @@ async function qualify(options) {
       env: appEnv,
     });
     NodeAssert.equal(await app.evaluate(({ app }) => app.getVersion()), source.manifest.version);
+    // The old app must exit; one that survives beside the relaunch is a failed handoff.
+    const sourceMainPid = await app.evaluate(() => process.pid);
     NodeAssert.equal(
       NodePath.resolve(await app.evaluate(({ app }) => app.getPath("userData"))),
       NodePath.resolve(profiles.userData),
@@ -759,9 +784,13 @@ async function qualify(options) {
     await composer.waitFor({ state: "visible", timeout: TIMEOUT });
     await page.evaluate(() => window.desktopBridge.checkForUpdate());
     if (corrupt.value) {
+      // Only the injected fault counts: a transport error that a retry fixes would prove nothing.
       await waitForUpdateState(
         page,
-        (state) => state.errorContext === "download" && state.downloadedVersion === null,
+        (state) =>
+          state.errorContext === "download" &&
+          state.downloadedVersion === null &&
+          /ERR_CHECKSUM_MISMATCH|checksum mismatch/.test(state.message ?? ""),
       );
       NodeAssert.equal(await app.evaluate(({ app }) => app.getVersion()), source.manifest.version);
       corrupt.value = false;
@@ -790,6 +819,8 @@ async function qualify(options) {
         "Native signature rejection must leave the original app running",
       );
       const trace = NodePath.join(profiles.baseDir, "userdata", "logs", "desktop.trace.ndjson");
+      // Squirrel must have rejected the damaged signature itself, not failed some other way.
+      await waitForFileText(trace, /Code signature at URL .* did not pass validation/);
       const observation = new AbortController();
       try {
         const events = await waitForTrace(
@@ -919,12 +950,21 @@ async function qualify(options) {
             .filter({ hasText: "Synthetic restart qualification" })
             .first();
           await editor.waitFor({ state: "visible", timeout: TIMEOUT });
-          // Freeze autosave only to establish a real dirty edit; resume the RPC scheduler before consent.
-          await page.clock.install();
-          await page.clock.pauseAt(new Date(Date.now() + 1_000));
+          // Autosave (a 500 ms debounce) would save the edit by itself and hide a broken save
+          // barrier, so its timer is dropped while the edit is typed; every other timer and RPC
+          // runs normally. The barrier is then the only thing that can save this edit.
+          await page.evaluate(() => {
+            const schedule = window.setTimeout;
+            window.__qualificationRestoreTimers = () => {
+              window.setTimeout = schedule;
+            };
+            window.setTimeout = (handler, delay, ...args) =>
+              delay === 500 ? 0 : schedule(handler, delay, ...args);
+          });
           await editor.locator("[data-line]").first().click();
           await page.keyboard.press("ControlOrMeta+a");
           await page.keyboard.insertText(editedSentinel);
+          await page.evaluate(() => window.__qualificationRestoreTimers());
           await page
             .locator("[data-content] > [data-line]")
             .filter({
@@ -932,6 +972,8 @@ async function qualify(options) {
             })
             .first()
             .waitFor({ state: "visible", timeout: TIMEOUT });
+          // Long enough for any autosave that escaped to have written the file.
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
           NodeAssert.equal(
             NodeFS.readFileSync(NodePath.join(project, "sentinel.txt"), "utf8"),
             sentinel,
@@ -939,7 +981,6 @@ async function qualify(options) {
           );
         }
         await page.getByRole("button", { name: /^Update:/ }).click();
-        if (checksUnsavedEdit) await page.clock.resume();
         await page.getByRole("button", { name: "Restart now", exact: true }).click();
         const events = await completion;
         const successfulEvents =
@@ -959,6 +1000,17 @@ async function qualify(options) {
           NodeFS.readFileSync(NodePath.join(project, "sentinel.txt"), "utf8"),
           checksUnsavedEdit ? editedSentinel : sentinel,
         );
+        if (checksUnsavedEdit) {
+          const confirmedAt = successfulEvents.find((event) => event.event === "confirmed")?.atMs;
+          NodeAssert.ok(confirmedAt !== undefined, "The consent receipt must carry its time");
+          NodeAssert.ok(
+            NodeFS.statSync(NodePath.join(project, "sentinel.txt")).mtimeMs >= confirmedAt - 5,
+            "The edit must be saved by the consented restart, not before it",
+          );
+        }
+        for (let wait = 0; processAlive(sourceMainPid) && wait < 60; wait++)
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        NodeAssert.equal(processAlive(sourceMainPid), false, "The old app must exit after handoff");
         const restoredControls = await inspectRestartedWorkspace(
           updatedPid,
           target.manifest.version,

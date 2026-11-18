@@ -82,7 +82,20 @@ jobs:
             fi
             sha="$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' <<<"$metadata")"
             echo "${kind}_sha=$sha" >> "$GITHUB_OUTPUT"
+            declare "${kind}_sha=$sha"
           done
+          # The installed source runs the download, consent, saves and handoff, so it must ship
+          # the candidate's product code; only this harness and docs may differ between the two.
+          git fetch --no-tags --depth=1 origin "$source_sha" "$target_sha"
+          git diff --quiet "$source_sha" "$target_sha" -- . \
+            ':(exclude)docs' \
+            ':(exclude)scripts/qualify-desktop-update.mjs' \
+            ':(exclude)scripts/qualify-desktop-update.test.mjs' \
+            ':(exclude).github/workflows/desktop-update-qualification.yml' || {
+            echo "Source and target rehearsals must build the same product code." >&2
+            git diff --stat "$source_sha" "$target_sha" -- . ':(exclude)docs' >&2
+            exit 1
+          }
       - name: Download immutable source candidate
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

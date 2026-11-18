@@ -243,6 +243,13 @@ tag or release already exists.
    edit and the receipt records `unsavedEditPreserved: "not-checked-windows-file-access"`;
    the save barrier is the same renderer code on every platform and is checked on
    macOS and Linux.
+   The two rehearsals must build the same product code (only the harness and docs
+   may differ), because the installed source runs consent, saving and handoff. The
+   harness drops only the editor's 500 ms autosave timer while typing the edit, so
+   the restart's save barrier is the only thing that can save it, and requires the
+   saved file to be newer than the consent receipt. It requires the old app to
+   exit, and the recovery cases accept only their injected fault (a checksum
+   mismatch; Squirrel rejecting the damaged signature).
    macOS also rejects a synthetically damaged code signature after a valid
    download checksum, verifies that preparation did not shut down the app,
    then downloads the genuine target and completes a fresh consented restart.
