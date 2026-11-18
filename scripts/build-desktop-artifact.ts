@@ -1219,6 +1219,7 @@ import {
   WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
 } from "./scient/conversationAssociation.ts";
 export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
+import { renderWindowsInstallFolderMacros } from "./scient/installFolderProtection.ts";
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/file-exchange",
@@ -4761,7 +4762,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     // SCIENT-FORK:START
     yield* fs.writeFileString(
       path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
-      renderWindowsConversationAssociationInclude(previewChannel, nativePreviewPath !== undefined),
+      renderWindowsInstallFolderMacros() +
+        renderWindowsConversationAssociationInclude(
+          previewChannel,
+          nativePreviewPath !== undefined,
+        ),
     );
     // SCIENT-FORK:END
   }
