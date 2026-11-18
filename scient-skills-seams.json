@@ -252,7 +252,7 @@
     },
     {
       "path": "packages/client-runtime/src/t3ToolSummary.ts",
-      "anchor": "scientMcpToolSummaryLabel(action, phrase, times)",
+      "anchor": "scientToolSummaryLabel(action, selected.length, done, resolve)",
       "purpose": "Summarize collapsed groups of Scient's own tools by family (scientMcpToolPresentation.test.ts)."
     },
     {

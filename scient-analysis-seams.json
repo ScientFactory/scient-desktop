@@ -345,6 +345,11 @@
       "path": "apps/web/src/routes/__root.tsx",
       "anchor": "ComputeQuitGuardReport",
       "purpose": "Keep the desktop app told how many runs Quit would stop, so Quit can ask first."
+    },
+    {
+      "path": "vite.config.ts",
+      "anchor": "const SCIENT_ENGLISH_ONLY_FILES = [",
+      "purpose": "Scient-owned screens, including the static asset image surface, stay outside T3's untranslated-copy lint until they are translated."
     }
   ],
   "scientMounts": [
