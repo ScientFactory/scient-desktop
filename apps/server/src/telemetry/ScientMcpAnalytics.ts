@@ -149,8 +149,10 @@ const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   stale_ref: "input",
   bad_locator: "input",
   bad_selector: "input",
-  // Scient installs this browser itself; a call that gives up while it installs is Scient's to wait out.
+  // Scient installs this browser itself; a call that gives up while it downloads or unpacks is
+  // Scient's to wait out.
   preview_browser_installing: "scient",
+  preview_browser_unpacking: "scient",
   // The caller's own script threw on the page (the browser reported its exception).
   script_exception: "code",
   // A message to a thread that cannot take one: archived, or no run to steer.
@@ -161,6 +163,11 @@ const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   task_projection_missing: "scient",
   // "unavailable" can be the browser or the Accounts store; neither is proven here.
   accounts_unavailable: "unknown",
+  // A delegate naming a model its provider does not list, or a name matching several.
+  delegate_model_not_offered: "input",
+  delegate_model_ambiguous: "input",
+  // The model needs a newer provider CLI than the one installed on this computer.
+  delegate_model_needs_update: "environment",
 };
 
 const notedClasses = new WeakMap<object, string>();

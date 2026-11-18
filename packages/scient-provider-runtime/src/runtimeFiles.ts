@@ -233,6 +233,39 @@ export function managedRuntimeFailureClass(
   return "other";
 }
 
+/** The install step that failed, for analytics; the failure class says how it failed. */
+export type ManagedRuntimeCheck =
+  | "smoke"
+  | "reserve"
+  | "stop_sessions"
+  | "rpc_start"
+  | "protocol"
+  | "version"
+  | "get_state"
+  | "qualification"
+  | "activation"
+  | "rollback"
+  | "refresh";
+
+const failedChecks = new WeakMap<object, ManagedRuntimeCheck>();
+
+/**
+ * Records which step `cause` failed in, unless a step nearer the root cause already did. Any
+ * object can carry it, since some Effect failures are plain objects. Returns `cause` unchanged.
+ */
+export function markManagedRuntimeCheck<E>(check: ManagedRuntimeCheck, cause: E): E {
+  if (typeof cause === "object" && cause !== null && managedRuntimeFailedCheck(cause) === undefined)
+    failedChecks.set(cause, check);
+  return cause;
+}
+
+/** The step nearest the root cause along the cause chain. */
+export function managedRuntimeFailedCheck(cause: unknown): ManagedRuntimeCheck | undefined {
+  let found = typeof cause === "object" && cause !== null ? failedChecks.get(cause) : undefined;
+  for (const error of causeChain(cause)) found = failedChecks.get(error) ?? found;
+  return found;
+}
+
 function causeChain(cause: unknown): ReadonlyArray<Error> {
   const errors: Error[] = [];
   for (let current = cause; current instanceof Error && errors.length < 8; current = current.cause)

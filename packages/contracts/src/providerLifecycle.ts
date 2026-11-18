@@ -198,6 +198,22 @@ export const ProviderRuntimeFailureClass = Schema.Literals([
 ]);
 export type ProviderRuntimeFailureClass = typeof ProviderRuntimeFailureClass.Type;
 
+/** The install step a failed operation stopped in; `refresh` means the new runtime was active. */
+export const ProviderRuntimeFailedCheck = Schema.Literals([
+  "smoke",
+  "reserve",
+  "stop_sessions",
+  "rpc_start",
+  "protocol",
+  "version",
+  "get_state",
+  "qualification",
+  "activation",
+  "rollback",
+  "refresh",
+]);
+export type ProviderRuntimeFailedCheck = typeof ProviderRuntimeFailedCheck.Type;
+
 export const ProviderRuntimeOperation = Schema.Struct({
   operationId: TrimmedNonEmptyString,
   action: ProviderManagedRuntimeAction,
@@ -220,6 +236,8 @@ export const ProviderRuntimeOperation = Schema.Struct({
   retrying: Schema.optionalKey(Schema.Boolean),
   /** Set on a failed operation. Optional for older clients. */
   failureClass: Schema.optionalKey(ProviderRuntimeFailureClass),
+  /** Set on a failed operation when the step is known. Optional for older clients. */
+  failedCheck: ForwardCompatibleOptional(ProviderRuntimeFailedCheck),
   /**
    * Scient started it on its own, not the user: clients show its progress where the
    * user looks for the provider, and no notice, failure or cancellation.

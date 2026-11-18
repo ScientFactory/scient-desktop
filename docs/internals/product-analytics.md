@@ -323,6 +323,11 @@ failed: `dns`, `refused`, `reset`, `unreachable`, `connect_timeout`, `stalled`, 
 `other`) and `compressedFailure` (why the compressed copy was given up for the raw one). Only
 `provider.lifecycle.failed` carries `failureClass`; it reports `stalled` (30 seconds without data)
 apart from `timeout`, while the operation itself still says `timeout` so older clients decode it.
+When the step is known, it also carries `failedCheck`: `smoke` (the new runtime's version check),
+`reserve`, `stop_sessions`, `rpc_start`, `protocol`, `version` and `get_state` (Scient Agent's RPC
+check, `qualification` when the step inside it is unknown), `activation` (moving or recording
+files), `rollback` (the previous runtime could not be restored) or `refresh` (the new runtime was
+already active and only restarting its sessions failed).
 No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
 `downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
 `provider.runtime.first_pick` is sent once per installation when the user first
@@ -738,8 +743,11 @@ exception (`script_exception`); any other execution failure stays `unknown`, sin
 call shares the tag. An Accounts failure without a connector's own class reports its reason
 (`accounts_invalid_input`, `accounts_denied`, …), and `accounts_unavailable` stays `unknown`.
 Exact codes: a merged or hostless pull request and an oversized script result are `input`; a
-preview that gave up while Scient's browser was still installing is `scient`. Older builds keep
-their earlier owners, so compare owners by `appVersion`.
+preview that gave up while Scient's browser was still downloading (`preview_browser_installing`) or
+unpacking (`preview_browser_unpacking`) is `scient`. A delegation naming a model its provider does
+not list (`delegate_model_not_offered`) or a name matching several (`delegate_model_ambiguous`) is
+`input`; a model that needs a newer provider CLI (`delegate_model_needs_update`) is `environment`.
+Older builds keep their earlier owners, so compare owners by `appVersion`.
 Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
 `cell`, `run-file`) and `runtimeSource`.
 

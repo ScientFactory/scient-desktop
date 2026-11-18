@@ -270,6 +270,19 @@ const DOWNLOAD_NETWORK_KINDS = new Set([
   "cut_off",
   "other",
 ]);
+const LIFECYCLE_FAILED_CHECKS = new Set([
+  "smoke",
+  "reserve",
+  "stop_sessions",
+  "rpc_start",
+  "protocol",
+  "version",
+  "get_state",
+  "qualification",
+  "activation",
+  "rollback",
+  "refresh",
+]);
 const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
@@ -1224,6 +1237,7 @@ function normalizeEvent(
             networkKind: DOWNLOAD_NETWORK_KINDS,
             compressedFailure: FAILURE_CLASSES,
           }),
+          ...(failed ? optionalProperties(input, { failedCheck: LIFECYCLE_FAILED_CHECKS }) : {}),
           ...(property(input, "resumedBytes") === undefined
             ? {}
             : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),

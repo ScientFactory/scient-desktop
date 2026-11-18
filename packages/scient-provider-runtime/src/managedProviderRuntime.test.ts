@@ -8,6 +8,7 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
+import { managedRuntimeFailedCheck, markManagedRuntimeCheck } from "./runtimeFiles.ts";
 import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
 import { tryAcquireManagedRuntimeMutationLock } from "./runtimeMutationLock.ts";
 import {
@@ -260,7 +261,9 @@ describe("ManagedProviderRuntime contract", () => {
     await install(runtime, recipe);
     const originalState = await NodeFSP.readFile(statePath(root), "utf8");
     shouldLock = true;
-    await expect(install(runtime, recipe)).rejects.toThrow("could not be restored");
+    const rollback = await install(runtime, recipe).catch((cause: unknown) => cause);
+    expect(rollback).toMatchObject({ message: expect.stringContaining("could not be restored") });
+    expect(managedRuntimeFailedCheck(rollback)).toBe("rollback");
     expect(await NodeFSP.readFile(statePath(root), "utf8")).toBe(originalState);
     const journal = JSON.parse(await NodeFSP.readFile(activationPath(root), "utf8"));
     expect(
@@ -603,6 +606,43 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await runtime.readState()).toMatchObject({ activeVersion: "1.0.0" });
     expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
     await expect(NodeFSP.access(runtime.launchPath(replacement))).rejects.toThrow();
+  });
+
+  it("records the step each failed install stopped in, nearest the root cause", async () => {
+    const failure = (promise: Promise<unknown>) =>
+      promise.then(
+        () => undefined,
+        (cause: unknown) => managedRuntimeFailedCheck(cause),
+      );
+    const smoke = await makeRuntime({ smokeFailsAtCall: 1 });
+    expect(await failure(install(smoke.runtime, artifact("1.0.0")))).toBe("smoke");
+
+    const { runtime } = await makeRuntime({ stateCommitFailsAtCall: 1 });
+    expect(await failure(install(runtime, artifact("1.0.0")))).toBe("activation");
+    const qualifying = (qualify: () => Promise<void>) =>
+      failure(
+        runtime.install({
+          artifact: artifact("1.0.0"),
+          signal: new AbortController().signal,
+          qualify,
+        }),
+      );
+    expect(
+      await qualifying(async () => {
+        throw new Error("runtime incompatible");
+      }),
+    ).toBe("qualification");
+    expect(
+      await qualifying(async () => {
+        throw new Error("wrapped", {
+          cause: markManagedRuntimeCheck("version", new Error("reported 1.0.1")),
+        });
+      }),
+    ).toBe("version");
+    // A plain Effect failure object carries its step too.
+    expect(managedRuntimeFailedCheck(markManagedRuntimeCheck("refresh", { message: "x" }))).toBe(
+      "refresh",
+    );
   });
 
   it("keeps launching the active release while a newer artifact is only reviewed", async () => {
