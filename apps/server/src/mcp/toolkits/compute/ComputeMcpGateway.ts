@@ -17,6 +17,11 @@ import * as ComputeSessionService from "../../../scient/compute/ComputeSessionSe
 import * as NotebookStore from "../../../scient/notebook/NotebookStore.ts";
 import { AnalysisService } from "../../../scient/analysis/AnalysisService.ts";
 import type { ComputeOutputResourceRef } from "@scientfactory/compute";
+import { ComputeResults } from "../../../scient/results/ComputeResults.ts";
+import {
+  makeResultOperations,
+  type ResultOperations,
+} from "../../../scient/results/resultOperations.ts";
 
 export interface ComputeOutputBytes {
   readonly mediaType: string;
@@ -44,6 +49,12 @@ export interface ComputeMcpGatewayShape extends ComputeRpcGateway {
   readonly startFileRun: AnalysisService["Service"]["startRun"];
   readonly subscribeFileRuns: AnalysisService["Service"]["subscribeRuns"];
   readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
+  /** Linked results: what fresh script runs published, for agents to cite and check. */
+  readonly resolveResults: ResultOperations["resolve"];
+  readonly listResults: ResultOperations["list"];
+  readonly placeResultFigure: ResultOperations["placeFigure"];
+  readonly rerunResults: ResultOperations["rerun"];
+  readonly checkResults: ResultOperations["check"];
 }
 
 export class ComputeMcpGateway extends Context.Service<ComputeMcpGateway, ComputeMcpGatewayShape>()(
@@ -76,6 +87,12 @@ export const ComputeMcpGatewayLive = Layer.effect(
     const notebooks = yield* NotebookStore.NotebookStore;
     const fileRuns = yield* AnalysisService;
     const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    const resultOperations = makeResultOperations({
+      gateway: rpc,
+      results: yield* ComputeResults,
+      runtimeDescriptors: compute.runtimeDescriptors,
+      workspace: workspaceFiles,
+    });
     return ComputeMcpGateway.of({
       ...rpc,
       readOutput,
@@ -90,6 +107,11 @@ export const ComputeMcpGatewayLive = Layer.effect(
       startFileRun: fileRuns.startRun,
       subscribeFileRuns: fileRuns.subscribeRuns,
       readFile: workspaceFiles.readFile,
+      resolveResults: resultOperations.resolve,
+      listResults: resultOperations.list,
+      placeResultFigure: resultOperations.placeFigure,
+      rerunResults: resultOperations.rerun,
+      checkResults: resultOperations.check,
     });
   }),
 );

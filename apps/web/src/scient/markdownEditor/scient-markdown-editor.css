@@ -1308,3 +1308,46 @@ textarea.scient-markdown-math-source {
   background: color-mix(in srgb, var(--primary) 30%, transparent);
   color: inherit;
 }
+
+/* A linked result: the value reads as text, with one small mark when it needs the reader. */
+.scient-markdown-document [data-scient-result-value] {
+  cursor: pointer;
+  border-radius: 3px;
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+.scient-markdown-document [data-scient-result-value].ProseMirror-selectednode {
+  outline: none;
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+}
+.scient-markdown-document [data-scient-result-value][data-result-state]::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: 3px;
+  border-radius: 999px;
+  vertical-align: super;
+  background: var(--warning);
+}
+.scient-markdown-document [data-scient-result-value][data-result-state="newer"]::after {
+  background: var(--info);
+}
+.scient-markdown-document [data-scient-result-value][data-result-state="unrecorded"]::after {
+  display: none;
+}
+.scient-markdown-document .scient-result[data-result-state]:not([data-scient-result-value]) img {
+  outline: 1px dashed var(--warning);
+  outline-offset: 3px;
+}
+.scient-markdown-document
+  .scient-result[data-result-state="newer"]:not([data-scient-result-value])
+  img {
+  outline-color: var(--info);
+}
+.scient-markdown-document
+  .scient-result[data-result-state="unrecorded"]:not([data-scient-result-value])
+  img {
+  outline: none;
+}

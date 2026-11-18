@@ -82,6 +82,7 @@ import {
   type ComputeFoundTool,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { RESULTS_FOLDER_VARIABLE } from "@t3tools/shared/computeResults";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -154,6 +155,7 @@ const sameRunOnce = (
     : right !== undefined &&
       left.executionId === right.executionId &&
       left.code === right.code &&
+      left.actor?.threadId === right.actor?.threadId &&
       sameExecutionSource(left.source, right.source);
 
 /** A language and the transport that can carry it, paired at wiring time. */
@@ -335,6 +337,8 @@ export interface ComputeSettledRun {
   /** What reading the session back must be admitted with. */
   readonly workspace: ComputeWorkspaceReceipt | null;
   readonly execution: ComputeExecutionRecord;
+  /** The session as it was when the run settled: its language and runtime. */
+  readonly session: ComputeSessionRecord;
 }
 
 /** How much of a transcript is already spent, and what it is allowed to spend. */
@@ -1150,6 +1154,7 @@ const make = Effect.gen(function* () {
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
         workspace: live.workspaceReceipt,
         execution,
+        session: yield* Ref.get(live.recordRef),
       });
     }
     // Queue/phase changes must not recreate a start.
@@ -2355,11 +2360,14 @@ const make = Effect.gen(function* () {
         const executionId = ComputeExecutionId.make(event.requestId);
         yield* collectProjectOutputs(live, event);
         const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
-        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) =>
-          event.executionCount === undefined
-            ? result
-            : { ...result, executionCount: event.executionCount },
-        );
+        const reads = event.writes?.reads;
+        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) => ({
+          ...result,
+          ...(event.executionCount === undefined ? {} : { executionCount: event.executionCount }),
+          ...(reads === undefined
+            ? {}
+            : { reads: { files: reads, truncated: event.writes?.readsTruncated === true } }),
+        }));
         yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
         yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
         if (event.outcome !== "succeeded" && finished !== undefined) {
@@ -2653,7 +2661,29 @@ const make = Effect.gen(function* () {
           cause,
         ),
     });
-    const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
+    const { environment: hostRuntimeEnvironment } = sanitizeComputeEnvironment(
+      definedEnvironment(hostEnvironment),
+    );
+    const once = input.runOnce;
+    const publishes = once?.publishResults === true;
+    const environment =
+      publishes && once !== undefined
+        ? {
+            ...hostRuntimeEnvironment,
+            [RESULTS_FOLDER_VARIABLE]: yield* store
+              .prepareResultsFolder(input.projectId, input.sessionId, once.executionId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  computeError(
+                    "start",
+                    "runtime-unusable",
+                    "The results folder could not be made.",
+                    cause,
+                  ),
+                ),
+              ),
+          }
+        : hostRuntimeEnvironment;
     const profiles = yield* binding.adapter
       .discover({
         projectRoot,

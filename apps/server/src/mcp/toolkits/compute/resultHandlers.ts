@@ -1,0 +1,158 @@
+import type {
+  ComputeResultCause,
+  ComputeResultScript,
+  ComputeResultSummary,
+} from "@t3tools/contracts";
+import {
+  formatResultFigureMarkdown,
+  formatResultValueMarkdown,
+  type ResultReferenceState,
+} from "@t3tools/shared/computeResults";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import { agentScope, computeFailed } from "./agentComputeScope.ts";
+
+const DEFAULT_WAIT_SECONDS = 120;
+
+const CAUSE_LABELS: Record<ComputeResultCause["kind"], string> = {
+  "script-changed": "script changed",
+  "script-missing": "script missing",
+  "input-changed": "input changed",
+  "input-missing": "input missing",
+  "input-changed-during-run": "input changed while the script ran",
+};
+
+/** The editor's states, in words an agent reads without the app. */
+const STATE_FOR_AGENT: Record<ResultReferenceState, string> = {
+  current: "current",
+  newer: "newer-run",
+  stale: "out-of-date",
+  edited: "edited",
+  missing: "missing",
+  unrecorded: "no-record",
+};
+
+const describeCauses = (causes: ReadonlyArray<ComputeResultCause>) =>
+  causes.map((cause) => `${CAUSE_LABELS[cause.kind]}: ${cause.path}`);
+
+const summaryForAgent = (summary: ComputeResultSummary) => ({
+  revision: summary.revision,
+  script: summary.scriptPath,
+  finishedAt: summary.finishedAt,
+  inputTracking: summary.inputTracking,
+  inputs: summary.inputs,
+  outOfDate: describeCauses(summary.causes),
+});
+
+const scriptForAgent = (script: ComputeResultScript) => ({
+  latest: summaryForAgent(script.latest),
+  revisions: script.revisions,
+  values: script.values.map((value) => ({
+    ...value,
+    markdown: formatResultValueMarkdown(value.value, {
+      revision: script.latest.revision,
+      output: value.output,
+      pointer: value.pointer,
+    }),
+  })),
+  figures: script.figures,
+});
+
+export const runScientResults = Effect.fn("ScientResultsTools.run")(function* (input: {
+  readonly path: string;
+  readonly waitSeconds?: number | undefined;
+}) {
+  const scope = yield* agentScope();
+  const outcome = yield* scope.gateway
+    .rerunResults({ cwd: scope.cwd, scriptPath: input.path, threadId: scope.threadId })
+    .pipe(
+      Effect.timeoutOption(Duration.seconds(input.waitSeconds ?? DEFAULT_WAIT_SECONDS)),
+      Effect.mapError(computeFailed),
+    );
+  if (Option.isNone(outcome))
+    return {
+      status: "running" as const,
+      message: "Still running. Its revision appears in scient_results_list once the run finishes.",
+    };
+  if (outcome.value._tag === "failed")
+    return { status: "failed" as const, message: outcome.value.message };
+  const revision = outcome.value.summary.revision;
+  const { scripts } = yield* scope.gateway
+    .listResults({ cwd: scope.cwd })
+    .pipe(Effect.mapError(computeFailed));
+  const script = scripts.find((candidate) => candidate.latest.revision === revision);
+  return {
+    status: "published" as const,
+    revision: summaryForAgent(outcome.value.summary),
+    ...(script === undefined
+      ? {}
+      : { values: scriptForAgent(script).values, figures: script.figures }),
+  };
+});
+
+export const listScientResults = Effect.fn("ScientResultsTools.list")(function* () {
+  const scope = yield* agentScope();
+  const { scripts } = yield* scope.gateway
+    .listResults({ cwd: scope.cwd })
+    .pipe(Effect.mapError(computeFailed));
+  return { scripts: scripts.map(scriptForAgent) };
+});
+
+export const scientResultMarkdown = Effect.fn("ScientResultsTools.markdown")(function* (input: {
+  readonly document: string;
+  readonly revision: string;
+  readonly output: string;
+  readonly pointer?: string | undefined;
+  readonly alt?: string | undefined;
+}) {
+  const scope = yield* agentScope();
+  const target = { revision: input.revision, output: input.output, pointer: input.pointer ?? null };
+  if (input.pointer !== undefined) {
+    const { resolutions } = yield* scope.gateway
+      .resolveResults({ cwd: scope.cwd, references: [target] })
+      .pipe(Effect.mapError(computeFailed));
+    const resolution = resolutions[0];
+    if (resolution?._tag !== "resolved" || resolution.value === null)
+      return yield* computeFailed({
+        message: `Revision ${input.revision} has no value ${input.pointer} in ${input.output}.`,
+      });
+    return { markdown: formatResultValueMarkdown(resolution.value, target) };
+  }
+  const { src } = yield* scope.gateway
+    .placeResultFigure({
+      cwd: scope.cwd,
+      documentPath: input.document,
+      revision: input.revision,
+      output: input.output,
+    })
+    .pipe(Effect.mapError(computeFailed));
+  const alt = input.alt ?? input.output.replace(/^.*\//u, "").replace(/\.[^.]+$/u, "");
+  return { markdown: formatResultFigureMarkdown({ alt, src }, target) };
+});
+
+export const checkScientResults = Effect.fn("ScientResultsTools.check")(function* (input: {
+  readonly document: string;
+}) {
+  const scope = yield* agentScope();
+  const checked = yield* scope.gateway
+    .checkResults({ cwd: scope.cwd, documentPath: input.document })
+    .pipe(Effect.mapError(computeFailed));
+  return {
+    results: checked.map(({ reference, line, resolution, state }) => {
+      const resolved = resolution?._tag === "resolved" ? resolution : null;
+      return {
+        line,
+        kind: reference.kind,
+        shown: reference.kind === "value" ? reference.text : reference.src,
+        state: STATE_FOR_AGENT[state],
+        revision: reference.revision,
+        value: resolved?.value ?? null,
+        newerRevision: resolved?.newer?.summary.revision ?? null,
+        newerValue: resolved?.newer?.value ?? null,
+        outOfDate: describeCauses(resolved?.summary.causes ?? []),
+      };
+    }),
+  };
+});

@@ -551,6 +551,23 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeSaveOutput,
       scheduler: executionScheduler,
     }),
+    resultsResolve: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-resolve",
+      tag: WS_METHODS.computeResultsResolve,
+    }),
+    resultsList: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-list",
+      tag: WS_METHODS.computeResultsList,
+    }),
+    resultsPlaceFigure: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-place-figure",
+      tag: WS_METHODS.computeResultsPlaceFigure,
+    }),
+    resultsRerun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-rerun",
+      tag: WS_METHODS.computeResultsRerun,
+      scheduler: executionScheduler,
+    }),
     saveConsoleNotebook: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:save-console-notebook",
       tag: WS_METHODS.computeSaveConsoleNotebook,

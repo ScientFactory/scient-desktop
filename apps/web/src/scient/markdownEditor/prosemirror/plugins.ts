@@ -35,6 +35,7 @@ import {
   scientMarkdownKeymapNames,
   type ScientMarkdownShortcutId,
 } from "../shortcuts";
+import { scientMarkdownResultsPlugin } from "./results";
 
 const sourceIdentityPluginKey = new PluginKey("scientMarkdownSourceIdentity");
 
@@ -132,6 +133,7 @@ export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
     scientMarkdownSearchPlugin(),
     scientMarkdownOutlinePlugin(),
     imageFigurePlugin(),
+    scientMarkdownResultsPlugin(),
     inputRules({ rules: [...buildInputRules()] }),
     (() => {
       let snapshot = getKeyboardPreferences();

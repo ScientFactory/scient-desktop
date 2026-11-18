@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- append-only session journals are a Node filesystem boundary.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import {
   ComputeExecutionId,
@@ -197,8 +198,25 @@ export class LocalComputeStore extends Context.Service<
       record: ComputeSessionRecord,
       removedAt: string,
     ) => Effect.Effect<ComputeSessionRecord, LocalComputeStoreError>;
+    /** A new, empty folder a fresh script run writes its linked results into. */
+    readonly prepareResultsFolder: (
+      projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
+      executionId: ComputeExecutionId,
+    ) => Effect.Effect<string, LocalComputeStoreError>;
   }
 >()("t3/scient/compute/LocalComputeStore") {}
+
+/** Where a fresh run's results folder is; the results service reads it after the run. */
+export function computeResultsStagingFolder(
+  computeDir: string,
+  projectId: string,
+  sessionId: string,
+  executionId: string,
+): string | null {
+  if (![projectId, sessionId, executionId].every(isSafeSegment)) return null;
+  return NodePath.join(computeDir, "results", projectId, "staging", sessionId, executionId);
+}
 
 async function sha256Bytes(bytes: Uint8Array): Promise<string> {
   return `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
@@ -995,7 +1013,34 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const prepareResultsFolder = Effect.fn("LocalComputeStore.prepareResultsFolder")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId,
+  ) {
+    const folder = computeResultsStagingFolder(
+      config.computeDir,
+      projectId,
+      sessionId,
+      executionId,
+    );
+    if (folder === null)
+      return yield* storeError(
+        "results-folder",
+        config.computeDir,
+        new Error("The run cannot name a results folder."),
+      );
+    yield* fs
+      .remove(folder, { recursive: true, force: true })
+      .pipe(
+        Effect.andThen(fs.makeDirectory(folder, { recursive: true })),
+        mapStoreError("results-folder", folder),
+      );
+    return folder;
+  });
+
   return LocalComputeStore.of({
+    prepareResultsFolder,
     writeSession,
     appendJournal,
     writeExecutionRequest,

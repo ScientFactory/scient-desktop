@@ -375,6 +375,10 @@
       "types": "./src/computeCitations.ts",
       "import": "./src/computeCitations.ts"
     },
+    "./computeResults": {
+      "types": "./src/computeResults.ts",
+      "import": "./src/computeResults.ts"
+    },
     "./officeCitations": {
       "types": "./src/officeCitations.ts",
       "import": "./src/officeCitations.ts"

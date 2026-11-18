@@ -46,6 +46,7 @@ FRAME_HEADER = struct.Struct(">I")
 MAX_FRAME = 16 * 1024 * 1024
 MAX_CODE = 1024 * 1024
 MAX_WRITE_RECORD_PATHS = 256
+MAX_READ_RECORD_PATHS = 1024
 MAX_WRITE_RECORD_PATH = 4096
 WRITE_RECORD_TIMEOUT = 2.0
 MAX_STREAM_TEXT = 256 * 1024
@@ -264,7 +265,9 @@ _scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
 
 # Note which figure and table files each cell writes, at any depth and through any library. The
 # paths are extra candidates for the server, which still watches the project: writes through an
-# already-open handle or a dir_fd are not seen here. The hook never raises.
+# already-open handle or a dir_fd are not seen here. Project files opened for reading are noted
+# too, with their size and modification time when opened, so a result can name its inputs; reads by
+# native code that bypasses Python's open are not seen. The hook never raises.
 def _scient_install_write_recorder():
     import types
     if not hasattr(sys, "addaudithook"):
@@ -273,8 +276,27 @@ def _scient_install_write_recorder():
     write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
     destination_events = frozenset({"os.rename", "shutil.copyfile", "os.link"})
     # Cells being run, outermost first; nested run_cell calls stack up.
-    record = {"cells": [], "paths": {}, "invalid": False}
+    record = {"cells": [], "paths": {}, "reads": {}, "reads_truncated": False, "invalid": False}
     fspath, fsdecode, abspath, splitext = os.fspath, os.fsdecode, os.path.abspath, os.path.splitext
+    stat = os.stat
+    project = os.path.join(os.path.realpath(os.getcwd()), "")
+    ignored_parts = (os.sep + "__pycache__" + os.sep, os.sep + ".git" + os.sep)
+
+    def note_read(path):
+        if isinstance(path, int):
+            return
+        path = abspath(fsdecode(fspath(path)))
+        reads = record["reads"]
+        if path in reads or not path.startswith(project) or any(p in path for p in ignored_parts):
+            return
+        if len(reads) >= 1024:
+            record["reads_truncated"] = True
+            return
+        try:
+            status = stat(path)
+        except OSError:
+            return
+        reads[path] = [status.st_size, status.st_mtime_ns, status.st_ctime_ns]
 
     def note(path):
         if isinstance(path, int):
@@ -293,10 +315,23 @@ def _scient_install_write_recorder():
         try:
             if event == "open":
                 mode, flags = args[1], args[2]
-                if (isinstance(flags, int) and flags & write_flags) or (
+                writes = (isinstance(flags, int) and flags & write_flags) or (
                     isinstance(mode, str) and any(c in mode for c in "wax+")
-                ):
+                )
+                if writes:
                     note(args[0])
+                # r+ (and O_RDWR without truncation) reads what was there before writing.
+                if (
+                    not writes
+                    or (isinstance(mode, str) and "r" in mode and "+" in mode)
+                    or (
+                        not isinstance(mode, str)
+                        and isinstance(flags, int)
+                        and flags & os.O_RDWR
+                        and not flags & os.O_TRUNC
+                    )
+                ):
+                    note_read(args[0])
             elif event in destination_events:
                 note(args[1])
         except Exception:
@@ -326,9 +361,22 @@ def _scient_install_write_recorder():
     # Read between cells, so a cell still open means its lifecycle was lost.
     def take():
         invalid = record["invalid"] or bool(record["cells"])
-        taken = json.dumps(None if invalid else {"paths": list(record["paths"])})
+        taken = json.dumps(
+            None
+            if invalid
+            else {
+                "paths": list(record["paths"]),
+                "reads": [
+                    [path, size, str(mtime), str(ctime)]
+                    for path, (size, mtime, ctime) in record["reads"].items()
+                ],
+                "readsTruncated": record["reads_truncated"],
+            }
+        )
         record["cells"] = []
         record["paths"] = {}
+        record["reads"] = {}
+        record["reads_truncated"] = False
         record["invalid"] = False
         return taken
 
@@ -1966,7 +2014,25 @@ class ScientBridge:
         if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
             return None
         kept = [path for path in paths if len(path) <= MAX_WRITE_RECORD_PATH]
-        return {"paths": kept[:MAX_WRITE_RECORD_PATHS]}
+        report: dict[str, Any] = {"paths": kept[:MAX_WRITE_RECORD_PATHS]}
+        reads = record.get("reads")
+        if isinstance(reads, list):
+            usable = [
+                {"path": read[0], "size": read[1], "modifiedAtNs": read[2], "changedAtNs": read[3]}
+                for read in reads
+                if isinstance(read, list)
+                and len(read) == 4
+                and isinstance(read[0], str)
+                and len(read[0]) <= MAX_WRITE_RECORD_PATH
+                and isinstance(read[1], int)
+                and isinstance(read[2], str)
+                and isinstance(read[3], str)
+            ]
+            report["reads"] = usable[:MAX_READ_RECORD_PATHS]
+            report["readsTruncated"] = (
+                record.get("readsTruncated") is True or len(usable) > MAX_READ_RECORD_PATHS
+            )
+        return report
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
         drained = 0

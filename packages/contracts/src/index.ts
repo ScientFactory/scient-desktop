@@ -101,6 +101,7 @@ export * from "./scientAnnotations.ts";
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
+export * from "./scientComputeResults.ts";
 export * from "./scient/computeLanguages.ts";
 export * from "./scient/sourcesSettings.ts";
 export * from "./scient/computeLanguageStatus.ts";
