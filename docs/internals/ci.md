@@ -133,8 +133,8 @@ releases still build their own artifacts.
 
 A source qualifies through its gates, not its overall result: the newest run of that head must
 be in progress or completed with success or failure, and its latest attempt must hold exactly one
-successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS,
-shard weights, main caches) may still be running or may have failed. A cancelled, timed-out or
+successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS and
+the main caches) may still be running or may have failed. A cancelled, timed-out or
 unstarted run never qualifies, and an older run is never used behind a newer one of the same head.
 
 Missing, expired, malformed or mismatched proof/reports, API failures, and restoration failures

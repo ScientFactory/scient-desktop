@@ -483,25 +483,25 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 43],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 49],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 43],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 42],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 48],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 42],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 59],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 58],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 58],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 57],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      67,
+      66,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 52],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 44],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 51],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 43],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
-    ["main push", "docs/operations/development.md", "push", false, 72],
-    ["nightly", "docs/operations/development.md", "schedule", false, 71],
+    ["main push", "docs/operations/development.md", "push", false, 71],
+    ["nightly", "docs/operations/development.md", "schedule", false, 70],
     // Probe, two suite reporters, four stable contexts, the store refresh, Check.
     ["reused main push", "docs/operations/development.md", "push", true, 9],
   ] as const)(

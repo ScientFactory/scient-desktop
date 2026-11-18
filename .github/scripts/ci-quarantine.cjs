@@ -43,7 +43,7 @@ const RUN_DESPITE_FAILURE = [
 ];
 const GATE = "Check";
 // ci-check.cjs ADVISORY jobs: evidence and upkeep beside the gate, which never block.
-const ADVISORY_JOBS = ["Overleaf macOS", "Shard weights", "Main dependency store"];
+const ADVISORY_JOBS = ["Overleaf macOS", "Main dependency store"];
 
 const ROW_KEYS = ["id", "job", "step", "test", "signature", "owner", "quarantined", "expires"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
