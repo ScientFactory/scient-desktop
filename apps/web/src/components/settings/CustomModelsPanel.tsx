@@ -63,11 +63,11 @@ import {
   connectionKeyMissing,
   customModelPresetId,
   defaultModelAgents,
-  modelConnectionStatus,
+  modelConnectionStatusKind,
+  modelConnectionStatusLabel,
   modelTestAgents,
   modelUnavailableHint,
   namedTestFailure,
-  NEEDS_SETUP_STATUS,
 } from "./customModels";
 
 const CONNECTION_ICON_BY_PRESET: Partial<Record<string, Icon>> = {
@@ -425,8 +425,10 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                 );
                 const agent = agents.find((entry) => entry.id === id);
                 const name = agent?.name ?? id;
-                const label = modelConnectionStatus(provider, assessment, messages);
-                return { id, name, label, assessment, driver: agent?.driver };
+                const kind = modelConnectionStatusKind(provider, assessment);
+                const label =
+                  kind === undefined ? undefined : modelConnectionStatusLabel(kind, messages);
+                return { id, name, kind, label, assessment, driver: agent?.driver };
               });
               const rowNotice =
                 notice && notice.key === rowKey && notice.revision === catalog.revision
@@ -449,7 +451,8 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                             (entry) =>
                               entry.name +
                               " · " +
-                              (entry.label === messages(NEEDS_SETUP_STATUS) &&
+                              (entry.kind === "needs-setup" &&
+                              entry.label !== undefined &&
                               entry.assessment?.reason === "model_unavailable"
                                 ? modelUnavailableHint(entry.driver, entry.label, messages)
                                 : entry.label),
@@ -502,7 +505,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                   <CustomModelRowActions
                     busy={busy}
                     testing={testing === rowKey}
-                    statuses={attachments.map((entry) => entry.label)}
+                    statuses={attachments.map((entry) => entry.kind)}
                     keyMissing={keyMissing(connection)}
                     testAgents={testAgents}
                     notice={rowNotice}

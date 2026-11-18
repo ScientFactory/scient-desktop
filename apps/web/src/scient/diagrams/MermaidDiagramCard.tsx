@@ -145,6 +145,8 @@ export function MermaidDiagramCard({
   const [expanded, setExpanded] = useState(false);
   const [activeAction, setActiveAction] = useState<DiagramAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Which copy just succeeded: its message is translated, so the checkmark keys on this instead.
+  const [copiedKind, setCopiedKind] = useState<string | null>(null);
   const renderGenerationRef = useRef(0);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayTitle = title || gt("Mermaid diagram");
@@ -220,11 +222,13 @@ export function MermaidDiagramCard({
     [],
   );
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, kind: string | null = null) => {
     if (copyResetTimerRef.current != null) clearTimeout(copyResetTimerRef.current);
     setActionMessage(message);
+    setCopiedKind(kind);
     copyResetTimerRef.current = setTimeout(() => {
       setActionMessage(null);
+      setCopiedKind(null);
       copyResetTimerRef.current = null;
     }, 1_500);
   };
@@ -243,7 +247,10 @@ export function MermaidDiagramCard({
     void navigator.clipboard.writeText(text).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(recovered ? gt("Recovered source copied") : gt("Source copied"));
+        showTransientMessage(
+          recovered ? gt("Recovered source copied") : gt("Source copied"),
+          recovered ? "recovered-source" : "source",
+        );
       },
       (cause) => {
         console.error("[scient-diagrams] Failed to copy Mermaid source", cause);
@@ -298,7 +305,7 @@ export function MermaidDiagramCard({
     void navigator.clipboard.writeText(repairRequest).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(gt("Error and source copied"));
+        showTransientMessage(gt("Error and source copied"), "error-source");
       },
       () => {
         setActiveAction(null);
@@ -313,7 +320,7 @@ export function MermaidDiagramCard({
     void copyMermaidPng(readyResult.svg, theme).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(gt("Image copied"));
+        showTransientMessage(gt("Image copied"), "image");
       },
       (cause) => {
         console.error("[scient-diagrams] Failed to copy Mermaid PNG", cause);
@@ -411,12 +418,12 @@ export function MermaidDiagramCard({
                 />
                 {recovery ? (
                   <MenuItem disabled={activeAction != null} onClick={handleCopyRecoveredSource}>
-                    {actionMessage === gt("Recovered source copied") ? <CheckIcon /> : <CopyIcon />}
+                    {copiedKind === "recovered-source" ? <CheckIcon /> : <CopyIcon />}
                     <T>Copy recovered source</T>
                   </MenuItem>
                 ) : null}
                 <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                  {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                  {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                   {recovery ? gt("Copy original source") : gt("Copy source")}
                 </MenuItem>
                 <RichFenceSourceMenuItem
@@ -435,7 +442,7 @@ export function MermaidDiagramCard({
                   disabled={readyResult == null || activeAction != null}
                   onClick={handleCopyPng}
                 >
-                  {actionMessage === gt("Image copied") ? <CheckIcon /> : <ImageIcon />}
+                  {copiedKind === "image" ? <CheckIcon /> : <ImageIcon />}
                   {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy image")}
                 </MenuItem>
                 <MenuItem
@@ -506,7 +513,7 @@ export function MermaidDiagramCard({
               disabled={repairRequest === null || activeAction !== null}
               label={gt("Copy error and source")}
             >
-              {actionMessage === gt("Error and source copied") ? (
+              {copiedKind === "error-source" ? (
                 <CheckIcon className="size-3" strokeWidth={1.5} />
               ) : (
                 <CopyIcon className="size-3" strokeWidth={1.5} />

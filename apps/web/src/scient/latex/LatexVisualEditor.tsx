@@ -8785,7 +8785,12 @@ function LatexVisualEditorReady(
     },
     ...(["title", "author", "date"] as const).map((field) => ({
       id: "document-" + field,
-      label: gt("Document ") + field,
+      label:
+        field === "title"
+          ? gt("Document title")
+          : field === "author"
+            ? gt("Document author")
+            : gt("Document date"),
       description: gt("Edit document metadata"),
       group: "Document",
       run: () => openTitleField(field),

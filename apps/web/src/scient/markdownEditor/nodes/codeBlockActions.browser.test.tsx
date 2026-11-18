@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 
 const preference = vi.hoisted(() => ({ wrapped: true, listeners: new Set<() => void>() }));
-vi.mock("~/hooks/useSettings", () => ({
+vi.mock("~/hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useSettings")>()),
   getClientSettings: () => ({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: preference.wrapped }),
   useClientSettings: () =>
     useSyncExternalStore(

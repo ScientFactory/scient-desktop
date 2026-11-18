@@ -178,6 +178,8 @@ export function PlotlyChartCard({
   } | null>(null);
   const [activeAction, setActiveAction] = useState<ChartAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Which copy just succeeded: its message is translated, so the checkmark keys on this instead.
+  const [copiedKind, setCopiedKind] = useState<string | null>(null);
   const captureState = useStableCallback(() => {
     const state = controllerRef.current?.getState();
     if (state != null) setTransferredView({ source, state });
@@ -221,12 +223,14 @@ export function PlotlyChartCard({
     [],
   );
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, kind: string | null = null) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
     setActionMessage(message);
+    setCopiedKind(kind);
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
       setActionMessage(null);
+      setCopiedKind(null);
     }, 1_500);
   };
 
@@ -236,6 +240,7 @@ export function PlotlyChartCard({
       messageTimerRef.current = null;
     }
     setActionMessage(message);
+    setCopiedKind(null);
   };
 
   const runControllerAction = (
@@ -270,7 +275,7 @@ export function PlotlyChartCard({
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(gt("Source copied"));
+        showTransientMessage(gt("Source copied"), "source");
       },
       () => {
         setActiveAction(null);
@@ -390,7 +395,7 @@ export function PlotlyChartCard({
                 detail={parsed?.hasWebGl ? "WebGL" : undefined}
               />
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                 <T>Copy Plotly JSON</T>
               </MenuItem>
               <RichFenceSourceMenuItem

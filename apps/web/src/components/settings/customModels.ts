@@ -53,14 +53,56 @@ export function connectionKeyMissing(
   );
 }
 
-/**
- * Status labels as `msg()` strings. Callers compare a resolved status with `resolve(…)` of
- * these, through the same resolver.
- */
 /** A connection's saved key is gone or unusable; only re-entering it helps. */
 export const MISSING_KEY_STATUS = msg("Saved key missing. Re-enter it");
-export const NEEDS_SETUP_STATUS = msg("Needs setup", { $context: "custom model status" });
-export const CHECK_AGENT_STATUS = msg("Check agent", { $context: "custom model status" });
+const NEEDS_SETUP_STATUS = msg("Needs setup", { $context: "custom model status" });
+const CHECK_AGENT_STATUS = msg("Check agent", { $context: "custom model status" });
+
+/** What a custom model's attachment to one agent needs; the label is only for display. */
+export type ModelConnectionStatusKind =
+  | "disabled"
+  | "not-installed"
+  | "checking"
+  | "check-agent"
+  | "missing-key"
+  | "needs-setup";
+
+export function modelConnectionStatusKind(
+  provider:
+    | Pick<ServerProvider, "enabled" | "installed" | "probePending" | "status" | "auth">
+    | undefined,
+  assessment: ModelConnectionReadiness | undefined,
+): ModelConnectionStatusKind | undefined {
+  if (provider?.enabled === false) return "disabled";
+  if (provider && !provider.installed && !provider.probePending) return "not-installed";
+  if (provider?.probePending) return "checking";
+  if (provider?.status === "error" || provider?.auth.status === "unauthenticated")
+    return "check-agent";
+  if (assessment?.state === "needs_setup")
+    return assessment.reason === "credential" ? "missing-key" : "needs-setup";
+  if (assessment?.state === "available") return undefined;
+  return "checking";
+}
+
+export function modelConnectionStatusLabel(
+  kind: ModelConnectionStatusKind,
+  resolve: MessageResolver = m,
+): string {
+  switch (kind) {
+    case "disabled":
+      return resolve(msg("Disabled", { $context: "custom model status: the agent is off" }));
+    case "not-installed":
+      return resolve(msg("Not installed", { $context: "custom model status" }));
+    case "checking":
+      return resolve(msg("Checking", { $context: "custom model status" }));
+    case "check-agent":
+      return resolve(CHECK_AGENT_STATUS);
+    case "missing-key":
+      return resolve(MISSING_KEY_STATUS);
+    case "needs-setup":
+      return resolve(NEEDS_SETUP_STATUS);
+  }
+}
 
 export function modelConnectionStatus(
   provider:
@@ -69,19 +111,8 @@ export function modelConnectionStatus(
   assessment: ModelConnectionReadiness | undefined,
   resolve: MessageResolver = m,
 ): string | undefined {
-  if (provider?.enabled === false)
-    return resolve(msg("Disabled", { $context: "custom model status: the agent is off" }));
-  if (provider && !provider.installed && !provider.probePending)
-    return resolve(msg("Not installed", { $context: "custom model status" }));
-  if (provider?.probePending) return resolve(msg("Checking", { $context: "custom model status" }));
-  if (provider?.status === "error" || provider?.auth.status === "unauthenticated")
-    return resolve(CHECK_AGENT_STATUS);
-  if (assessment?.state === "needs_setup")
-    return assessment.reason === "credential"
-      ? resolve(MISSING_KEY_STATUS)
-      : resolve(NEEDS_SETUP_STATUS);
-  if (assessment?.state === "available") return undefined;
-  return resolve(msg("Checking", { $context: "custom model status" }));
+  const kind = modelConnectionStatusKind(provider, assessment);
+  return kind === undefined ? undefined : modelConnectionStatusLabel(kind, resolve);
 }
 
 export const CUSTOM_MODEL_PRESETS: ReadonlyArray<{

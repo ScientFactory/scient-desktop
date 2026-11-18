@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { msg } from "gt-react";
 
 import { m } from "~/i18n/messages";
+import { subscribeI18n } from "~/i18n/runtime";
 
 import { observeResize } from "~/lib/observeResize";
 
@@ -118,6 +119,7 @@ class ScientImageNodeView implements NodeView {
   private destroyed = false;
   private readonly unregisterExternalPresentation: (() => void) | undefined;
   private readonly unregisterImage: (() => void) | undefined;
+  private readonly stopLabels: () => void;
 
   constructor(
     node: ProseMirrorNode,
@@ -140,8 +142,6 @@ class ScientImageNodeView implements NodeView {
     this.caption.rows = 1;
     this.caption.dir = "auto";
     this.caption.dataset.keybindingCapture = "";
-    this.caption.setAttribute("aria-label", m(msg("Image caption")));
-    this.caption.placeholder = m(msg("Add a caption…"));
     this.caption.addEventListener("mousedown", this.handleCaptionPointer);
     this.caption.addEventListener("focus", this.handleCaptionFocus);
     this.caption.addEventListener("blur", this.handleCaptionBlur);
@@ -156,7 +156,9 @@ class ScientImageNodeView implements NodeView {
     this.fileInput.type = "file";
     this.fileInput.accept = "image/png,image/jpeg,image/gif,image/webp,image/avif";
     this.fileInput.hidden = true;
-    this.fileInput.setAttribute("aria-label", m(msg("Replace Markdown image")));
+    this.applyLabels();
+    // The labels live in this DOM, outside React, so a language switch re-applies them.
+    this.stopLabels = subscribeI18n(this.applyLabels);
     this.fileInput.addEventListener("change", this.handleReplacementFile);
     this.fileInput.addEventListener("cancel", this.handleReplacementCancel);
     this.dom.append(this.image, this.placeholder, this.caption, this.chrome, this.fileInput);
@@ -184,6 +186,12 @@ class ScientImageNodeView implements NodeView {
     });
     this.render();
   }
+
+  private readonly applyLabels = () => {
+    this.caption.setAttribute("aria-label", m(msg("Image caption")));
+    this.caption.placeholder = m(msg("Add a caption…"));
+    this.fileInput.setAttribute("aria-label", m(msg("Replace Markdown image")));
+  };
 
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
@@ -229,6 +237,7 @@ class ScientImageNodeView implements NodeView {
   }
 
   destroy(): void {
+    this.stopLabels();
     this.destroyed = true;
     this.generation += 1;
     this.resolveVersion += 1;

@@ -12,7 +12,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { CHECK_AGENT_STATUS, modelTestGuidance, NEEDS_SETUP_STATUS } from "./customModels";
+import { type ModelConnectionStatusKind, modelTestGuidance } from "./customModels";
 
 export interface CustomModelTestNotice {
   readonly text: string;
@@ -37,7 +37,7 @@ export function CustomModelRowActions({
   /** A Test of this model is running. */
   testing: boolean;
   /** Each attached agent's status label, when it has one. */
-  statuses: ReadonlyArray<string | undefined>;
+  statuses: ReadonlyArray<ModelConnectionStatusKind | undefined>;
   /** An agent reports the connection's saved key missing (see `connectionKeyMissing`). */
   keyMissing: boolean;
   /** Agents the model can be tested through (see `modelTestAgents`). */
@@ -48,12 +48,9 @@ export function CustomModelRowActions({
   onTest: (agent: ProviderInstanceId) => void;
 }) {
   const gt = useGT();
-  const messages = useMessages();
   return (
     <>
-      {statuses.some(
-        (label) => label === messages(NEEDS_SETUP_STATUS) || label === messages(CHECK_AGENT_STATUS),
-      ) ? (
+      {statuses.some((kind) => kind === "needs-setup" || kind === "check-agent") ? (
         <Button size="xs" variant="ghost" disabled={busy} onClick={onCheckAgain}>
           <T>Check again</T>
         </Button>

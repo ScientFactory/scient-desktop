@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { m } from "~/i18n/messages";
+import { getActiveLocale, m } from "~/i18n/messages";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -127,7 +127,8 @@ export function useLatexCitationSuggestions(input: {
     if (environmentId === null) return [];
     const { paths, reachesLibrary } = linked();
     read(paths);
-    const key = JSON.stringify([typed, paths, reachesLibrary]);
+    // The hint is translated, so a language switch must not reuse the last answer.
+    const key = JSON.stringify([typed, paths, reachesLibrary, getActiveLocale()]);
     if (answered.current?.key === key && answered.current.library === library) {
       return answered.current.result;
     }

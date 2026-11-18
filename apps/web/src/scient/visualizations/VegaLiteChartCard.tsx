@@ -150,6 +150,8 @@ export function VegaLiteChartCard({
   const [expandedState, setExpandedState] = useState<VegaLiteViewState | null>(null);
   const [activeAction, setActiveAction] = useState<ChartAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Which copy just succeeded: its message is translated, so the checkmark keys on this instead.
+  const [copiedKind, setCopiedKind] = useState<string | null>(null);
   const displayTitle = title || gt("Vega-Lite chart");
   const markdownCopy = vegaLiteMarkdownCopySource(source, language, fenceMeta);
 
@@ -182,11 +184,13 @@ export function VegaLiteChartCard({
     [],
   );
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, kind: string | null = null) => {
     if (copyResetTimerRef.current != null) clearTimeout(copyResetTimerRef.current);
     setActionMessage(message);
+    setCopiedKind(kind);
     copyResetTimerRef.current = setTimeout(() => {
       setActionMessage(null);
+      setCopiedKind(null);
       copyResetTimerRef.current = null;
     }, 1_500);
   };
@@ -197,6 +201,7 @@ export function VegaLiteChartCard({
       copyResetTimerRef.current = null;
     }
     setActionMessage(message);
+    setCopiedKind(null);
   };
 
   const runControllerAction = (
@@ -231,7 +236,7 @@ export function VegaLiteChartCard({
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(gt("Source copied"));
+        showTransientMessage(gt("Source copied"), "source");
       },
       () => {
         setActiveAction(null);
@@ -348,7 +353,7 @@ export function VegaLiteChartCard({
             <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
               <VisualCardDetails title={displayTitle} />
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                 <T>Copy source</T>
               </MenuItem>
               <RichFenceSourceMenuItem
