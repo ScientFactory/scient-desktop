@@ -238,7 +238,12 @@ tag or release already exists.
    managed feed only over HTTPS, so each job creates a certificate for this run,
    trusts it only on that disposable runner (macOS System keychain, Linux NSS
    database, Windows Root store), deletes its signing key, and serves the
-   loopback feed with it.
+   loopback feed with it. Windows runners cannot read project files (the native
+   publication helper's permission probes time out there; see
+   [CI flakes](./ci-flakes.md)), so on Windows the harness skips the unsaved file
+   edit and the receipt records `unsavedEditPreserved: "not-checked-windows-file-access"`;
+   the save barrier is the same renderer code on every platform and is checked on
+   macOS and Linux.
    macOS also rejects a synthetically damaged code signature after a valid
    download checksum, verifies that preparation did not shut down the app,
    then downloads the genuine target and completes a fresh consented restart.

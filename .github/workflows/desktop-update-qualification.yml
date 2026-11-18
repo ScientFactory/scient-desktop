@@ -52,7 +52,14 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
       - name: Install the pinned Playwright video recorder
-        run: node scripts/node_modules/playwright-core/cli.js install ffmpeg
+        shell: bash
+        # The download host times out now and then; a qualification run should not fail on it.
+        run: |
+          for attempt in 1 2 3; do
+            node scripts/node_modules/playwright-core/cli.js install ffmpeg && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Verify rehearsal run identity
         id: runs
         shell: bash
