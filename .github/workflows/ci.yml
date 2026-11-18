@@ -103,6 +103,7 @@ jobs:
       compute_platforms: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'all' || steps.compute.outputs.platforms }}
       windows_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.changed }}
       linux_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.linux_changed }}
+      macos_overleaf: ${{ (github.event_name != 'pull_request' || steps.macos_overleaf.outcome != 'success') && 'true' || steps.macos_overleaf.outputs.changed }}
       # SCIENT-FORK:END
     steps:
       # Only the package manifests the script reads to build the dependency graph.
@@ -143,6 +144,18 @@ jobs:
         id: packaging
         if: ${{ !cancelled() && steps.packaging_gate.outcome == 'success' }}
         run: node .github/scripts/windows-packaging-ci-gate.mjs detect
+      # Advisory: neither step can fail Changes. Without a `false` from a passing gate, Overleaf
+      # macOS runs.
+      - name: Test Overleaf macOS gate
+        id: macos_overleaf_gate
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        run: node --test .github/scripts/overleaf-macos-ci-gate.test.mjs
+      - name: Detect Overleaf macOS changes
+        id: macos_overleaf
+        if: ${{ !cancelled() && steps.macos_overleaf_gate.outcome == 'success' }}
+        continue-on-error: true
+        run: node .github/scripts/overleaf-macos-ci-gate.mjs
   # SCIENT-FORK:END
 
   # Lint and the desktop build each get a runner so they run side by side.
@@ -1057,10 +1070,11 @@ jobs:
   # identity, path budget) and sync, recovery and process death on its disk; not a required check.
   overleaf_macos:
     name: Overleaf macOS
-    needs: [queue_ci]
-    # Nothing waits on it in the merge queue, so it runs on pull requests and main pushes that
-    # could not reuse the queue's qualification of the same content.
-    if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.queue_ci.outputs.reused != 'true' }}
+    needs: [queue_ci, changes]
+    # Nothing waits on it in the merge queue. It runs on the nightly run, on main pushes that could
+    # not reuse the queue's qualification, and on pull requests whose diff can reach what it tests
+    # (overleaf-macos-ci-gate.mjs); a gate that fails or cannot read the diff runs it.
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.macos_overleaf != 'false' }}
     runs-on: macos-26
     timeout-minutes: 20
     steps:

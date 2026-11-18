@@ -86,7 +86,13 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   `.github/scripts/overleaf-platform-tests.cjs` must run without skips. Files run three at a time,
   each in its own process, rather than the server configuration's one at a time. Neither job
   restores a dependency store: on these hosted runners restoring the whole-workspace store took
-  longer than installing the server and desktop closures without one.
+  longer than installing the server and desktop closures without one. Overleaf macOS runs on every
+  nightly run and every main push that cannot reuse, but on a pull request only when its diff can
+  reach what only macOS can show (`.github/scripts/overleaf-macos-ci-gate.mjs`: the Overleaf,
+  workspace and file-publication sources, the native publication helper, the Electron sign-in
+  smoke and setup, and the toolchain). The same files run on Linux and Windows in required lanes,
+  so a change that breaks them everywhere still fails there. Its steps cannot fail Changes: unless
+  a passing gate says `false`, the job runs.
 
 Every change gate diffs the tested commit against one comparison base
 (`.github/scripts/ci-comparison-base.cjs`): the group's base for a queue run, `main` before the

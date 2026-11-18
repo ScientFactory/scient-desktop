@@ -17,6 +17,9 @@ const { needsLinuxPackaging, needsWindowsPackaging } =
     needsLinuxPackaging: (paths: string[]) => boolean;
     needsWindowsPackaging: (paths: string[]) => boolean;
   };
+const { needsMacOverleaf } = require("../.github/scripts/overleaf-macos-ci-gate.mjs") as {
+  needsMacOverleaf: (paths: string[]) => boolean;
+};
 const { decide, readWorkspace } = require("../.github/scripts/ci-changes.cjs") as {
   readWorkspace: () => unknown;
   decide: (
@@ -65,6 +68,7 @@ function simulate(files: string[], eventName = "pull_request", reused = false, b
       compute_platforms: full ? "all" : compute.platforms,
       windows_changed: full || needsWindowsPackaging(files),
       linux_changed: full || needsLinuxPackaging(files),
+      macos_overleaf: eventName !== "pull_request" || needsMacOverleaf(files),
     }).map(([key, value]) => [key, String(value)]),
   );
   const needs: Record<string, JobResult> = {};
@@ -447,10 +451,41 @@ describe("CI workflow decisions", () => {
       expect(reused.needs[id]!.result).toBe("success");
   });
 
+  it("keeps the advisory Overleaf macOS selector from failing Changes", () => {
+    const steps = workflow.jobs.changes!.steps! as Array<{
+      id?: string;
+      "continue-on-error"?: boolean;
+    }>;
+    for (const id of ["macos_overleaf_gate", "macos_overleaf"])
+      expect(steps.find((step) => step.id === id)?.["continue-on-error"], id).toBe(true);
+    // Only a successful detection may return `false`; any other outcome runs the job.
+    const output = (workflow.jobs.changes as { outputs?: Record<string, string> }).outputs!
+      .macos_overleaf!;
+    const evaluate = (event: string, outcome: string, changed: string) =>
+      NodeVM.runInNewContext(output.slice(3, -2), {
+        github: { event_name: event },
+        steps: { macos_overleaf: { outcome, outputs: { changed } } },
+      });
+    expect(evaluate("pull_request", "success", "false")).toBe("false");
+    expect(evaluate("pull_request", "failure", "")).toBe("true");
+    expect(evaluate("pull_request", "skipped", "")).toBe("true");
+    expect(evaluate("push", "skipped", "")).toBe("true");
+  });
+
+  it("runs advisory Overleaf macOS on pull requests only when their diff can reach it", () => {
+    const run = (file: string, event = "pull_request") =>
+      simulate([file], event).needs.overleaf_macos!.result;
+    expect(run("apps/web/src/authBootstrap.test.ts")).toBe("skipped");
+    expect(run("apps/server/src/scient/overleaf/OverleafSync.ts")).toBe("success");
+    expect(run("apps/web/src/authBootstrap.test.ts", "push")).toBe("success");
+    expect(run("apps/web/src/authBootstrap.test.ts", "schedule")).toBe("success");
+    expect(run("apps/server/src/scient/overleaf/OverleafSync.ts", "merge_group")).toBe("skipped");
+  });
+
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 44],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 50],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 44],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 43],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 49],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 43],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
     ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 59],
     ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 58],
@@ -459,9 +494,9 @@ describe("CI workflow decisions", () => {
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      68,
+      67,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 53],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 52],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 44],
     // The probe, two suite reporters, four stable contexts, the receipt and Check.
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
