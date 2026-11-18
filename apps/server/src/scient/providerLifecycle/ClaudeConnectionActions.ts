@@ -1,4 +1,8 @@
-import type { ClaudeSettings, ProviderConnectionMethod } from "@t3tools/contracts";
+import type {
+  ClaudeSettings,
+  ProviderConnectionFailureReason,
+  ProviderConnectionMethod,
+} from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -30,10 +34,15 @@ const AUTH_URL_TIMEOUT = "30 seconds";
 const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_STATUS_TIMEOUT = "15 seconds";
 const AUTHORIZATION_CODE_MAX_LENGTH = 8_192;
-const connectionError = (message: string, cause?: unknown) =>
+const connectionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+) =>
   new ProviderConnectionActionError({
     message,
     ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
   });
 
 function isClaudeAuthorizationHost(hostname: string): boolean {
@@ -109,6 +118,9 @@ export function makeClaudeConnectionActionsFromRuntime(
         submitAuthorizationCode: process.submitAuthorizationCode,
         waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
         cancel: process.cancel,
+        // Claude's own `auth status` is the account authority. Once it reports the
+        // account connected, a login process still running has nothing left to do.
+        finishWhenAccountConnected: process.cancel.pipe(Effect.ignore),
       };
     }),
     disconnect: runtime.logout,
@@ -216,16 +228,29 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
     "--json",
   ]).pipe(
     Effect.mapError((cause) =>
-      connectionError("Claude signed in, but Scient could not verify the account.", cause),
+      connectionError(
+        "Claude signed in, but Scient could not verify the account.",
+        cause,
+        "verification",
+      ),
     ),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.fail(connectionError("Claude account verification timed out.")),
+        onNone: () =>
+          Effect.fail(
+            connectionError("Claude account verification timed out.", undefined, "verification"),
+          ),
         onSome: (result) => {
           const status = decodeClaudeAuthStatus(result.stdout);
           return result.code === 0 && status?.loggedIn === true
             ? Effect.void
-            : Effect.fail(connectionError("Claude did not report a connected account."));
+            : Effect.fail(
+                connectionError(
+                  "Claude did not report a connected account.",
+                  undefined,
+                  "verification",
+                ),
+              );
         },
       }),
     ),
@@ -240,7 +265,7 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
       extendEnv: false,
     }).pipe(
       Effect.mapError((cause) =>
-        connectionError("Scient could not prepare Claude sign in.", cause),
+        connectionError("Scient could not prepare Claude sign in.", cause, "start_failed"),
       ),
     );
     const child = yield* spawner
@@ -254,7 +279,7 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
       )
       .pipe(
         Effect.mapError((cause) =>
-          connectionError("Scient could not start Claude sign in.", cause),
+          connectionError("Scient could not start Claude sign in.", cause, "start_failed"),
         ),
       );
     const cancel = child
@@ -281,7 +306,11 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
       Effect.catchCause(() =>
         Deferred.fail(
           authorizationUrl,
-          connectionError("Claude sign in stopped before opening its secure page."),
+          connectionError(
+            "Claude sign in stopped before opening its secure page.",
+            undefined,
+            "flow_stopped",
+          ),
         ).pipe(Effect.asVoid),
       ),
       Effect.forkScoped,
@@ -289,7 +318,13 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
 
     const exitedBeforeUrl = child.exitCode.pipe(
       Effect.flatMap(() =>
-        Effect.fail(connectionError("Claude did not provide a secure sign-in page.")),
+        Effect.fail(
+          connectionError(
+            "Claude did not provide a secure sign-in page.",
+            undefined,
+            "provider_exited",
+          ),
+        ),
       ),
     );
     const url = yield* Effect.raceFirst(Deferred.await(authorizationUrl), exitedBeforeUrl).pipe(
@@ -297,7 +332,13 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
       Effect.flatMap(
         Option.match({
           onNone: () =>
-            Effect.fail(connectionError("Claude took too long to open its sign-in page.")),
+            Effect.fail(
+              connectionError(
+                "Claude took too long to open its sign-in page.",
+                undefined,
+                "no_signin_page",
+              ),
+            ),
           onSome: Effect.succeed,
         }),
       ),
@@ -321,11 +362,15 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
     };
 
     const completed = child.exitCode.pipe(
-      Effect.mapError((cause) => connectionError("Claude sign in stopped unexpectedly.", cause)),
+      Effect.mapError((cause) =>
+        connectionError("Claude sign in stopped unexpectedly.", cause, "flow_stopped"),
+      ),
       Effect.flatMap((code) =>
         Number(code) === 0
           ? Effect.void
-          : Effect.fail(connectionError("Claude sign in was not completed.")),
+          : Effect.fail(
+              connectionError("Claude sign in was not completed.", undefined, "provider_exited"),
+            ),
       ),
     );
     const waitForExit = completed.pipe(
@@ -336,7 +381,13 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
             cancel.pipe(
               Effect.ignore,
               Effect.andThen(
-                Effect.fail(connectionError("Claude sign in took too long. Start sign in again.")),
+                Effect.fail(
+                  connectionError(
+                    "Claude sign in took too long. Start sign in again.",
+                    undefined,
+                    "timeout",
+                  ),
+                ),
               ),
             ),
           onSome: Effect.succeed,
@@ -399,6 +450,13 @@ export function invalidateClaudeCapabilitiesAfterAccountChange(
         Effect.map((attempt) => ({
           ...attempt,
           waitForCompletion: attempt.waitForCompletion.pipe(Effect.tap(() => invalidate)),
+          ...(attempt.finishWhenAccountConnected
+            ? {
+                finishWhenAccountConnected: attempt.finishWhenAccountConnected.pipe(
+                  Effect.andThen(invalidate),
+                ),
+              }
+            : {}),
         })),
       ),
     disconnect: actions.disconnect.pipe(Effect.tap(() => invalidate)),

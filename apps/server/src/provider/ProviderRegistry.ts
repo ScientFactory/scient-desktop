@@ -181,6 +181,17 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
 
+  // SCIENT-FORK:START — a waiting sign-in reads fresh account evidence without publishing it.
+  /**
+   * Probe one instance now and return its canonical snapshot, unpublished and without a
+   * runtime-proven authentication failure applied, so a sign-in can see the account its
+   * provider connected. Only `refreshInstanceAfterAccountChange` clears that failure.
+   */
+  readonly readFreshInstance: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ServerProvider, ProviderRegistryRefreshError>;
+  // SCIENT-FORK:END
+
   /**
    * Recreate one provider instance from unchanged settings, attach its fresh
    * snapshot source, and run a probe before returning. Used when an external
@@ -1418,6 +1429,7 @@ export const layer = Layer.effect(
       reloadInstance,
       refreshInstanceStrict,
       refreshInstanceAfterAccountChange,
+      readFreshInstance,
       reloadInstanceStrict,
     } = makeScientProviderReload({
       instanceRegistry,
@@ -1764,6 +1776,8 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstanceStrict,
       refreshInstanceAfterAccountChange,
+      // SCIENT-FORK: fresh account evidence for a waiting sign-in.
+      readFreshInstance,
       reloadInstance: (instanceId: ProviderInstanceId) =>
         reloadInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadInstanceStrict,

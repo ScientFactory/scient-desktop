@@ -322,6 +322,9 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                     ...(failure?.httpStatus === undefined
                       ? {}
                       : { httpStatus: failure.httpStatus }),
+                    ...(failure?.toolServerOwner === undefined
+                      ? {}
+                      : { toolServerOwner: failure.toolServerOwner }),
                     retryAttempts,
                   },
                 },

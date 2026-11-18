@@ -13,6 +13,18 @@ export const makeProviderRegistryMock = (
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),
   refreshInstanceStrict: () => Effect.succeed(providers),
+  readFreshInstance: (instanceId) => {
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    return provider
+      ? Effect.succeed(provider)
+      : Effect.fail(
+          new ProviderRegistry.ProviderRegistryRefreshError({
+            operation: "refresh",
+            instanceId,
+            message: "No live source is available.",
+          }),
+        );
+  },
   refreshInstanceAfterAccountChange: () => Effect.succeed(providers),
   reloadInstance: () => Effect.succeed(providers),
   reloadInstanceStrict: () => Effect.succeed(providers),

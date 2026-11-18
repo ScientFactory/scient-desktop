@@ -133,6 +133,104 @@ describe("Provider lifecycle analytics", () => {
     expect(mapper.observe([provider(operation("failed"))])).toEqual([]);
   });
 
+  it("says why a sign-in failed and which page it waited on", () => {
+    const signIn = (
+      status: NonNullable<NonNullable<ServerProvider["connection"]>["operation"]>["status"],
+      extra: Partial<NonNullable<NonNullable<ServerProvider["connection"]>["operation"]>> = {},
+    ): ServerProvider => {
+      const base = provider();
+      return {
+        ...base,
+        connection: {
+          ...base.connection!,
+          operation: {
+            operationId: "private-sign-in",
+            method: "droid_device_pairing",
+            status,
+            startedAt: "2026-08-31T00:00:00.000Z",
+            finishedAt: status === "failed" ? "2026-08-31T00:10:00.000Z" : null,
+            message: "private provider text",
+            ...extra,
+          },
+        },
+      };
+    };
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([signIn("starting")]);
+    expect(
+      mapper.observe([
+        signIn("waiting_for_browser", {
+          authorizationUrl: "https://private.example.invalid/",
+          authorizationUrlKind: "manual_fallback",
+        }),
+      ]),
+    ).toEqual([]);
+    mapper.observe([signIn("verifying")]);
+    const failed = mapper.observe([signIn("failed", { failureReason: "timeout" })]);
+    expect(failed).toMatchObject([
+      {
+        name: "provider.lifecycle.failed",
+        properties: {
+          action: "sign-in",
+          stage: "verifying",
+          failureReason: "timeout",
+          signInPage: "manual_fallback",
+        },
+      },
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("private");
+  });
+
+  it("says a sign-in that failed before showing any page waited on none", () => {
+    const base = provider();
+    const withOperation = (status: "starting" | "failed"): ServerProvider => ({
+      ...base,
+      connection: {
+        ...base.connection!,
+        operation: {
+          operationId: "private-sign-in",
+          method: "droid_device_pairing",
+          status,
+          startedAt: "2026-08-31T00:00:00.000Z",
+          finishedAt: status === "failed" ? "2026-08-31T00:00:02.000Z" : null,
+          message: "private provider text",
+          ...(status === "failed" ? { failureReason: "start_failed" as const } : {}),
+        },
+      },
+    });
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([withOperation("starting")]);
+    expect(mapper.observe([withOperation("failed")])).toMatchObject([
+      { properties: { failureReason: "start_failed", signInPage: "none" } },
+    ]);
+  });
+
+  it("reports an older failed sign-in with no reason as unknown", () => {
+    const base = provider();
+    const withOperation = (status: "waiting_for_device_code" | "failed"): ServerProvider => ({
+      ...base,
+      connection: {
+        ...base.connection!,
+        operation: {
+          operationId: "private-sign-in",
+          method: "droid_device_pairing",
+          status,
+          startedAt: "2026-08-31T00:00:00.000Z",
+          finishedAt: status === "failed" ? "2026-08-31T00:00:30.000Z" : null,
+          message: "private provider text",
+        },
+      },
+    });
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([withOperation("waiting_for_device_code")]);
+    expect(mapper.observe([withOperation("failed")])).toMatchObject([
+      { properties: { failureReason: "unknown", signInPage: "none" } },
+    ]);
+  });
+
   it("reports the runtime owner's failure class for a failed download", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     mapper.observe([provider()]);

@@ -1751,6 +1751,8 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // SCIENT-FORK: the provider's HTTP status beside `code`; absent from older records.
   httpStatus: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
+  // SCIENT-FORK: whose tool server failed to start, for a failure caused by one.
+  toolServerOwner: Schema.optional(Schema.Literals(["scient", "connector", "user", "unknown"])),
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 

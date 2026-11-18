@@ -194,6 +194,7 @@ function makeHarness(
       refreshWorkspaceSnapshot: () => SubscriptionRef.get(providersRef),
       refreshInstanceStrict: () => SubscriptionRef.get(providersRef),
       refreshInstanceAfterAccountChange: () => SubscriptionRef.get(providersRef),
+      readFreshInstance: () => Effect.die("Runtime changes never read fresh account state."),
       reloadInstance: () =>
         reloadInstance.pipe(Effect.catch(() => SubscriptionRef.get(providersRef))),
       reloadInstanceStrict: (instanceId) =>

@@ -167,7 +167,7 @@ describe("useBrowserPdfExport", () => {
 
     expect(mocks.publish).not.toHaveBeenCalled();
     expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
-    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed", "source-changed");
   });
 
   it("does not present a revision whose source lease expires after publication", async () => {
@@ -184,7 +184,7 @@ describe("useBrowserPdfExport", () => {
     expect(mocks.publish).toHaveBeenCalledOnce();
     expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
     expect(mocks.recordExport).not.toHaveBeenCalled();
-    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed", "source-changed");
   });
 
   it("does not report success until presentation and source association finish", async () => {
@@ -193,7 +193,7 @@ describe("useBrowserPdfExport", () => {
       throw failure;
     });
     await expect(exportPdf?.(target)).rejects.toBe(failure);
-    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed", "delivery-failed");
   });
 
   it("observes one attempt for a coalesced export and a new attempt for a retry", async () => {
@@ -222,7 +222,7 @@ describe("useBrowserPdfExport", () => {
     const error = new Error("private render failure /private/path");
     mocks.exportPdf.mockRejectedValue(error);
     await expect(exportPdf?.(target)).rejects.toBe(error);
-    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed", "render-failed");
     expect(mocks.publish).not.toHaveBeenCalled();
   });
   it("prints and publishes a remote server tab through its environment without a local render or upload", async () => {

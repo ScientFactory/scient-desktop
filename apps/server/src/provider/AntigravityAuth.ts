@@ -2,6 +2,11 @@ import {
   ProviderSetupError,
   type ProviderAuthState,
   type ProviderInstanceId,
+  // SCIENT-FORK:START — sign-in failure reasons.
+  markProviderConnectionFailure,
+  providerConnectionFailureReason,
+  type ProviderConnectionFailureReason,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -125,6 +130,17 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
 }
 
 // SCIENT-FORK:START — safe failure presentation; native OAuth and account checks stay upstream.
+/** A deadline marked where it was set wins; past `start`, Antigravity accepted the sign-in. */
+function antigravityAuthFailureReason(
+  cause: Cause.Cause<unknown>,
+  phase: ProviderAuthState["phase"],
+): ProviderConnectionFailureReason {
+  return (
+    providerConnectionFailureReason(Option.getOrUndefined(Cause.findErrorOption(cause))) ??
+    (phase === "verifying" ? "post_signin_setup" : "provider_failed")
+  );
+}
+
 function safeAuthFailure(
   cause: Cause.Cause<unknown>,
   usesBrowser: boolean,
@@ -271,6 +287,10 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               ? "Signed in with Google."
               : "Connected to Antigravity."
             : safeAuthFailure(result.cause, usesBrowser, !flow.authorizationUrlReceived),
+          // SCIENT-FORK: why the attempt failed, from where it failed.
+          ...(Exit.isFailure(result)
+            ? { failureReason: antigravityAuthFailureReason(result.cause, flow.state.phase) }
+            : {}),
         });
       }),
     );
@@ -349,13 +369,17 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           duration: AUTH_TIMEOUT_MS,
           orElse: () =>
             Effect.fail(
-              setupError(
-                "start",
-                flow.state.phase !== "starting"
-                  ? "Google sign-in expired. Start sign-in again."
-                  : flow.initialized
-                    ? UNREACHABLE_MESSAGE
-                    : NOT_RESPONDING_MESSAGE,
+              // SCIENT-FORK: this deadline is Scient's own.
+              markProviderConnectionFailure(
+                "timeout",
+                setupError(
+                  "start",
+                  flow.state.phase !== "starting"
+                    ? "Google sign-in expired. Start sign-in again."
+                    : flow.initialized
+                      ? UNREACHABLE_MESSAGE
+                      : NOT_RESPONDING_MESSAGE,
+                ),
               ),
             ),
         }),
@@ -379,6 +403,8 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               authorizationUrl: null,
               expiresAt: null,
               message,
+              // SCIENT-FORK: a stopped flow fails only when Antigravity refused the callback.
+              ...(phase === "failed" ? { failureReason: "provider_failed" as const } : {}),
             });
             return true;
           }),

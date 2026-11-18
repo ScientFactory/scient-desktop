@@ -2,6 +2,7 @@ import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
 } from "../../provider/ScientProviderInstanceSeams.ts";
+import { ProviderConnectionFailureReason } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -104,6 +105,7 @@ export class ProviderConnectionActionError extends Schema.TaggedError<ProviderCo
     cause: Schema.optional(Schema.Defect()),
     signInMayBeRemoved: Schema.optional(Schema.Boolean),
     afterSignIn: Schema.optional(Schema.Boolean),
+    failureReason: Schema.optional(ProviderConnectionFailureReason),
   },
 ) {}
 

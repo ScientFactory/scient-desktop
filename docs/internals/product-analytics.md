@@ -328,6 +328,16 @@ When the step is known, it also carries `failedCheck`: `smoke` (the new runtime'
 check, `qualification` when the step inside it is unknown), `activation` (moving or recording
 files), `rollback` (the previous runtime could not be restored) or `refresh` (the new runtime was
 already active and only restarting its sessions failed).
+A failed sign-in (`action: sign-in`) carries `failureReason`, set where the failure is known:
+`start_failed`, `no_signin_page`, `invalid_response`, `timeout` (a deadline Scient set),
+`provider_failed` (the provider reported failure), `provider_exited` (its process ended first),
+`verification` (an account the provider accepted that Scient could not confirm),
+`post_signin_setup` (a failure after the provider accepted the sign-in), `flow_stopped` or
+`unknown`. Every sign-in end also carries `signInPage`: `primary` (Scient opened the page),
+`manual_fallback` (the provider opened its own page; Scient kept a link) or `none`. A sign-in whose
+provider's own account check is authoritative (Claude) finishes as soon as a fresh check, every
+15 seconds while it waits, finds the account connected, even when the provider's process has not
+ended; builds up to 0.6.30 reported such a sign-in as failed after 10 minutes.
 No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
 `downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
 `provider.runtime.first_pick` is sent once per installation when the user first
@@ -730,8 +740,19 @@ permission), `external` (a network or remote service), `cancelled` or `unknown`.
 the typed failure is still in hand, with a closed `failureCategory` beside it. A runtime-reported
 error is the code's own, unless its error class names a missing package, memory or network; a
 missing package in Scient-managed Python stays `unknown`, since its Toolkits are Scient's promise.
-A run that never reached the kernel, an app restart or a broken bridge connection is Scient's. A
-runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
+A run that never reached the kernel, an app restart or a broken bridge connection is Scient's, and
+so are an admission the runtime never acknowledged (`admission-timeout`), session state Scient
+could not save (`persistence-failed`), a bridge protocol error (`protocol-error`) and a bridge
+missing what Scient needs (`missing-capability`). A kernel that died (`kernel-exited`) or stopped
+answering (`kernel-connection`), and any other runtime exit (`runtime-exited`), stays `unknown`. A
+run Scient refused because its source changed is `input` (`source-conflict`). A run file that never
+started says why: `source-changed` (`input`) or `runtime-missing` (`environment`). A PDF export
+reports its typed error code as the category (`renderer-unavailable`, `publication-failed` and
+`partial-publication` are Scient's; `output-write-failed` is `environment`; `render-failed` stays
+`unknown`; the rest are `input`); an export from the editor or the Browser names the step it failed
+at (`unsaved-changes`, `prepare-failed`, `render-failed`, `publication-failed`, `source-changed`,
+`renderer-unavailable`, `delivery-failed`). Builds up to 0.6.30 sent no reason for PDF exports.
+Error names and messages never leave the computer.
 A tool call that ends with no result is `exception` and Scient's, except arguments the tool refused
 (`invalid_params`, `input`) and a cancelled call (`interrupted`, `cancelled`).
 A broad tool failure built from a more specific cause keeps that cause as a fixed `failureClass`
@@ -758,6 +779,13 @@ A Scient Agent turn whose code is `usage-limit` reports `usage_limit` even when 
 classifier said `provider_error` (it keys on cost caps and HTTP 429); only the report changes, not
 recovery. Claude's `usage_limit` with `compaction_failed` is a failed compaction under a rate limit,
 and holds queued work as a usage limit should; break it out by `failureCode` when counting quota.
+A Claude turn whose result gives no API status reports the SDK's terminal reason
+(`turn_setup_failed`, `model_error`, `api_error`, `blocking_limit` and the rest) or
+`sdk_result_error`; when that reason is generic and the turn's last message carried the SDK's
+closed error, the code is `assistant_<error>` (`assistant_authentication_failed`,
+`assistant_oauth_org_not_allowed`, `assistant_billing_error`, `assistant_model_not_found`, ...).
+A query that ends with no result is `claude_stream_ended`, or `claude_query_failed` when it
+failed without a process exit. Builds up to 0.6.30 dropped these codes.
 
 - `failureCode`: one machine reason. Scient Agent reports its error classifier's kinds in
   `prompt_result.error.kinds` (scient-agent `SA-FAILURE-KIND`), and
@@ -774,7 +802,10 @@ and holds queued work as a usage limit should; break it out by `failureCode` whe
   an ACP agent that sent nothing until the inactivity watchdog stopped it is `prompt_inactivity`.
   Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
   ChatGPT sharing codes come from those adapters. Antigravity reports Google's RPC status (with
-  `httpStatus`), `mcp_load_failed` when a tool server failed to start and aborted the turn, and
+  `httpStatus`), `mcp_load_failed` when a tool server failed to start and aborted the turn (with
+  `toolServerOwner`: `scient` for Scient's own server, `connector` for one Scient delivered to the
+  session, `user` for one in the profile's own `mcp_config.json`, or `unknown` when no single
+  source lists the name; and `httpStatus` when Scient's bridge reported one), and
   `harness_error` for another harness error; Droid reports its turn-end reason
   (`model_usage_exhausted`, `model_rate_limited`, …) and `no_active_subscription`.
   [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each
