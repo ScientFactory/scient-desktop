@@ -426,8 +426,17 @@ function stopOwnedUpdatedProcess(pid, executable, platform) {
   } else {
     const environment = NodeFS.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
     const appImage = environment.find((entry) => entry.startsWith("APPIMAGE="))?.slice(9);
+    // Under APPIMAGE_EXTRACT_AND_RUN (runners cannot mount FUSE) the relaunched AppImage runs from
+    // its extracted copy without APPIMAGE; requireSingleMain already tied this PID to the trace
+    // the synthetic profile recorded, so the extracted executable is the owner.
+    const extracted =
+      appImage === undefined &&
+      environment.includes("APPIMAGE_EXTRACT_AND_RUN=1") &&
+      /\/appimage_extracted_[0-9a-f]+\//.test(NodeFS.readlinkSync(`/proc/${pid}/exe`));
     NodeAssert.ok(
-      appImage !== undefined && NodeFS.realpathSync(appImage) === NodeFS.realpathSync(executable),
+      extracted ||
+        (appImage !== undefined &&
+          NodeFS.realpathSync(appImage) === NodeFS.realpathSync(executable)),
       `Updated PID is not this qualification AppImage (APPIMAGE=${appImage ?? "unset"})`,
     );
     actual = executable;
@@ -621,6 +630,7 @@ async function qualify(options) {
   const server = await serveFeed(targetRoot, port, corrupt, overrides, options["tls-dir"]);
   let app;
   let keepConsole = () => {};
+  let keepUpdateUi = async () => {};
   let updatedPid;
   let receipt;
   try {
@@ -650,6 +660,29 @@ async function qualify(options) {
       undefined,
       { timeout: TIMEOUT },
     );
+    // Every update state this renderer receives, to explain a control that shows the wrong one.
+    await page.evaluate(() => {
+      window.__qualificationUpdateStates = [];
+      window.desktopBridge.onUpdateState((state) =>
+        window.__qualificationUpdateStates.push({
+          status: state.status,
+          errorContext: state.errorContext,
+          availableVersion: state.availableVersion,
+          downloadedVersion: state.downloadedVersion,
+          message: state.message,
+        }),
+      );
+    });
+    keepUpdateUi = async () => {
+      const ui = await page.evaluate(async () => ({
+        received: window.__qualificationUpdateStates,
+        current: await window.desktopBridge.getUpdateState(),
+        controls: [...document.querySelectorAll("button[aria-label]")]
+          .map((button) => button.getAttribute("aria-label"))
+          .filter((label) => /update|retry|restart|download/i.test(label)),
+      }));
+      NodeFS.writeFileSync(NodePath.join(evidence, "update-ui.json"), JSON.stringify(ui, null, 2));
+    };
     // A fresh profile opens Scient's getting-started flow; skip it to reach the empty workspace.
     const addProject = page.getByRole("button", { name: "Add project", exact: true }).first();
     const skipOnboarding = page.getByRole("button", { name: "Skip", exact: true }).first();
@@ -910,19 +943,18 @@ async function qualify(options) {
     }
     await video.saveAs(NodePath.join(evidence, "restart.webm"));
   } finally {
-    try {
-      keepConsole();
-      const logs = NodePath.join(profiles.baseDir, "userdata", "logs");
-      if (NodeFS.existsSync(logs))
-        NodeFS.cpSync(logs, NodePath.join(evidence, "desktop-logs"), { recursive: true });
-    } catch (error) {
-      console.error("Could not keep the run's console and logs", error);
-    }
+    // A relaunched app has no page left to read; only a stopped run does.
+    if (updatedPid === undefined) await keepUpdateUi().catch(() => {});
+    keepConsole();
     try {
       if (updatedPid !== undefined) stopOwnedUpdatedProcess(updatedPid, executable, platform);
       else if (app !== undefined) await app.close().catch(() => {});
     } finally {
       await new Promise((resolve) => server.close(resolve));
+      // After the app stopped, so its trace is complete.
+      const logs = NodePath.join(profiles.baseDir, "userdata", "logs");
+      if (NodeFS.existsSync(logs))
+        NodeFS.cpSync(logs, NodePath.join(evidence, "desktop-logs"), { recursive: true });
     }
   }
   NodeFS.mkdirSync(NodePath.dirname(NodePath.resolve(options.output)), { recursive: true });
