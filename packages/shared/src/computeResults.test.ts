@@ -125,7 +125,14 @@ describe("linked result references", () => {
       "value",
     ]);
     expect(findMarkdownResultReferences(`Table: ${link}`).map((ref) => ref.kind)).toEqual([
+      "value",
+    ]);
+    const table = "| a |\n| --- |\n| 1 |\n\n";
+    expect(findMarkdownResultReferences(`${table}Table: ${link}`).map((ref) => ref.kind)).toEqual([
       "table",
     ]);
+    expect(
+      findMarkdownResultReferences(`${table}Table: ${link} and more`).map((ref) => ref.kind),
+    ).toEqual(["value"]);
   });
 });

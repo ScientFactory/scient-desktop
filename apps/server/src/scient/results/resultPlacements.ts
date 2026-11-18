@@ -35,7 +35,10 @@ import type { ResultsLayout, ResultsReader } from "./resultRevisions.ts";
 
 /** Project files as the placement code sees them; the server passes its guarded workspace writer. */
 export interface ProjectFiles {
-  /** A regular file inside the project, reached without links, or null. */
+  /**
+   * A regular file inside the project, or null when nothing is there. Throws for a path reached
+   * through a link, which Scient neither reads nor changes, so a link never counts as absence.
+   */
   readonly read: (path: string) => Promise<Uint8Array | null>;
   /**
    * Writes when the file is still what the caller saw: absent for null, those bytes for a hash.
@@ -373,19 +376,25 @@ const removeCopies = (context: PlacementContext, change: ChangeRecord) =>
 
 /** Where each file of a change stands on disk: before it, after it, or neither. */
 async function changePositions(context: PlacementContext, change: ChangeRecord) {
-  const positions: Array<"before" | "after" | "other"> = [];
+  const positions: Array<"before" | "after" | "both" | "other"> = [];
   for (const file of change.files) {
-    const current = await diskSha(context, file.path);
+    const current = await diskSha(context, file.path).catch(() => undefined);
+    const isAfter = current === file.after;
+    const isBefore =
+      current !== undefined &&
+      (file.before === null ? current === null : current === file.before.sha256);
+    // An update that left a file's bytes as they were counts on both sides.
     positions.push(
-      current === file.after
-        ? "after"
-        : (file.before === null ? current === null : current === file.before.sha256)
-          ? "before"
-          : "other",
+      isAfter && isBefore ? "both" : isAfter ? "after" : isBefore ? "before" : "other",
     );
   }
   return positions;
 }
+
+const allOn = (
+  positions: ReadonlyArray<"before" | "after" | "both" | "other">,
+  side: "before" | "after",
+) => positions.every((position) => position === side || position === "both");
 
 /**
  * Finishes what an interrupted Update or Undo left: when every file reached one side, the record
@@ -393,11 +402,12 @@ async function changePositions(context: PlacementContext, change: ChangeRecord) 
  */
 async function reconcile(context: PlacementContext, record: PlacementRecord) {
   let next = record;
+  const retired: ChangeRecord[] = [];
   for (const change of record.changes) {
     if (change.state === "updated") continue;
     const positions = await changePositions(context, change);
-    const allAfter = positions.every((position) => position === "after");
-    const allBefore = positions.every((position) => position === "before");
+    const allAfter = allOn(positions, "after");
+    const allBefore = allOn(positions, "before");
     if (change.state === "updating" && allAfter)
       next = {
         ...withPlacements(next, change.script, change.root, change.placementsAfter),
@@ -408,13 +418,13 @@ async function reconcile(context: PlacementContext, record: PlacementRecord) {
       };
     else if (change.state === "updating" && allBefore) {
       next = dropChange(next, change);
-      await removeCopies(context, change);
+      retired.push(change);
     } else if (change.state === "undoing" && allBefore) {
       next = dropChange(
         withPlacements(next, change.script, change.root, change.placementsBefore),
         change,
       );
-      await removeCopies(context, change);
+      retired.push(change);
     } else if (change.state === "undoing" && allAfter)
       next = {
         ...next,
@@ -424,6 +434,8 @@ async function reconcile(context: PlacementContext, record: PlacementRecord) {
       };
   }
   if (next !== record) await writeRecord(context.layout, context.projectId, next);
+  // Copies go only once the record no longer needs them.
+  for (const change of retired) await removeCopies(context, change);
   return next;
 }
 
@@ -481,6 +493,22 @@ export function placeLatexResult(
     const documentMacros = definedMacros(request.documentText);
     const made = await placedBytes(context, record, script, source, revision, documentMacros);
     if ("refused" in made) throw new PlacementRefusal({ message: made.refused });
+    if (source.kind === "values") {
+      // A name given for another paper may be defined differently in this one; that one would win.
+      const included = request.documentText.includes(`% Made by Scient from ${script}, run`);
+      const clash = made.macros.find(
+        (macro) =>
+          macro.script === script &&
+          macro.output === output.name &&
+          macro.pointer === request.pointer &&
+          !included &&
+          documentMacros.has(macro.macro),
+      );
+      if (clash !== undefined)
+        throw new PlacementRefusal({
+          message: `This paper already defines \\${clash.macro}. Rename or remove that definition, then insert again.`,
+        });
+    }
     if (source.kind === "copy" && output.kind === "latex")
       source = { ...source, wholeFloat: isWholeFloat(made.bytes) };
 
@@ -517,11 +545,12 @@ export function placeLatexResult(
         if (index > 100)
           throw new PlacementRefusal({ message: "Too many files already use this result's name." });
         if (!taken.has(candidate.toLowerCase())) {
-          const onDisk = await context.files.read(candidate);
+          // A link at this name counts as taken.
+          const onDisk = await context.files.read(candidate).catch(() => undefined);
           // A file Scient did not place is never overwritten; an identical one is adopted.
           if (onDisk === null) {
             if (await context.files.write(candidate, made.bytes, null)) break;
-          } else if (sha256(onDisk) === sha256(made.bytes)) break;
+          } else if (onDisk !== undefined && sha256(onDisk) === sha256(made.bytes)) break;
         }
         candidate = inRoot(root, `results/${folder}/${withSuffix(base, index)}`);
       }
@@ -559,13 +588,19 @@ export function placeLatexResult(
         // Braced, so the space after it survives: TeX drops a space after a bare control word,
         // and editors drop an empty `{}` when they rewrite a paragraph.
         insert: { kind: "inline", source: `{\\${macro.macro}}` },
-        macro: { name: macro.macro, definition: escapeLatexText(value?.value ?? "") },
+        macro: {
+          name: macro.macro,
+          definition: escapeLatexText(value?.value ?? ""),
+          // The values file's first line: seeing it in the setup means the file is included.
+          includedMarker: `% Made by Scient from ${script}, run`,
+        },
         preambleInput: `\\input{${relativePath}}`,
         packages: [],
         files: [path],
       };
     }
-    const label = outputSlug(output.name);
+    // From the placed file, so two outputs with one base name get two labels.
+    const label = outputSlug(path);
     const caption = escapeLatexText(resultCaption(output.name, script));
     if (output.kind === "figure")
       return {
@@ -615,7 +650,8 @@ async function fileState(
   file: PlacedFileRecord,
   outOfDate: boolean,
 ): Promise<ComputeResultFileState> {
-  const current = await diskSha(context, file.path);
+  // A file replaced by a link is not the placed file.
+  const current = await diskSha(context, file.path).catch(() => "");
   if (current === null) return "missing";
   if (current !== file.sha256) return "edited";
   return outOfDate ? "out-of-date" : "current";
@@ -944,8 +980,10 @@ export function updatePlacedFiles(
     for (const old of finished) await removeCopies(context, old);
 
     const written: number[] = [];
+    let attempted = 0;
     let failure: unknown = null;
     for (const [index, step] of plan.entries()) {
+      attempted = index + 1;
       try {
         const expected = step.current === null ? null : sha256(step.current);
         if (await context.files.write(step.file.path, step.bytes, expected)) {
@@ -976,6 +1014,14 @@ export function updatePlacedFiles(
       const reason = isPlacementRefusal(failure)
         ? failure.message
         : `A file could not be written${failure instanceof Error ? ` (${failure.message})` : ""}. Close any program that has it open, then try again.`;
+      // A failed write can still have changed its file, so every file tried is checked again.
+      const positions = await changePositions(context, {
+        ...change,
+        files: change.files.slice(0, attempted),
+      });
+      for (const [index, position] of positions.entries())
+        if (position === "other" || position === "after")
+          if (!stuck.includes(change.files[index]!.path)) stuck.push(change.files[index]!.path);
       if (stuck.length > 0)
         // The journal stays, so the status offers Undo update for what could not be put back.
         return refused(
@@ -1035,7 +1081,7 @@ export function undoPlacedFilesUpdate(
     const copies = undoFolder(context.layout, context.projectId, change.id);
     const restored: string[] = [];
     for (const [index, file] of change.files.entries()) {
-      if (positions[index] === "before") continue;
+      if (positions[index] === "before" || positions[index] === "both") continue;
       try {
         const back =
           file.before === null
@@ -1056,6 +1102,9 @@ export function undoPlacedFilesUpdate(
       }
       restored.push(file.path);
     }
+    // Retired only once every file is back as it was.
+    if (!allOn(await changePositions(context, change), "before"))
+      return refused("Some files did not return to their earlier version. Undo update again.");
     await writeRecord(
       context.layout,
       context.projectId,

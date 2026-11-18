@@ -133,7 +133,11 @@ describe("placing results for a LaTeX paper", () => {
     });
     expect(value).toEqual({
       insert: { kind: "inline", source: "{\\resultAnalysisHr}" },
-      macro: { name: "resultAnalysisHr", definition: "0.73" },
+      macro: {
+        name: "resultAnalysisHr",
+        definition: "0.73",
+        includedMarker: "% Made by Scient from analysis.py, run",
+      },
       preambleInput: "\\input{results/analysis/values.tex}",
       packages: [],
       files: ["paper/results/analysis/values.tex"],
@@ -189,6 +193,32 @@ describe("placing results for a LaTeX paper", () => {
       now: at(50),
     });
     expect(value.insert.source).toBe("{\\resultAnalysisHrB}");
+  });
+
+  it("refuses a name another paper was given when this paper defines it differently", async () => {
+    const place = await setup();
+    const revision = await place.publish(FIRST);
+    const request = { revision, output: "values.json", pointer: "/hr", now: at(50) };
+    await placeLatexResult(place.context(), {
+      ...request,
+      documentPath: "a/main.tex",
+      documentText: "",
+    });
+    await expect(
+      placeLatexResult(place.context(), {
+        ...request,
+        documentPath: "b/main.tex",
+        documentText: "\\newcommand{\\resultAnalysisHr}{9.99}",
+      }),
+    ).rejects.toThrow("This paper already defines \\resultAnalysisHr");
+    // Its own included values file is not a clash.
+    const again = await placeLatexResult(place.context(), {
+      ...request,
+      documentPath: "a/main.tex",
+      documentText:
+        "% Made by Scient from analysis.py, run r000\n\\newcommand{\\resultAnalysisHr}{0.73}",
+    });
+    expect(again.insert.source).toBe("{\\resultAnalysisHr}");
   });
 
   it("gives each output its own TeX-safe file and never overwrites one it did not place", async () => {

@@ -82,16 +82,21 @@ async function unaliasedPath(root: string, relativePath: string): Promise<string
   }
 }
 
-/** Bytes of a regular file inside the project, reached without links, or null. */
+/**
+ * Bytes of a regular file inside the project, or null when nothing is there. A path reached
+ * through a link, or anything but a regular file, throws: it is neither absent nor the placed file.
+ */
 async function readProjectFile(root: string, relativePath: string): Promise<Uint8Array | null> {
   const target = await unaliasedPath(root, relativePath);
-  if (target === null) return null;
-  try {
-    if (!(await NodeFSP.stat(target)).isFile()) return null;
-    return new Uint8Array(await NodeFSP.readFile(target));
-  } catch {
-    return null;
-  }
+  if (target === null)
+    throw new Error(`${relativePath} is reached through a link, so Scient does not change it.`);
+  const status = await NodeFSP.lstat(target).catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === "ENOENT" || cause.code === "ENOTDIR") return null;
+    throw cause;
+  });
+  if (status === null) return null;
+  if (!status.isFile()) throw new Error(`${relativePath} is not a regular file.`);
+  return new Uint8Array(await NodeFSP.readFile(target));
 }
 
 const requireUnaliased = async (root: string, relativePath: string) => {
@@ -112,7 +117,7 @@ export function makeResultOperations(input: {
   readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
   readonly workspace: Pick<
     WorkspaceFileSystem.WorkspaceFileSystem["Service"],
-    "readFile" | "createBinaryFile" | "writeBinaryFile" | "deleteFile"
+    "readFile" | "createBinaryFile" | "writeBinaryFile"
   >;
 }) {
   const project = (cwd: string) =>
@@ -313,20 +318,16 @@ export function makeResultOperations(input: {
           ),
       );
     },
+    // The workspace's delete is for text files; a placed figure can be binary or large. Removal
+    // happens only when the whole file still holds the bytes the update wrote.
     remove: async (path, expectedSha256) => {
-      await requireUnaliased(root, path);
-      return Effect.runPromise(
-        input.workspace
-          .deleteFile({
-            cwd: root,
-            relativePath: path,
-            expectedRevision: `sha256:${expectedSha256}`,
-          })
-          .pipe(
-            Effect.as(true),
-            Effect.catchTags({ WorkspaceFileRevisionConflictError: () => Effect.succeed(false) }),
-          ),
-      );
+      const target = await unaliasedPath(root, path);
+      if (target === null)
+        throw new Error(`${path} is reached through a link, so Scient does not change it.`);
+      const current = await readProjectFile(root, path);
+      if (current === null || sha256(current) !== expectedSha256) return false;
+      await NodeFSP.rm(target);
+      return true;
     },
   });
 

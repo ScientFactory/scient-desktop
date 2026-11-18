@@ -56,6 +56,7 @@ export function LatexResultPicker(props: {
     if (result._tag !== "Success")
       return resultErrorMessage(result, "The result could not be placed in the project.");
     const placed = result.value;
+    let preambleChanged = false;
     window.dispatchEvent(new Event(RESULTS_PLACED_EVENT));
     if (!(await props.prepareFiles(placed.files)))
       return "The placed files could not be read yet. Try again in a moment.";
@@ -68,23 +69,29 @@ export function LatexResultPicker(props: {
         )
       )
         return `The preamble could not be changed. Add \\usepackage{${name}} before \\begin{document}, then try again.`;
+      else preambleChanged = true;
+    // A refused body leaves the preamble line it needed; say so, since nothing else does.
+    const leftBehind = preambleChanged
+      ? " Any preamble line Scient added stays; it does nothing until a result uses it."
+      : "";
     if (placed.insert.kind === "block")
       return props.insertBlock(placed.insert.source)
         ? null
-        : "This spot cannot take a block. Place the cursor between paragraphs, then try again.";
+        : `This spot cannot take a block. Place the cursor between paragraphs, then try again.${leftBehind}`;
     if (placed.macro === null) return "The result could not be placed in the project.";
     if (
       placed.preambleInput !== null &&
-      // Its own definition shows the values file is included; any other use of the name does not.
+      // The values file's own first line shows it is included; a definition of the same name in
+      // the paper does not.
       !props.ensurePreambleLine(
         placed.preambleInput,
-        new RegExp(String.raw`\\newcommand\s*\{\s*\\${placed.macro.name}\s*\}`, "u"),
+        new RegExp(placed.macro.includedMarker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
       )
     )
       return `The preamble could not be changed. Add ${placed.preambleInput} before \\begin{document}, then try again.`;
     return props.insertMacro({ ...placed.macro, source: placed.insert.source })
       ? null
-      : "Place the cursor in ordinary text, then try again.";
+      : "Place the cursor in ordinary text, then try again. The \\input line Scient added to the preamble stays; it does nothing until a result uses it.";
   };
 
   return (

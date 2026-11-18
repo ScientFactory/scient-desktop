@@ -194,8 +194,14 @@ function ScriptResults(props: {
   );
   const [busy, setBusy] = useState<"rerun" | "update" | "undo" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  // Edited files the user was warned about, as they were then; confirming replaces only those.
-  const [edited, setEdited] = useState<ReadonlyArray<ComputeResultFileDigest>>([]);
+  // Edited files the user was warned about, as they were then, for the run the warning was about;
+  // confirming replaces only those, and only for that run.
+  const [warning, setWarning] = useState<{
+    readonly revision: string;
+    readonly edited: ReadonlyArray<ComputeResultFileDigest>;
+  } | null>(null);
+  const edited =
+    warning !== null && warning.revision === script.newer?.revision ? warning.edited : [];
 
   const act = (kind: "rerun" | "update" | "undo", run: () => Promise<void>) => {
     setBusy(kind);
@@ -236,10 +242,14 @@ function ScriptResults(props: {
     }
     if (response.value._tag === "refused") {
       setMessage(response.value.message);
-      setEdited(response.value.edited);
+      setWarning(
+        response.value.edited.length > 0
+          ? { revision: toRevision, edited: response.value.edited }
+          : null,
+      );
       return;
     }
-    setEdited([]);
+    setWarning(null);
   };
 
   const undo = async () => {

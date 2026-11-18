@@ -8186,7 +8186,12 @@ function LatexVisualEditorReady(
   const insertVisualSource = (source: string, wrap = false) => {
     if (!editor || textReadOnly) return false;
     const nodes = projectLatexVisualDocument(source).content.content ?? [];
-    if (nodes.length && !insertLatexBlock(editor, nodes, wrap)) {
+    // The source guard can still refuse after the commands report success.
+    const refused = refusedChanges.current;
+    if (
+      nodes.length &&
+      (!insertLatexBlock(editor, nodes, wrap) || refusedChanges.current !== refused)
+    ) {
       setNotice(
         "This insertion cannot preserve the selected content here. Place the cursor in ordinary text or edit Source.",
       );

@@ -123,6 +123,20 @@ export function resultCaption(output: string, scriptPath: string): string {
 /** What a caption line holds before its link: `Table: ` (Pandoc also reads a bare `: `). */
 const TABLE_CAPTION_START = /^\s{0,3}(?:Table)?:\s*$/u;
 
+/**
+ * A caption as the editor reads one: `Table: ` and the link alone on its line, right after a pipe
+ * table (one blank line between is allowed).
+ */
+function isTableCaption(source: string, open: number, close: number): boolean {
+  const lineStart = source.lastIndexOf("\n", open) + 1;
+  const lineEnd = source.indexOf("\n", close);
+  if (!TABLE_CAPTION_START.test(source.slice(lineStart, open))) return false;
+  if (source.slice(close + 1, lineEnd < 0 ? source.length : lineEnd).trim() !== "") return false;
+  const before = source.slice(0, Math.max(0, lineStart - 1)).split("\n");
+  while (before.length > 0 && before.at(-1)!.trim() === "") before.pop();
+  return before.at(-1)?.trim().startsWith("|") === true;
+}
+
 /** Tables are linked from their caption, `Table: [Table 1](scient-result:<revision>/table1.csv)`. */
 export const isResultTableOutput = (output: string) => /\.csv$/iu.test(output);
 
@@ -153,7 +167,7 @@ export function findMarkdownResultReferences(
       !figure &&
         target.pointer === null &&
         isResultTableOutput(target.output) &&
-        TABLE_CAPTION_START.test(source.slice(source.lastIndexOf("\n", open) + 1, open))
+        isTableCaption(source, open, close)
         ? {
             ...target,
             kind: "table",

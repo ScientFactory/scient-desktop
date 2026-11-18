@@ -229,7 +229,7 @@ export const ComputeResultsPlaceLatexResult = Schema.Struct({
   /** LaTeX for the cursor: a macro call inline, or a `figure`/`table` environment as a block. */
   insert: Schema.Struct({ kind: Schema.Literals(["inline", "block"]), source: Text }),
   /** For a value: the macro and its LaTeX definition, so an editor can show it before compiling. */
-  macro: Schema.NullOr(Schema.Struct({ name: Text, definition: Text })),
+  macro: Schema.NullOr(Schema.Struct({ name: Text, definition: Text, includedMarker: Text })),
   /** A preamble line the insertion needs, already absent-checked by the caller: `\input{…}`. */
   preambleInput: Schema.NullOr(Text),
   /** Packages the inserted LaTeX needs, such as `booktabs` for a table. */
