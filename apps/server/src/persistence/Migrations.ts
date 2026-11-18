@@ -136,6 +136,9 @@ import Migration0098 from "./Migrations/098_TurnItemMessageOrdinalIndex.ts";
 import Migration0099 from "./Migrations/099_TurnItemInlineWorkOutput.ts";
 // T3's migration 96 follows Scient's immutable migration sequence.
 import Migration0100 from "./Migrations/100_RepairStaleTitleRegeneration.ts";
+// T3's migrations 97-98 follow Scient's immutable migration sequence.
+import Migration0101 from "./Migrations/101_IssueTrackerBindings.ts";
+import Migration0102 from "./Migrations/102_ActiveShellIndexIndexes.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -269,6 +272,9 @@ export const migrationEntries = [
   [99, "TurnItemInlineWorkOutput", Migration0099],
   // T3's migration 96 follows Scient's immutable migration sequence.
   [100, "RepairStaleTitleRegeneration", Migration0100],
+  // T3's migrations 97-98 follow Scient's immutable migration sequence.
+  [101, "IssueTrackerBindings", Migration0101],
+  [102, "ActiveShellIndexIndexes", Migration0102],
   // SCIENT-FORK:END
 ] as const;
 

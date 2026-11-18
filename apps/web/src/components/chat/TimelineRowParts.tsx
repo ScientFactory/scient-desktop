@@ -42,7 +42,13 @@ export function TimelineRowTimestamp({
   );
 }
 
-export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+export function ActivityShimmerOverlay({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   // SCIENT-FORK:START — the light's copy of a label shows no path tooltip of its own.
   return (
     <TracePathTooltipEnabled value={false}>
@@ -51,7 +57,9 @@ export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
         className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
       >
         <span className="live-activity-focus-counter block">
-          <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+          <span className={cn("live-activity-focus-aligned block text-foreground", className)}>
+            {children}
+          </span>
         </span>
       </span>
     </TracePathTooltipEnabled>

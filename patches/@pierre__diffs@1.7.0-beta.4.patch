@@ -438,6 +438,19 @@ index 7a39b643e77c42cdb9d5d68966cbc8d3a20171aa..c512fbb4f886f7bfe7b80926c5729a2b
  		}
  	});
  	useIsomorphicLayoutEffect(() => {
+diff --git a/dist/utils/parsePatchFiles.js b/dist/utils/parsePatchFiles.js
+index 48568bd..f27123f 100644
+--- a/dist/utils/parsePatchFiles.js
++++ b/dist/utils/parsePatchFiles.js
+@@ -339,7 +339,7 @@ function parsePatchFiles(data, options = {}) {
+ 	return patches;
+ }
+ function decodeDiffFileName(value, stripGitPrefix = false) {
+-	const rawName = value.trim();
++	const rawName = value.replace(/[\t\r\n]+$/, "");
+ 	const name = rawName.startsWith("\"") ? parseQuotedDiffFileName(rawName)?.fileName ?? rawName : rawName;
+ 	return stripGitPrefix && (name.startsWith("a/") || name.startsWith("b/")) ? name.slice(2) : name;
+ }
 diff --git a/package.json b/package.json
 index d1fa4d5d79ba70b6cd990b0ac9df5206fe55b58d..8762624a075174f5d9f35224cf091596d951a1a7 100644
 --- a/package.json

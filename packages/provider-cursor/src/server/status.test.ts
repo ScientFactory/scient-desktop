@@ -435,7 +435,7 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
-      supportsConversationRollback: false,
+      supportsConversationRollback: true,
     });
   });
 
@@ -484,7 +484,7 @@ describe("buildCursorProviderSnapshot", () => {
       message: "Cursor SDK model discovery returned no built-in models.",
       models: [],
       slashCommands: [COMPACT_SLASH_COMMAND],
-      supportsConversationRollback: false,
+      supportsConversationRollback: true,
     });
   });
 });

@@ -902,6 +902,7 @@ export const layerWithOptions = (
               "orchestration",
               "worktree",
               "pull-requests",
+              "issues",
               "documents:build",
               "compute",
               "sources:read",

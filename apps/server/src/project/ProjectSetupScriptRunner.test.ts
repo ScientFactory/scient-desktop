@@ -8,6 +8,7 @@ import {
   ThreadId,
   type OrchestrationProject,
   type TerminalEvent,
+  type TerminalOpenInput,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -54,14 +55,19 @@ const makeHarness = Effect.fn(function* (options: {
   readonly shell?: string | null;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
+  const opens: TerminalOpenInput[] = [];
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
-    open: () =>
-      (options.opening
-        ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
-        : Effect.void
-      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
+    open: (input) =>
+      Effect.sync(() => opens.push(input)).pipe(
+        Effect.andThen(
+          options.opening
+            ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+        Effect.as(openSnapshot(options.history ?? "")),
+      ),
     getShell: () =>
       options.shell === null
         ? Effect.fail(new TerminalNotRunningError({ threadId, terminalId }))
@@ -108,7 +114,7 @@ const makeHarness = Effect.fn(function* (options: {
   });
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { start, listeners, writes, outputLines, emit };
+  return { start, listeners, writes, outputLines, emit, opens };
 });
 
 const setup = Effect.fn(function* (
@@ -126,6 +132,13 @@ const setup = Effect.fn(function* (
 });
 
 describe("ProjectSetupScriptRunner", () => {
+  it.effect("keeps setup scripts independent of the interactive shell preference", () =>
+    Effect.gen(function* () {
+      const { opens } = yield* setup();
+      expect(opens[0]?.env?.T3CODE_TERMINAL_SHELL).toBe("");
+    }),
+  );
+
   it.effect("writes immediately when the spawned fallback is PowerShell", () =>
     Effect.gen(function* () {
       const { writes } = yield* setup({
@@ -373,6 +386,7 @@ describe("ProjectSetupScriptRunner", () => {
             T3CODE_PROJECT_ROOT: "/repo/project",
             T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
             COLORTERM: "",
+            T3CODE_TERMINAL_SHELL: "",
             NO_COLOR: "1",
             FORCE_COLOR: "0",
           },
@@ -493,6 +507,7 @@ describe("ProjectSetupScriptRunner", () => {
           T3CODE_PROJECT_ROOT: "/repo/project",
           T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
           COLORTERM: "",
+          T3CODE_TERMINAL_SHELL: "",
           NO_COLOR: "1",
           FORCE_COLOR: "0",
         },

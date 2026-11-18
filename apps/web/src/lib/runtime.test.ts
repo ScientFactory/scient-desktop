@@ -6,6 +6,9 @@ import "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
+// Load the runtime's module graph once at collection, outside the per-test timeout;
+// each case re-evaluates it from that cache after vi.resetModules().
+import "./runtime";
 
 afterEach(() => {
   vi.unstubAllEnvs();

@@ -8,6 +8,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
+import { PopoverClose } from "../ui/popover";
 import { ModelMentionChip } from "./ModelMentionChip";
 
 function SkillInlineText(props: {
@@ -139,9 +140,12 @@ export function SkillChipPopover(props: {
         </p>
         {props.onViewInstructions ? (
           <div className="flex justify-end">
-            <Button variant="ghost-muted" size="micro" onClick={props.onViewInstructions}>
+            <PopoverClose
+              render={<Button variant="ghost-muted" size="micro" />}
+              onClick={props.onViewInstructions}
+            >
               View Skill
-            </Button>
+            </PopoverClose>
           </div>
         ) : null}
       </div>
