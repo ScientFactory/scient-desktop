@@ -53,7 +53,7 @@ import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
-import { prepareScientV2SkillScope, prepareScientV2SkillTurn } from "./ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope } from "./ScientV2SkillTurn.ts";
 
 const registryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
@@ -472,7 +472,8 @@ it.effect("replaces incomplete empty authority without claiming a complete empty
     });
     yield* mcpSessions.set(issued.config);
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    const text = yield* prepareScientV2SkillTurn({
+    const before = yield* registry.resolve(token);
+    const prepared = yield* prepareScientV2SkillScope({
       threadId,
       driver: ProviderDriverKind.make("codex"),
       mcpSessionInjection: true,
@@ -504,8 +505,14 @@ it.effect("replaces incomplete empty authority without claiming a complete empty
       ),
       Effect.ensuring(mcpSessions.clear(threadId)),
     );
-    assert.include(text, "scope for this turn is incomplete; emptiness cannot be inferred");
-    assert.notInclude(text, "complete and empty");
+    // Like the start and steer callers, nothing changes until the caller publishes.
+    assert.deepEqual(yield* registry.resolve(token), before);
+    yield* prepared.publish;
+    assert.include(
+      prepared.text,
+      "scope for this turn is incomplete; emptiness cannot be inferred",
+    );
+    assert.notInclude(prepared.text, "complete and empty");
     const scope = yield* registry.resolve(token);
     assert.isDefined(scope);
     assert.equal(scope!.skillScope?.catalog?.status, "incomplete");
@@ -589,7 +596,7 @@ it.effect.each(
     if (negative.session) yield* mcpSessions.set(issued.config);
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const before = yield* registry.resolve(token);
-    const text = yield* prepareScientV2SkillTurn({
+    const prepared = yield* prepareScientV2SkillScope({
       threadId,
       driver: ProviderDriverKind.make(negative.driver),
       mcpSessionInjection: negative.injection,
@@ -606,7 +613,8 @@ it.effect.each(
       ),
       Effect.ensuring(mcpSessions.clear(threadId)),
     );
-    assert.equal(text, "Untouched user request");
+    yield* prepared.publish;
+    assert.equal(prepared.text, "Untouched user request");
     assert.deepEqual(yield* registry.resolve(token), before);
   }).pipe(Effect.provide(registryLayer)),
 );
