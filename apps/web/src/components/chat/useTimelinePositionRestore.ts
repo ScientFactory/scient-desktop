@@ -128,7 +128,10 @@ export function startTimelinePositionRestore({
       : // initialScrollAtEnd measured this target; scrollToEnd would replace it with an estimate.
         listOpenedOn === listIdentityKey
         ? undefined
-        : list.scrollToEnd({ animated: false });
+        : // Let Legend commit its measured extent before it dispatches the end scroll.
+          Promise.resolve().then(() =>
+            cancelled ? undefined : list.scrollToEnd({ animated: false }),
+          );
   const settlesAtEnd = position?.atEnd !== false && scrolling !== undefined;
   void Promise.resolve(scrolling).then(async () => {
     if (cancelled) return;

@@ -50,6 +50,16 @@
       "owner": "Compute",
       "quarantined": "2026-11-17",
       "expires": "2026-11-24"
+    },
+    {
+      "id": "claude-captured-stop-close",
+      "job": "Test Server *",
+      "step": "Test",
+      "test": "src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts > ClaudeAdapterV2 background wake turns > ends a subagent's SendMessage with its result when the CLI exits while the resume waits",
+      "signature": "Claude captured Stop close remains unresolved.",
+      "owner": "Orchestration lifecycle",
+      "quarantined": "2026-11-18",
+      "expires": "2026-11-25"
     }
   ]
 }

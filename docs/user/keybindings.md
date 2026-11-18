@@ -124,6 +124,9 @@ use bundled fonts and render locally. Unassigned actions are optional. Choose
 print dialog. The reference uses the current profile, including custom bindings;
 there is no separate shortcut list to maintain.
 
+To free a default shortcut for another command, choose **Unassign** from its row's
+actions menu. **Reset to default** brings it back.
+
 ## Composer controls
 
 `mod+shift+d` starts dictation in the focused editor, or the composer, and finishes it on the next press;

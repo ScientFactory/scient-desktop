@@ -299,6 +299,18 @@ export const DesktopUpdateFact = Schema.Struct({
   ),
 });
 export type DesktopUpdateFact = typeof DesktopUpdateFact.Type;
+
+/**
+ * A backend started without the telemetry pipes (a WSL-only primary) takes the same facts over
+ * authenticated HTTP; the response lists the ids its outbox holds, as the pipe's ack does.
+ */
+export const DESKTOP_UPDATE_FACTS_HTTP_PATH = "/api/scient/desktop-update-facts/v1";
+export const DesktopUpdateFactsHttpRequest = Schema.Struct({
+  facts: Schema.Array(DesktopUpdateFact).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+});
+export const DesktopUpdateFactsHttpResponse = Schema.Struct({
+  ids: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+});
 // SCIENT-FORK:END
 
 export const DesktopUpdateStatusReport = Schema.Struct({

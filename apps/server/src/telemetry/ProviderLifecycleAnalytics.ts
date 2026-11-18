@@ -90,6 +90,7 @@ function snapshot(provider: ServerProvider): Snapshot {
           details: {
             trigger: operation.background ? "background" : "user",
             ...(operation.attempt === undefined ? {} : { attempt: operation.attempt }),
+            ...(operation.failedCheck === undefined ? {} : { failedCheck: operation.failedCheck }),
             ...(operation.download === undefined ? {} : downloadDetails(operation.download)),
           },
         }

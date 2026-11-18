@@ -38,6 +38,12 @@ const OMP_CODES = new Set([
   "idle_confirmation_failed",
   "unconfirmed",
   "command_rejected",
+  // No cause from the agent: where the failure's evidence came from.
+  "unrecognized_error_kind",
+  "prompt_result_error",
+  "retry_exhausted",
+  "assistant_error",
+  "prompt_command_failed",
   "command_timeout",
   "rpc_failed",
 ]);
@@ -134,6 +140,24 @@ const DROID_CODES = new Set([
 
 const HTTP_CODE = /^http_[1-5]\d\d$/u;
 const CLAUDE_API_ERROR_CODE = /^api_error_[1-5]\d\d$/u;
+
+/**
+ * The class to report for a failure whose validated code names it more exactly. Scient Agent can
+ * end a turn on a usage-limit kind without the cost cap or HTTP 429 its classifier keys on, so
+ * that turn says provider_error while its code says usage-limit. Only the report changes: the
+ * classifier also drives recovery, which keeps its own class.
+ */
+export function analyticsFailureClass(
+  provider: string,
+  failureClass: string,
+  failureCode: string | undefined,
+): string {
+  return (provider === "scient" || provider === "omp") &&
+    failureClass === "provider_error" &&
+    failureCode === "usage-limit"
+    ? "usage_limit"
+    : failureClass;
+}
 
 /** The code to report for a failure of `provider`, or undefined when it is not a known category. */
 export function analyticsFailureCode(provider: string, code: unknown): string | undefined {

@@ -1205,6 +1205,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  it.effect.each(["downloaded", "existing", "concurrent"] as const)(
+    "reports a verification timeout for a %s runtime without changing the active release",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const asset = yield* releaseAsset();
+        const entered = yield* Queue.unbounded<void>();
+        let verificationCount = 0;
+        const { installation, stagingReleased, requests, validations } = yield* makeHarness({
+          previous: true,
+          asset,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (from, to) =>
+              source === "concurrent" && path.basename(path.dirname(to)) === "versions"
+                ? writeRelease(path.dirname(path.dirname(to)), asset, false).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                    Effect.andThen(
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "AlreadyExists",
+                          module: "FileSystem",
+                          method: "rename",
+                          pathOrDescriptor: to,
+                        }),
+                      ),
+                    ),
+                  )
+                : fs.rename(from, to),
+          }),
+          validate: () =>
+            Effect.suspend(() =>
+              source === "concurrent" && verificationCount++ === 0
+                ? Effect.void
+                : Queue.offer(entered, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+        });
+        if (source === "existing") {
+          yield* writeRelease(installation.managedDirectory, asset, false);
+        }
+        yield* installation.start;
+        yield* Queue.take(entered);
+        yield* TestClock.adjust("5 minutes");
+        // SCIENT-FORK: a failed check of the installed copy downloads a verified replacement.
+        if (source === "existing") {
+          yield* Queue.take(entered);
+          yield* TestClock.adjust("5 minutes");
+        }
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "failed",
+          message:
+            "Antigravity didn't finish starting within 5 minutes while Scient was checking it. Starting it can take a while on some computers. Try again.",
+        });
+        yield* Deferred.await(stagingReleased);
+        yield* expectPreviousRelease(installation);
+        expect(requests).toHaveLength(1);
+        expect(validations).toHaveLength(source === "downloaded" ? 1 : 2);
+      }),
+  );
+
   it.effect.each(["download", "extract", "active pointer"] as const)(
     "preserves the old runtime after an ENOSPC error during %s",
     (stage) =>
@@ -1496,8 +1558,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const baseDir = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const cliDirectory = path.join(baseDir, "cli");
+        const cliDirectory = path.join(baseDir, 'cli" ');
         yield* fs.makeDirectory(cliDirectory);
+        const siblingDirectory = path.join(baseDir, 'cli"');
+        yield* fs.makeDirectory(siblingDirectory);
+        yield* fs.writeFileString(path.join(siblingDirectory, "agy"), "other cli", { mode: 0o755 });
         const cli = path.join(cliDirectory, "antigravity");
         const alias = path.join(cliDirectory, "agy");
         const other = path.join(cliDirectory, "custom-acp");
@@ -1520,6 +1585,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           executablePath: alias,
           harnessPath: null,
         });
+        expect(yield* installation.resolve(undefined, { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+          source: "path",
+        });
         expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
         });
@@ -1540,7 +1610,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          const selected = yield* windows.resolve("agy", { PATH: windowsDirectory });
+          const selected = yield* windows.resolve("agy", { PATH: `"${windowsDirectory}"` });
           expect(selected.harnessPath).toBeNull();
           expect((yield* fs.realPath(selected.executablePath)).toLowerCase()).toBe(
             (yield* fs.realPath(path.join(windowsDirectory, name))).toLowerCase(),

@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopConfig from "../../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -130,6 +131,32 @@ describe("DesktopUpdateFacts", () => {
         };
         assert.lengthOf(journal.facts, 0);
       }),
+  );
+
+  it.effect("offers unacknowledged facts again, so a lost acknowledgement is retried", () =>
+    Effect.gen(function* () {
+      const home = temporaryHome();
+      const [first, again, pending] = yield* inLaunch(home, "true", (facts) =>
+        Effect.gen(function* () {
+          const first = yield* nextOffers(
+            facts,
+            facts
+              .sourceReady(PRIMARY_INSTANCE_ID)
+              .pipe(
+                Effect.andThen(
+                  facts.record("app.update.outcome", { step: "apply", outcome: "completed" }),
+                ),
+              ),
+          );
+          // No acknowledgement arrives; the next offer comes from the timer alone.
+          const again = yield* nextOffers(facts, TestClock.adjust("5 minutes"));
+          return [first, again, yield* facts.pending] as const;
+        }),
+      );
+      assert.lengthOf(first, 1);
+      assert.deepEqual(ids(again), ids(first));
+      assert.deepEqual(ids(pending), ids(first));
+    }),
   );
 
   it.effect("never keeps or replays facts when analytics is switched off", () =>

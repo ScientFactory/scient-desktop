@@ -118,6 +118,40 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+  getRestartReadinessToken: () =>
+    ipcRenderer.invoke(IpcChannels.GET_RESTART_READINESS_TOKEN_CHANNEL),
+  reportWorkspaceReady: (input) =>
+    ipcRenderer.invoke(IpcChannels.REPORT_WORKSPACE_READY_CHANNEL, input),
+  onPrepareUpdateSave: (listener) => {
+    const handle = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      if (typeof input !== "object" || input === null) return;
+      const { requestId, lockForRestart } = input as {
+        requestId?: unknown;
+        lockForRestart?: unknown;
+      };
+      if (
+        typeof requestId === "string" &&
+        requestId.length > 0 &&
+        requestId.length <= 128 &&
+        typeof lockForRestart === "boolean"
+      )
+        listener({ requestId, lockForRestart });
+    };
+    ipcRenderer.on(IpcChannels.PREPARE_UPDATE_SAVE_CHANNEL, handle);
+    return () => ipcRenderer.removeListener(IpcChannels.PREPARE_UPDATE_SAVE_CHANNEL, handle);
+  },
+  onReleaseUpdateSave: (listener) => {
+    const handle = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+      if (typeof requestId === "string" && requestId.length > 0 && requestId.length <= 128)
+        listener(requestId);
+    };
+    ipcRenderer.on(IpcChannels.RELEASE_UPDATE_SAVE_CHANNEL, handle);
+    return () => ipcRenderer.removeListener(IpcChannels.RELEASE_UPDATE_SAVE_CHANNEL, handle);
+  },
+  completeUpdateSave: (input) =>
+    ipcRenderer.invoke(IpcChannels.COMPLETE_UPDATE_SAVE_CHANNEL, input),
+  // SCIENT-FORK:END
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {

@@ -91,6 +91,17 @@ export interface ManagedRuntimeCatalogRefreshResult {
 }
 
 type Fetch = (input: URL, init?: RequestInit) => Promise<Response>;
+
+/** Hosted runners share an address, so GitHub's anonymous API limit is often already spent. */
+export function withGitHubToken(fetch_: Fetch, token: string | undefined): Fetch {
+  if (!token) return fetch_;
+  return (input, init) => {
+    if (input.origin !== "https://api.github.com") return fetch_(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    return fetch_(input, { ...init, headers });
+  };
+}
 type PolicyResolver = (target: ManagedRuntimeTarget) => ManagedRuntimeArtifactPolicy | undefined;
 
 const targets: ReadonlyArray<ManagedRuntimeTarget> = [
@@ -215,7 +226,9 @@ async function request(input: {
     headers: { "user-agent": "Scient-managed-runtime-catalog/1" },
   });
   if (!response.ok && !(input.allowNotFound && response.status === 404)) {
-    throw new Error(`Release request failed with HTTP ${response.status}: ${input.url}`);
+    const remaining = response.headers.get("x-ratelimit-remaining");
+    const limit = remaining === null ? "" : ` (API requests left: ${remaining})`;
+    throw new Error(`Release request failed with HTTP ${response.status}${limit}: ${input.url}`);
   }
   return response;
 }

@@ -16,6 +16,8 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
+import * as DesktopUpdateSave from "../app/DesktopUpdateSave.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
@@ -30,6 +32,13 @@ export interface UpdatesHarnessOptions {
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly downloadUpdate?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterDownloadUpdateError>;
+  readonly prepareUpdate?: (
+    expectedVersion: string,
+  ) => Effect.Effect<void, ElectronUpdater.ElectronUpdaterPrepareUpdateError>;
+  readonly authorizedNativeVersion?: Effect.Effect<string | null>;
+  readonly saveBeforeInstall?: Effect.Effect<boolean>;
+  readonly lockBeforeInstall?: Effect.Effect<boolean>;
+  readonly releaseAfterInstallFailure?: Effect.Effect<void>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -134,6 +143,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
     }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
+    prepareUpdate: (version) => options.prepareUpdate?.(version) ?? Effect.void,
+    authorizedNativeVersion: options.authorizedNativeVersion ?? Effect.succeed(null),
     quitAndInstall: () =>
       Effect.sync(() => {
         quitAndInstallCount += 1;
@@ -333,6 +344,15 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
   });
 
   const layer = DesktopUpdates.layer.pipe(
+    Layer.provide(DesktopRestartTiming.layer),
+    Layer.provide(
+      Layer.mock(DesktopUpdateSave.DesktopUpdateSave, {
+        prepare: options.saveBeforeInstall ?? Effect.succeed(true),
+        prepareForRestart:
+          options.lockBeforeInstall ?? options.saveBeforeInstall ?? Effect.succeed(true),
+        release: options.releaseAfterInstallFailure ?? Effect.void,
+      }),
+    ),
     Layer.provide(layerFileSystem),
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
     Layer.provideMerge(layerUpdater),

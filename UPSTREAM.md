@@ -219,7 +219,31 @@ call live in `apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; callers 
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
 callers; do not reintroduce the confirmation during alignment. A managed policy's feed stays the
 update source on every channel. Install-on-quit and early native (Squirrel.Mac) preparation stay
-off: they need native-readiness tracking and packaged-build tests first.
+off. Electron 44.10.1 pins Squirrel.Mac `fffea30e4a339a7f7d69a3391314b72548d209bd`,
+whose `downloadAndPrepareUpdate` arms installation after ordinary termination. Electron's
+public API has no prepare-without-arming or cancellation operation; changing
+`electron-updater.autoInstallOnAppQuit` cannot change that native guarantee.
+Keep native preparation behind explicit consent unless a qualified native adapter separates
+staging from commit. Outer `update-downloaded` proves only the archive download.
+After explicit consent, `MacUpdatePreparation.ts` uses Electron's public updater API and
+matches native `update-downloaded.updateURL` to the exact random loopback ZIP URL emitted
+by the pinned electron-updater patch (`nativeUpdateUrl`). Never replace this receipt with
+MacUpdater's unversioned `squirrelDownloadedUpdate` boolean. Preparation waits five minutes;
+a timeout retry rejoins that native operation. A terminal native error invalidates the
+download's install eligibility; retry refreshes the feed before reusing cached bytes and
+uses the normal download retry schedule. Preparing again requires fresh explicit consent.
+The install reservation spans `preparing`, both all-window save acknowledgements
+(`DesktopUpdateSave.prepare` then `prepareForRestart`), concurrent backend shutdown and native
+handoff. Backends remain running until the final acknowledgement. `quitting` becomes true
+before the final barrier to prevent new windows, and that barrier locks renderer input before
+saving; failure/interruption releases every lock before returning control.
+The compact control shows only a state-specific, reduced-motion-aware spinner, never long
+button copy. Its tooltip opens by itself with the progress, then for a few seconds with the reason
+a restart stopped (`apps/web/src/scient/desktopUpdate/useRestartProgressNotice.ts`); with the
+sidebar closed, progress is a corner toast.
+The version shown by an install caller remains binding even when its final feed check
+discovers and downloads a newer release. Late download events cannot replace the current
+offer, and update events cannot mutate an install's reserved release.
 Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
 `apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
 `DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
@@ -683,6 +707,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`42763ff8b12bfb534363df4dd5f8f5f759f54990` is recorded in
+[the 2026-11-18 42763ff8b1 receipt](docs/internals/t3-upstream-sync-20261118-42763ff8b1.md).
+Literal merge `07c3ec51f70ae063b45fadadeccd7df07e45befd` has owned base
+`e583aa41d560c43d07c22f359a23a4cbc68c1fd2` and the frozen official target as parents, retaining
+the 174 official commits after `e9a1e8699e`. The range adds T3's Issues (GitHub, GitLab, Azure
+DevOps, Forgejo and Linear trackers, issue links on threads and agent issue tools) beside
+fixes: a running Claude thread forks natively, saved secrets reach only their destination, and
+HTML previews swap revisions without a blank frame. T3's migrations 97-98 are Scient's 101-102.
+Release remains separate.
+
+The previous committed alignment through
 `e9a1e8699e0b8530a27372de4a22e57cf1ebbe70` is recorded in
 [the 2026-11-17 e9a1e8699e receipt](docs/internals/t3-upstream-sync-20261117-e9a1e8699e.md).
 Literal merge `d9ea28b9ebad988f15a57f22e1377c3dd7c4e364` has owned base
@@ -692,7 +727,7 @@ requests that never answer fail after 10 minutes, retried MCP and provider calls
 limits, snapshots copy between composers, themes can carry a background image, and T3's phone
 builds move to one shared local-build action. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
 [the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
 Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
@@ -2263,9 +2298,9 @@ beside the upkeep).
 
 Marked blocks in T3-owned files, to offer upstream and then drop:
 
-- `GitVcsDriverCore.ts` and `GitVcsDriver.ts`: the worktree base fetch and the storage cleanup's
-  tracking-branch fetch pass `--no-auto-gc` (T3 already does this for its status fetch). Tested in
-  `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042, which reworks these fetches.
+- `GitVcsDriverCore.ts` and `GitVcsDriver.ts`: the worktree base fetch passes `--no-auto-gc`
+  (T3 does this for its status fetch and, since #38174, the storage cleanup's tracking-branch
+  fetch). Tested in `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042.
 - `GitVcsDriverCore.ts`: T3's backoff for a failed untracked-file listing (pingdotgg/t3code#34460,
   from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
   status reads share one running listing, and the error keeps the listing's `GitCommandError` as

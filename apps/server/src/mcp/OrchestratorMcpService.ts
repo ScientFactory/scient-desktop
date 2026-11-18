@@ -92,11 +92,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+// SCIENT-FORK: broad failures keep their specific cause for analytics.
+import { withFailureClass } from "../telemetry/ScientMcpAnalytics.ts";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskReportRuns,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -259,7 +262,7 @@ export class OrchestratorMcpService extends Context.Service<
   OrchestratorMcpServiceShape
 >()("t3/mcp/OrchestratorMcpService") {}
 
-const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
+export const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -269,27 +272,37 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
 export { isLiveCallerShell };
 // SCIENT-FORK:END
 
-function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
+export function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
     case "ThreadManagementThreadNotFoundError":
       return failure("thread_not_found", error.message);
     case "ThreadManagementRunNotFoundError":
       return failure("run_not_found", error.message);
+    // SCIENT-FORK:START — analytics keep which cause made a thread unsendable.
     case "ThreadManagementThreadArchivedError":
+      return withFailureClass(failure("thread_not_sendable", error.message), "thread_archived");
     case "ThreadManagementWorktreeRestoreError":
       return failure("thread_not_sendable", error.message);
     case "ThreadManagementNoSteerableRunError":
-      return failure(
-        "thread_not_sendable",
-        `${error.message} Send with mode: "auto" or "queue" to start a new turn there.`,
+      return withFailureClass(
+        failure(
+          "thread_not_sendable",
+          `${error.message} Send with mode: "auto" or "queue" to start a new turn there.`,
+        ),
+        "no_steerable_run",
       );
+    // SCIENT-FORK:END
     case "ThreadManagementThreadNotInterruptibleError":
       return failure("thread_not_interruptible", error.message);
     case "ThreadManagementProjectionLoadError":
     case "ThreadManagementProjectThreadsListError":
     case "ThreadManagementDurableRunProjectionError":
-      return failure("orchestration_error", error.message);
+      // SCIENT-FORK: Scient's own projection reads failed.
+      return withFailureClass(
+        failure("orchestration_error", error.message),
+        "projection_load_failed",
+      );
     case "ThreadManagementProviderInstanceDisabledError":
       return failure("invalid_request", error.message);
   }
@@ -447,17 +460,29 @@ const resolveRequestedModel = (provider: ServerProvider, model: string) => {
   if (provider.models.length === 0 || advertisedModel(provider, model) !== undefined)
     return Effect.succeed(model);
   // A model the detected CLI is too old for keeps upstream's update message.
-  if (provider.updateRequiredModels?.some((candidate) => candidate.slug === model))
-    return requireAdvertisedModel(provider, model).pipe(Effect.as(model));
+  if (provider.updateRequiredModels?.some((candidate) => candidate.slug === model)) {
+    const updateRequired: Effect.Effect<void, OrchestratorMcpFailure> = requireAdvertisedModel(
+      provider,
+      model,
+    );
+    return updateRequired.pipe(
+      Effect.mapError((error) => withFailureClass(error, "delegate_model_needs_update")),
+      Effect.as(model),
+    );
+  }
   const match = matchDelegateModel(provider.models, model);
+  // The caller named a model this provider does not list; the message lists the ones it does.
   return match.kind === "found"
     ? Effect.succeed(match.model.slug)
     : Effect.fail(
-        failure(
-          "model_unavailable",
-          match.kind === "ambiguous"
-            ? ambiguousModelMessage(provider, model, match.candidates)
-            : modelUnavailableMessage(provider, model),
+        withFailureClass(
+          failure(
+            "model_unavailable",
+            match.kind === "ambiguous"
+              ? ambiguousModelMessage(provider, model, match.candidates)
+              : modelUnavailableMessage(provider, model),
+          ),
+          match.kind === "ambiguous" ? "delegate_model_ambiguous" : "delegate_model_not_offered",
         ),
       );
 };
@@ -1021,6 +1046,7 @@ function listItemFromShell(
 function threadDetail(
   scope: McpInvocationScope,
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
+  runCount: number,
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
@@ -1066,7 +1092,7 @@ function threadDetail(
     ...(projection.thread.delegatedFrom == null
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
-    runCount: projection.runs.length,
+    runCount,
     itemCount,
     pendingRequestCount: projection.runtimeRequests.filter(
       (request) => request.status === "pending",
@@ -1564,6 +1590,7 @@ const make = Effect.gen(function* () {
   const loadReadableThread = Effect.fn("OrchestratorMcpService.loadReadableThread")(function* (
     scope: McpInvocationScope,
     threadId: ThreadId,
+    runLimit: number,
   ) {
     const { parent } = yield* loadCaller(scope, []);
     // SCIENT-FORK:START — only a thread outside the project needs the prompts that attached it.
@@ -1601,20 +1628,38 @@ const make = Effect.gen(function* () {
         "The thread is outside the calling project and was not attached by the user.",
       );
     const input = { projectId: shell.projectId, threadId };
-    // Transfers are needed only to acknowledge a caller's child-task result.
-    const records =
-      parent === undefined
-        ? threadManagement
-            .getProjectThreadRecords(input, ["runs", "providerTurns", "runtimeRequests"])
-            .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
-        : threadManagement.getProjectThreadRecords(input, [
-            "runs",
-            "providerTurns",
-            "runtimeRequests",
-            "contextTransfers",
-          ]);
-    const target = yield* records.pipe(Effect.mapError(threadManagementFailure));
-    return { parent, target, shell } as const;
+    // Acknowledging a caller's child-task result matches it against every run and transfer.
+    if (
+      parent !== undefined &&
+      shell.lineage.parentThreadId === parent.thread.id &&
+      shell.lineage.relationshipToParent === "subagent"
+    ) {
+      const target = yield* threadManagement
+        .getProjectThreadRecords(input, [
+          "runs",
+          "providerTurns",
+          "runtimeRequests",
+          "contextTransfers",
+        ])
+        .pipe(Effect.mapError(threadManagementFailure));
+      return { parent, target, shell, runCount: target.runs.length } as const;
+    }
+    // Long threads hold thousands of runs; the read shows only the recent and active ones.
+    const [records, runCount] = yield* Effect.all([
+      threadManagement.getProjectThreadRecords(input, ["runs", "runtimeRequests"], {
+        latestRunLimit: runLimit,
+        runStatuses: ThreadManagementService.ACTIVE_RUN_STATUSES,
+        runtimeRequestStatuses: ["pending"],
+      }),
+      threadManagement.getRunCount(threadId),
+    ]).pipe(Effect.mapError(threadManagementFailure));
+    const { providerTurns } = yield* threadManagement
+      .getProjectThreadRecords(input, ["providerTurns"], {
+        providerTurnAttemptIds: records.runs.flatMap((run) => run.activeAttemptId ?? []),
+      })
+      .pipe(Effect.mapError(threadManagementFailure));
+    const target = { ...records, providerTurns, contextTransfers: [] };
+    return { parent, target, shell, runCount } as const;
   });
 
   const loadProviders = providerRegistry.getProviders;
@@ -1952,9 +1997,16 @@ const make = Effect.gen(function* () {
       childRun,
       heldForRestart ? taskResultRun : undefined,
     );
+    // Only the task's own result looks back for its report, and only among its own runs.
+    const reportRuns =
+      task.result === null && taskResultRun !== undefined
+        ? delegatedTaskReportRuns(childControls, taskResultRun)
+        : [];
     const resultRunIds = [
       ...new Set(
-        [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
+        [taskResultRun?.id, terminalRun?.id, ...reportRuns.map((run) => run.id)].filter(
+          (id): id is RunId => id !== undefined,
+        ),
       ),
     ];
     const resultRecords = yield* threadManagement
@@ -1970,6 +2022,11 @@ const make = Effect.gen(function* () {
       messages: [...childControls.messages, ...resultRecords.messages],
       turnItems: resultRecords.turnItems,
     };
+    const resultText = (run: OrchestrationV2Run) =>
+      subagentResultForRun(
+        { ...childProjection, runs: run.id === taskResultRun?.id ? reportRuns : [] },
+        run,
+      ).text;
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
     const runStatus = taskStatusForRun(taskResultRun ?? childRun);
@@ -1995,7 +2052,7 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
+          ? resultText(taskResultRun)
           : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
@@ -2016,7 +2073,7 @@ const make = Effect.gen(function* () {
     const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
       ? terminalRun.id === childRun?.id
         ? derivedResult
-        : subagentResultForRun(childProjection, terminalRun).text
+        : resultText(terminalRun)
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
@@ -2998,9 +3055,13 @@ const make = Effect.gen(function* () {
           stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
       );
       if (taskEvent?.event.type !== "subagent.updated") {
-        return yield* failure(
-          "orchestration_error",
-          "Delegated task command did not produce a task projection.",
+        // SCIENT-FORK: an accepted command that left no task is Scient's failure.
+        return yield* withFailureClass(
+          failure(
+            "orchestration_error",
+            "Delegated task command did not produce a task projection.",
+          ),
+          "task_projection_missing",
         );
       }
       const taskId = taskEvent.event.payload.id;
@@ -3535,7 +3596,12 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadListResult;
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
-      const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
+      const runLimit = input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT;
+      const { parent, target, shell, runCount } = yield* loadReadableThread(
+        scope,
+        input.threadId,
+        runLimit,
+      );
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
@@ -3582,6 +3648,7 @@ const make = Effect.gen(function* () {
       const thread = threadDetail(
         scope,
         target,
+        runCount,
         timeline.totalItems,
         shell,
         yield* Clock.currentTimeMillis,
@@ -3591,7 +3658,7 @@ const make = Effect.gen(function* () {
       );
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
-        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+        .slice(0, runLimit)
         .map((run) => threadRun(target, run));
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },

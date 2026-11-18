@@ -76,6 +76,7 @@ const representativeProperties = {
   downloadAttempts: 5,
   networkKind: "stalled",
   compressedFailure: "checksum",
+  failedCheck: "rpc_start",
   progressPercent: 37,
   bytesPerSecond: 410_000,
   resumedBytes: 41_000_000,

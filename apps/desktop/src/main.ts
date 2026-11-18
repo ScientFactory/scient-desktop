@@ -32,6 +32,7 @@ import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the update facts journal the updater writes and the telemetry pipe delivers.
 import * as DesktopUpdateFacts from "./scient/updateOutcomes/DesktopUpdateFacts.ts";
+import * as DesktopUpdateFactsHttpDelivery from "./scient/updateOutcomes/DesktopUpdateFactsHttpDelivery.ts";
 // SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
@@ -46,6 +47,10 @@ import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+import * as DesktopRestartTiming from "./app/DesktopRestartTiming.ts";
+import * as DesktopUpdateSave from "./app/DesktopUpdateSave.ts";
+// SCIENT-FORK:END
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
@@ -181,6 +186,8 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
   DesktopPrimaryPaste.layer,
+  // SCIENT-FORK: restart receipts for consented update restarts.
+  DesktopRestartTiming.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,
 ).pipe(Layer.provideMerge(layerDesktopEnvironment));
@@ -244,6 +251,8 @@ const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — feedback reports to the Scient team.
   DesktopFeedback.layer,
   // SCIENT-FORK:END
+  // SCIENT-FORK: update facts over HTTP for a primary without the telemetry pipes (WSL-only).
+  DesktopUpdateFactsHttpDelivery.layer.pipe(Layer.provide(DesktopUpdateFacts.layer)),
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,
@@ -262,6 +271,8 @@ const layerDesktopApplication = Layer.mergeAll(
       Layer.provide(DesktopManagedPolicy.layer),
     ),
   ),
+  // SCIENT-FORK: every window saves before a consented update restart.
+  Layer.provideMerge(DesktopUpdateSave.layer.pipe(Layer.provide(layerDesktopWindow))),
   // Updates closes the same tunnels the SSH IPC opens before quitAndInstall.
   Layer.provideMerge(layerDesktopSsh),
   Layer.provideMerge(layerDesktopWslBackend),

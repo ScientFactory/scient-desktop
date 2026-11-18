@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 // SCIENT-FORK:START
 import { connectionDiagnosisText } from "./diagnosis.ts";
 // SCIENT-FORK:END
@@ -170,6 +171,19 @@ describe("presentConnectionDiagnosis", () => {
     );
     expect(diagnosis?.headline).toBe("Mac mini is waiting for someone to approve this device");
     expect(diagnosis?.steps.join(" ")).toContain("scient auth connect-device approve K7QM-2XFD");
+  });
+
+  it("tells a host that refused this device's login to sign in again, not to start Scient", () => {
+    const failure = mapRemoteEnvironmentError(
+      new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        traceId: "trace-1",
+      }),
+    );
+    const steps = diagnose(backoff(failure), "direct")?.steps.join(" ");
+    expect(steps).not.toContain("Make sure Scient is running");
+    expect(steps).toMatch(/pair|sign in/i);
   });
 
   it("does not report hops as working when the failure names none", () => {

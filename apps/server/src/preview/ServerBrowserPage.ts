@@ -277,6 +277,8 @@ const pageChanged = () =>
   new ServerBrowserOperationError({
     tag: "PreviewAutomationExecutionError",
     message: "The page changed while capturing its snapshot. Take another snapshot.",
+    // SCIENT-FORK: a fixed reason analytics keep.
+    detail: { failureClass: "snapshot_page_changed" },
   });
 
 type SnapshotStage = typeof PreviewAutomationSnapshotStage.Type;
@@ -568,6 +570,8 @@ export const captureViewport = async (
             tag: "PreviewAutomationExecutionError",
             message:
               "The browser is not producing screenshot frames. For a desktop tab, show or restore the Scient window and try again.",
+            // SCIENT-FORK: a fixed reason analytics keep.
+            detail: { failureClass: "screenshot_no_frames" },
           }),
         ),
       SCREENSHOT_TIMEOUT_MS,
@@ -1150,6 +1154,8 @@ export const evaluate = async (
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationExecutionError",
       message: result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+      // SCIENT-FORK: the page reported the script's own exception, a fact analytics keep.
+      detail: { failureClass: "script_exception" },
     });
   }
   const value =

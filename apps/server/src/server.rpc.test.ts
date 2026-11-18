@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -1632,7 +1633,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               const response = yield* HttpClient.get(issued.relativeUrl);
               assert.equal(response.status, 200);
               assert.equal(response.headers["content-type"], "text/html; charset=utf-8");
-              assert.equal(yield* response.text, "<p>draft</p>");
+              assert.equal(yield* response.text, `<p>draft</p>${FILE_PREVIEW_SCROLL_SCRIPT}`);
             }),
           ),
         );

@@ -366,6 +366,11 @@
       "path": "apps/server/src/provider/ScientPersonWaitTools.ts",
       "anchor": "omp: 10 * 60_000",
       "purpose": "A person's card waits up to 10 minutes for Scient Agent and Oh My Pi, whose Scient bridge keeps a tool call open past Bun's fetch deadline."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/scient-provider/StalledRetryFailure.ts",
+      "anchor": "OMP_EVIDENCE_FAILURE_CODES",
+      "purpose": "Name a stalled retry over an Oh My Pi or Scient Agent code that only says where a failure's evidence came from."
     }
   ]
 }

@@ -28,6 +28,7 @@ const ALL_MCP_CAPABILITIES = [
   "worktree",
   "device",
   "pull-requests",
+  "issues",
   // SCIENT-FORK:START — Scient's own grants.
   "documents:build",
   /** Run code in Scient Compute sessions and read their results. */

@@ -323,6 +323,11 @@ failed: `dns`, `refused`, `reset`, `unreachable`, `connect_timeout`, `stalled`, 
 `other`) and `compressedFailure` (why the compressed copy was given up for the raw one). Only
 `provider.lifecycle.failed` carries `failureClass`; it reports `stalled` (30 seconds without data)
 apart from `timeout`, while the operation itself still says `timeout` so older clients decode it.
+When the step is known, it also carries `failedCheck`: `smoke` (the new runtime's version check),
+`reserve`, `stop_sessions`, `rpc_start`, `protocol`, `version` and `get_state` (Scient Agent's RPC
+check, `qualification` when the step inside it is unknown), `activation` (moving or recording
+files), `rollback` (the previous runtime could not be restored) or `refresh` (the new runtime was
+already active and only restarting its sessions failed).
 No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
 `downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
 `provider.runtime.first_pick` is sent once per installation when the user first
@@ -729,12 +734,30 @@ A run that never reached the kernel, an app restart or a broken bridge connectio
 runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
 A tool call that ends with no result is `exception` and Scient's, except arguments the tool refused
 (`invalid_params`, `input`) and a cancelled call (`interrupted`, `cancelled`).
+A broad tool failure built from a more specific cause keeps that cause as a fixed `failureClass`
+([`ScientMcpAnalytics.ts`](../../apps/server/src/telemetry/ScientMcpAnalytics.ts)
+`withFailureClass`), and the class decides the owner: an archived thread or one with no run to
+steer is `input`; Scient's own projection reads failing, or a delegation command that left no task,
+is `scient`. A browser `execution` failure is `code` only when the page reported the script's own
+exception (`script_exception`); any other execution failure stays `unknown`, since a broken browser
+call shares the tag. An Accounts failure without a connector's own class reports its reason
+(`accounts_invalid_input`, `accounts_denied`, …), and `accounts_unavailable` stays `unknown`.
+Exact codes: a merged or hostless pull request and an oversized script result are `input`; a
+preview that gave up while Scient's browser was still downloading (`preview_browser_installing`) or
+unpacking (`preview_browser_unpacking`) is `scient`. A delegation naming a model its provider does
+not list (`delegate_model_not_offered`) or a name matching several (`delegate_model_ambiguous`) is
+`input`; a model that needs a newer provider CLI (`delegate_model_needs_update`) is `environment`.
+Older builds keep their earlier owners, so compare owners by `appVersion`.
 Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
 `cell`, `run-file`) and `runtimeSource`.
 
 ## Why a turn or delegated task failed
 
-`provider.turn.failed` keeps `failureClass` and adds the cause a provider gave, when it gave one:
+`provider.turn.failed` keeps `failureClass` and adds the cause a provider gave, when it gave one.
+A Scient Agent turn whose code is `usage-limit` reports `usage_limit` even when the agent's own
+classifier said `provider_error` (it keys on cost caps and HTTP 429); only the report changes, not
+recovery. Claude's `usage_limit` with `compaction_failed` is a failed compaction under a rate limit,
+and holds queued work as a usage limit should; break it out by `failureCode` when counting quota.
 
 - `failureCode`: one machine reason. Scient Agent reports its error classifier's kinds in
   `prompt_result.error.kinds` (scient-agent `SA-FAILURE-KIND`), and
@@ -743,8 +766,11 @@ Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`,
   `content-blocked`, `payload-rejected`, `context-overflow` and so on down to `transient`, then
   `http_<status>` for an agent without kinds. The OMP host names its own outcomes:
   `process_exit`, `prompt_result_timeout`, `drain_busy`, `idle_confirmation_failed`,
-  `command_rejected`, `command_timeout` and `rpc_failed`. A retry the host stops after it never
-  resumed is `retry_stalled` unless the provider gave a code; an out-of-memory kill is `oom_kill`;
+  `command_rejected`, `command_timeout` and `rpc_failed`. A failed turn with no kind or status
+  names where its evidence came from: `unrecognized_error_kind` (kinds this build does not list),
+  `prompt_result_error`, `retry_exhausted`, `assistant_error` (the last message ended in error) or
+  `prompt_command_failed` (the prompt command itself failed). A retry the host stops after it
+  never resumed is `retry_stalled` unless the provider gave a code other than those; an out-of-memory kill is `oom_kill`;
   an ACP agent that sent nothing until the inactivity watchdog stopped it is `prompt_inactivity`.
   Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
   ChatGPT sharing codes come from those adapters. Antigravity reports Google's RPC status (with
@@ -817,7 +843,9 @@ reports the transport cause. `targetVersion`, `sourceKind` (`github`, `scient_mi
 `administrator`), `packageKind` (`zip`, `nsis`, `appimage`, `deb`; omitted when unknown), a random
 per-attempt `attemptRef` and `durationBucket` complete it. The rejected promise, not the updater's
 matching `error` event, is a check's or download's outcome; an install records one failure
-however many paths report it. `handoff-attempted` is recorded just before the installer takes
+however many paths report it. An install attempt starts at Restart now: a failed native
+preparation is its `failed`, while a restart paused because a window could not save records
+nothing. `handoff-attempted` is recorded just before the installer takes
 over; the next launch reports `apply` with the same `attemptRef`: `completed` when the target
 runs, `not-applied` when the old version runs again (once, not at every launch), `superseded`
 when another build runs. A handoff without a later outcome is unresolved, not a failure; there is
@@ -826,8 +854,9 @@ An `apply` outcome omits `sourceKind`: the install record does not retain the pr
 process's feed. Its `attemptRef` links to the original handoff instead of guessing from
 the new process's configured feed.
 
-`app.update.summary` is sent at launch, when the status settles somewhere new (a check in
-progress is not a change) and daily while running: `reason`, `status`, `channel`, `behind`
+`app.update.summary` is sent at launch, when the status settles somewhere new (a check or a
+restart's preparation in progress is not a change, and a daily summary due during a
+preparation is skipped) and daily while running: `reason`, `status`, `channel`, `behind`
 (`yes` when a newer offer is known, `no` for an approved older/equal target or a
 successful check that found none, and `unknown` after a failed check even if an older
 offer remains retained), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),
@@ -845,7 +874,13 @@ pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else
 one; two backends have two installation identities). That backend's `ScientRecordedAnalyticsIngest`
 queues them with their own event ids and times, through the normal shape checks, and the desktop
 forgets them only after the outbox persisted them or analytics there must never send them. A fact
-offered again stays one event: the outbox and gateway both ignore a repeated id.
+offered again stays one event: the outbox and gateway both ignore a repeated id. Pending facts are
+offered again every five minutes, so a timed-out ingest or a lost acknowledgement is retried. A
+primary started without the telemetry pipes (WSL-only) takes them over authenticated HTTP instead
+(`POST /api/scient/desktop-update-facts/v1`, served only by a desktop-mode backend without the
+pipes and only to the desktop's own bootstrap session), polled every 30 seconds
+while facts are pending; its response lists the ids the outbox holds, as the pipe's acknowledgement
+does.
 
 ## Privacy invariants
 

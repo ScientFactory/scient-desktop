@@ -138,7 +138,7 @@ export function getScientDesktopUpdateLabel(state: DesktopUpdateState): string |
 }
 
 export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null): boolean {
-  return state?.status === "downloading";
+  return state?.status === "downloading" || state?.status === "preparing";
 }
 
 export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
@@ -157,6 +157,9 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+  if (state.status === "preparing") {
+    return state.message ?? "Preparing update… You can keep working.";
+  }
   if (
     state.notAppliedVersion !== undefined &&
     (state.status === "available" || state.status === "downloaded") &&
@@ -208,6 +211,8 @@ export function getDesktopUpdateInstallConfirmationMessage(
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
   if (!result.accepted || result.completed) return null;
+  // SCIENT-FORK: still preparing means the installer took over; every failure leaves preparing.
+  if (result.state.status === "preparing") return null;
   if (typeof result.state.message !== "string") return null;
   const message = result.state.message.trim();
   return message.length > 0 ? message : null;
@@ -220,7 +225,10 @@ export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateAction
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
   if (!state || !state.enabled) return false;
   return (
-    state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
+    state.status !== "checking" &&
+    state.status !== "downloading" &&
+    state.status !== "preparing" &&
+    state.status !== "disabled"
   );
 }
 

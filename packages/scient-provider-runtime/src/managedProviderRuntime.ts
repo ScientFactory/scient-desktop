@@ -20,6 +20,7 @@ import {
   managedRuntimeFailureRetryable,
   managedRuntimeRetryAfterMs,
   ManagedRuntimeFileError,
+  markManagedRuntimeCheck,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
   unpackManagedRuntimeZstd,
@@ -862,8 +863,11 @@ export class ManagedProviderRuntime {
         : stagedExecutable;
       const smokeExecutableStat = await NodeFSP.lstat(smokeExecutablePath).catch(() => undefined);
       if (!smokeExecutableStat?.isFile() || smokeExecutableStat.isSymbolicLink()) {
-        throw new ManagedProviderRuntimeError(
-          `Managed ${this.#displayName} payload did not contain the reviewed smoke-test executable.`,
+        throw markManagedRuntimeCheck(
+          "smoke",
+          new ManagedProviderRuntimeError(
+            `Managed ${this.#displayName} payload did not contain the reviewed smoke-test executable.`,
+          ),
         );
       }
       const smokeWorkingDirectory = artifact.smokeWorkingDirectory
@@ -872,24 +876,31 @@ export class ManagedProviderRuntime {
       if (smokeWorkingDirectory) {
         const smokeCwdStat = await NodeFSP.lstat(smokeWorkingDirectory).catch(() => undefined);
         if (!smokeCwdStat?.isDirectory() || smokeCwdStat.isSymbolicLink()) {
-          throw new ManagedProviderRuntimeError(
-            `Managed ${this.#displayName} payload did not contain the reviewed smoke-test directory.`,
+          throw markManagedRuntimeCheck(
+            "smoke",
+            new ManagedProviderRuntimeError(
+              `Managed ${this.#displayName} payload did not contain the reviewed smoke-test directory.`,
+            ),
           );
         }
       }
-      await this.#dependencies.smoke(
-        smokeExecutablePath,
-        artifact.smokeArgs,
-        this.#displayName,
-        artifact.smokeEnvironment,
-        {
-          ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}),
-          signal,
-          ...(artifact.smokeVersionFormat
-            ? { expectedVersion: artifact.version, versionFormat: artifact.smokeVersionFormat }
-            : {}),
-        },
-      );
+      await this.#dependencies
+        .smoke(
+          smokeExecutablePath,
+          artifact.smokeArgs,
+          this.#displayName,
+          artifact.smokeEnvironment,
+          {
+            ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}),
+            signal,
+            ...(artifact.smokeVersionFormat
+              ? { expectedVersion: artifact.version, versionFormat: artifact.smokeVersionFormat }
+              : {}),
+          },
+        )
+        .catch((cause: unknown) => {
+          throw markManagedRuntimeCheck("smoke", cause);
+        });
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       await beforeActivate?.(signal);
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
@@ -922,6 +933,8 @@ export class ManagedProviderRuntime {
             executablePath: this.launchPath(artifact),
             payloadPath: destination,
             signal,
+          }).catch((cause: unknown) => {
+            throw markManagedRuntimeCheck("qualification", cause);
           });
         }
         if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
@@ -956,12 +969,16 @@ export class ManagedProviderRuntime {
           if (existingMoved) await this.#dependencies.filesystem.rename(replaced, destination);
           await NodeFSP.rm(this.#activationPath, { force: true });
         } catch (rollbackCause) {
-          throw new ManagedProviderRuntimeError(
-            `Managed ${this.#displayName} activation failed and the previous runtime could not be restored.`,
-            { cause: new AggregateError([cause, rollbackCause]) },
+          throw markManagedRuntimeCheck(
+            "rollback",
+            new ManagedProviderRuntimeError(
+              `Managed ${this.#displayName} activation failed and the previous runtime could not be restored.`,
+              { cause: new AggregateError([cause, rollbackCause]) },
+            ),
           );
         }
-        throw cause;
+        // Unless qualification failed, this step moved or recorded files.
+        throw markManagedRuntimeCheck("activation", cause);
       }
       await NodeFSP.rm(this.#activationPath, { force: true }).catch(() => undefined);
       if (hadExisting) {
