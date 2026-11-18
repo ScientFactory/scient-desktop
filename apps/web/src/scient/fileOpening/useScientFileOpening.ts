@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useRef } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -23,15 +24,21 @@ export function useScientFileOpening(input: {
 }): (relativePath: string) => void {
   const { threadRef, workspaceRoot, openSource } = input;
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef?.environmentId ?? null);
+  // Each open mints a new URL: the tab would otherwise load the cached copy of an edited file.
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
+    refresh: true,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  // A later open supersedes an earlier one still minting its URL, so it cannot take focus.
+  const latestOpen = useRef(0);
 
   return (relativePath: string) => {
     if (!threadRef || !workspaceRoot) return;
+    const open = ++latestOpen.current;
+    const isCurrent = () => latestOpen.current === open;
 
     if (
       !shouldOpenInBrowserByDefault(relativePath) ||
@@ -51,8 +58,9 @@ export function useScientFileOpening(input: {
           httpBaseUrl: environmentHttpBaseUrl,
           createAssetUrl,
           openPreview,
+          isCurrent,
         });
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+        if (result._tag === "Success" || isAtomCommandInterrupted(result) || !isCurrent()) return;
 
         openSource(relativePath);
         const error = squashAtomCommandFailure(result);
@@ -64,6 +72,7 @@ export function useScientFileOpening(input: {
           }),
         );
       } catch (cause) {
+        if (!isCurrent()) return;
         openSource(relativePath);
         toastManager.add(
           stackedThreadToast({
