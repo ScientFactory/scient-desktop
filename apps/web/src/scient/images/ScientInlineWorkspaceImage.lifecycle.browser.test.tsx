@@ -91,6 +91,46 @@ describe("workspace file image display lifetime", () => {
     expect(host.querySelector('[role="figure"]')?.getAttribute("aria-label")).toBe(
       "decoration.png",
     );
+    // regression: e34e687915 fix(chat): make rich media reliable and copyable
+    // Byte actions read the pixels, so the image is requested with anonymous CORS.
+    expect(host.querySelector<HTMLImageElement>("img")?.crossOrigin).toBe("anonymous");
+    using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    await act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Expand decoration.png"]')!.click(),
+    );
+    // The expanded view keeps the same file and byte actions.
+    const toolbar = document.querySelector<HTMLElement>(
+      '[role="toolbar"][aria-label="Expanded image actions"]',
+    )!;
+    expect(toolbar.querySelector('button[aria-label="Open image file"]')).not.toBeNull();
+    const expandedMenuItems = async () => {
+      await act(() =>
+        toolbar
+          .querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!
+          .click(),
+      );
+      return new Map(
+        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'), (item) => [
+          item.textContent,
+          item,
+        ]),
+      );
+    };
+    let items = await expandedMenuItems();
+    for (const label of [
+      "Copy image",
+      "Download original",
+      "Copy relative path",
+      "Background: automatic",
+      "Refresh from file",
+    ]) {
+      expect(items.get(label)?.hasAttribute("data-disabled"), label).toBe(false);
+    }
+    await act(() => items.get("Background: automatic")!.click());
+    items = await expandedMenuItems();
+    expect(items.has("Background: light")).toBe(true);
+    await act(() => items.get("Copy relative path")!.click());
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("decoration.png");
   });
 
   it("retains loaded pixels through capability refresh/failure and resets only on retry or source identity", async () => {
