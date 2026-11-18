@@ -350,9 +350,25 @@ export async function directoryIdentity(directory: string, helper?: string): Pro
       throw new Error("Workspace directory binding changed.");
     return { dev: identity.dev, ino: identity.ino };
   }
+  return hostDirectoryIdentity(directory);
+}
+/**
+ * A directory's identity as the operating system reports it to Node, on every host: enough to
+ * tell that a path still names the same directory a moment later. Plain reads and the workspace
+ * epoch use it, so they never depend on the native helper; retained records and native
+ * publication keep the helper's volume GUID and 128-bit file id.
+ */
+export async function hostDirectoryIdentity(directory: string): Promise<Identity> {
   const stat = await NodeFSP.lstat(directory, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new Error("Workspace directory binding changed.");
+  // Windows reports 0 or all ones when a file system has no file id (some network shares give
+  // every object 0); such an id can't tell that the folder stayed the same.
+  if (
+    HostProcess.Platform.defaultValue() === "win32" &&
+    (stat.ino === 0n || stat.ino === 0xffff_ffff_ffff_ffffn)
+  )
+    throw new Error("This folder's file system gives it no stable identity.");
   return { dev: String(stat.dev), ino: String(stat.ino) };
 }
 export async function assertRootBinding(root: string, expected?: Identity, helper?: string) {
