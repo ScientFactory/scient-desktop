@@ -768,6 +768,13 @@ A Scient Agent turn whose code is `usage-limit` reports `usage_limit` even when 
 classifier said `provider_error` (it keys on cost caps and HTTP 429); only the report changes, not
 recovery. Claude's `usage_limit` with `compaction_failed` is a failed compaction under a rate limit,
 and holds queued work as a usage limit should; break it out by `failureCode` when counting quota.
+A Claude turn whose result gives no API status reports the SDK's terminal reason
+(`turn_setup_failed`, `model_error`, `api_error`, `blocking_limit` and the rest) or
+`sdk_result_error`; when that reason is generic and the turn's last message carried the SDK's
+closed error, the code is `assistant_<error>` (`assistant_authentication_failed`,
+`assistant_oauth_org_not_allowed`, `assistant_billing_error`, `assistant_model_not_found`, ...).
+A query that ends with no result is `claude_stream_ended`, or `claude_query_failed` when it
+failed without a process exit. Builds up to 0.6.30 dropped these codes.
 
 - `failureCode`: one machine reason. Scient Agent reports its error classifier's kinds in
   `prompt_result.error.kinds` (scient-agent `SA-FAILURE-KIND`), and
