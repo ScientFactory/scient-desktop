@@ -32,14 +32,13 @@ import {
   removeScientSource,
   restoreScientSource,
   revertScientSource,
-  SCIENT_SOURCE_HISTORY_DIRECTORY,
   SCIENT_SOURCE_HISTORY_LIMIT,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
   sourceAttachmentAbsolutePath,
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import { SCIENT_SOURCE_HISTORY_DIRECTORY, sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 

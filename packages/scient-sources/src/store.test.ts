@@ -32,9 +32,6 @@ import {
   retryFailedSourceImportOperationItems,
   SCIENT_SOURCES_DIRECTORY,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
-  SCIENT_SOURCE_OPERATIONS_DIRECTORY,
-  SCIENT_SOURCE_RECEIPTS_DIRECTORY,
-  SCIENT_SOURCE_HISTORY_DIRECTORY,
   scientSourceStoreInternals,
   sourceAttachmentAbsolutePath,
   stageScientSourcePdfUpload,
@@ -42,7 +39,12 @@ import {
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
-import { sourceCandidate } from "./testing/sourceFixtures.ts";
+import {
+  SCIENT_SOURCE_HISTORY_DIRECTORY,
+  SCIENT_SOURCE_OPERATIONS_DIRECTORY,
+  SCIENT_SOURCE_RECEIPTS_DIRECTORY,
+  sourceCandidate,
+} from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 

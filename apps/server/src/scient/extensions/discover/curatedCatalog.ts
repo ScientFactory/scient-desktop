@@ -12,8 +12,6 @@ import {
 
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 
-export const MOST_USED_CAP = 12;
-
 const CATALOG_VERIFIED_ON = "2026-10-21";
 
 /** Names of curated servers not listed in the MCP Registry. Install them by URL. */

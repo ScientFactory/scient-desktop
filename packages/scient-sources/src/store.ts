@@ -102,9 +102,6 @@ import { normalizeScientSourceMore } from "./sourceMore.ts";
 export const SCIENT_SOURCES_DIRECTORY = ".scient/sources";
 export const SCIENT_SOURCE_RECORDS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/records`;
 export const SCIENT_SOURCE_FILES_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/files/sha256`;
-export const SCIENT_SOURCE_HISTORY_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/history`;
-export const SCIENT_SOURCE_OPERATIONS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/operations`;
-export const SCIENT_SOURCE_RECEIPTS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/receipts`;
 /** Kept revisions per source, counting the first one, which is never pruned. */
 export const SCIENT_SOURCE_HISTORY_LIMIT = 50;
 /** In the library, Zotero merge bases sit at `zotero/`; every other folder keeps its project name. */

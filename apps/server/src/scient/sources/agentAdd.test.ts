@@ -9,7 +9,6 @@ import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import {
   listScientSourceRecords,
   readScientSourceStagedMaterial,
-  SCIENT_SOURCE_OPERATIONS_DIRECTORY,
   stagedScientSourcePdfAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -111,7 +110,7 @@ describe("agent identifier add", () => {
       },
     });
     expect(added.record?.origin?.operationId).toMatch(/^agent_/);
-    const operationsDirectory = NodePath.join(root, SCIENT_SOURCE_OPERATIONS_DIRECTORY);
+    const operationsDirectory = NodePath.join(root, ".scient/sources/operations");
     await expect(NodeFSP.readdir(operationsDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
