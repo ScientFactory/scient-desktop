@@ -530,7 +530,7 @@
     },
     {
       "path": "apps/web/src/scient/extensions/extensionsView.ts",
-      "anchor": "`${kind} from Accounts`",
+      "anchor": "msg(\"Bearer token from Accounts\")",
       "purpose": "Identify bound connector credentials as Accounts keys in the shared Extensions presentation."
     },
     {
