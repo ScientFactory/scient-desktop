@@ -42,6 +42,7 @@ import {
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -51,10 +52,8 @@ async function fixture(): Promise<string> {
   return root;
 }
 
-const candidate: ScientSourceCandidate = {
+const candidate: ScientSourceCandidate = sourceCandidate({
   sourceKey: "ABC123",
-  type: "article",
-  customType: null,
   title: "A local-first source",
   creators: [
     { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
@@ -62,15 +61,8 @@ const candidate: ScientSourceCandidate = {
   issuedRaw: "2026",
   issuedYear: 2026,
   identifiers: [{ scheme: "doi", value: "10.1000/local" }],
-  abstract: null,
   containerTitle: "Journal",
-  publisher: null,
-  volume: null,
-  issue: null,
-  pages: null,
   language: "en",
-  url: null,
-  tags: [],
   externalReferences: [
     {
       system: "zotero",
@@ -80,11 +72,10 @@ const candidate: ScientSourceCandidate = {
       rawItemType: "journalArticle",
     },
   ],
-  fieldProvenance: [],
   pdfAvailable: true,
   pdfFileName: "paper.pdf",
   pdfAttachmentCount: 1,
-};
+});
 
 async function writeSourceRecordFixture(input: {
   readonly root: string;

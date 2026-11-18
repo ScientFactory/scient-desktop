@@ -38,6 +38,7 @@ import {
   removeScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -55,32 +56,18 @@ async function newLibrary(base: string, name: string): Promise<Library> {
   return scientLibraryLocation(root);
 }
 
-const work = (title: string): ScientSourceCandidate => ({
-  sourceKey: title,
-  type: "article",
-  customType: null,
-  title,
-  creators: [
-    { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
-  ],
-  issuedRaw: "2020",
-  issuedYear: 2020,
-  identifiers: [{ scheme: "doi", value: "10.1000/shared" }],
-  abstract: null,
-  containerTitle: "Journal",
-  publisher: null,
-  volume: null,
-  issue: null,
-  pages: null,
-  language: null,
-  url: null,
-  tags: [],
-  externalReferences: [],
-  fieldProvenance: [],
-  pdfAvailable: false,
-  pdfFileName: null,
-  pdfAttachmentCount: 0,
-});
+const work = (title: string): ScientSourceCandidate =>
+  sourceCandidate({
+    sourceKey: title,
+    title,
+    creators: [
+      { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+    ],
+    issuedRaw: "2020",
+    issuedYear: 2020,
+    identifiers: [{ scheme: "doi", value: "10.1000/shared" }],
+    containerTitle: "Journal",
+  });
 
 async function add(library: Library, candidate: ScientSourceCandidate) {
   const imported = await importScientSource({

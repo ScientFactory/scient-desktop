@@ -25,6 +25,7 @@ import {
   unlinkScientProjectSourceRestoringCopies,
 } from "./projectSourceLink.ts";
 import { importScientSource, readScientSourceRecord, removeScientSource } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -36,32 +37,19 @@ afterEach(async () => {
 
 type Library = ReturnType<typeof scientLibraryLocation>;
 
-const work = (title: string, sourceKey = title): ScientSourceCandidate => ({
-  sourceKey,
-  type: "article",
-  customType: null,
-  title,
-  creators: [
-    { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
-  ],
-  issuedRaw: "2020",
-  issuedYear: 2020,
-  identifiers: [{ scheme: "doi", value: "10.1000/shared" }],
-  abstract: `Abstract of ${title}.`,
-  containerTitle: "Journal",
-  publisher: null,
-  volume: null,
-  issue: null,
-  pages: null,
-  language: null,
-  url: null,
-  tags: [],
-  externalReferences: [],
-  fieldProvenance: [],
-  pdfAvailable: false,
-  pdfFileName: null,
-  pdfAttachmentCount: 0,
-});
+const work = (title: string, sourceKey = title): ScientSourceCandidate =>
+  sourceCandidate({
+    sourceKey,
+    title,
+    creators: [
+      { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+    ],
+    issuedRaw: "2020",
+    issuedYear: 2020,
+    identifiers: [{ scheme: "doi", value: "10.1000/shared" }],
+    abstract: `Abstract of ${title}.`,
+    containerTitle: "Journal",
+  });
 
 /** A project citing a paper from its author's Library, opened with a collaborator's Library. */
 async function collaboratorCheckout() {

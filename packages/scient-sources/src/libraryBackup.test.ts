@@ -21,6 +21,7 @@ import {
   listScientSourceRecords,
   removeScientSource,
 } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 const TEMPORARY_ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -32,10 +33,8 @@ afterEach(async () => {
 });
 
 function candidate(sourceKey: string, title: string, pdf: boolean): ScientSourceCandidate {
-  return {
+  return sourceCandidate({
     sourceKey,
-    type: "article",
-    customType: null,
     title,
     creators: [
       { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
@@ -43,21 +42,11 @@ function candidate(sourceKey: string, title: string, pdf: boolean): ScientSource
     issuedRaw: "2026",
     issuedYear: 2026,
     identifiers: [{ scheme: "doi", value: `10.1000/${sourceKey.toLowerCase()}` }],
-    abstract: null,
     containerTitle: "Journal",
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
     pdfAvailable: pdf,
     pdfFileName: pdf ? `${sourceKey}.pdf` : null,
     pdfAttachmentCount: pdf ? 1 : 0,
-  };
+  });
 }
 
 /** A Library with a paper and its PDF, a merged pair and a paper in the Trash with its PDF. */

@@ -39,6 +39,7 @@ import {
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -56,10 +57,8 @@ async function project(): Promise<string> {
 }
 
 function candidate(key: string, doi: string): ScientSourceCandidate {
-  return {
+  return sourceCandidate({
     sourceKey: key,
-    type: "article",
-    customType: null,
     title: `Work ${key}`,
     creators: [
       { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
@@ -67,21 +66,9 @@ function candidate(key: string, doi: string): ScientSourceCandidate {
     issuedRaw: "2026",
     issuedYear: 2026,
     identifiers: [{ scheme: "doi", value: doi }],
-    abstract: null,
     containerTitle: "Journal",
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
     language: "en",
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
-    pdfAvailable: false,
-    pdfFileName: null,
-    pdfAttachmentCount: 0,
-  };
+  });
 }
 
 async function add(
