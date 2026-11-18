@@ -11,7 +11,7 @@ import {
 } from "./updateReadyNotice";
 
 /** How long the reason a restart did not happen stays beside the update control. */
-export const RESTART_FAILURE_NOTICE_MS = 8_000;
+const RESTART_FAILURE_NOTICE_MS = 8_000;
 
 export interface RestartProgressNotice {
   /** The update control's tooltip shows this notice without hover; it hides with an off-screen control. */
