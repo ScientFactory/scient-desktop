@@ -707,6 +707,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`8cf97b5f06f30a872ce30ab8a888f2ff012365a2` is recorded in
+[the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md).
+Literal merge `fd911abf341715fb283a62d37690c9ca853042a8` has owned base
+`e1c4beb937cdcbf0abc69b3e58c8ebfe20b58334` and the frozen official target as parents, retaining
+the 63 official commits after `42763ff8b1`. The range translates the whole app into T3's ten
+languages, adding Swedish; Scient's wording inside T3's screens is translated with it, and
+Scient's own modules stay English. Fixes include service-worker pages identifying as Chrome and
+Run now keeping a paused one-time task. The alignment is Scient PR #1021. Release remains separate.
+
+The previous committed alignment through
 `42763ff8b12bfb534363df4dd5f8f5f759f54990` is recorded in
 [the 2026-11-18 42763ff8b1 receipt](docs/internals/t3-upstream-sync-20261118-42763ff8b1.md).
 Literal merge `07c3ec51f70ae063b45fadadeccd7df07e45befd` has owned base
@@ -717,7 +727,7 @@ fixes: a running Claude thread forks natively, saved secrets reach only their de
 HTML previews swap revisions without a blank frame. T3's migrations 97-98 are Scient's 101-102.
 Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `e9a1e8699e0b8530a27372de4a22e57cf1ebbe70` is recorded in
 [the 2026-11-17 e9a1e8699e receipt](docs/internals/t3-upstream-sync-20261117-e9a1e8699e.md).
 Literal merge `d9ea28b9ebad988f15a57f22e1377c3dd7c4e364` has owned base
