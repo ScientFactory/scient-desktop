@@ -1576,6 +1576,10 @@ export const make = Effect.gen(function* () {
           // control never stays at "Checking for updates…"; the check records it as a feed failure.
           Effect.andThen(
             Effect.gen(function* () {
+              // The check that found it failed, even when a re-check keeps an earlier offer shown.
+              yield* outcomes.checkFailed(
+                new DesktopUpdateUnreadableResultError({ code: "ERR_UPDATER_INVALID_UPDATE_INFO" }),
+              );
               if ((yield* Ref.get(updateStateRef)).status !== "checking") return;
               const failedAt = yield* currentIsoTimestamp;
               yield* updateState((current) =>
@@ -1586,9 +1590,6 @@ export const make = Effect.gen(function* () {
                       failedAt,
                     )
                   : current,
-              );
-              yield* outcomes.checkFailed(
-                new DesktopUpdateUnreadableResultError({ code: "ERR_UPDATER_INVALID_UPDATE_INFO" }),
               );
             }),
           ),
