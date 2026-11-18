@@ -51,6 +51,7 @@ export function DataFileTable(props: {
   const readPage = useAtomQueryRunner(dataFileTablePage, { reportFailure: false, refresh: true });
   const [sheet, setSheet] = useState(0);
   const [sheets, setSheets] = useState<ReadonlyArray<string>>([]);
+  const [rightToLeft, setRightToLeft] = useState(false);
   const loadPage = async (query: DataTableQuery) => {
     const result = await readPage({
       environmentId: props.environmentId,
@@ -58,6 +59,7 @@ export function DataFileTable(props: {
     });
     if (result._tag !== "Success") throw squashAtomCommandFailure(result);
     setSheets(result.value.sheets);
+    setRightToLeft(result.value.rightToLeft === true);
     return result.value;
   };
   if (revision === null) return <FileSurfaceLoading />;
@@ -66,6 +68,7 @@ export function DataFileTable(props: {
       key={sheet}
       label={sheets[sheet] ?? props.name}
       revision={`${revision}#${props.reloadKey}`}
+      rightToLeft={rightToLeft}
       loadPage={loadPage}
       toolbarStart={
         sheets.length > 1 ? (

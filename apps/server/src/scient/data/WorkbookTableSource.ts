@@ -24,6 +24,8 @@ export interface WorkbookSheet {
   readonly sheets: ReadonlyArray<string>;
   readonly rows: Array<Array<string | null>>;
   readonly truncated: boolean;
+  /** The sheet reads right to left, its first column on the right. */
+  readonly rightToLeft: boolean;
 }
 
 /** Collects rows, skipping empty runs unless content follows them. */
@@ -258,6 +260,8 @@ async function readXlsx(path: string, sheet: number): Promise<WorkbookSheet> {
     if (!chosen || !sheetEntry)
       throw new WorkbookFormatError({ message: "This sheet could not be found." });
     const rows = new SheetRows();
+    let rightToLeft = false;
+    let sheetViews = 0;
     let type = "n";
     let style = 0;
     let value = "";
@@ -265,7 +269,11 @@ async function readXlsx(path: string, sheet: number): Promise<WorkbookSheet> {
     const parser = new SaxesParser();
     parser.on("opentag", (tag: SaxesTagPlain) => {
       const name = localName(tag.name);
-      if (name === "row") {
+      if (name === "sheetView") {
+        // Excel shows a sheet through its first view.
+        if (sheetViews++ === 0)
+          rightToLeft = /^(?:1|true)$/.test(String(tag.attributes.rightToLeft));
+      } else if (name === "row") {
         if (tag.attributes.r !== undefined) rows.rowAt(Number(tag.attributes.r));
       } else if (name === "c") {
         type = String(tag.attributes.t ?? "n");
@@ -293,7 +301,12 @@ async function readXlsx(path: string, sheet: number): Promise<WorkbookSheet> {
       }
     });
     await archive.parse(sheetEntry, parser);
-    return { sheets: sheets.map((item) => item.name), rows: rows.rows, truncated: rows.truncated };
+    return {
+      sheets: sheets.map((item) => item.name),
+      rows: rows.rows,
+      truncated: rows.truncated,
+      rightToLeft,
+    };
   } finally {
     archive.close();
   }
@@ -306,6 +319,9 @@ async function readOds(path: string, sheet: number): Promise<WorkbookSheet> {
     if (!content) throw new WorkbookFormatError({ message: "Not a valid workbook." });
     const sheets: string[] = [];
     const rows = new SheetRows();
+    const rightToLeftStyles = new Set<string>();
+    let tableStyle: string | null = null;
+    let rightToLeft = false;
     let inSheet = false;
     let depth = 0;
     let cell: { value: string | null; text: string; repeat: number } | null = null;
@@ -316,10 +332,20 @@ async function readOds(path: string, sheet: number): Promise<WorkbookSheet> {
     parser.on("opentag", (tag: SaxesTagPlain) => {
       const name = tag.name;
       const attribute = (key: string) => tag.attributes[key] as string | undefined;
+      if (name === "style:style")
+        tableStyle =
+          attribute("style:family") === "table" ? (attribute("style:name") ?? null) : null;
+      else if (
+        name === "style:table-properties" &&
+        tableStyle !== null &&
+        attribute("style:writing-mode")?.startsWith("rl")
+      )
+        rightToLeftStyles.add(tableStyle);
       if (name === "table:table") {
         depth++;
         if (depth === 1) {
           inSheet = sheets.length === sheet;
+          if (inSheet) rightToLeft = rightToLeftStyles.has(attribute("table:style-name") ?? "");
           sheets.push(attribute("table:name") ?? `Sheet ${sheets.length + 1}`);
         }
       }
@@ -367,7 +393,7 @@ async function readOds(path: string, sheet: number): Promise<WorkbookSheet> {
     await archive.parse(content, parser);
     if (sheet >= sheets.length)
       throw new WorkbookFormatError({ message: "This sheet could not be found." });
-    return { sheets, rows: rows.rows, truncated: rows.truncated };
+    return { sheets, rows: rows.rows, truncated: rows.truncated, rightToLeft };
   } finally {
     archive.close();
   }
