@@ -362,6 +362,13 @@ export async function hostDirectoryIdentity(directory: string): Promise<Identity
   const stat = await NodeFSP.lstat(directory, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new Error("Workspace directory binding changed.");
+  // Windows reports 0 or all ones when a file system has no file id (some network shares give
+  // every object 0); such an id can't tell that the folder stayed the same.
+  if (
+    HostProcess.Platform.defaultValue() === "win32" &&
+    (stat.ino === 0n || stat.ino === 0xffff_ffff_ffff_ffffn)
+  )
+    throw new Error("This folder's file system gives it no stable identity.");
   return { dev: String(stat.dev), ino: String(stat.ino) };
 }
 export async function assertRootBinding(root: string, expected?: Identity, helper?: string) {
