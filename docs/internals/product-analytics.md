@@ -766,8 +766,11 @@ and holds queued work as a usage limit should; break it out by `failureCode` whe
   `content-blocked`, `payload-rejected`, `context-overflow` and so on down to `transient`, then
   `http_<status>` for an agent without kinds. The OMP host names its own outcomes:
   `process_exit`, `prompt_result_timeout`, `drain_busy`, `idle_confirmation_failed`,
-  `command_rejected`, `command_timeout` and `rpc_failed`. A retry the host stops after it never
-  resumed is `retry_stalled` unless the provider gave a code; an out-of-memory kill is `oom_kill`;
+  `command_rejected`, `command_timeout` and `rpc_failed`. A failed turn with no kind or status
+  names where its evidence came from: `unrecognized_error_kind` (kinds this build does not list),
+  `prompt_result_error`, `retry_exhausted`, `assistant_error` (the last message ended in error) or
+  `prompt_command_failed` (the prompt command itself failed). A retry the host stops after it
+  never resumed is `retry_stalled` unless the provider gave a code other than those; an out-of-memory kill is `oom_kill`;
   an ACP agent that sent nothing until the inactivity watchdog stopped it is `prompt_inactivity`.
   Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
   ChatGPT sharing codes come from those adapters. Antigravity reports Google's RPC status (with

@@ -38,6 +38,12 @@ const OMP_CODES = new Set([
   "idle_confirmation_failed",
   "unconfirmed",
   "command_rejected",
+  // No cause from the agent: where the failure's evidence came from.
+  "unrecognized_error_kind",
+  "prompt_result_error",
+  "retry_exhausted",
+  "assistant_error",
+  "prompt_command_failed",
   "command_timeout",
   "rpc_failed",
 ]);
