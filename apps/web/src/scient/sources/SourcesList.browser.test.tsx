@@ -48,6 +48,12 @@ vi.mock("../../localApi", () => ({
 const environmentId = "environment-1" as EnvironmentId;
 const SOURCE_COUNT = 3000;
 const SNAPSHOT_INDEX = 2500;
+/**
+ * The project backend mounts every row, so a few hundred already exceed any virtual window (the
+ * Library mounts fewer than 60). Mounting 3,000 such rows took half the test budget on a CI
+ * runner and timed out on a slow one.
+ */
+const PROJECT_SOURCE_COUNT = 300;
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 
 function record(index: number, overrides: Partial<SourceRecord> = {}): SourceRecord {
@@ -186,13 +192,17 @@ function scrollerOf(element: HTMLElement): HTMLElement {
 describe("Sources list at Library size", () => {
   it("keeps the project backend in the shared scroll area with every row mounted", async () => {
     setup();
-    const { scopes: _scopes, libraryBackend: _backend, ...project } = overview();
-    mocks.readScientSources.mockResolvedValue({ ...project, libraryBackend: false });
+    const { scopes: _scopes, libraryBackend: _backend, records, ...project } = overview();
+    mocks.readScientSources.mockResolvedValue({
+      ...project,
+      records: records.slice(0, PROJECT_SOURCE_COUNT),
+      libraryBackend: false,
+    });
     await using screen = await render(<Harness />, { router: false });
 
     await expect.element(screen.getByText("Source 0001")).toBeVisible();
-    expect(mountedRows(screen.container).length).toBe(SOURCE_COUNT);
-    expect(rowTitled(screen.container, "Source 2999")).not.toBeNull();
+    expect(mountedRows(screen.container).length).toBe(PROJECT_SOURCE_COUNT);
+    expect(rowTitled(screen.container, "Source 0299")).not.toBeNull();
     expect(
       rowTitled(screen.container, "Source 0001")!.closest('[data-slot="scroll-area-viewport"]'),
     ).not.toBeNull();
