@@ -443,7 +443,7 @@ export const ComputeToolResultValue = Schema.Struct({
 
 const ScientResultsRunTool = Tool.make("scient_results_run", {
   description:
-    'Run a saved analysis script (Python, R, Julia or another session language) from scratch in a fresh session, the way the user\'s Run in a fresh session does, and publish what it writes into the folder named by the SCIENT_RESULTS_DIR environment variable as a numbered result revision. Write the values a manuscript will cite to a JSON file there (strings or numbers, formatted as they should appear, e.g. {"n": 1204, "hr": "0.72"}) and figures as .png, .jpg or .svg. Save the script first: the revision records exactly the saved file. Returns the revision with its values and their Markdown; use scient_results_markdown for figures.',
+    'Run a saved script from scratch and publish what it writes to $SCIENT_RESULTS_DIR as a result revision: a JSON file of values formatted as they should read (e.g. {"hr": "0.72"}) and .png/.jpg/.svg figures. Returns the values with the Markdown that cites each.',
   parameters: Schema.Struct({
     path: ResultPath.annotate({ description: "The script, relative to the project root." }),
     waitSeconds: Schema.optional(WaitSeconds),
@@ -467,7 +467,7 @@ const ScientResultsRunTool = Tool.make("scient_results_run", {
 
 const ScientResultsListTool = Tool.make("scient_results_list", {
   description:
-    "List the linked results in this project: for each script, its newest result revision, what changed since it ran, its values with the Markdown that inserts each one, and its figures.",
+    "Linked results in this project: each script's newest revision, what changed since it ran, and its values with their Markdown.",
   parameters: EmptyToolInput,
   success: Schema.Struct({
     scripts: Schema.Array(
@@ -491,7 +491,7 @@ const ScientResultsListTool = Tool.make("scient_results_list", {
 
 const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
   description:
-    "The exact Markdown that inserts one linked result into a manuscript: a value by its pointer, or a figure, which is copied beside the manuscript (assets/results/) so the manuscript keeps that revision's figure. Insert the returned text with your file tools.",
+    "Markdown that cites one result in a manuscript: a value by JSON Pointer, or a figure (copied beside the manuscript). Insert it with your file tools.",
   parameters: Schema.Struct({
     document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
     revision: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(64)),
@@ -516,7 +516,7 @@ const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
 
 const ScientResultsCheckTool = Tool.make("scient_results_check", {
   description:
-    "Check every linked result in a Markdown manuscript: whether the script or a file it read changed since its revision ran, whether a newer revision gives a different value, and whether the shown text was edited. To update, re-run with scient_results_run and replace each reference with the new revision's Markdown.",
+    "Check the linked results in a Markdown manuscript: out of date, a newer run, or edited. Update by re-running and replacing each reference with the new Markdown.",
   parameters: Schema.Struct({
     document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
   }),

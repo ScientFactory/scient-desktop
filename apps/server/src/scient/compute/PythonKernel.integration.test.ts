@@ -372,7 +372,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
               ),
             );
             expect(saved.outcome).toBe("failed");
-            expect(saved.writes).toEqual({ paths: [NodePath.join(deep, "plot.png")] });
+            expect(saved.writes?.paths).toEqual([NodePath.join(deep, "plot.png")]);
             const nested = completion(
               yield* execute(
                 harness,
@@ -380,7 +380,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
                 `get_ipython().run_cell(""); open(${JSON.stringify(NodePath.join(folder, "after.svg"))}, "w").close()`,
               ),
             );
-            expect(nested.writes).toEqual({ paths: [NodePath.join(folder, "after.svg")] });
+            expect(nested.writes?.paths).toEqual([NodePath.join(folder, "after.svg")]);
             yield* Effect.promise(() => NodeFSP.rm(folder, { recursive: true, force: true }));
             yield* harness.channel.shutdown({
               expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
