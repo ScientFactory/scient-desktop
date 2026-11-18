@@ -311,9 +311,18 @@ function ResultCard(props: {
         }
         placed.set(candidate.href, result.value.src);
       }
+      // Results added or removed during the copies would be left on the old run, so start over.
+      const live = props.controller.resultReferences();
+      if (
+        live.map((reference) => reference.href).join("\n") !==
+        props.references.map((reference) => reference.href).join("\n")
+      ) {
+        setMessage("The document's results changed while updating. Update again.");
+        return;
+      }
       // Positions are read after the copies, so edits made meanwhile are kept.
       const updates: ResultUpdate[] = [];
-      for (const current of props.controller.resultReferences()) {
+      for (const current of live) {
         const match = group.find(({ candidate }) => candidate.href === current.href);
         if (match === undefined) continue;
         const href = formatResultTarget({
@@ -470,6 +479,9 @@ function ResultPicker(props: {
   const list = useStableCallback(
     useAtomCommand(computeEnvironment.resultsList, { reportFailure: false }),
   );
+  const canPlace = useAtomValue(
+    computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
+  );
   const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
     reportFailure: false,
   });
@@ -599,7 +611,7 @@ function ResultPicker(props: {
                       </span>
                     </button>
                   )),
-                ...script.figures
+                ...(canPlace ? script.figures : [])
                   .filter((figure) => matches(`${script.latest.scriptPath} ${figure}`))
                   .map((figure) => (
                     <button

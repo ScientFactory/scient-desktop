@@ -57,6 +57,8 @@ export class ComputeResults extends Context.Service<
       revision: string,
       output: string,
     ) => Effect.Effect<Uint8Array | null, ComputeResultsError>;
+    /** Ends the wait for a run that will never settle, such as one whose runtime never started. */
+    readonly abandon: (sessionId: string, executionId: string) => Effect.Effect<void>;
     /** What publishing a run's results came to; it waits for the run to settle. */
     readonly publication: (
       sessionId: string,
@@ -216,7 +218,13 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return ComputeResults.of({ resolve, list, figure, publication });
+  const abandon = (sessionId: string, executionId: string) =>
+    Deferred.succeed(publicationFor(sessionId, executionId), {
+      _tag: "failed",
+      message: "The run stopped before it started.",
+    }).pipe(Effect.asVoid);
+
+  return ComputeResults.of({ resolve, list, figure, publication, abandon });
 });
 
 export const layer = Layer.effect(ComputeResults, make);

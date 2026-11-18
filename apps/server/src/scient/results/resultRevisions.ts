@@ -118,6 +118,7 @@ export interface SettledScriptRun {
           readonly path: string;
           readonly size: number;
           readonly modifiedAtNs: string;
+          readonly changedAtNs?: string | undefined;
         }>;
         readonly truncated: boolean;
       }
@@ -130,7 +131,12 @@ export type PublishOutcome =
 
 async function recordInput(
   root: string,
-  read: { readonly path: string; readonly size: number; readonly modifiedAtNs: string },
+  read: {
+    readonly path: string;
+    readonly size: number;
+    readonly modifiedAtNs: string;
+    readonly changedAtNs?: string | undefined;
+  },
 ): Promise<ComputeResultInput | null> {
   const relative = projectRelative(root, read.path);
   if (relative === null) return null;
@@ -151,7 +157,9 @@ async function recordInput(
     changedAtNs: status.ctimeNs.toString(),
     sha256: status.size <= MAXIMUM_HASHED_INPUT_BYTES ? await sha256File(read.path) : null,
     changedDuringRun:
-      Number(status.size) !== read.size || status.mtimeNs.toString() !== read.modifiedAtNs,
+      Number(status.size) !== read.size ||
+      status.mtimeNs.toString() !== read.modifiedAtNs ||
+      (read.changedAtNs !== undefined && status.ctimeNs.toString() !== read.changedAtNs),
   };
 }
 
@@ -177,9 +185,12 @@ export async function publishScriptRun(
     let bytes = 0;
     for (const name of files) {
       if (outputs.length >= MAXIMUM_OUTPUT_FILES) break;
+      const source = NodePath.join(run.stagingFolder, ...name.split("/"));
+      // Checked before copying, and again on the copy, which is what the revision keeps.
+      if (bytes + (await NodeFSP.stat(source)).size > MAXIMUM_OUTPUT_BYTES) continue;
       const target = NodePath.join(pending, "outputs", ...name.split("/"));
       await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-      await NodeFSP.copyFile(NodePath.join(run.stagingFolder, ...name.split("/")), target);
+      await NodeFSP.copyFile(source, target);
       const size = (await NodeFSP.stat(target)).size;
       if (bytes + size > MAXIMUM_OUTPUT_BYTES) {
         await NodeFSP.rm(target);
@@ -231,8 +242,9 @@ export async function publishScriptRun(
     await pruneFigureBytes(layout, run.projectId, run.scriptPath).catch(() => undefined);
     return { _tag: "published", revision };
   } finally {
-    await NodeFSP.rm(pending, { recursive: true, force: true });
-    await NodeFSP.rm(run.stagingFolder, { recursive: true, force: true });
+    // Cleanup never changes the outcome: a committed revision stays published.
+    await NodeFSP.rm(pending, { recursive: true, force: true }).catch(() => undefined);
+    await NodeFSP.rm(run.stagingFolder, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

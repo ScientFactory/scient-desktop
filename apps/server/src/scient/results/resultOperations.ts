@@ -22,9 +22,6 @@ import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type { ComputeRuntimeDescriptor } from "../compute/ComputeSessionService.ts";
 import type { ComputeResults } from "./ComputeResults.ts";
 
-/** How long a stopped run's own settlement may take to publish before Re-run reports the stop. */
-const SETTLE_GRACE = Duration.seconds(30);
-
 const failure = (message: string) => (cause: unknown) =>
   new ComputeResultsError({
     message:
@@ -57,7 +54,10 @@ async function sameCopyInProject(root: string, relativePath: string, bytes: Uint
  * project folder and resolves its Compute project the same way Compute does.
  */
 export function makeResultOperations(input: {
-  readonly gateway: Pick<ComputeRpcGateway, "project" | "startSession" | "getSession">;
+  readonly gateway: Pick<
+    ComputeRpcGateway,
+    "project" | "startSession" | "getSession" | "listExecutions"
+  >;
   readonly results: ComputeResults["Service"];
   readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
   readonly workspace: Pick<
@@ -103,7 +103,7 @@ export function makeResultOperations(input: {
       NodePath.posix.basename(request.output, extension).replace(/[^\p{L}\p{N}._-]+/gu, "-") ||
       "figure";
     const folder = NodePath.posix.join(
-      NodePath.posix.dirname(request.documentPath),
+      NodePath.posix.dirname(request.documentPath.replaceAll("\\", "/")),
       "assets",
       "results",
     );
@@ -179,7 +179,8 @@ export function makeResultOperations(input: {
         },
       })
       .pipe(Effect.mapError(failure("The run could not start.")));
-    // A session that ends before its run settles (a runtime that would not start) publishes nothing.
+    // A session that ends before it ever ran the script (a runtime that would not start) has no
+    // run to settle, so nothing would publish; a run that did start always settles and publishes.
     const stopped = input.gateway.getSession({ cwd: resultsProject.root, sessionId }).pipe(
       Effect.orElseSucceed(() => null),
       Effect.repeat({
@@ -187,11 +188,21 @@ export function makeResultOperations(input: {
         until: (session) =>
           session === null || TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status),
       }),
-      Effect.delay(SETTLE_GRACE),
-      Effect.map((session): ComputeResultsRerunResult => ({
-        _tag: "failed",
-        message: session?.lostReason ?? "The run stopped before it finished.",
-      })),
+      Effect.flatMap((session) =>
+        input.gateway.listExecutions({ cwd: resultsProject.root, sessionId, limit: 200 }).pipe(
+          Effect.orElseSucceed(() => []),
+          Effect.flatMap((executions) =>
+            executions.some((execution) => execution.request.executionId === executionId)
+              ? Effect.never
+              : input.results.abandon(sessionId, executionId).pipe(
+                  Effect.as<ComputeResultsRerunResult>({
+                    _tag: "failed",
+                    message: session?.lostReason ?? "The run stopped before it started.",
+                  }),
+                ),
+          ),
+        ),
+      ),
     );
     return yield* Effect.raceFirst(input.results.publication(sessionId, executionId), stopped);
   });

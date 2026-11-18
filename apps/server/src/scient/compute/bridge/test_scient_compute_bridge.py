@@ -868,7 +868,7 @@ class TestWriteRecorder(unittest.TestCase):
         record = self.cell(body)
         self.assertEqual(
             record["reads"],
-            [[self.path("cohort.csv"), opened.st_size, str(opened.st_mtime_ns)]],
+            [[self.path("cohort.csv"), opened.st_size, str(opened.st_mtime_ns), str(opened.st_ctime_ns)]],
         )
         self.assertFalse(record["readsTruncated"])
 

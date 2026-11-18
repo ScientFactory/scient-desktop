@@ -296,7 +296,7 @@ def _scient_install_write_recorder():
             status = stat(path)
         except OSError:
             return
-        reads[path] = [status.st_size, status.st_mtime_ns]
+        reads[path] = [status.st_size, status.st_mtime_ns, status.st_ctime_ns]
 
     def note(path):
         if isinstance(path, int):
@@ -366,7 +366,10 @@ def _scient_install_write_recorder():
             if invalid
             else {
                 "paths": list(record["paths"]),
-                "reads": [[path, size, str(mtime)] for path, (size, mtime) in record["reads"].items()],
+                "reads": [
+                    [path, size, str(mtime), str(ctime)]
+                    for path, (size, mtime, ctime) in record["reads"].items()
+                ],
                 "readsTruncated": record["reads_truncated"],
             }
         )
@@ -2015,14 +2018,15 @@ class ScientBridge:
         reads = record.get("reads")
         if isinstance(reads, list):
             usable = [
-                {"path": read[0], "size": read[1], "modifiedAtNs": read[2]}
+                {"path": read[0], "size": read[1], "modifiedAtNs": read[2], "changedAtNs": read[3]}
                 for read in reads
                 if isinstance(read, list)
-                and len(read) == 3
+                and len(read) == 4
                 and isinstance(read[0], str)
                 and len(read[0]) <= MAX_WRITE_RECORD_PATH
                 and isinstance(read[1], int)
                 and isinstance(read[2], str)
+                and isinstance(read[3], str)
             ]
             report["reads"] = usable[:MAX_READ_RECORD_PATHS]
             report["readsTruncated"] = (

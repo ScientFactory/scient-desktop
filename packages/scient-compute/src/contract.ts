@@ -327,6 +327,7 @@ export const ComputeRuntimeRead = Schema.Struct({
   size: Schema.Number,
   /** Nanoseconds as decimal text, which a JSON number cannot hold exactly. */
   modifiedAtNs: Schema.String.check(Schema.isPattern(/^\d{1,24}$/u)),
+  changedAtNs: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{1,24}$/u))),
 });
 export type ComputeRuntimeRead = typeof ComputeRuntimeRead.Type;
 
