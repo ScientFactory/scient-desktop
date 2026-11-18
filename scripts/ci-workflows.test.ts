@@ -9,6 +9,7 @@ const { computeQualificationSuites } = require("../.github/scripts/compute-ci-ga
   computeQualificationSuites: (paths: string[]) => {
     realKernel: boolean;
     managedPython: boolean;
+    pythonProduct: boolean;
     platforms: string;
   };
 };
@@ -62,9 +63,10 @@ function simulate(files: string[], eventName = "pull_request", reused = false, b
   const gates = Object.fromEntries(
     Object.entries({
       ...outputs,
-      compute_changed: full || compute.realKernel || compute.managedPython,
+      compute_changed: full || compute.realKernel || compute.managedPython || compute.pythonProduct,
       real_kernel: full || compute.realKernel,
       managed_python: full || compute.managedPython,
+      python_product: full || compute.pythonProduct,
       compute_platforms: full ? "all" : compute.platforms,
       windows_changed: full || needsWindowsPackaging(files),
       linux_changed: full || needsLinuxPackaging(files),

@@ -11,11 +11,18 @@ import {
   testGatePasses,
 } from "./compute-ci-gate.mjs";
 
-const neither = { realKernel: false, managedPython: false, platforms: "none" };
-const kernel = { realKernel: true, managedPython: false, platforms: "all" };
-const managed = { realKernel: false, managedPython: true, platforms: "all" };
-const both = { realKernel: true, managedPython: true, platforms: "all" };
-const linux = { realKernel: true, managedPython: true, platforms: "linux" };
+const suites = (realKernel, managedPython, pythonProduct, platforms) => ({
+  realKernel,
+  managedPython,
+  pythonProduct,
+  platforms,
+});
+const neither = suites(false, false, false, "none");
+const kernel = suites(true, false, false, "all");
+const managed = suites(false, true, false, "all");
+const both = suites(true, true, false, "all");
+const linux = suites(true, true, false, "linux");
+const product = "apps/server/src/scient/compute/ComputeProduct.integration.test.ts";
 
 NodeTest.test("known suite-specific inputs select only their consumer", () => {
   for (const path of [
@@ -35,6 +42,32 @@ NodeTest.test("known suite-specific inputs select only their consumer", () => {
   ])
     NodeAssert.deepEqual(computeQualificationSuites([path]), managed, path);
 });
+
+NodeTest.test(
+  "the product case alone runs only its Linux leg, and joins any wider selection",
+  () => {
+    NodeAssert.deepEqual(
+      computeQualificationSuites([product]),
+      suites(false, false, true, "linux"),
+    );
+    NodeAssert.equal(needsComputeQualification([product]), true);
+    NodeAssert.deepEqual(
+      computeQualificationSuites([
+        product,
+        "apps/server/src/scient/compute/managed-python/uv.lock",
+      ]),
+      suites(false, true, true, "all"),
+    );
+    NodeAssert.deepEqual(
+      computeQualificationSuites([product, "apps/server/src/scient/compute/Kernel.ts"]),
+      suites(true, true, true, "all"),
+    );
+    NodeAssert.deepEqual(
+      computeQualificationSuites([product, "pnpm-lock.yaml"]),
+      suites(true, true, true, "linux"),
+    );
+  },
+);
 
 NodeTest.test("Compute's own code and how it runs select both suites on every platform", () => {
   for (const path of [
@@ -97,6 +130,7 @@ NodeTest.test("selection is a union: adding files never removes required coverag
     "apps/server/src/preview/PortScanner.ts",
     "apps/server/src/scient/compute/managed-python/uv.lock",
     "apps/server/src/scient/compute/PythonComputeRuntime.ts",
+    product,
     "pnpm-lock.yaml",
   ];
   for (const first of paths)
@@ -111,6 +145,7 @@ NodeTest.test("selection is a union: adding files never removes required coverag
       NodeAssert.deepEqual(computeQualificationSuites([first, second]), {
         realKernel: a.realKernel || b.realKernel,
         managedPython: a.managedPython || b.managedPython,
+        pythonProduct: a.pythonProduct || b.pythonProduct,
         platforms,
       });
     }
@@ -206,6 +241,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
       changed: "false",
       real_kernel: "false",
       managed_python: "false",
+      python_product: "false",
       platforms: "none",
     });
     NodeFS.renameSync(
@@ -215,11 +251,19 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
     git("add", "apps", "moved.txt");
     git("-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "move out of scope");
     const head = git("rev-parse", "HEAD");
-    const all = { changed: "true", real_kernel: "true", managed_python: "true", platforms: "all" };
+    const all = {
+      changed: "true",
+      real_kernel: "true",
+      managed_python: "true",
+      python_product: "false",
+      platforms: "all",
+    };
+    // A comparison that can't be resolved runs everything, the product case included.
+    const failOpen = { ...all, python_product: "true" };
     NodeAssert.deepEqual(detect({ pull_request: { base: { sha: base } } }, head), all);
     NodeAssert.deepEqual(detect({ before: base }, head), all);
-    NodeAssert.deepEqual(detect({ before: "0".repeat(40) }, head), all);
-    NodeAssert.deepEqual(detect({}, head), all);
+    NodeAssert.deepEqual(detect({ before: "0".repeat(40) }, head), failOpen);
+    NodeAssert.deepEqual(detect({}, head), failOpen);
     // A normal PR and a post-merge push select the same relevant suites.
     NodeFS.mkdirSync(NodePath.join(directory, "apps/server/src/preview"), { recursive: true });
     NodeFS.writeFileSync(
@@ -233,6 +277,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
       changed: "true",
       real_kernel: "true",
       managed_python: "false",
+      python_product: "false",
       platforms: "all",
     };
     NodeAssert.deepEqual(detect({ before: head }, scannerHead), scanner);
@@ -251,6 +296,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
       changed: "true",
       real_kernel: "false",
       managed_python: "true",
+      python_product: "false",
       platforms: "all",
     };
     NodeAssert.deepEqual(detect({ before: scannerHead }, recipeHead), recipe);
