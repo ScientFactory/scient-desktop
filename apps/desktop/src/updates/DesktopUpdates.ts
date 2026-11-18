@@ -106,8 +106,18 @@ const UpdateInfo = Schema.Struct({
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
   releaseName: Schema.optional(Schema.NullOr(Schema.String)),
-  releaseDate: Schema.optional(Schema.String),
+  // SCIENT-FORK:START — electron-updater reads feeds as YAML 1.1, so an unquoted date arrives as a
+  // Date. Only release notes use it; a date that can't be read is dropped, never the offer.
+  releaseDate: Schema.optional(Schema.Unknown),
+  // SCIENT-FORK:END
 });
+
+// SCIENT-FORK:START
+function releaseDateText(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  return value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString() : undefined;
+}
+// SCIENT-FORK:END
 
 const DownloadProgressInfo = Schema.Struct({
   percent: Schema.Number,
@@ -205,6 +215,18 @@ export class DesktopUpdateUnexpectedActionError extends Schema.TaggedError<Deskt
     return `Desktop update ${this.action} action failed unexpectedly.`;
   }
 }
+
+// SCIENT-FORK:START — a check that finished without a result the app could read. Carries
+// electron-updater's own code, so outcomes classify it as a feed failure.
+export class DesktopUpdateUnreadableResultError extends Schema.TaggedError<DesktopUpdateUnreadableResultError>()(
+  "DesktopUpdateUnreadableResultError",
+  { code: Schema.Literal("ERR_UPDATER_INVALID_UPDATE_INFO") },
+) {
+  override get message(): string {
+    return "The update check finished without update information Scient could read.";
+  }
+}
+// SCIENT-FORK:END
 
 export class DesktopUpdateChannelManagedError extends Schema.TaggedError<DesktopUpdateChannelManagedError>()(
   "DesktopUpdateChannelManagedError",
@@ -1521,7 +1543,7 @@ export const make = Effect.gen(function* () {
             releaseNotesOfOfferedVersion(info),
             info.version,
             state.channel,
-            info.releaseDate,
+            releaseDateText(info.releaseDate),
           );
           yield* setState(
             reduceDesktopUpdateStateOnUpdateAvailable(
@@ -1549,7 +1571,30 @@ export const make = Effect.gen(function* () {
           errorTag: error._tag,
           cause: describeUpdateErrorCause(error.cause),
           event: error.event,
-        });
+        }).pipe(
+          // SCIENT-FORK:START — an offer the app cannot read ends the check that found it, so the
+          // control never stays at "Checking for updates…"; the check records it as a feed failure.
+          Effect.andThen(
+            Effect.gen(function* () {
+              // The check that found it failed, even when a re-check keeps an earlier offer shown.
+              yield* outcomes.checkFailed(
+                new DesktopUpdateUnreadableResultError({ code: "ERR_UPDATER_INVALID_UPDATE_INFO" }),
+              );
+              if ((yield* Ref.get(updateStateRef)).status !== "checking") return;
+              const failedAt = yield* currentIsoTimestamp;
+              yield* updateState((current) =>
+                current.status === "checking"
+                  ? reduceDesktopUpdateStateOnCheckFailure(
+                      current,
+                      "Scient could not read the update information. Try again later.",
+                      failedAt,
+                    )
+                  : current,
+              );
+            }),
+          ),
+          // SCIENT-FORK:END
+        );
       }),
     );
   });
