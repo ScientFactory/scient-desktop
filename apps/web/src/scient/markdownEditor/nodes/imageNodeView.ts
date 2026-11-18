@@ -4,6 +4,9 @@ import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import { createElement, Fragment } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import { observeResize } from "~/lib/observeResize";
 
@@ -74,9 +77,9 @@ function isStandaloneMarkdownImage(
 }
 
 function imageDisplayName(source: string): string {
-  if (source.startsWith("data:")) return "Embedded image";
-  if (source.startsWith("blob:")) return "Image";
-  const name = source.split(/[?#]/u)[0]?.split(/[\\/]/u).at(-1) || "Image";
+  if (source.startsWith("data:")) return m(msg("Embedded image"));
+  if (source.startsWith("blob:")) return m(msg("Image"));
+  const name = source.split(/[?#]/u)[0]?.split(/[\\/]/u).at(-1) || m(msg("Image"));
   try {
     return decodeURIComponent(name);
   } catch {
@@ -137,8 +140,8 @@ class ScientImageNodeView implements NodeView {
     this.caption.rows = 1;
     this.caption.dir = "auto";
     this.caption.dataset.keybindingCapture = "";
-    this.caption.setAttribute("aria-label", "Image caption");
-    this.caption.placeholder = "Add a caption…";
+    this.caption.setAttribute("aria-label", m(msg("Image caption")));
+    this.caption.placeholder = m(msg("Add a caption…"));
     this.caption.addEventListener("mousedown", this.handleCaptionPointer);
     this.caption.addEventListener("focus", this.handleCaptionFocus);
     this.caption.addEventListener("blur", this.handleCaptionBlur);
@@ -153,7 +156,7 @@ class ScientImageNodeView implements NodeView {
     this.fileInput.type = "file";
     this.fileInput.accept = "image/png,image/jpeg,image/gif,image/webp,image/avif";
     this.fileInput.hidden = true;
-    this.fileInput.setAttribute("aria-label", "Replace Markdown image");
+    this.fileInput.setAttribute("aria-label", m(msg("Replace Markdown image")));
     this.fileInput.addEventListener("change", this.handleReplacementFile);
     this.fileInput.addEventListener("cancel", this.handleReplacementCancel);
     this.dom.append(this.image, this.placeholder, this.caption, this.chrome, this.fileInput);
@@ -675,7 +678,7 @@ class ScientImageNodeView implements NodeView {
     if (link && this.options.onOpenImageLink)
       actions.push({
         id: "open-image-link",
-        label: "Open link",
+        label: m(msg("Open link")),
         closeViewer: true,
         run: () => this.options.onOpenImageLink?.(String(link.attrs.href), this.dom),
       });
@@ -683,21 +686,21 @@ class ScientImageNodeView implements NodeView {
       const position = this.getPos();
       actions.push({
         id: "edit-details",
-        label: "Edit details",
+        label: m(msg("Edit details")),
         closeViewer: true,
         run: guarded(this.editDetails),
       });
       if (position !== undefined && canCaptionImage(this.view.state.doc, position))
         actions.push({
           id: "edit-caption",
-          label: this.node.attrs.title ? "Edit caption" : "Add caption",
+          label: this.node.attrs.title ? m(msg("Edit caption")) : m(msg("Add caption")),
           closeViewer: true,
           run: guarded(this.editCaption),
         });
       if (this.options.uploadImage)
         actions.push({
           id: "replace-image",
-          label: this.replacing ? "Replacing image…" : "Replace image",
+          label: this.replacing ? m(msg("Replacing image…")) : m(msg("Replace image")),
           closeViewer: true,
           requiresUserActivation: this.referenceLabel() === null,
           disabled: this.replacing,
@@ -705,7 +708,7 @@ class ScientImageNodeView implements NodeView {
         });
       actions.push({
         id: "remove-image",
-        label: "Remove from document",
+        label: m(msg("Remove from document")),
         closeViewer: true,
         run: () => this.removeImage(target),
       });

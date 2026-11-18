@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import type { MessageResolver } from "~/i18n/messages";
 import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import { AlertCircle, FileText, MoreVertical, Star } from "lucide-react";
@@ -43,6 +46,7 @@ export function MetadataReviewIndicator(props: {
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onOpen: () => void;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -50,7 +54,7 @@ export function MetadataReviewIndicator(props: {
           <button
             type="button"
             className="rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
-            aria-label="Metadata needs review"
+            aria-label={gt("Metadata needs review")}
             onClick={(event) => {
               event.stopPropagation();
               props.onOpen();
@@ -62,11 +66,15 @@ export function MetadataReviewIndicator(props: {
       />
       <TooltipPopup side="top" align="end" className="max-w-72" variant="glass">
         <div className="space-y-1 px-3 py-2">
-          <div className="font-medium">Metadata needs review</div>
+          <div className="font-medium">
+            <T>Metadata needs review</T>
+          </div>
           <div className="text-muted-foreground">
             {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
           </div>
-          <div className="pt-1 text-muted-foreground">Click to view source details.</div>
+          <div className="pt-1 text-muted-foreground">
+            <T>Click to view source details.</T>
+          </div>
         </div>
       </TooltipPopup>
     </Tooltip>
@@ -79,18 +87,23 @@ export function RowStar(props: {
   readonly starred: boolean;
   readonly onToggle?: () => Promise<void>;
 }) {
+  const m = useMessages();
   const [pending, setPending] = useState(false);
   const onToggle = props.onToggle;
   if (!onToggle) {
     return (
       <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
         {props.starred ? (
-          <Star role="img" aria-label={LIBRARY_LABELS.starred} className="size-3.5 fill-current" />
+          <Star
+            role="img"
+            aria-label={m(LIBRARY_LABELS.starred)}
+            className="size-3.5 fill-current"
+          />
         ) : null}
       </span>
     );
   }
-  const label = props.starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star;
+  const label = props.starred ? m(LIBRARY_LABELS.removeStar) : m(LIBRARY_LABELS.star);
   return (
     <span
       className={
@@ -118,9 +131,14 @@ export function RowStar(props: {
   );
 }
 
-function creatorLabel(record: SourceRecord): string {
+function creatorLabel(record: SourceRecord, resolve: MessageResolver): string {
   const creator = record.creators[0];
-  return creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? "Unknown creator";
+  return (
+    creator?.familyName ??
+    creator?.literalName ??
+    creator?.givenName ??
+    resolve(msg("Unknown creator"))
+  );
 }
 
 /** A click opens the source, or picks it while picking or with a modifier key held. */
@@ -142,6 +160,7 @@ export function SourcePdfAction(props: {
   readonly row: SourceRowContext;
   readonly size: "icon-sm" | "icon-xs";
 }) {
+  const gt = useGT();
   const { record, row } = props;
   const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
   if (materialSelection._tag === "Selected") {
@@ -151,7 +170,7 @@ export function SourcePdfAction(props: {
         <Button
           variant="ghost"
           size={props.size}
-          aria-label={`Open PDF: ${pdf.fileName}`}
+          aria-label={gt("Open PDF: {fileName}", { fileName: pdf.fileName })}
           onClick={() => {
             row.onOpenPdf({
               sourceId: record.sourceId,
@@ -171,7 +190,9 @@ export function SourcePdfAction(props: {
       <Button
         variant="ghost"
         size={props.size}
-        aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
+        aria-label={gt("Choose a PDF to open: {title}", {
+          title: record.title ?? gt("Untitled source"),
+        })}
         onClick={() => row.onOpenDetails(record.sourceId)}
       >
         <FileText />
@@ -184,12 +205,13 @@ export function SourceMenuButton(props: {
   readonly record: SourceRecord;
   readonly row: SourceRowContext;
 }) {
+  const gt = useGT();
   return (
     <ScientTooltip content="More source actions">
       <Button
         variant="ghost"
         size="icon-xs"
-        aria-label="More source actions"
+        aria-label={gt("More source actions")}
         onClick={(event) => {
           event.stopPropagation();
           const bounds = event.currentTarget.getBoundingClientRect();
@@ -206,16 +228,19 @@ export function SourceProvenance(props: {
   readonly record: SourceRecord;
   readonly row: SourceRowContext;
 }) {
+  const m = useMessages();
   const { record, row } = props;
   const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
-  const membership = row.listed === "library" ? sourcePinLabel(record, row.listed) : "";
-  return `${sourceAddedLabel(record.importedAt, justAdded)}${membership}`;
+  const membership = row.listed === "library" ? sourcePinLabel(record, row.listed, m) : "";
+  return `${sourceAddedLabel(record.importedAt, justAdded, false, m)}${membership}`;
 }
 
 export function SourceRow(props: {
   readonly record: SourceRecord;
   readonly row: SourceRowContext;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const { record, row } = props;
   const metadataDiagnostics = row.diagnosticsBySourceId.get(record.sourceId);
   const onToggleStar = row.onToggleStar;
@@ -232,7 +257,7 @@ export function SourceRow(props: {
         <span className="ml-1 flex shrink-0">
           <Checkbox
             checked={row.selection.has(record.sourceId)}
-            aria-label={`Select ${record.title ?? "Untitled source"}`}
+            aria-label={gt("Select {title}", { title: record.title ?? gt("Untitled source") })}
             onCheckedChange={() => row.onToggleSelected(record.sourceId)}
           />
         </span>
@@ -252,13 +277,13 @@ export function SourceRow(props: {
               />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">
-                  {record.title ?? "Untitled source"}
+                  {record.title ?? gt("Untitled source")}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  {creatorLabel(record)}
+                  {creatorLabel(record, m)}
                   {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                  {sourceTrustLabel(record)}
-                  {record.fromSnapshot ? sourcePinLabel(record, row.listed) : null}
+                  {sourceTrustLabel(record, m)}
+                  {record.fromSnapshot ? sourcePinLabel(record, row.listed, m) : null}
                 </span>
               </span>
             </button>
@@ -279,10 +304,10 @@ export function SourceRow(props: {
         ) : null}
         <span className="flex w-3 shrink-0 items-center justify-center">
           {record.readingStatus === "unread" ? (
-            <ScientTooltip content={LIBRARY_LABELS.unread}>
+            <ScientTooltip content={m(LIBRARY_LABELS.unread)}>
               <span
                 role="img"
-                aria-label={LIBRARY_LABELS.unread}
+                aria-label={m(LIBRARY_LABELS.unread)}
                 className="size-1.5 rounded-full bg-sky-500"
               />
             </ScientTooltip>

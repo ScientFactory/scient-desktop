@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
@@ -6,6 +7,7 @@ import { Switch } from "../../components/ui/switch";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import {
   collectExternalSkillProviders,
@@ -52,6 +54,8 @@ export function AgentSkills({
   /** Words every listed skill matches; agents with no match are left out. */
   readonly query?: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const groups = collectExternalSkillProviders(providers)
     .filter(({ provider }) => instanceId === null || provider.instanceId === instanceId)
     .map((group) =>
@@ -162,11 +166,11 @@ export function AgentSkills({
       if (actual !== lane.desired) {
         toastManager.add({
           type: "error",
-          title: `Could not update ${input.name}`,
+          title: m(msg("Could not update {skill}", { skill: input.name })),
           description:
             actual === undefined
-              ? "Scient could not verify this skill's current state."
-              : "The provider did not apply your latest choice.",
+              ? m(msg("Scient could not verify this skill's current state."))
+              : m(msg("The provider did not apply your latest choice.")),
         });
       }
     };
@@ -231,7 +235,7 @@ export function AgentSkills({
       ) : null}
       {groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {query ? "No agent skills match." : "No agent reports its own skills yet."}
+          {query ? gt("No agent skills match.") : gt("No agent reports its own skills yet.")}
         </p>
       ) : (
         <div className="min-w-0">
@@ -240,7 +244,7 @@ export function AgentSkills({
               expandedGroup ? `external-skills-${expandedGroup.provider.instanceId}` : null
             }
           >
-            <SettingsSourceStrip label="Agent providers">
+            <SettingsSourceStrip label={gt("Agent providers")}>
               {groups.map(({ provider, skills }, index) => {
                 const label = providerLabel(provider.driver, provider.displayName);
                 const isOpen = expandedInstanceId === provider.instanceId;
@@ -275,8 +279,8 @@ export function AgentSkills({
               <SettingsSourcePanel id={`external-skills-${expandedGroup.provider.instanceId}`}>
                 {expandedGroup.skills.length === 0 ? (
                   <SettingsRow
-                    title="No global skills reported"
-                    description="Project skills stay with their workspace."
+                    title={gt("No global skills reported")}
+                    description={gt("Project skills stay with their workspace.")}
                   />
                 ) : null}
                 {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
@@ -312,15 +316,23 @@ export function AgentSkills({
                       description={description}
                       status={
                         pending && !pending.confirmed
-                          ? `${externalSkillSourceLabel(source)} · Updating`
-                          : externalSkillStatus({ ...skill, enabled: shownEnabled }, source)
+                          ? `${externalSkillSourceLabel(source, messages)} · ${gt("Updating", { $context: "a skill's switch is being applied" })}`
+                          : externalSkillStatus(
+                              { ...skill, enabled: shownEnabled },
+                              source,
+                              messages,
+                            )
                       }
                       control={
                         skill.canSetEnabled === true ? (
                           <Switch
                             checked={shownEnabled}
                             motion="none"
-                            aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
+                            aria-label={
+                              shownEnabled
+                                ? gt("Deactivate {skill}", { skill: displayName })
+                                : gt("Activate {skill}", { skill: displayName })
+                            }
                             onCheckedChange={(checked) =>
                               void updateSkill({
                                 instanceId: expandedGroup.provider.instanceId,

@@ -1,4 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import type { ScientMarkdownCommand } from "./prosemirror/commands";
 
@@ -46,27 +49,34 @@ export function isScientMarkdownTableContextMenuAction(
 }
 
 /** Native table actions reuse the editor command boundary instead of owning mutations. */
-export function scientMarkdownTableContextMenuItems(): readonly ContextMenuItem<ScientMarkdownTableContextMenuItemId>[] {
+export function scientMarkdownTableContextMenuItems(
+  resolve: MessageResolver = m,
+): readonly ContextMenuItem<ScientMarkdownTableContextMenuItemId>[] {
   return [
-    { id: "select-table", label: "Select whole table" },
+    { id: "select-table", label: resolve(msg("Select whole table")) },
     {
       id: "table-row-actions",
-      label: "Row",
+      label: resolve(msg("Row", { $context: "table row submenu" })),
       children: [
-        { id: "add-row-before", label: "Insert row above" },
-        { id: "add-row-after", label: "Insert row below" },
-        { id: "delete-row", label: "Delete row", destructive: true, separatorBefore: true },
+        { id: "add-row-before", label: resolve(msg("Insert row above")) },
+        { id: "add-row-after", label: resolve(msg("Insert row below")) },
+        {
+          id: "delete-row",
+          label: resolve(msg("Delete row")),
+          destructive: true,
+          separatorBefore: true,
+        },
       ],
     },
     {
       id: "table-column-actions",
-      label: "Column",
+      label: resolve(msg("Column", { $context: "table column submenu" })),
       children: [
-        { id: "add-column-before", label: "Insert column before" },
-        { id: "add-column-after", label: "Insert column after" },
+        { id: "add-column-before", label: resolve(msg("Insert column before")) },
+        { id: "add-column-after", label: resolve(msg("Insert column after")) },
         {
           id: "delete-column",
-          label: "Delete column",
+          label: resolve(msg("Delete column")),
           destructive: true,
           separatorBefore: true,
         },
@@ -74,24 +84,33 @@ export function scientMarkdownTableContextMenuItems(): readonly ContextMenuItem<
     },
     {
       id: "table-alignment-actions",
-      label: "Column alignment",
+      label: resolve(msg("Column alignment")),
       children: [
-        { id: "align-column-left", label: "Align left" },
-        { id: "align-column-center", label: "Align center" },
-        { id: "align-column-right", label: "Align right" },
-        { id: "align-column-default", label: "Clear alignment", separatorBefore: true },
+        { id: "align-column-left", label: resolve(msg("Align left")) },
+        { id: "align-column-center", label: resolve(msg("Align center")) },
+        { id: "align-column-right", label: resolve(msg("Align right")) },
+        {
+          id: "align-column-default",
+          label: resolve(msg("Clear alignment")),
+          separatorBefore: true,
+        },
       ],
     },
     {
       id: "table-direction-actions",
-      label: "Table direction",
+      label: resolve(msg("Table direction")),
       children: [
-        { id: "direction-auto", label: "Auto (detect from table)" },
-        { id: "direction-ltr", label: "Left to right" },
-        { id: "direction-rtl", label: "Right to left" },
+        { id: "direction-auto", label: resolve(msg("Auto (detect from table)")) },
+        { id: "direction-ltr", label: resolve(msg("Left to right")) },
+        { id: "direction-rtl", label: resolve(msg("Right to left")) },
       ],
     },
-    { id: "delete-table", label: "Delete table", destructive: true, separatorBefore: true },
+    {
+      id: "delete-table",
+      label: resolve(msg("Delete table")),
+      destructive: true,
+      separatorBefore: true,
+    },
   ];
 }
 

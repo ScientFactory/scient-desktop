@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { PdfMaterial, PdfSourceResolver } from "@scientfactory/document-artifacts";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
@@ -166,8 +167,12 @@ export function SourcePdfPreview(props: {
           {currentAsset._tag === "Failure" ? (
             <>
               <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
-              <h2>Couldn't open this PDF</h2>
-              <p>Scient could not create an authorized preview for this file.</p>
+              <h2>
+                <T>Couldn't open this PDF</T>
+              </h2>
+              <p>
+                <T>Scient could not create an authorized preview for this file.</T>
+              </p>
               <Button
                 size="xs"
                 variant="outline"
@@ -175,7 +180,7 @@ export function SourcePdfPreview(props: {
                 aria-busy={currentAsset.waiting === true}
                 onClick={refresh}
               >
-                Try again
+                <T>Try again</T>
               </Button>
             </>
           ) : (
@@ -184,7 +189,9 @@ export function SourcePdfPreview(props: {
                 className="size-6 animate-spin text-muted-foreground"
                 aria-hidden="true"
               />
-              <p>Preparing PDF…</p>
+              <p>
+                <T>Preparing PDF…</T>
+              </p>
             </>
           )}
         </div>

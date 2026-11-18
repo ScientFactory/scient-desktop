@@ -1,5 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { PlugIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
@@ -19,6 +20,8 @@ export function ExtensionsReceiptIndicator({
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const receipt = useEnvironmentQuery(
     extensionsDeliveryReceipt({ environmentId, input: { threadId } }),
   ).data?.receipt;
@@ -28,21 +31,36 @@ export function ExtensionsReceiptIndicator({
   return (
     <Popover>
       <PopoverTrigger
-        aria-label={`Connected services: ${delivered} delivered, ${skipped} skipped`}
+        aria-label={gt("Connected services: {delivered} delivered, {skipped} skipped", {
+          delivered,
+          skipped,
+        })}
         data-extensions-receipt=""
         render={<Button variant="outline" size="micro" className="shrink-0" />}
       >
         <PlugIcon aria-hidden className="size-3" />
         <span>{delivered}</span>
-        {skipped > 0 ? <span className="text-warning-foreground">· {skipped} skipped</span> : null}
+        {skipped > 0 ? (
+          <span className="text-warning-foreground">
+            <T>
+              · <Var>{skipped}</Var> skipped
+            </T>
+          </span>
+        ) : null}
       </PopoverTrigger>
       <PopoverPopup side="bottom" align="end" width="md" padding="comfortable">
         <div className="grid gap-3 text-xs">
-          <PopoverTitle>Connected services</PopoverTitle>
-          <section className="grid gap-1" aria-label="Delivered">
-            <h3 className="text-muted-foreground">Delivered to this session</h3>
+          <PopoverTitle>
+            <T>Connected services</T>
+          </PopoverTitle>
+          <section className="grid gap-1" aria-label={gt("Delivered")}>
+            <h3 className="text-muted-foreground">
+              <T>Delivered to this session</T>
+            </h3>
             {delivered === 0 ? (
-              <p className="text-muted-foreground">None</p>
+              <p className="text-muted-foreground">
+                <T>None</T>
+              </p>
             ) : (
               <ul className="grid gap-1">
                 {receipt.delivered.map((entry) => (
@@ -57,8 +75,10 @@ export function ExtensionsReceiptIndicator({
             )}
           </section>
           {skipped > 0 ? (
-            <section className="grid gap-1" aria-label="Skipped">
-              <h3 className="text-muted-foreground">Skipped</h3>
+            <section className="grid gap-1" aria-label={gt("Skipped")}>
+              <h3 className="text-muted-foreground">
+                <T>Skipped</T>
+              </h3>
               <ul className="grid gap-1">
                 {receipt.skipped.map(({ entry, reason }) => (
                   <li
@@ -68,7 +88,7 @@ export function ExtensionsReceiptIndicator({
                   >
                     <span className="truncate text-foreground">{entry.displayName}</span>
                     <span className="shrink-0 text-muted-foreground">
-                      {SKIP_REASON_LABELS[reason]}
+                      {messages(SKIP_REASON_LABELS[reason])}
                     </span>
                   </li>
                 ))}
@@ -83,7 +103,7 @@ export function ExtensionsReceiptIndicator({
               <Link to="/settings/extensions/installed" search={{ machine: environmentId }} />
             }
           >
-            Manage connected services
+            <T>Manage connected services</T>
           </Button>
         </div>
       </PopoverPopup>

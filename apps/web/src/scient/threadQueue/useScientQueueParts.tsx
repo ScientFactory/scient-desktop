@@ -7,12 +7,14 @@ import {
 import type { ThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { msg, T } from "gt-react";
 import { CircleAlertIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ComposerBanner } from "../../components/chat/ComposerBanner";
 import { Button } from "../../components/ui/button";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
+import { m } from "../../i18n/messages";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -69,7 +71,9 @@ export function useScientQueueParts(input: {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const cause = squashAtomCommandFailure(result);
       setActionError(
-        cause instanceof Error ? cause.message : "The queued message action failed. Try again.",
+        cause instanceof Error
+          ? cause.message
+          : m(msg("The queued message action failed. Try again.")),
       );
     }
     busyRef.current = false;
@@ -112,7 +116,7 @@ export function ScientQueueNotices(props: {
       {retry === null ? null : (
         <ComposerBanner.Actions>
           <Button size="xs" variant="outline" disabled={props.busy} onClick={retry}>
-            Retry
+            <T>Retry</T>
           </Button>
         </ComposerBanner.Actions>
       )}

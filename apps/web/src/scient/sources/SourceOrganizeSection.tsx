@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import {
   scientSourceTagCounts,
   scientSourceTagKey,
@@ -81,6 +82,7 @@ function AddTagMenu(props: {
   readonly tags: ReadonlyArray<string>;
   readonly libraryTags: ReadonlyArray<string>;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const own = new Set(props.tags.map(scientSourceTagKey));
   const typed = query.trim();
@@ -102,7 +104,7 @@ function AddTagMenu(props: {
         }
       >
         <Plus />
-        Tag
+        <T context="noun">Tag</T>
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-52">
         <MenuSearchInput
@@ -113,8 +115,8 @@ function AddTagMenu(props: {
           onKeyDown={(event) => {
             if (event.key === "Enter" && typed && !event.nativeEvent.isComposing) add(typed);
           }}
-          placeholder="Find or create a tag"
-          aria-label="Find or create a tag"
+          placeholder={gt("Find or create a tag")}
+          aria-label={gt("Find or create a tag")}
         />
         {choices.map((tag) => (
           <MenuItem key={scientSourceTagKey(tag)} onClick={() => add(tag)}>
@@ -123,10 +125,18 @@ function AddTagMenu(props: {
         ))}
         {typed && !exists && !own.has(needle) ? (
           <MenuItem onClick={() => add(typed)}>
-            <span className="min-w-0 truncate">Create “{typed}”</span>
+            <span className="min-w-0 truncate">
+              <T>
+                Create “<Var>{typed}</Var>”
+              </T>
+            </span>
           </MenuItem>
         ) : null}
-        {!typed && choices.length === 0 ? <MenuItem disabled>Type a new tag</MenuItem> : null}
+        {!typed && choices.length === 0 ? (
+          <MenuItem disabled>
+            <T>Type a new tag</T>
+          </MenuItem>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -134,13 +144,14 @@ function AddTagMenu(props: {
 
 /** A registry category; showing it lists the sources that share it. */
 function CategoryChip(props: { readonly label: string; readonly onShow: () => void }) {
+  const gt = useGT();
   return (
     <Badge variant="outline" className="max-w-full">
       <ScientTooltip content={props.label}>
         <button
           type="button"
           className="min-w-0 cursor-pointer truncate outline-none focus-visible:underline"
-          aria-label={`Show sources in ${props.label}`}
+          aria-label={gt("Show sources in {label}", { label: props.label })}
           onClick={props.onShow}
         >
           {props.label}
@@ -163,6 +174,7 @@ export function SourceFiling(props: {
   readonly onShowCollection: (collectionId: string) => void;
   readonly onRequestName: (request: SourcesNameRequest) => void;
 }) {
+  const gt = useGT();
   const { organize, sourceId } = props;
   const editable = organize.canChange;
   const tags = [...new Map(props.tags.map((tag) => [scientSourceTagKey(tag), tag])).values()];
@@ -193,7 +205,7 @@ export function SourceFiling(props: {
               }
             >
               <Plus />
-              Collection
+              <T context="noun, a collection of sources">Collection</T>
             </MenuTrigger>
             <MenuPopup align="start" side="bottom" className="min-w-48">
               {collections.map(({ collection, aboveIds }) => (
@@ -214,8 +226,8 @@ export function SourceFiling(props: {
               <MenuItem
                 onClick={() =>
                   props.onRequestName({
-                    title: "New collection",
-                    label: "Collection name",
+                    title: gt("New collection"),
+                    label: gt("Collection name"),
                     initialName: "",
                     action: "Create",
                     onSubmit: async (name) =>
@@ -223,7 +235,7 @@ export function SourceFiling(props: {
                   })
                 }
               >
-                New collection…
+                <T>New collection…</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -234,11 +246,11 @@ export function SourceFiling(props: {
           key={scientSourceTagKey(tag)}
           icon={<TagIcon className="text-muted-foreground" aria-hidden />}
           label={tag}
-          showLabel={`Show sources tagged ${tag}`}
+          showLabel={gt("Show sources tagged {tag}", { tag })}
           {...(editable
             ? {
                 remove: {
-                  label: `Remove tag ${tag}`,
+                  label: gt("Remove tag {tag}", { tag }),
                   disabled: organize.pending,
                   run: () =>
                     void organize.bulk(
@@ -256,11 +268,11 @@ export function SourceFiling(props: {
           key={collection.collectionId}
           icon={<Folder className="text-muted-foreground" aria-hidden />}
           label={label}
-          showLabel={`Show collection ${label}`}
+          showLabel={gt("Show collection {label}", { label })}
           {...(editable
             ? {
                 remove: {
-                  label: `Remove from ${label}`,
+                  label: gt("Remove from {label}", { label }),
                   disabled: organize.pending,
                   run: () => setMembership(collection.collectionId, false),
                 },
@@ -278,18 +290,19 @@ export function SourceCategories(props: {
   readonly categories: ScientSourceCategorySummary | undefined;
   readonly onShowCategory: (category: SourceCategoryChoice) => void;
 }) {
+  const m = useMessages();
   const studyDesign = props.categories?.studyDesign;
   const topics = props.categories?.topics ?? [];
   if (!studyDesign && topics.length === 0) return null;
   return (
     <section className="space-y-2">
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Categories
+        <T>Categories</T>
       </h3>
       <div className="flex flex-wrap items-center gap-1.5">
         {studyDesign ? (
           <CategoryChip
-            label={SCIENT_SOURCE_STUDY_DESIGN_LABELS[studyDesign]}
+            label={m(SCIENT_SOURCE_STUDY_DESIGN_LABELS[studyDesign])}
             onShow={() => props.onShowCategory({ studyDesign })}
           />
         ) : null}

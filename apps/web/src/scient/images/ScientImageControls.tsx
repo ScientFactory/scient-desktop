@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react";
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 
@@ -11,6 +12,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { VisualCardToolbar } from "../presentation/VisualCardToolbar";
 import { ScientImageActionMenu, type ScientImageAction } from "./ScientImageActionMenu";
@@ -68,6 +70,7 @@ export function ScientImageControls({ ref, ...props }: ScientImageControlsProps)
 }
 
 function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProps) {
+  const gt = useGT();
   const [background, setBackground] = useState<ScientImageBackground>("automatic");
   const [expanded, setExpanded] = useState(false);
   const [activeAction, setActiveAction] = useState<string | null>(null);
@@ -89,7 +92,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
     if (!resolveViewerSource) {
       setViewer({
         url: props.imageURL,
-        error: props.imageURL ? null : "Image unavailable",
+        error: props.imageURL ? null : m(msg("Image unavailable")),
         request,
       });
       return;
@@ -106,7 +109,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
           if (!mounted.current || request !== viewerRequest.current) return;
           setViewer({
             url: null,
-            error: cause instanceof Error ? cause.message : "Image unavailable",
+            error: cause instanceof Error ? cause.message : m(msg("Image unavailable")),
             request,
           });
         },
@@ -142,14 +145,17 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
   const actions: readonly ScientImageAction[] = [
     {
       id: "expand-image",
-      label: "Expand image",
+      label: gt("Expand image"),
       disabled: !props.loaded || !props.imageURL,
       run: expand,
     },
     ...props.actions,
     {
       id: "image-background",
-      label: `Background: ${background}`,
+      label: gt(
+        "{background, select, light {Background: light} dark {Background: dark} other {Background: automatic}}",
+        { background },
+      ),
       run: () =>
         setBackground((value) =>
           value === "automatic" ? "light" : value === "light" ? "dark" : "automatic",
@@ -159,7 +165,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
       ? [
           {
             id: "retry-image",
-            label: "Refresh image",
+            label: gt("Refresh image"),
             run: expanded ? loadViewer : props.onRetry,
           },
         ]
@@ -188,11 +194,11 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
     void Promise.resolve(result)
       .then(
         () => {
-          if (mounted.current && /copy/.test(action.id)) setMessage("Copied");
+          if (mounted.current && /copy/.test(action.id)) setMessage(m(msg("Copied")));
         },
         (cause: unknown) => {
           if (mounted.current)
-            setMessage(cause instanceof Error ? cause.message : "The image action failed.");
+            setMessage(cause instanceof Error ? cause.message : m(msg("The image action failed.")));
         },
       )
       .finally(() => {
@@ -238,7 +244,9 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
           },
           (cause: unknown) => {
             if (mounted.current)
-              setMessage(cause instanceof Error ? cause.message : "Could not open image actions.");
+              setMessage(
+                cause instanceof Error ? cause.message : m(msg("Could not open image actions.")),
+              );
           },
         )
         .finally(() => {
@@ -269,12 +277,12 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
             "opacity-0 group-hover/scient-image:opacity-100 focus-within:opacity-100",
         )}
       >
-        <VisualCardToolbar label="Image actions">
+        <VisualCardToolbar label={gt("Image actions")}>
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
-                  aria-label="Expand image"
+                  aria-label={gt("Expand image")}
                   disabled={!props.loaded || !props.imageURL}
                   onClick={expand}
                   size="icon-xs"
@@ -285,7 +293,9 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
             >
               <Maximize2Icon className="size-3" strokeWidth={1.5} />
             </TooltipTrigger>
-            <TooltipPopup>Expand image</TooltipPopup>
+            <TooltipPopup>
+              <T>Expand image</T>
+            </TooltipPopup>
           </Tooltip>
           {menu}
         </VisualCardToolbar>
@@ -322,7 +332,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
                 <span className="block truncate">{props.displayName}</span>
               </DialogTitle>
               <DialogDescription className="sr-only">
-                Expanded image. Pinch or Control-scroll to zoom.
+                <T>Expanded image. Pinch or Control-scroll to zoom.</T>
               </DialogDescription>
             </span>
             {menu}
@@ -345,7 +355,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
               onLoadError={() => {
                 setViewer((current) =>
                   current?.request === viewer.request
-                    ? { ...current, url: null, error: "Unable to display this image" }
+                    ? { ...current, url: null, error: m(msg("Unable to display this image")) }
                     : current,
                 );
                 props.onLoadError?.();
@@ -356,10 +366,10 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
               role="status"
               className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
             >
-              {viewer?.error ? viewer.error : "Loading image…"}
+              {viewer?.error ? viewer.error : gt("Loading image…")}
               {viewer?.error ? (
                 <Button type="button" size="xs" variant="outline" onClick={loadViewer}>
-                  Try again
+                  <T>Try again</T>
                 </Button>
               ) : null}
             </span>

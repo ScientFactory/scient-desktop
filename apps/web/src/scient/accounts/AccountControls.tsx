@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { AccountAccess, AccountTarget, GrantScope, EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, MoreHorizontalIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -92,7 +93,9 @@ export function ScopeSubmenu({
   const apply = (next: GrantScope) => void update({ target, scope: next });
   return (
     <MenuSub>
-      <MenuSubTrigger>Available in</MenuSubTrigger>
+      <MenuSubTrigger>
+        <T>Available in</T>
+      </MenuSubTrigger>
       <MenuSubPopup>
         <MenuCheckboxItem
           checked={scope.type === "all-projects"}
@@ -100,7 +103,7 @@ export function ScopeSubmenu({
             apply(toggleScope(scope, projectIds, { type: "all" }, checked))
           }
         >
-          All projects
+          <T>All projects</T>
         </MenuCheckboxItem>
         {projects.length ? <MenuSeparator /> : null}
         {projects.map((project) => (
@@ -128,11 +131,17 @@ export function ControlsMenu({
   disabled: boolean;
   children: React.ReactNode;
 }) {
+  const gt = useGT();
   return (
     <Menu>
       <MenuTrigger
         render={
-          <Button variant="ghost" size="icon-xs" aria-label="Account menu" disabled={disabled} />
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={gt("Account menu")}
+            disabled={disabled}
+          />
         }
       >
         <MoreHorizontalIcon />

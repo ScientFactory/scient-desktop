@@ -1,5 +1,8 @@
 import type { ScientSourceImportOperation } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import type { ReactNode } from "react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import type { ImportPreparation } from "./sourcesWorkflow";
 
@@ -48,21 +51,34 @@ export function selectSourcesActivity(
   };
 }
 
-export function importPreparationLabel(preparation: ImportPreparation): string {
-  if (preparation.kind === "file") return `Reading references in ${preparation.name}`;
-  if (preparation.kind === "local-files" && preparation.names.length === 1) {
-    return `Reading article metadata of ${preparation.names[0]}`;
+export function importPreparationLabel(
+  preparation: ImportPreparation,
+  resolve: MessageResolver = m,
+): string {
+  if (preparation.kind === "file") {
+    return resolve(msg("Reading references in {name}", { name: preparation.name }));
   }
-  return "Reading article metadata";
+  if (preparation.kind === "local-files" && preparation.names.length === 1) {
+    return resolve(msg("Reading article metadata of {name}", { name: preparation.names[0]! }));
+  }
+  return resolve(msg("Reading article metadata"));
 }
 
 /** "Importing 6 of 200": the references settled so far, of all the import takes. */
-export function importProgressLabel(operation: ScientSourceImportOperation): string {
+export function importProgressLabel(
+  operation: ScientSourceImportOperation,
+  resolve: MessageResolver = m,
+): string {
   const total = operation.items.length;
   const settled = operation.items.filter((item) => item.state !== "pending").length;
   return total > 0
-    ? `Importing ${settled.toLocaleString()} of ${total.toLocaleString()}`
-    : "Importing";
+    ? resolve(
+        msg("Importing {settled} of {total}", {
+          settled: settled.toLocaleString(),
+          total: total.toLocaleString(),
+        }),
+      )
+    : resolve(msg("Importing"));
 }
 
 export interface SourcesResultContent {

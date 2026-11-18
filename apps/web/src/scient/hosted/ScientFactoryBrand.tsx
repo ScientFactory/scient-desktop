@@ -1,3 +1,5 @@
+import { useGT } from "gt-react";
+
 import { ScientSymbol } from "~/components/ScientSymbol";
 
 const WEBSITE_URL = "https://scientfactory.com";
@@ -8,8 +10,9 @@ const WEBSITE_URL = "https://scientfactory.com";
  * a path so the app needs no extra font; its box is the font's line box, so it centers as text.
  */
 export function ScientFactoryBrand() {
+  const gt = useGT();
   return (
-    <a href={WEBSITE_URL} className="scient-hosted-brand" aria-label="ScientFactory home">
+    <a href={WEBSITE_URL} className="scient-hosted-brand" aria-label={gt("ScientFactory home")}>
       <ScientSymbol className="scient-hosted-brand-icon" />
       <svg
         aria-hidden

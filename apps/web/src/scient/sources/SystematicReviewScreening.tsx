@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import {
   scientReviewDecisions,
   scientReviewPendingIds,
@@ -60,6 +61,8 @@ export function SystematicReviewScreening(props: {
   readonly onOpenSource: (sourceId: string) => void;
   readonly onRequestName: (request: SourcesNameRequest) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const { detail, stage } = props;
   const [skipped, setSkipped] = useState<ReadonlyArray<string>>([]);
   const present = new Set(props.records.keys());
@@ -89,14 +92,14 @@ export function SystematicReviewScreening(props: {
     ...[...decisions.values()].map((entry) => ({
       sourceId: entry.sourceId,
       at: entry.decidedAt,
-      label: `${DECISION_LABELS[entry.decision]}${entry.reason ? ` · ${entry.reason}` : ""}`,
+      label: `${m(DECISION_LABELS[entry.decision])}${entry.reason ? ` · ${entry.reason}` : ""}`,
       by: entry.decidedBy,
       undo: () => props.onClear(entry.sourceId),
     })),
     ...notRetrieved.map((entry) => ({
       sourceId: entry.sourceId,
       at: entry.recordedAt,
-      label: "Not retrieved",
+      label: gt("Not retrieved"),
       by: entry.recordedBy,
       undo: () => props.onRetrieval(entry.sourceId, "sought"),
     })),
@@ -128,8 +131,8 @@ export function SystematicReviewScreening(props: {
   };
   const otherReason = () =>
     props.onRequestName({
-      title: "Exclusion reason",
-      label: "Reason",
+      title: gt("Exclusion reason"),
+      label: gt("Reason"),
       initialName: "",
       action: "Exclude",
       onSubmit: async (reason) => {
@@ -143,14 +146,14 @@ export function SystematicReviewScreening(props: {
       <p className="text-xs text-muted-foreground tabular-nums">
         {eligible === 0
           ? stage === "full-text"
-            ? "Records included at title and abstract screening appear here."
-            : "Log a search or add records to start screening."
-          : `${eligible - queue.length} of ${eligible} decided`}
+            ? gt("Records included at title and abstract screening appear here.")
+            : gt("Log a search or add records to start screening.")
+          : gt("{value} of {eligible} decided", { value: eligible - queue.length, eligible })}
       </p>
       {current ? (
         <article
           tabIndex={0}
-          aria-label="Record to screen"
+          aria-label={gt("Record to screen")}
           className="space-y-3 rounded-md border border-border p-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey) return;
@@ -168,14 +171,14 @@ export function SystematicReviewScreening(props: {
               className="cursor-pointer text-left text-sm font-medium outline-none hover:underline focus-visible:underline"
               onClick={() => props.onOpenSource(current)}
             >
-              {record?.title ?? "Untitled source"}
+              {record?.title ?? gt("Untitled source")}
             </button>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {[creatorLine(record), record?.label].filter(Boolean).join(" · ")}
             </p>
           </div>
           <p className="min-h-16 whitespace-pre-line text-sm leading-relaxed text-foreground/90">
-            {abstractReady ? (sourceDetail.abstract ?? "No abstract.") : null}
+            {abstractReady ? (sourceDetail.abstract ?? gt("No abstract.")) : null}
           </p>
           <div className="flex flex-wrap items-center gap-1.5">
             <Button
@@ -184,7 +187,7 @@ export function SystematicReviewScreening(props: {
               disabled={props.pending}
               onClick={() => decide("include")}
             >
-              Include
+              <T context="verb, screening decision">Include</T>
             </Button>
             <Button
               type="button"
@@ -193,7 +196,7 @@ export function SystematicReviewScreening(props: {
               disabled={props.pending}
               onClick={() => decide("maybe")}
             >
-              Maybe
+              <T context="screening decision">Maybe</T>
             </Button>
             <Menu>
               <MenuTrigger
@@ -201,7 +204,7 @@ export function SystematicReviewScreening(props: {
                   <Button type="button" size="sm" variant="outline" disabled={props.pending} />
                 }
               >
-                Exclude
+                <T context="verb, screening decision">Exclude</T>
                 <ChevronDown />
               </MenuTrigger>
               <MenuPopup align="start" side="bottom" className="min-w-48">
@@ -210,9 +213,13 @@ export function SystematicReviewScreening(props: {
                     {reason}
                   </MenuItem>
                 ))}
-                <MenuItem onClick={otherReason}>Other reason…</MenuItem>
+                <MenuItem onClick={otherReason}>
+                  <T>Other reason…</T>
+                </MenuItem>
                 <MenuSeparator />
-                <MenuItem onClick={() => decide("exclude")}>Exclude without a reason</MenuItem>
+                <MenuItem onClick={() => decide("exclude")}>
+                  <T>Exclude without a reason</T>
+                </MenuItem>
               </MenuPopup>
             </Menu>
             {stage === "full-text" ? (
@@ -223,7 +230,7 @@ export function SystematicReviewScreening(props: {
                 disabled={props.pending}
                 onClick={markNotRetrieved}
               >
-                Not retrieved
+                <T>Not retrieved</T>
               </Button>
             ) : null}
             {ordered.length > 1 ? (
@@ -236,28 +243,30 @@ export function SystematicReviewScreening(props: {
                   setSkipped((list) => [...list.filter((id) => id !== current), current])
                 }
               >
-                Skip
+                <T context="verb, button">Skip</T>
               </Button>
             ) : null}
           </div>
         </article>
       ) : eligible > 0 ? (
-        <p className="text-sm text-muted-foreground">Every record at this stage has a decision.</p>
+        <p className="text-sm text-muted-foreground">
+          <T>Every record at this stage has a decision.</T>
+        </p>
       ) : null}
       {recent.length > 0 ? (
         <section className="space-y-1">
           <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Recent decisions
+            <T>Recent decisions</T>
           </h3>
           <ul className="divide-y divide-border">
             {recent.map((entry) => (
               <li key={entry.sourceId} className="flex items-center gap-2 py-1.5 text-sm">
                 <span className="min-w-0 flex-1 truncate">
-                  {props.records.get(entry.sourceId)?.title ?? "Untitled source"}
+                  {props.records.get(entry.sourceId)?.title ?? gt("Untitled source")}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {entry.label}
-                  {entry.by === "agent" ? " · by agent" : ""}
+                  {entry.by === "agent" ? gt(" · by agent") : ""}
                 </span>
                 <Button
                   type="button"
@@ -266,7 +275,7 @@ export function SystematicReviewScreening(props: {
                   disabled={props.pending}
                   onClick={() => void entry.undo()}
                 >
-                  Undo
+                  <T context="verb, button that undoes a change">Undo</T>
                 </Button>
               </li>
             ))}

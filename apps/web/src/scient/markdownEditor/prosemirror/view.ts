@@ -16,6 +16,9 @@ import {
 } from "prosemirror-state";
 import { CellSelection, cellAround, findTable } from "prosemirror-tables";
 import { EditorView, type DirectEditorProps } from "prosemirror-view";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import type { ScientRichFenceContextMenuHandler } from "~/scient/presentation/RichFenceSourceActions";
 
@@ -324,7 +327,7 @@ function accessibilityAttributes(
     ? {
         ...common,
         "aria-multiline": "true",
-        ...(empty ? { "aria-placeholder": "Start writing" } : {}),
+        ...(empty ? { "aria-placeholder": m(msg("Start writing")) } : {}),
         role: "textbox",
       }
     : { ...common, role: "document" };

@@ -525,6 +525,7 @@ function equationReferences(
             row,
             number,
             kind: "bibliography",
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
             title: "Reference",
           });
         return number;
@@ -532,6 +533,7 @@ function equationReferences(
       result.bibliographies.set(position, {
         ...(external ? { items: compiled } : {}),
         title:
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
           documentClass === "book" || documentClass === "report" ? "Bibliography" : "References",
         labels,
       });
@@ -622,6 +624,7 @@ function equationReferences(
           row: 0,
           number,
           kind: "heading",
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
           title: level === 6 ? (appendix ? "Appendix" : "Chapter") : "Section",
         });
       if (node.attrs.unnumbered !== true && (level <= 3 || level === 6))
@@ -668,6 +671,7 @@ function equationReferences(
           row: 0,
           number,
           kind: table ? "table" : "figure",
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
           title: table ? "Table" : "Figure",
         });
     }
@@ -685,6 +689,7 @@ function equationReferences(
           row: 0,
           number,
           kind: "listing",
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
           title: "Listing",
         });
     }
@@ -709,6 +714,7 @@ function equationReferences(
           row: 0,
           number,
           kind: "algorithm",
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
           title: "Algorithm",
         });
     }
@@ -743,6 +749,7 @@ function equationReferences(
           labelAt > captionAt) ||
           (meta?.captionRange && meta?.labelRange?.from > meta.captionRange.from))
       )
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
         addLabel(label, { position, row: 0, number, kind: "figure", title: "Figure" });
       const panels: (string | null)[] = [];
       let panelCounter = 0;
@@ -763,6 +770,7 @@ function equationReferences(
               row: 0,
               number: number !== null && letter !== null ? number + letter : null,
               kind: "figure",
+              // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
               title: "Figure panel",
               panelIndex: index,
               panelNumber: letter,
@@ -813,6 +821,7 @@ function equationReferences(
           labelAt < 0 ||
           captionAt < labelAt)
       )
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- LaTeX's printed name (\figurename, \refname…), which follows the document like the PDF
         addLabel(label, { position, row: 0, number, kind: "table", title: "Table" });
       return false;
     }

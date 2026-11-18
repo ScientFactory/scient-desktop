@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
@@ -24,6 +25,7 @@ export function ScientVoiceCommentControl({
   readonly onTranscript: (text: string) => void;
   readonly className?: string;
 }): ReactNode {
+  const gt = useGT();
   const client = getVoiceBridge();
   const [ready, setReady] = useState(false);
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
@@ -52,7 +54,7 @@ export function ScientVoiceCommentControl({
   if (!client || !engineReady) return null;
   return (
     <ScientVoiceComposerControl
-      ariaLabel="Dictate citation comment"
+      ariaLabel={gt("Dictate citation comment")}
       {...(className ? { className } : {})}
       disabled={disabled}
       environmentId={environmentId}

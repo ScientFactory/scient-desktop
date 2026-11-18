@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react";
 import { useSignInRecording } from "./useSignInRecording";
 import { useUniversityBrowsing } from "./useUniversityBrowsing";
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
@@ -30,6 +31,7 @@ import { SaveStores } from "./SaveStores";
 import { autofilledTabs, filledTabRecord } from "./accountAutofill";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useThreadPreviewState } from "~/previewStateStore";
+import { m } from "~/i18n/messages";
 
 const NEVER_KEY = "scient.accounts.never-save.v1";
 /** A submitted form has had time to reject the password by now. */
@@ -67,6 +69,7 @@ function SaveSignIn({
   ]);
   const [busy, setBusy] = useState(false);
   const save = useAccountCommand(accountsState.save, environmentId);
+  const gt = useGT();
   const origin = new URL(capture.url).origin;
   const submit = async () => {
     if (busy || !selectedStores.length) return;
@@ -95,11 +98,13 @@ function SaveSignIn({
           className="w-72"
           role="dialog"
           aria-label={
-            comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"
+            comparison.result === "password-changed" ? gt("Update password?") : gt("Save sign-in?")
           }
         >
           <div className="text-sm font-medium">
-            {comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"}
+            {comparison.result === "password-changed"
+              ? gt("Update password?")
+              : gt("Save sign-in?")}
           </div>
           <div className="my-2 text-xs text-muted-foreground">
             {[new URL(origin).hostname, capture.username].filter(Boolean).join(" · ")}
@@ -121,7 +126,9 @@ function SaveSignIn({
               disabled={busy || selectedStores.length === 0}
               onClick={() => void submit()}
             >
-              {comparison.result === "password-changed" ? "Update" : "Save"}
+              {comparison.result === "password-changed"
+                ? gt("Update", { $context: "verb, saves the changed password" })
+                : gt("Save", { $context: "verb, saves the sign-in" })}
             </Button>
             <Button
               size="xs"
@@ -139,7 +146,7 @@ function SaveSignIn({
                 onClose();
               }}
             >
-              Don't ask for this site
+              <T>Don't ask for this site</T>
             </Button>
           </div>
         </div>
@@ -302,10 +309,10 @@ function DesktopBrowserAccountControls({
           ...(result.value.otp !== undefined ? { otp: result.value.otp } : {}),
         });
         if (filled) setFilledAccount({ accountId: account.accountId, url: requestedUrl });
-        else toastManager.add({ type: "error", title: "No sign-in form found" });
+        else toastManager.add({ type: "error", title: m(msg("No sign-in form found")) });
       }
     } catch {
-      toastManager.add({ type: "error", title: "Could not fill sign-in" });
+      toastManager.add({ type: "error", title: m(msg("Could not fill sign-in")) });
     }
     setBusy(false);
   };

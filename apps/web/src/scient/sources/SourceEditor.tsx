@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
@@ -171,13 +172,15 @@ export function SourceEditor(props: {
   readonly onRefreshed: (record: SourceRecord) => void;
   readonly onSaved: (record: SourceRecord) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const originalMetadata = metadataFromRecord(props.record);
   // An uncommon type the source already has is offered too, before Other source.
   const sourceTypeItems = (
     COMMON_SOURCE_TYPES.includes(props.record.type)
       ? COMMON_SOURCE_TYPES
       : [...COMMON_SOURCE_TYPES.slice(0, -1), props.record.type, "other" as const]
-  ).map((type) => ({ value: type, label: SCIENT_SOURCE_TYPE_LABELS[type] }));
+  ).map((type) => ({ value: type, label: m(SCIENT_SOURCE_TYPE_LABELS[type]) }));
   const [metadata, setMetadata] = useState<Metadata>(originalMetadata);
   const [yearText, setYearText] = useState(
     originalMetadata.issuedYear === null ? "" : String(originalMetadata.issuedYear),
@@ -256,7 +259,7 @@ export function SourceEditor(props: {
       if (skipped.length > 0) {
         toastManager.add({
           type: "warning",
-          title: "Some documents still use the old key",
+          title: gt("Some documents still use the old key"),
           description: skipped
             .slice(0, 3)
             .map((entry) => `${entry.path}: ${entry.reason}`)
@@ -285,17 +288,19 @@ export function SourceEditor(props: {
         >
           <PopoverTrigger render={<Button variant="ghost" size="xs" disabled={editor.saving} />}>
             <ChevronLeft />
-            Cancel
+            <T>Cancel</T>
           </PopoverTrigger>
           <PopoverPopup side="bottom" align="start" className="w-64" padding="none">
             <div className="space-y-2 p-2">
-              <div className="px-1 text-sm font-medium">Save your changes?</div>
+              <div className="px-1 text-sm font-medium">
+                <T>Save your changes?</T>
+              </div>
               <div className="flex items-center justify-end gap-1">
                 <Button size="xs" variant="ghost" onClick={() => setDiscardOpen(false)}>
-                  Keep editing
+                  <T>Keep editing</T>
                 </Button>
                 <Button size="xs" variant="ghost" onClick={props.onCancel}>
-                  Discard
+                  <T>Discard</T>
                 </Button>
                 <Button
                   size="xs"
@@ -305,7 +310,7 @@ export function SourceEditor(props: {
                     void save();
                   }}
                 >
-                  Save
+                  <T>Save</T>
                 </Button>
               </div>
             </div>
@@ -318,7 +323,7 @@ export function SourceEditor(props: {
           onClick={() => void save()}
         >
           {editor.saving ? <LoaderCircle className="animate-spin" /> : null}
-          Save
+          <T>Save</T>
         </Button>
       </div>
 
@@ -340,9 +345,14 @@ export function SourceEditor(props: {
 
           {editor.result?.outcome === "stale" ? (
             <div className="space-y-1 text-sm" role="alert">
-              <div className="font-medium">This source changed while you were editing it.</div>
+              <div className="font-medium">
+                <T>This source changed while you were editing it.</T>
+              </div>
               <div className="text-muted-foreground">
-                Cancel and reopen the editor to review the latest metadata. Your draft remains here.
+                <T>
+                  Cancel and reopen the editor to review the latest metadata. Your draft remains
+                  here.
+                </T>
               </div>
             </div>
           ) : null}
@@ -352,19 +362,21 @@ export function SourceEditor(props: {
               <div className="font-medium">{editor.result.duplicate.reason}</div>
               {editor.result.duplicate.kind === "possible-metadata-match" ? (
                 <Button type="button" size="xs" variant="outline" onClick={() => void save(true)}>
-                  Save as a separate source
+                  <T>Save as a separate source</T>
                 </Button>
               ) : (
                 <div className="text-muted-foreground">
-                  Use a different persistent identifier before saving.
+                  <T>Use a different persistent identifier before saving.</T>
                 </div>
               )}
             </div>
           ) : null}
 
-          <FormSection title="Source">
+          <FormSection title={gt("Source", { $context: "noun, a Library source" })}>
             <Field>
-              <FieldLabel>Type</FieldLabel>
+              <FieldLabel>
+                <T context="a source's type">Type</T>
+              </FieldLabel>
               <Select
                 value={metadata.type}
                 items={sourceTypeItems}
@@ -391,11 +403,13 @@ export function SourceEditor(props: {
             </Field>
             {metadata.type === "other" ? (
               <Field invalid={invalidCustomType}>
-                <FieldLabel>Source type</FieldLabel>
+                <FieldLabel>
+                  <T>Source type</T>
+                </FieldLabel>
                 <InlineInput
                   autoFocus
                   aria-invalid={invalidCustomType || undefined}
-                  placeholder="e.g. Protocol or guideline"
+                  placeholder={gt("e.g. Protocol or guideline")}
                   value={metadata.customType ?? ""}
                   onChange={(event) =>
                     setMetadata((current) => ({
@@ -405,12 +419,16 @@ export function SourceEditor(props: {
                   }
                 />
                 {invalidCustomType ? (
-                  <FieldError match={true}>Enter the source type.</FieldError>
+                  <FieldError match={true}>
+                    <T>Enter the source type.</T>
+                  </FieldError>
                 ) : null}
               </Field>
             ) : null}
             <Field>
-              <FieldLabel>Title</FieldLabel>
+              <FieldLabel>
+                <T context="a source field">Title</T>
+              </FieldLabel>
               <InlineInput
                 value={metadata.title ?? ""}
                 onChange={(event) =>
@@ -420,12 +438,14 @@ export function SourceEditor(props: {
             </Field>
           </FormSection>
 
-          <FormSection title="Creators">
+          <FormSection title={gt("Creators", { $context: "a source field, authors and editors" })}>
             {(metadata.incompleteCreatorRoles ?? []).map((role) => (
               <div key={role} className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="min-w-0 flex-1 text-muted-foreground">
-                  The {creatorRoleLabel(role).toLowerCase()} list ends with “and others”, so
-                  references end it with “et al.”.
+                  <T>
+                    The <Var>{creatorRoleLabel(role).toLowerCase()}</Var> list ends with “and
+                    others”, so references end it with “et al.”.
+                  </T>
                 </span>
                 <Button
                   type="button"
@@ -440,7 +460,9 @@ export function SourceEditor(props: {
                     }))
                   }
                 >
-                  The {creatorRoleLabel(role).toLowerCase()} list is complete
+                  <T>
+                    The <Var>{creatorRoleLabel(role).toLowerCase()}</Var> list is complete
+                  </T>
                 </Button>
               </div>
             ))}
@@ -451,7 +473,9 @@ export function SourceEditor(props: {
               >
                 <div className="grid grid-cols-2 gap-2">
                   <Field invalid={!creator.creatorType.trim()}>
-                    <FieldLabel>Role</FieldLabel>
+                    <FieldLabel>
+                      <T context="a creator's role">Role</T>
+                    </FieldLabel>
                     <Autocomplete
                       items={CREATOR_ROLE_LABELS}
                       mode="none"
@@ -465,7 +489,7 @@ export function SourceEditor(props: {
                     >
                       <AutocompleteInput
                         size="sm"
-                        aria-label="Role"
+                        aria-label={gt("Role", { $context: "a creator's role" })}
                         autoComplete="off"
                         spellCheck={false}
                         aria-invalid={!creator.creatorType.trim() || undefined}
@@ -482,7 +506,7 @@ export function SourceEditor(props: {
                     </Autocomplete>
                     {!creator.creatorType.trim() ? (
                       <FieldError match={true}>
-                        Enter a creator role, such as author or editor.
+                        <T>Enter a creator role, such as author or editor.</T>
                       </FieldError>
                     ) : null}
                   </Field>
@@ -491,7 +515,7 @@ export function SourceEditor(props: {
                       type="button"
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`Remove creator ${index + 1}`}
+                      aria-label={gt("Remove creator {value}", { value: index + 1 })}
                       onClick={() => {
                         setCreatorKeys((current) =>
                           current.filter((_, creatorIndex) => creatorIndex !== index),
@@ -510,7 +534,9 @@ export function SourceEditor(props: {
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <Field>
-                    <FieldLabel>Given name</FieldLabel>
+                    <FieldLabel>
+                      <T>Given name</T>
+                    </FieldLabel>
                     <InlineInput
                       value={creator.givenName ?? ""}
                       onChange={(event) => {
@@ -521,7 +547,9 @@ export function SourceEditor(props: {
                     />
                   </Field>
                   <Field>
-                    <FieldLabel>Family name</FieldLabel>
+                    <FieldLabel>
+                      <T>Family name</T>
+                    </FieldLabel>
                     <InlineInput
                       value={creator.familyName ?? ""}
                       onChange={(event) => {
@@ -533,7 +561,9 @@ export function SourceEditor(props: {
                   </Field>
                 </div>
                 <Field>
-                  <FieldLabel>Organization or group name</FieldLabel>
+                  <FieldLabel>
+                    <T>Organization or group name</T>
+                  </FieldLabel>
                   <InlineInput
                     value={creator.literalName ?? ""}
                     onChange={(event) => {
@@ -558,11 +588,11 @@ export function SourceEditor(props: {
                 }));
               }}
             >
-              <Plus /> Add creator
+              <Plus /> <T>Add creator</T>
             </Button>
           </FormSection>
 
-          <FormSection title="Abstract">
+          <FormSection title={gt("Abstract", { $context: "a source field" })}>
             <InlineTextarea
               value={metadata.abstract ?? ""}
               onChange={(event) =>
@@ -571,9 +601,11 @@ export function SourceEditor(props: {
             />
           </FormSection>
 
-          <FormSection title="Publication details">
+          <FormSection title={gt("Publication details")}>
             <Field>
-              <FieldLabel>Journal or publication</FieldLabel>
+              <FieldLabel>
+                <T>Journal or publication</T>
+              </FieldLabel>
               <InlineInput
                 value={metadata.containerTitle ?? ""}
                 onChange={(event) =>
@@ -583,7 +615,9 @@ export function SourceEditor(props: {
             </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field>
-                <FieldLabel>Date</FieldLabel>
+                <FieldLabel>
+                  <T context="a source field">Date</T>
+                </FieldLabel>
                 <InlineInput
                   value={metadata.issuedRaw ?? ""}
                   onChange={(event) =>
@@ -592,7 +626,9 @@ export function SourceEditor(props: {
                 />
               </Field>
               <Field invalid={invalidYear}>
-                <FieldLabel>Year</FieldLabel>
+                <FieldLabel>
+                  <T context="a source field, publication year">Year</T>
+                </FieldLabel>
                 <InlineInput
                   inputMode="numeric"
                   aria-invalid={invalidYear || undefined}
@@ -600,12 +636,16 @@ export function SourceEditor(props: {
                   onChange={(event) => setYearText(event.target.value)}
                 />
                 {invalidYear ? (
-                  <FieldError match={true}>Enter a four-digit year.</FieldError>
+                  <FieldError match={true}>
+                    <T>Enter a four-digit year.</T>
+                  </FieldError>
                 ) : null}
               </Field>
             </div>
             <Field>
-              <FieldLabel>Publisher</FieldLabel>
+              <FieldLabel>
+                <T context="a source field">Publisher</T>
+              </FieldLabel>
               <InlineInput
                 value={metadata.publisher ?? ""}
                 onChange={(event) =>
@@ -617,7 +657,11 @@ export function SourceEditor(props: {
               {(["volume", "issue", "pages"] as const).map((field) => (
                 <Field key={field}>
                   <FieldLabel>
-                    {field === "volume" ? "Volume" : field === "issue" ? "Issue" : "Pages"}
+                    {field === "volume"
+                      ? gt("Volume", { $context: "a source field, the journal volume" })
+                      : field === "issue"
+                        ? gt("Issue", { $context: "a source field, the journal issue" })
+                        : gt("Pages", { $context: "a page range" })}
                   </FieldLabel>
                   <InlineInput
                     value={metadata[field] ?? ""}
@@ -629,10 +673,12 @@ export function SourceEditor(props: {
               ))}
             </div>
             <Field>
-              <FieldLabel>Language</FieldLabel>
+              <FieldLabel>
+                <T context="a source field">Language</T>
+              </FieldLabel>
               <InlineInput
                 value={metadata.language ?? ""}
-                placeholder="e.g. en"
+                placeholder={gt("e.g. en")}
                 onChange={(event) =>
                   setMetadata((current) => ({ ...current, language: event.target.value }))
                 }
@@ -640,7 +686,7 @@ export function SourceEditor(props: {
             </Field>
           </FormSection>
 
-          <FormSection title="More details">
+          <FormSection title={gt("More details")}>
             {SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => name in more).map(({ name, label }) => (
               <Field key={name}>
                 <FieldLabel>{label}</FieldLabel>
@@ -662,7 +708,7 @@ export function SourceEditor(props: {
                     type="button"
                     size="icon-sm"
                     variant="ghost"
-                    aria-label={`Remove ${label}`}
+                    aria-label={gt("Remove {label}", { label })}
                     onClick={() => setMore(name, null)}
                   >
                     <Trash2 />
@@ -676,8 +722,8 @@ export function SourceEditor(props: {
                 if (typeof name === "string" && name) setMore(name, "");
               }}
             >
-              <SelectTrigger size="sm" aria-label="Add a detail">
-                <SelectValue placeholder="Add a detail…" />
+              <SelectTrigger size="sm" aria-label={gt("Add a detail")}>
+                <SelectValue placeholder={gt("Add a detail…")} />
               </SelectTrigger>
               <SelectPopup>
                 {SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => !(name in more)).map(
@@ -691,10 +737,12 @@ export function SourceEditor(props: {
             </Select>
           </FormSection>
 
-          <FormSection title="Identifiers and links">
+          <FormSection title={gt("Identifiers and links")}>
             {metadata.citationKey !== undefined ? (
               <Field invalid={invalidCitationKey}>
-                <FieldLabel>Citation key</FieldLabel>
+                <FieldLabel>
+                  <T>Citation key</T>
+                </FieldLabel>
                 <InlineInput
                   value={metadata.citationKey}
                   spellCheck={false}
@@ -707,7 +755,7 @@ export function SourceEditor(props: {
                   <FieldError match={true}>{CITATION_KEY_SYNTAX_MESSAGE}</FieldError>
                 ) : metadata.citationKey !== originalMetadata.citationKey ? (
                   <FieldDescription>
-                    Citations in this project's documents will use the new key.
+                    <T>Citations in this project's documents will use the new key.</T>
                   </FieldDescription>
                 ) : null}
               </Field>
@@ -716,7 +764,9 @@ export function SourceEditor(props: {
               <div key={identifierKeys[index]} className="space-y-1">
                 <div className="flex items-end gap-2">
                   <Field className="w-24 shrink-0" invalid={!identifier.scheme.trim()}>
-                    <FieldLabel>Type</FieldLabel>
+                    <FieldLabel>
+                      <T context="a source's type">Type</T>
+                    </FieldLabel>
                     <InlineInput
                       value={identifier.scheme}
                       aria-invalid={!identifier.scheme.trim() || undefined}
@@ -731,7 +781,9 @@ export function SourceEditor(props: {
                     className="min-w-0 flex-1"
                     invalid={!identifier.scheme.trim() || !identifier.value.trim()}
                   >
-                    <FieldLabel>Value</FieldLabel>
+                    <FieldLabel>
+                      <T context="the value of a source field">Value</T>
+                    </FieldLabel>
                     <InlineInput
                       value={identifier.value}
                       aria-invalid={!identifier.value.trim() || undefined}
@@ -742,14 +794,16 @@ export function SourceEditor(props: {
                       }}
                     />
                     {!identifier.scheme.trim() || !identifier.value.trim() ? (
-                      <FieldError match={true}>Enter both an identifier type and value.</FieldError>
+                      <FieldError match={true}>
+                        <T>Enter both an identifier type and value.</T>
+                      </FieldError>
                     ) : null}
                   </Field>
                   <Button
                     type="button"
                     size="icon-sm"
                     variant="ghost"
-                    aria-label={`Remove identifier ${index + 1}`}
+                    aria-label={gt("Remove identifier {value}", { value: index + 1 })}
                     onClick={() => {
                       setIdentifierKeys((current) =>
                         current.filter((_, identifierIndex) => identifierIndex !== index),
@@ -780,10 +834,12 @@ export function SourceEditor(props: {
                 }));
               }}
             >
-              <Plus /> Add identifier
+              <Plus /> <T>Add identifier</T>
             </Button>
             <Field invalid={invalidUrl}>
-              <FieldLabel>Source URL</FieldLabel>
+              <FieldLabel>
+                <T>Source URL</T>
+              </FieldLabel>
               <InlineInput
                 type="url"
                 aria-invalid={invalidUrl || undefined}
@@ -793,18 +849,22 @@ export function SourceEditor(props: {
                 }
               />
               {invalidUrl ? (
-                <FieldError match={true}>Enter an HTTP or HTTPS source URL.</FieldError>
+                <FieldError match={true}>
+                  <T>Enter an HTTP or HTTPS source URL.</T>
+                </FieldError>
               ) : null}
             </Field>
           </FormSection>
 
-          <FormSection title="Tags">
+          <FormSection title={gt("Tags", { $context: "noun" })}>
             <Field>
               <InlineTextarea
                 value={tagsText}
                 onChange={(event) => setTagsText(event.target.value)}
               />
-              <FieldDescription>One tag per line.</FieldDescription>
+              <FieldDescription>
+                <T>One tag per line.</T>
+              </FieldDescription>
             </Field>
           </FormSection>
         </form>

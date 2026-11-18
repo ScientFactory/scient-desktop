@@ -1,4 +1,5 @@
 import { observeResize } from "~/lib/observeResize";
+import { useGT } from "gt-react";
 import { CornerDownLeft } from "lucide-react";
 import {
   type ReactNode,
@@ -313,6 +314,7 @@ function MarkdownHeadingHint(props: {
 }
 
 function FileName(props: { readonly name: string; readonly onEnter: (() => void) | null }) {
+  const gt = useGT();
   return (
     <>
       <span className="scient-new-document-file">{props.name}</span>
@@ -320,7 +322,7 @@ function FileName(props: { readonly name: string; readonly onEnter: (() => void)
         <button
           type="button"
           className="scient-new-document-enter"
-          aria-label="Name the file"
+          aria-label={gt("Name the file")}
           onMouseDown={(event) => event.preventDefault()}
           onClick={props.onEnter}
         >
@@ -337,6 +339,7 @@ function NameLine(props: {
   readonly fileName: (typed: string) => string;
   readonly onCommit: (name: string) => void;
 }) {
+  const gt = useGT();
   const [value, setValue] = useState(props.initial);
   const [focused, setFocused] = useState(false);
   const field = useRef<HTMLInputElement>(null);
@@ -349,8 +352,8 @@ function NameLine(props: {
     <div className="scient-new-document-name">
       <input
         ref={field}
-        aria-label="Document name"
-        placeholder="Document name"
+        aria-label={gt("Document name")}
+        placeholder={gt("Document name")}
         value={value}
         spellCheck={false}
         onChange={(event) => setValue(event.target.value)}

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ImageOffIcon } from "lucide-react";
 
 import { MiddleTruncate } from "~/components/ui/middle-truncate";
@@ -10,14 +11,17 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
  * open in the system browser like chat links; anything else is shown as written.
  */
 export function MermaidBlockedResourcesNote(props: { readonly addresses: ReadonlyArray<string> }) {
+  const gt = useGT();
   return (
     <p
       role="note"
-      aria-label="Outside content not loaded"
+      aria-label={gt("Outside content not loaded")}
       className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 pb-2 text-xs text-muted-foreground"
     >
       <ImageOffIcon aria-hidden className="size-3.5 shrink-0" />
-      <span className="shrink-0">Outside content not loaded:</span>
+      <span className="shrink-0">
+        <T>Outside content not loaded:</T>
+      </span>
       {props.addresses.map((address, index) => {
         const remote = remoteImageAddress(address);
         const separator = index < props.addresses.length - 1 ? "," : null;
@@ -37,7 +41,7 @@ export function MermaidBlockedResourcesNote(props: { readonly addresses: Readonl
                   href={remote.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Open ${remote.label} in browser`}
+                  aria-label={gt("Open {label} in browser", { label: remote.label })}
                   className="inline-flex min-w-0 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                 >
                   <MiddleTruncate value={remote.label} showTitle={false} />

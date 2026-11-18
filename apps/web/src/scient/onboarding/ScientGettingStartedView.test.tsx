@@ -1,11 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   GettingStartedPreferencesStep,
   GettingStartedStartStep,
   ScientGettingStartedShell,
 } from "./ScientGettingStartedView";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 describe("ScientGettingStartedShell", () => {
   it("disables Back on the first step and offers Back and Skip later, outside a dialog", () => {

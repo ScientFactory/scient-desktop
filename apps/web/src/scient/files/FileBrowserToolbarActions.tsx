@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { FilePlus2Icon, FolderPlusIcon, FolderSyncIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -24,9 +25,12 @@ export const CONNECT_SERVICES: ReadonlyArray<{
   readonly label: string;
   readonly Mark: Icon;
 }> = [
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
   { id: "overleaf", label: "Overleaf", Mark: OverleafMark },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
   { id: "google-drive", label: "Google Drive", Mark: GoogleDriveMark },
   { id: "onedrive", label: "OneDrive", Mark: OneDriveMark },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
   { id: "dropbox", label: "Dropbox", Mark: DropboxMark },
 ];
 
@@ -68,9 +72,10 @@ function MenuButton(props: {
 export function NewDocumentButton(props: {
   readonly onChoose: (choice: NewDocumentChoice) => void;
 }) {
+  const gt = useGT();
   return (
     <MenuButton
-      label="New document"
+      label={gt("New document")}
       icon={<FilePlus2Icon aria-hidden className="scient-quiet-icon size-4" />}
     >
       <MenuPopup align="start" sideOffset={6} className="min-w-48">
@@ -86,10 +91,11 @@ export function ConnectFolderButton(props: {
   readonly onConnectOverleaf?: (() => void) | undefined;
 }) {
   // A service on the way says so where it was clicked, and the menu stays open.
+  const gt = useGT();
   const [comingSoon, setComingSoon] = useState<string | null>(null);
   return (
     <MenuButton
-      label="Connect an external folder"
+      label={gt("Connect an external folder")}
       icon={<FolderSyncIcon aria-hidden className="scient-quiet-icon size-4" />}
       onOpenChange={(open) => {
         if (!open) setComingSoon(null);
@@ -108,7 +114,9 @@ export function ConnectFolderButton(props: {
               <Mark aria-hidden className="size-4 opacity-100" />
               <span className="flex-1">{live ? `${label}…` : label}</span>
               {comingSoon === id ? (
-                <span className="ms-4 text-2xs text-muted-foreground">Coming soon</span>
+                <span className="ms-4 text-2xs text-muted-foreground">
+                  <T>Coming soon</T>
+                </span>
               ) : (
                 <FolderPlusIcon aria-hidden className="ms-4 size-3.5 text-muted-foreground/60" />
               )}

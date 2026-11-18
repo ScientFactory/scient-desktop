@@ -35,10 +35,7 @@ import { toastManager } from "~/components/ui/toast";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import {
-  MEDIA_FAILURE_COPY,
-  UNSUPPORTED_PREVIEW_TITLE,
-} from "~/scient/fileSurfaces/fileFailureCopy";
+import { mediaFailureCopy, UNSUPPORTED_PREVIEW_TITLE } from "~/scient/fileSurfaces/fileFailureCopy";
 
 // SCIENT-FORK:START — attachment PDFs open in Scient's reader
 import { AttachmentPdfPreview } from "~/scient/pdf/AttachmentPdfPreview";
@@ -321,7 +318,8 @@ export function AttachmentFilePreview(props: {
   ) : failure ? (
     <FileSurfaceFailure
       {...(failure.kind === "media" && (kind === "image" || kind === "audio" || kind === "video")
-        ? MEDIA_FAILURE_COPY[kind]
+        ? // SCIENT-FORK: failure copy in the active language.
+          mediaFailureCopy(kind, messages)
         : {
             title: gt("Couldn't open this file"),
             description: gt("Scient couldn't load this attachment."),
@@ -416,7 +414,8 @@ export function AttachmentFilePreview(props: {
     />
   ) : (
     <FileSurfaceMessage
-      title={UNSUPPORTED_PREVIEW_TITLE}
+      // SCIENT-FORK: the title in the active language.
+      title={messages(UNSUPPORTED_PREVIEW_TITLE)}
       description={unsupportedPreviewDescription(props.name, messages)}
     />
   );

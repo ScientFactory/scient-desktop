@@ -4,6 +4,7 @@ import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { useContext } from "react";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
+import { useGT } from "gt-react";
 
 export function LatexHeadingToolbar({
   editor,
@@ -14,6 +15,7 @@ export function LatexHeadingToolbar({
   draftKey: string;
   onRename: (before: string, after: string, fieldId?: string) => boolean;
 }) {
+  const gt = useGT();
   const { source } = useContext(LatexAuthoringContext);
   const labels = latexLabelInventory(source);
   const heading = useEditorState({
@@ -45,14 +47,14 @@ export function LatexHeadingToolbar({
   return (
     <div
       role="toolbar"
-      aria-label="Heading options"
+      aria-label={gt("Heading options")}
       data-context-fallback=""
       data-context-presentation="inline"
       className="scient-latex-context-toolbar scient-latex-heading-bar"
     >
       <LatexReferenceLabelControl
         key={heading.sourceId}
-        label="Heading reference label"
+        label={gt("Heading reference label")}
         allowEmpty
         disabled={!editor.isEditable}
         draftKey={`${draftKey}:heading:${heading.sourceId}:label`}

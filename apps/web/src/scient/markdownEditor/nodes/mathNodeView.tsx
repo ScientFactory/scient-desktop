@@ -1,8 +1,10 @@
 import { createRoot, type Root } from "react-dom/client";
+import { msg } from "gt-react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import { closeHistory, undo, redo } from "prosemirror-history";
+import { m } from "~/i18n/messages";
 import { MathInputController } from "~/scient/math/input/controller";
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
@@ -68,7 +70,7 @@ class ScientMathNodeView implements NodeView {
     if (this.sourceEditor instanceof HTMLTextAreaElement) this.sourceEditor.rows = 1;
     this.sourceEditor.setAttribute(
       "aria-label",
-      display ? "Display math source" : "Inline math source",
+      display ? m(msg("Display math source")) : m(msg("Inline math source")),
     );
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("compositionend", this.handleInput);

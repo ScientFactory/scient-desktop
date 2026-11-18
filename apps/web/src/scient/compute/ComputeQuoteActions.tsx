@@ -1,4 +1,5 @@
 import { EditorView } from "@codemirror/view";
+import { useGT } from "gt-react";
 import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   type ComputeCitation,
@@ -165,6 +166,7 @@ export function ComputeQuoteActions(
     readonly placeOf: (source: HTMLElement) => ComputePlace | null;
   },
 ) {
+  const gt = useGT();
   const composerRef = useComposerHandleContext();
   const { viewport, placeOf } = props;
   // Stable, so output arriving mid-drag does not restart the selection watcher.
@@ -192,8 +194,8 @@ export function ComputeQuoteActions(
         if (!accepted)
           toastManager.add({
             type: "warning",
-            title: "Could not add the citation",
-            description: "The chat input is not ready. Your selection is unchanged.",
+            title: gt("Could not add the citation"),
+            description: gt("The chat input is not ready. Your selection is unchanged."),
           });
         return accepted;
       }}

@@ -1,4 +1,7 @@
 import type { ContextMenuItem, ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { openShareLinkDialog } from "./shareDialogState";
 import { hasCloudAccount } from "./useCloudAccount";
@@ -11,23 +14,25 @@ export type ShareLinkMenuId = "share" | "share-link";
  */
 export function shareMenuItems(
   canShareWithGuest: boolean,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<ShareLinkMenuId | "share-guest">> {
   const canShareLink = hasCloudAccount();
   if (canShareLink && canShareWithGuest) {
     return [
       {
         id: "share",
-        label: "Share",
+        label: resolve(msg("Share", { $context: "verb, share the thread" })),
         icon: "user-plus",
         children: [
-          { id: "share-link", label: "Link…" },
-          { id: "share-guest", label: "Invite people…" },
+          { id: "share-link", label: resolve(msg("Link…", { $context: "share by link" })) },
+          { id: "share-guest", label: resolve(msg("Invite people…")) },
         ],
       },
     ];
   }
-  if (canShareLink) return [{ id: "share-link", label: "Share link…", icon: "link" }];
-  if (canShareWithGuest) return [{ id: "share-guest", label: "Invite people…", icon: "user-plus" }];
+  if (canShareLink) return [{ id: "share-link", label: resolve(msg("Share link…")), icon: "link" }];
+  if (canShareWithGuest)
+    return [{ id: "share-guest", label: resolve(msg("Invite people…")), icon: "user-plus" }];
   return [];
 }
 

@@ -1,4 +1,5 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { T } from "gt-react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { useEnvironmentQuery } from "~/state/query";
@@ -27,7 +28,7 @@ export function ScientSkillDocumentPreview(props: {
   if (document.data === null) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-        Loading skill…
+        <T>Loading skill…</T>
       </div>
     );
   }

@@ -1322,11 +1322,15 @@ function OpenCommandPaletteDialog(props: {
     }
 
     // SCIENT-FORK:START — Add project ▸ Overleaf project, right after GitHub
-    insertOverleafAddProjectItem(sourceItems, {
-      environmentId,
-      location: getAddProjectInitialQueryForEnvironment(environmentId),
-      isPrimary: environmentId === primaryEnvironmentId,
-    });
+    insertOverleafAddProjectItem(
+      sourceItems,
+      {
+        environmentId,
+        location: getAddProjectInitialQueryForEnvironment(environmentId),
+        isPrimary: environmentId === primaryEnvironmentId,
+      },
+      messages,
+    );
     // SCIENT-FORK:END
     return [{ value: `sources:${environmentId}`, label: gt("Sources"), items: sourceItems }];
   };
@@ -1821,6 +1825,7 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(
     ...feedbackPaletteItems(
       activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+      messages,
     ),
   );
   // SCIENT-FORK:END

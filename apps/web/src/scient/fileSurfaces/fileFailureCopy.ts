@@ -1,4 +1,7 @@
 import type { ProjectFileErrorReason, ProjectFileFailure } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** What a file surface says when it cannot show a file. */
 export interface FileFailureCopy {
@@ -10,7 +13,8 @@ export interface FileFailureCopy {
   readonly retryable: boolean;
 }
 
-export const UNSUPPORTED_PREVIEW_TITLE = "Preview unavailable";
+/** A `msg()` string: resolve it where it shows. */
+export const UNSUPPORTED_PREVIEW_TITLE = msg("Preview unavailable");
 
 /**
  * A server that predates location-independent reads refused the path as
@@ -47,12 +51,16 @@ function readDeniedDescription(input: {
   readonly hostOs: string | null;
 }): string {
   if (input.osErrorCode === "EACCES") {
-    return "The operating system denied access to this file. Check the permissions of the file and its folders on the computer that holds it.";
+    return msg(
+      "The operating system denied access to this file. Check the permissions of the file and its folders on the computer that holds it.",
+    );
   }
   if (input.osErrorCode === "EPERM" && input.hostOs === "darwin") {
-    return "macOS on the computer that holds this file didn't allow Scient to read it. If it is in a protected folder, allow access in System Settings → Privacy & Security there.";
+    return msg(
+      "macOS on the computer that holds this file didn't allow Scient to read it. If it is in a protected folder, allow access in System Settings → Privacy & Security there.",
+    );
   }
-  return "The operating system denied access to this file.";
+  return msg("The operating system denied access to this file.");
 }
 
 /**
@@ -69,22 +77,25 @@ export function fileReadFailureCopy(input: {
   readonly message: string | null;
   /** How many workspace files the missing path may have meant. */
   readonly candidateCount?: number;
+  readonly resolve?: MessageResolver;
 }): FileFailureCopy {
+  const resolve = input.resolve ?? m;
   const details = input.message?.trim() || null;
   switch (input.reason) {
     case "not_found":
       // With files to choose from, the choice is the point, not the failure.
       return (input.candidateCount ?? 0) > 0
         ? {
-            title: "Which file did you mean?",
-            description: "Nothing exists at this location.",
+            title: resolve(msg("Which file did you mean?")),
+            description: resolve(msg("Nothing exists at this location.")),
             details,
             retryable: true,
           }
         : {
-            title: "File not found",
-            description:
-              "Nothing exists at this location. It may have been moved, renamed, or deleted.",
+            title: resolve(msg("File not found")),
+            description: resolve(
+              msg("Nothing exists at this location. It may have been moved, renamed, or deleted."),
+            ),
             details,
             retryable: true,
           };
@@ -92,11 +103,13 @@ export function fileReadFailureCopy(input: {
       // No settings shortcut: even `EPERM` on a Mac does not prove a privacy
       // setting denied the read, and the setting lives on the host.
       return {
-        title: "Access denied",
-        description: readDeniedDescription({
-          osErrorCode: input.osErrorCode ?? null,
-          hostOs: input.hostOs ?? null,
-        }),
+        title: resolve(msg("Access denied")),
+        description: resolve(
+          readDeniedDescription({
+            osErrorCode: input.osErrorCode ?? null,
+            hostOs: input.hostOs ?? null,
+          }),
+        ),
         details,
         retryable: true,
       };
@@ -106,30 +119,36 @@ export function fileReadFailureCopy(input: {
   switch (input.failure) {
     case "binary_file":
       return {
-        title: UNSUPPORTED_PREVIEW_TITLE,
-        description: "Scient can't preview this type of file yet.",
+        title: resolve(UNSUPPORTED_PREVIEW_TITLE),
+        description: resolve(msg("Scient can't preview this type of file yet.")),
         details: null,
         retryable: false,
       };
     case "workspace_path_outside_root":
     case "resolved_path_outside_root":
       return {
-        title: "Outside this project",
-        description: "This file is outside the project folder. You can still open it read-only.",
+        title: resolve(msg("Outside this project")),
+        description: resolve(
+          msg("This file is outside the project folder. You can still open it read-only."),
+        ),
         details,
         retryable: false,
       };
     case "path_not_file":
       return {
-        title: "Not a file",
-        description: "This path points to a folder or another item that isn't a regular file.",
+        title: resolve(msg("Not a file")),
+        description: resolve(
+          msg("This path points to a folder or another item that isn't a regular file."),
+        ),
         details,
         retryable: true,
       };
     default:
       return {
-        title: "Couldn't open this file",
-        description: "It may have been moved, renamed, or deleted, or it can't be read right now.",
+        title: resolve(msg("Couldn't open this file")),
+        description: resolve(
+          msg("It may have been moved, renamed, or deleted, or it can't be read right now."),
+        ),
         details,
         retryable: true,
       };
@@ -141,14 +160,21 @@ export function fileReadFailureCopy(input: {
  * failed. It names the cause when the system gave one: a file renamed or
  * moved while it was open is the common case.
  */
-export function staleCopyNotice(reason: ProjectFileErrorReason | null): string {
+export function staleCopyNotice(
+  reason: ProjectFileErrorReason | null,
+  resolve: MessageResolver = m,
+): string {
   switch (reason) {
     case "not_found":
-      return "This file is no longer at this location. Showing the last available copy.";
+      return resolve(
+        msg("This file is no longer at this location. Showing the last available copy."),
+      );
     case "permission_denied":
-      return "This file can no longer be read. Showing the last available copy.";
+      return resolve(msg("This file can no longer be read. Showing the last available copy."));
     default:
-      return "The latest version could not be loaded. Showing the last available copy.";
+      return resolve(
+        msg("The latest version could not be loaded. Showing the last available copy."),
+      );
   }
 }
 
@@ -161,18 +187,22 @@ export function staleCopyNotice(reason: ProjectFileErrorReason | null): string {
 export function refreshFailureNoticeCopy(
   failure: { readonly reason: ProjectFileErrorReason; readonly osErrorCode: string | null } | null,
   hostOs: string | null,
+  resolve: MessageResolver = m,
 ): { readonly title: string; readonly description: string } | null {
   switch (failure?.reason) {
     case "not_found":
       return {
-        title: "This file is no longer at this location",
-        description:
-          "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+        title: resolve(msg("This file is no longer at this location")),
+        description: resolve(
+          msg(
+            "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+          ),
+        ),
       };
     case "permission_denied":
       return {
-        title: "This file can no longer be read",
-        description: `${readDeniedDescription({ osErrorCode: failure.osErrorCode, hostOs })} The last confirmed version is still open.`,
+        title: resolve(msg("This file can no longer be read")),
+        description: `${resolve(readDeniedDescription({ osErrorCode: failure.osErrorCode, hostOs }))} ${resolve(msg("The last confirmed version is still open."))}`,
       };
     default:
       return null;
@@ -183,10 +213,10 @@ export function refreshFailureNoticeCopy(
  * The one line shown above a file that can be viewed but not edited. It names
  * the reason when the environment gave it: the file lives outside the project.
  */
-export function readOnlyNotice(outsideWorkspace: boolean): string {
+export function readOnlyNotice(outsideWorkspace: boolean, resolve: MessageResolver = m): string {
   return outsideWorkspace
-    ? "This file is read-only because it is outside this project."
-    : "This file is read-only in Files.";
+    ? resolve(msg("This file is read-only because it is outside this project."))
+    : resolve(msg("This file is read-only in Files."));
 }
 
 export type MediaFailureKind = "image" | "audio" | "video" | "document";
@@ -194,24 +224,34 @@ export type MediaFailureKind = "image" | "audio" | "video" | "document";
 /**
  * Copy for a preview whose media or document frame failed to load. The
  * browser does not say why, so the description names the likely causes.
+ * The texts are `msg()` strings: resolve them where they show.
  */
 export const MEDIA_FAILURE_COPY: Readonly<
   Record<MediaFailureKind, Pick<FileFailureCopy, "title" | "description">>
 > = {
   image: {
-    title: "Couldn't display this image",
-    description: "It may have been moved, or its format may not be supported here.",
+    title: msg("Couldn't display this image"),
+    description: msg("It may have been moved, or its format may not be supported here."),
   },
   audio: {
-    title: "Couldn't play this audio",
-    description: "It may have been moved, or its format may not be supported here.",
+    title: msg("Couldn't play this audio"),
+    description: msg("It may have been moved, or its format may not be supported here."),
   },
   video: {
-    title: "Couldn't play this video",
-    description: "It may have been moved, or its format may not be supported here.",
+    title: msg("Couldn't play this video"),
+    description: msg("It may have been moved, or its format may not be supported here."),
   },
   document: {
-    title: "Couldn't load this preview",
-    description: "Scient couldn't prepare a preview of this file.",
+    title: msg("Couldn't load this preview"),
+    description: msg("Scient couldn't prepare a preview of this file."),
   },
 };
+
+/** `MEDIA_FAILURE_COPY[kind]` resolved; components pass `useMessages()`. */
+export function mediaFailureCopy(
+  kind: MediaFailureKind,
+  resolve: MessageResolver = m,
+): Pick<FileFailureCopy, "title" | "description"> {
+  const copy = MEDIA_FAILURE_COPY[kind];
+  return { title: resolve(copy.title), description: resolve(copy.description) };
+}

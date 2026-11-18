@@ -5,10 +5,12 @@ import type {
   ScientSourcesLibraryCopies,
   ScientSourcesRestoreStatus,
 } from "@t3tools/contracts";
+import { msg, T, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { randomUUID } from "../../lib/utils";
 import { changeLibraryRestore, organizeScientSources, readLibraryBackupStatus } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
@@ -86,14 +88,14 @@ function backupEnding(
         ...ending,
         operationId,
         failed: false,
-        title: BACKUP_LABELS.done,
+        title: m(BACKUP_LABELS.done),
         description: backupDoneLabel(backup),
       }
     : {
         ...ending,
         operationId,
         failed: true,
-        title: BACKUP_LABELS.failed,
+        title: m(BACKUP_LABELS.failed),
         description: backup.reason,
       };
 }
@@ -116,7 +118,7 @@ function joinEnding(
       kind: "join",
       operationId,
       failed: false,
-      title: join.added > 0 ? JOIN_LABELS.done : JOIN_LABELS.nothingNew,
+      title: join.added > 0 ? m(JOIN_LABELS.done) : m(JOIN_LABELS.nothingNew),
       description: joinDoneLabel(join),
     };
   }
@@ -127,7 +129,7 @@ function joinEnding(
     kind: "join",
     operationId,
     failed: true,
-    title: join.added > 0 ? JOIN_LABELS.stopped : JOIN_LABELS.failed,
+    title: join.added > 0 ? m(JOIN_LABELS.stopped) : m(JOIN_LABELS.failed),
     description: join.added > 0 ? joinStoppedLabel(join) : join.reason,
   };
 }
@@ -159,19 +161,19 @@ function restoreEnding(
     return ending(
       restore.restoreId,
       false,
-      restore.putBack ? RESTORE_LABELS.putBack : RESTORE_LABELS.restored,
+      restore.putBack ? m(RESTORE_LABELS.putBack) : m(RESTORE_LABELS.restored),
       restoredLabel(restore),
     );
   }
   if (restore.state === "failed") {
-    return ending(restore.failedAt, true, RESTORE_LABELS.failed, restore.reason);
+    return ending(restore.failedAt, true, m(RESTORE_LABELS.failed), restore.reason);
   }
   if (restore.state === "ready" && restore.refused) {
     // Another backup was asked for and refused; the one that was ready still waits.
     return ending(
       restore.refused.failedAt,
       true,
-      RESTORE_LABELS.failed,
+      m(RESTORE_LABELS.failed),
       restoreRefusedLabel(restore) ?? restore.refused.reason,
     );
   }
@@ -199,6 +201,7 @@ export function useLibraryBackup(input: {
   /** Return true when the ending was shown as the current result; it is then not kept. */
   readonly onEnded?: (ending: LibraryCopyEnding) => boolean;
 }) {
+  const resolve = useMessages();
   const context = `${input.environmentId}\0${input.root}`;
   const [reading, setReading] = useState<{
     readonly context: string;
@@ -285,7 +288,7 @@ export function useLibraryBackup(input: {
         show(asked, { backup: { state: "running", done: 0, total: 0 } });
         return load(asked);
       },
-      failed("backup", BACKUP_LABELS.failed, operationId),
+      failed("backup", m(BACKUP_LABELS.failed), operationId),
     );
   };
 
@@ -303,7 +306,7 @@ export function useLibraryBackup(input: {
         show(asked, { restore });
         report(restoreEnding(input.environmentId, restore));
       },
-      failed("restore", RESTORE_LABELS.failed, operationId),
+      failed("restore", m(RESTORE_LABELS.failed), operationId),
     );
   };
 
@@ -318,7 +321,7 @@ export function useLibraryBackup(input: {
         show(asked, { join: { state: "running", done: 0, total: 0 } });
         return load(asked);
       },
-      failed("join", JOIN_LABELS.failed, operationId),
+      failed("join", m(JOIN_LABELS.failed), operationId),
     );
   };
 
@@ -326,12 +329,12 @@ export function useLibraryBackup(input: {
   const waiting =
     copies?.restore.state === "ready" && !copies.restore.begun ? copies.restore : null;
   return {
-    joinLine: copies ? joinRunningLabel(copies.join) : null,
+    joinLine: copies ? joinRunningLabel(copies.join, resolve) : null,
     /** Adds what a backup, or a Library a restore replaced, holds and this Library lacks. */
     addFrom,
-    line: copies ? backupRunningLabel(copies.backup) : null,
+    line: copies ? backupRunningLabel(copies.backup, resolve) : null,
     start,
-    restoreLine: copies ? restoreLine(copies.restore) : null,
+    restoreLine: copies ? restoreLine(copies.restore, resolve) : null,
     /** True while a copy waits for the next start of Scient, or one is part way through. */
     restoreWaits: copies?.restore.state === "ready",
     /** Offered while a checked copy waits for the next start. */
@@ -365,6 +368,7 @@ function LibraryBackupNotice(props: {
   readonly restoreLine?: string | null;
   readonly onCancelRestore?: (() => void) | undefined;
 }) {
+  const m = useMessages();
   return (
     <>
       {props.line ? (
@@ -384,7 +388,7 @@ function LibraryBackupNotice(props: {
           </div>
           {props.onCancelRestore ? (
             <Button size="xs" variant="ghost" onClick={props.onCancelRestore}>
-              {RESTORE_LABELS.cancel}
+              {m(RESTORE_LABELS.cancel)}
             </Button>
           ) : null}
         </div>
@@ -416,13 +420,14 @@ export interface LibraryBackupActivityInput {
 /** The backup's, addition's and restore's running work, waiting restore and unseen endings. */
 export function libraryBackupActivity(
   backup: LibraryBackupActivityInput,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<SourcesActivityItem> {
   const items: SourcesActivityItem[] = [];
   if (backup.line) {
     items.push({
       key: "library-backup",
       tone: "running",
-      label: "Backing up the Library",
+      label: resolve(msg("Backing up the Library")),
       body: <LibraryBackupNotice line={backup.line} />,
     });
   }
@@ -430,7 +435,7 @@ export function libraryBackupActivity(
     items.push({
       key: "library-join",
       tone: "running",
-      label: "Adding from another Library",
+      label: resolve(msg("Adding from another Library")),
       body: <LibraryBackupNotice joinLine={backup.joinLine} />,
     });
   }
@@ -439,7 +444,9 @@ export function libraryBackupActivity(
       key: "library-restore",
       // A ready copy needs the person to restart Scient, or to cancel it.
       tone: backup.restoreWaits ? "decision" : "running",
-      label: backup.restoreWaits ? "A restore waits for the next start" : "Checking a backup",
+      label: backup.restoreWaits
+        ? resolve(msg("A restore waits for the next start"))
+        : resolve(msg("Checking a backup")),
       body: (
         <LibraryBackupNotice
           restoreLine={backup.restoreLine}
@@ -460,7 +467,7 @@ export function libraryBackupActivity(
             <p className="text-muted-foreground">{ending.description}</p>
           </div>
           <Button size="xs" variant="ghost" onClick={() => backup.acknowledgeEnding(ending.key)}>
-            Dismiss
+            <T>Dismiss</T>
           </Button>
         </div>
       ),

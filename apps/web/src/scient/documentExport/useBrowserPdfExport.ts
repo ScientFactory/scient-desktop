@@ -6,8 +6,10 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import * as Base64Url from "effect/encoding/Base64Url";
+import { msg } from "gt-react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { browserPdfExportEnvironment } from "~/state/browserPdfExport";
@@ -111,7 +113,7 @@ function exportBrowserPdf(
                     environmentId: target.threadRef.environmentId,
                     input: {
                       ...identity,
-                      title: artifact.title || "Browser export",
+                      title: artifact.title || m(msg("Browser export")),
                       sourceUrl: browserExportReceiptUrl(artifact.sourceUrl),
                       profile: artifact.profile,
                       media: artifact.media,

@@ -7,6 +7,10 @@ import {
   ScientFileReloadButton,
 } from "./ScientFileFreshnessControls";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 describe("ScientFileReloadButton", () => {
   it("keeps watcher recovery visible in the compact file header", () => {
     const markup = renderToStaticMarkup(

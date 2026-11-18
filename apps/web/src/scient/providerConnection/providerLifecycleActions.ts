@@ -1,6 +1,8 @@
+import { msg } from "gt-react";
 import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
 
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m } from "~/i18n/messages";
 
 export function hasManagedProviderUpdate(provider: ServerProvider): boolean {
   return provider.connection?.runtime?.actions.includes("update") ?? false;
@@ -111,12 +113,12 @@ export function providerUpdateIssue(
       return null;
     }
     return state.status === "failed"
-      ? { kind: "failed", message: state.message ?? "The update command failed." }
+      ? { kind: "failed", message: state.message ?? m(msg("The update command failed.")) }
       : {
           kind: "unchanged",
           message:
             state.message ??
-            "The update command finished, but Scient still detects the earlier version.",
+            m(msg("The update command finished, but Scient still detects the earlier version.")),
         };
   }
   const operation = provider.connection?.runtime?.operation;

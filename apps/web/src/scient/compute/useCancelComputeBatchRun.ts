@@ -1,8 +1,10 @@
 import type { AnalysisRunSnapshot, EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { m } from "~/i18n/messages";
 import { analysisEnvironment } from "~/state/analysis";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -45,8 +47,9 @@ export function useCancelComputeBatchRun() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to stop batch run",
-          description: error instanceof Error ? error.message : "Shutdown could not be confirmed.",
+          title: m(msg("Unable to stop batch run")),
+          description:
+            error instanceof Error ? error.message : m(msg("Shutdown could not be confirmed.")),
         }),
       );
     }

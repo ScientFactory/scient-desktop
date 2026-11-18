@@ -4,6 +4,7 @@ import type {
   ScientSkillInvocationPolicy,
   ServerProvider,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -80,7 +81,7 @@ export function ScientSkillsTitle() {
     // A block-level flex keeps the heading row at the text's height, like every other section title.
     <span className="flex items-center gap-2.5">
       <ScientSymbol className="size-5" weight="strong" />
-      Scient skills
+      <T>Scient skills</T>
     </span>
   );
 }
@@ -101,6 +102,7 @@ export function ScientSkillsLibrary({
   /** Words every listed skill matches; matching categories open. */
   readonly query?: string;
 }) {
+  const gt = useGT();
   const inventory = useEnvironmentQuery(scientSkillsInventory({ environmentId, input: {} }));
   const setActivation = useAtomCommand(setScientSkillUserActivation, {
     reportFailure: true,
@@ -143,16 +145,20 @@ export function ScientSkillsLibrary({
   return (
     <>
       {inventory.error ? (
-        <p className="text-sm text-muted-foreground">Skills unavailable: {inventory.error}</p>
+        <p className="text-sm text-muted-foreground">
+          {gt("Skills unavailable: {error}", { error: inventory.error })}
+        </p>
       ) : inventory.data === null ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">
+          <T>Loading…</T>
+        </p>
       ) : userSkills.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {query
-            ? "No skills match."
+            ? gt("No skills match.")
             : onlyActive
-              ? "None turned on. Turn them on from Discover."
-              : "This Scient build does not publish any skills."}
+              ? gt("None turned on. Turn them on from Discover.")
+              : gt("This Scient build does not publish any skills.")}
         </p>
       ) : (
         <div className="overflow-hidden rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/60">
@@ -172,7 +178,7 @@ export function ScientSkillsLibrary({
                     skill={skill}
                     pending={pending}
                     disabled={pendingReleaseKey !== null}
-                    status="Built into Scient · Personal"
+                    status={gt("Built into Scient · Personal")}
                     onOpen={() => setSelectedSkill(skill)}
                     onUpdate={(patch) => void updateSkill(skill, patch)}
                   />
@@ -183,7 +189,9 @@ export function ScientSkillsLibrary({
         </div>
       )}
       {userSkills.length > 0 ? (
-        <p className="text-xs text-muted-foreground">Changes apply to the next message.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>Changes apply to the next message.</T>
+        </p>
       ) : null}
       {selectedSkill ? (
         <ManagedSkillCard

@@ -1,6 +1,9 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import {
   scientMarkdownFootnoteDefinitionId,
@@ -105,7 +108,7 @@ class ScientReferenceNodeView implements NodeView {
       this.sourceEditor.dataset.scientMarkdownAtomEditor = "true";
       this.sourceEditor.setAttribute(
         "aria-label",
-        definition ? "Footnote text" : "Citation source",
+        definition ? m(msg("Footnote text")) : m(msg("Citation source")),
       );
       this.sourceEditor.addEventListener("mousedown", this.handleEditorMouseDown);
       this.sourceEditor.addEventListener("input", this.handleInput);
@@ -292,8 +295,8 @@ class ScientReferenceNodeView implements NodeView {
       this.marker.setAttribute(
         "aria-label",
         entry?.definitionPosition == null
-          ? `Footnote ${visibleNumber} has no definition`
-          : `Go to footnote ${visibleNumber}`,
+          ? m(msg("Footnote {number} has no definition", { number: visibleNumber }))
+          : m(msg("Go to footnote {number}", { number: visibleNumber })),
       );
       if (entry?.definitionPosition == null) this.marker.removeAttribute("aria-describedby");
       else this.marker.setAttribute("aria-describedby", scientMarkdownFootnoteDefinitionId(label));

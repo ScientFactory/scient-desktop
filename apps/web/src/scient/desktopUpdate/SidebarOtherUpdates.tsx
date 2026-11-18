@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ArrowUpIcon, CheckIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { flushSync } from "react-dom";
@@ -14,6 +15,7 @@ import {
 } from "~/components/ui/popover";
 import { SidebarMenuItem } from "~/components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import {
   isUpdateRunActive,
@@ -31,10 +33,10 @@ import { confirmServerStops, useOtherUpdates } from "./useOtherUpdates";
 const OTHER_UPDATES_DONE_VISIBLE_MS = 2_500;
 
 const CIRCLE_LABELS: Record<OtherUpdatesCircleState, string> = {
-  idle: "Other updates available",
-  updating: "Other updates in progress",
-  failed: "Other update failed",
-  done: "Other updates done",
+  idle: msg("Other updates available"),
+  updating: msg("Other updates in progress"),
+  failed: msg("Other update failed"),
+  done: msg("Other updates done"),
 };
 
 const CIRCLE_TONES: Record<OtherUpdatesCircleState, string> = {
@@ -87,6 +89,7 @@ function AskText({
   readonly stops: number;
   readonly className: string;
 }) {
+  const messages = useMessages();
   return (
     <span
       aria-live="polite"
@@ -94,7 +97,7 @@ function AskText({
       data-other-update-ask={asking || undefined}
       id={id}
     >
-      {asking ? stopsThreadsLabel(stops) : null}
+      {asking ? stopsThreadsLabel(stops, messages) : null}
     </span>
   );
 }
@@ -160,16 +163,19 @@ function RowEnd({
   readonly onUpdate: () => void;
   readonly onRetry: () => void;
 }) {
+  const gt = useGT();
   const muted = MUTED;
   switch (row.state.status) {
     case "idle":
       return busy ? (
-        <span className={muted}>waiting</span>
+        <span className={muted}>
+          <T context="update status">waiting</T>
+        </span>
       ) : (
         <AskingAction
           askId={askId}
           asking={asking}
-          label="Update"
+          label={gt("Update", { $context: "verb, installs this update" })}
           stops={stops}
           onAsk={onAsk}
           onRun={onUpdate}
@@ -178,24 +184,36 @@ function RowEnd({
     case "updating":
       return <span className={muted}>{otherUpdateProgressLabel(row.state.progress)}</span>;
     case "waiting":
-      return <span className={muted}>waiting for idle</span>;
+      return (
+        <span className={muted}>
+          <T>waiting for idle</T>
+        </span>
+      );
     case "failed":
       return row.state.retry && busy ? (
-        <span className={muted}>waiting</span>
+        <span className={muted}>
+          <T context="update status">waiting</T>
+        </span>
       ) : row.state.retry ? (
         <AskingAction
           askId={askId}
           asking={asking}
-          label="Retry"
+          label={gt("Retry")}
           stops={stops}
           onAsk={onAsk}
           onRun={onRetry}
         />
       ) : (
-        <span className="shrink-0 text-destructive">failed</span>
+        <span className="shrink-0 text-destructive">
+          <T context="update status">failed</T>
+        </span>
       );
     case "done":
-      return <span className={muted}>done</span>;
+      return (
+        <span className={muted}>
+          <T context="update status">done</T>
+        </span>
+      );
   }
 }
 
@@ -209,6 +227,7 @@ function OtherUpdateRowItem({
   onUpdate,
   onRetry,
 }: Omit<Parameters<typeof RowEnd>[0], "askId">) {
+  const gt = useGT();
   const askId = useId();
   const instanceId =
     row.item.kind === "provider"
@@ -226,12 +245,19 @@ function OtherUpdateRowItem({
         <span className="flex shrink-0 items-center gap-2.5">
           {instanceId !== null ? (
             <Link
-              aria-label={`Open ${row.item.name} settings${row.item.machine ? ` on ${row.item.machine}` : ""}`}
+              aria-label={
+                row.item.machine
+                  ? gt("Open {name} settings on {machine}", {
+                      name: row.item.name,
+                      machine: row.item.machine,
+                    })
+                  : gt("Open {name} settings", { name: row.item.name })
+              }
               className="text-foreground/80 underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
               search={{ environmentId: row.item.environmentId, instanceId }}
               to="/settings/providers"
             >
-              Settings
+              <T>Settings</T>
             </Link>
           ) : null}
           <RowEnd
@@ -276,6 +302,8 @@ export function SidebarOtherUpdates({
   readonly updateAll: (admitServer: (target: ServerUpdateTarget) => boolean) => Promise<void>;
   readonly standalone?: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const updates = useOtherUpdates(servers);
   const runActive = isUpdateRunActive(useUpdateEverythingRun());
   const [handle] = useState(() => PopoverCreateHandle());
@@ -320,8 +348,9 @@ export function SidebarOtherUpdates({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: m(msg("Could not update")),
+          description:
+            error instanceof Error ? error.message : m(msg("An unexpected error occurred.")),
         }),
       );
     }
@@ -345,7 +374,7 @@ export function SidebarOtherUpdates({
         openOnHover
         render={
           <button
-            aria-label={CIRCLE_LABELS[circle]}
+            aria-label={messages(CIRCLE_LABELS[circle])}
             className={cn(
               "relative grid size-5 shrink-0 cursor-pointer place-items-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
               !standalone && "mr-1.5",
@@ -400,7 +429,7 @@ export function SidebarOtherUpdates({
               <AskingAction
                 asking={asking === "all"}
                 emphasis
-                label="Update all"
+                label={gt("Update all")}
                 stops={updateAllStops}
                 onAsk={() => setAsking("all")}
                 onRun={() => void runUpdateAll()}

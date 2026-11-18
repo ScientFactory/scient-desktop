@@ -50,6 +50,7 @@ const material = (candidate: PersonalSkillCandidate) => {
   const source = candidate.material;
   if (!source) return "";
   if (source.text === undefined) {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- part of the prompt sent to the agent
     return `\n\nThe material is here: ${serializeComposerFileLink(source.path)}`;
   }
   // A fence longer than any run of backticks in the text keeps it whole.

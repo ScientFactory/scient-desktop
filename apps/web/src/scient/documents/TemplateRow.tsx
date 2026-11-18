@@ -14,6 +14,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronDown, Ellipsis } from "lucide-react";
 import { type MouseEvent, type ReactNode, useContext, useRef, useState } from "react";
 
@@ -56,6 +57,8 @@ export function TemplateRow(props: {
   readonly strip: Readonly<Record<string, string>>;
   readonly trailing?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const ids = props.templates.map((template) => template.id);
   const { layout, isDefault, update, restoreDefaults } = useTemplateLayout(ids);
   const nameOf = (id: string) => props.templates.find((template) => template.id === id)?.name ?? id;
@@ -98,7 +101,7 @@ export function TemplateRow(props: {
 
   const openActions = async (id: string, position: { x: number; y: number }) => {
     const items: ContextMenuItem<TemplateAction>[] = [
-      ...templateActions(layout, id, props.defaultTemplate, isOwn(id)),
+      ...templateActions(layout, id, props.defaultTemplate, isOwn(id), messages),
     ];
     const action = await readLocalApi()?.contextMenu.show(items, position);
     if (!action) return;
@@ -116,7 +119,7 @@ export function TemplateRow(props: {
 
   return (
     <div className="scient-new-document-bar">
-      <div role="radiogroup" aria-label="Template">
+      <div role="radiogroup" aria-label={gt("Template")}>
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -153,7 +156,9 @@ export function TemplateRow(props: {
               />
             }
           >
-            {chosenInMore ? nameOf(chosenInMore) : "More"}
+            {chosenInMore
+              ? nameOf(chosenInMore)
+              : gt("More", { $context: "menu of more templates" })}
             <ChevronDown aria-hidden="true" />
           </MenuTrigger>
           <MenuPopup
@@ -189,8 +194,14 @@ export function TemplateRow(props: {
               </SortableContext>
             </DndContext>
             {layout.more.length > 0 ? <MenuSeparator /> : null}
-            <MenuItem onClick={() => setNaming("new")}>New template…</MenuItem>
-            {isDefault ? null : <MenuItem onClick={restoreDefaults}>Restore defaults</MenuItem>}
+            <MenuItem onClick={() => setNaming("new")}>
+              <T>New template…</T>
+            </MenuItem>
+            {isDefault ? null : (
+              <MenuItem onClick={restoreDefaults}>
+                <T>Restore defaults</T>
+              </MenuItem>
+            )}
           </MenuPopup>
         </Menu>
       </div>
@@ -198,13 +209,17 @@ export function TemplateRow(props: {
       {preview ? <TemplatePreviewDialog {...preview} onClose={() => setPreview(null)} /> : null}
       <TemplateNameDialog
         open={naming !== null}
-        title={naming === "new" ? "New template" : "Rename template"}
+        title={naming === "new" ? gt("New template") : gt("Rename template")}
         initialName={
           naming === null || naming === "new"
-            ? `${nameOf(props.selected)} copy`
+            ? gt("{name} copy", { name: nameOf(props.selected) })
             : nameOf(naming.rename)
         }
-        actionFor={() => (naming === "new" ? "Create" : "Rename")}
+        actionFor={() =>
+          naming === "new"
+            ? gt("Create", { $context: "button, creates the template" })
+            : gt("Rename", { $context: "button, renames the template" })
+        }
         onSubmit={async (name) => {
           if (naming === "new") await props.onNewTemplate(name);
           else if (naming !== null) await userTemplates.rename(naming.rename, name);

@@ -1,6 +1,9 @@
 import type { AnalysisRunSummary } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 const TERMINAL_ANALYSIS_RUN_STATUSES = new Set<AnalysisRunSummary["receipt"]["status"]>([
   "succeeded",
@@ -17,8 +20,11 @@ export function isTerminalAnalysisRunStatus(
 
 export function emptyAnalysisRunOutputLabel(
   status: AnalysisRunSummary["receipt"]["status"],
+  resolve: MessageResolver = m,
 ): string {
-  return isTerminalAnalysisRunStatus(status) ? "No console output." : "Waiting for output…";
+  return isTerminalAnalysisRunStatus(status)
+    ? resolve(msg("No console output."))
+    : resolve(msg("Waiting for output…"));
 }
 
 export function analysisRunIdToAutoExpand(

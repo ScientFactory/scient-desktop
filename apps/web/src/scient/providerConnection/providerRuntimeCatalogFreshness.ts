@@ -1,4 +1,7 @@
 import type { ProviderRuntimeSummary } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 
@@ -9,6 +12,7 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 export function describeProviderRuntimeCatalog(
   runtime: ProviderRuntimeSummary,
   relativeTime: (iso: string) => string = formatRelativeTimeLabel,
+  resolve: MessageResolver = m,
 ): { readonly text: string; readonly failed: boolean } | null {
   const { catalog } = runtime;
   const managesRuntime =
@@ -32,27 +36,44 @@ export function describeProviderRuntimeCatalog(
     catalog.failure === null &&
     !catalog.checksDisabled;
   const releases = available
-    ? `Update ${available} available`
+    ? resolve(msg("Update {version} available"), { version: available })
     : current
-      ? "Up to date"
+      ? resolve(msg("Up to date"))
       : runtime.source === "scient_managed" &&
           qualified !== null &&
           qualified !== runtime.managedVersion
-        ? `Latest qualified ${qualified}`
+        ? resolve(msg("Latest qualified {version}"), { version: qualified })
         : null;
-  const lastChecked = catalog.checkedAt ? `last checked ${relativeTime(catalog.checkedAt)}` : null;
+  // After the releases phrase the freshness continues the line; alone it starts it.
+  const lead = releases === null;
   const freshness = catalog.checksDisabled
-    ? "automatic update checks are off"
+    ? lead
+      ? resolve(msg("Automatic update checks are off"))
+      : resolve(msg("automatic update checks are off"))
     : catalog.failure
-      ? [`couldn't check for updates ${relativeTime(catalog.failure.at)}`, lastChecked]
-          .filter((part) => part !== null)
-          .join(", ")
+      ? catalog.checkedAt
+        ? resolve(
+            lead
+              ? msg("Couldn't check for updates {failedAt}, last checked {checkedAt}")
+              : msg("couldn't check for updates {failedAt}, last checked {checkedAt}"),
+            {
+              failedAt: relativeTime(catalog.failure.at),
+              checkedAt: relativeTime(catalog.checkedAt),
+            },
+          )
+        : resolve(
+            lead
+              ? msg("Couldn't check for updates {failedAt}")
+              : msg("couldn't check for updates {failedAt}"),
+            { failedAt: relativeTime(catalog.failure.at) },
+          )
       : catalog.checkedAt
-        ? `checked ${relativeTime(catalog.checkedAt)}`
+        ? resolve(lead ? msg("Checked {time}") : msg("checked {time}"), {
+            time: relativeTime(catalog.checkedAt),
+          })
         : null;
-  const line = [releases, freshness].filter((part) => part !== null).join(" · ");
-  if (!line) return null;
+  const text = [releases, freshness].filter((part) => part !== null).join(" · ");
+  if (!text) return null;
   const failed = catalog.failure !== null && !catalog.checksDisabled;
-  const text = line.charAt(0).toUpperCase() + line.slice(1);
   return { text: failed ? `${text}. ${catalog.failure!.message}` : text, failed };
 }

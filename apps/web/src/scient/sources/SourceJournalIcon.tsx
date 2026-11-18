@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ScientSourceType } from "@scientfactory/scient-sources";
 import { journalIconIdentity } from "@t3tools/shared/scientJournalIdentity";
+import { useMessages } from "gt-react";
 import {
   Book,
   BookOpenText,
@@ -150,6 +151,7 @@ function JournalIconImage(props: {
   readonly bundled: ReturnType<typeof bundledJournalIcon>;
 }) {
   const { environmentId, root, resolveIcon, cacheKey, lookupKey, eligible, bundled } = props;
+  const messages = useMessages();
   const sourceId = props.record.sourceId;
   const [discovered, setDiscovered] = useState<{
     resolver: IconResolver;
@@ -252,7 +254,9 @@ function JournalIconImage(props: {
   return (
     <ScientTooltip
       content={
-        icon && !imageFailed ? icon.journalTitle : SCIENT_SOURCE_TYPE_LABELS[props.record.type]
+        icon && !imageFailed
+          ? messages(icon.journalTitle)
+          : messages(SCIENT_SOURCE_TYPE_LABELS[props.record.type])
       }
     >
       {journalIcon}

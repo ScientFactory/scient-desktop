@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type {
   MessageId,
   ConversationAttachment,
@@ -29,6 +30,7 @@ import {
   type SnapshotRow,
   type SnapshotWorkStep,
 } from "./snapshotTimeline";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** Bytes behind a blob the conversation names: an attachment or a rendered visual. */
 export type SnapshotBlobLoader = (sha256: string) => Promise<Blob>;
@@ -106,7 +108,7 @@ export function SnapshotConversationView({
         : null}
       {conversation.snapshot.omittedRunningTurn !== null ? (
         <p className="px-1 text-xs text-muted-foreground">
-          The last response was still being written when this copy was made.
+          <T>The last response was still being written when this copy was made.</T>
         </p>
       ) : null}
     </div>
@@ -141,7 +143,9 @@ function SnapshotRowView({ row, context }: { row: SnapshotRow; context: RowConte
     case "plan":
       return (
         <section className="rounded-xl border border-border px-4 py-3">
-          <h4 className="mb-1 text-xs font-medium text-muted-foreground">Plan</h4>
+          <h4 className="mb-1 text-xs font-medium text-muted-foreground">
+            <T>Plan</T>
+          </h4>
           <ChatMarkdown text={row.plan.markdown} cwd={undefined} headingLevelOffset={4} />
         </section>
       );
@@ -420,9 +424,10 @@ function WorkStep({
   step: SnapshotWorkStep;
   repository: SnapshotRepository | undefined;
 }) {
+  const gt = useGT();
   if (step.kind === "reasoning") {
     return (
-      <Disclosure summary="Thought">
+      <Disclosure summary={gt("Thought", { $context: "noun, the agent's reasoning" })}>
         <ChatMarkdown
           text={step.reasoning.text}
           cwd={undefined}
@@ -434,7 +439,7 @@ function WorkStep({
   return <WorkEntry entry={step.entry} repository={repository} />;
 }
 
-function workEntryTitle(entry: ConversationWorkLogEntry): string {
+function workEntryTitle(entry: ConversationWorkLogEntry, resolve: MessageResolver = m): string {
   switch (entry._tag) {
     case "tool":
     case "task":
@@ -442,7 +447,7 @@ function workEntryTitle(entry: ConversationWorkLogEntry): string {
     case "compaction":
       return entry.title;
     case "plan-steps":
-      return "Updated the plan";
+      return resolve(msg("Updated the plan"));
   }
 }
 
@@ -456,15 +461,17 @@ function WorkEntry({
   const failed =
     ((entry._tag === "tool" || entry._tag === "task") && entry.status === "failed") ||
     (entry._tag === "notice" && entry.level === "error");
-  const title = workEntryTitle(entry);
+  const gt = useGT();
+  const messages = useMessages();
+  const title = workEntryTitle(entry, messages);
   const details: ReactNode[] = [];
   if (entry._tag === "tool") {
     if (entry.command)
-      details.push(<BoundedBlock key="command" label="Command" text={entry.command} />);
+      details.push(<BoundedBlock key="command" label={gt("Command")} text={entry.command} />);
     if (entry.detail)
-      details.push(<BoundedBlock key="detail" label="Details" text={entry.detail} />);
+      details.push(<BoundedBlock key="detail" label={gt("Details")} text={entry.detail} />);
     if (entry.output)
-      details.push(<BoundedBlock key="output" label="Output" text={entry.output} />);
+      details.push(<BoundedBlock key="output" label={gt("Output")} text={entry.output} />);
     if (entry.changedFiles.length > 0) {
       details.push(
         <ChangedFiles
@@ -476,7 +483,7 @@ function WorkEntry({
       );
     }
   } else if ((entry._tag === "task" || entry._tag === "notice") && entry.detail) {
-    details.push(<BoundedBlock key="detail" label="Details" text={entry.detail} />);
+    details.push(<BoundedBlock key="detail" label={gt("Details")} text={entry.detail} />);
   } else if (entry._tag === "plan-steps") {
     details.push(
       <ol key="steps" className="list-decimal ps-5 text-sm">
@@ -540,7 +547,13 @@ function ChangedFiles({
           </li>
         );
       })}
-      {omitted > 0 ? <li className="text-muted-foreground">and {omitted} more</li> : null}
+      {omitted > 0 ? (
+        <li className="text-muted-foreground">
+          <T>
+            and <Var>{omitted}</Var> more
+          </T>
+        </li>
+      ) : null}
     </ul>
   );
 }

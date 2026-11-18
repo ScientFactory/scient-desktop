@@ -2,6 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -145,7 +146,7 @@ export function useLatexCitationSuggestions(input: {
       detail: [candidate.label === candidate.citationKey ? null : candidate.label, candidate.title]
         .filter((part) => part !== null)
         .join(" · "),
-      ...(candidate.sourceId && !reachesLibrary ? { note: LIBRARY_BIBLIOGRAPHY_HINT } : {}),
+      ...(candidate.sourceId && !reachesLibrary ? { note: m(LIBRARY_BIBLIOGRAPHY_HINT) } : {}),
     }));
     answered.current = { key, library, result };
     return result;

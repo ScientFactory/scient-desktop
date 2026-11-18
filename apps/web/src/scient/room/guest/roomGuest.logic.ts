@@ -6,9 +6,13 @@ import {
   type GuestThreadModel,
   type OrchestrationV2ProjectedTurnItem,
   type RoomGuestView,
+  type RoomRole,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import {
   applyGuestStreamEvent,
@@ -89,16 +93,32 @@ export function applyRoomStreamEvent(
   }
 }
 
+/** `msg()` strings: resolve them where they show. */
 export const roomEndedNotice: Record<EndReason, string> = {
-  closed: "The owner closed this room.",
-  removed: "Your access to this room was removed.",
-  expired: "Your access to this room has expired.",
-  archived: "This thread was archived. The room has ended.",
+  closed: msg("The owner closed this room."),
+  removed: msg("Your access to this room was removed."),
+  expired: msg("Your access to this room has expired."),
+  archived: msg("This thread was archived. The room has ended."),
 };
 
-export function formatRoomExpiry(expiresAt: string, nowMs: number) {
+const ROOM_ROLE_LABELS: Record<RoomRole, string> = {
+  watch: msg("Can view"),
+  discuss: msg("Can chat"),
+  agent: msg("Can use agent"),
+};
+
+/** What a person in the room may do, in the UI language. */
+export function roomRoleLabel(role: RoomRole, resolve: MessageResolver = m): string {
+  return resolve(ROOM_ROLE_LABELS[role]);
+}
+
+export function formatRoomExpiry(expiresAt: string, nowMs: number, resolve: MessageResolver = m) {
   const minutes = Math.floor((Date.parse(expiresAt) - nowMs) / 60_000);
-  if (minutes <= 0) return "Expired";
-  if (minutes >= 1440) return `${Math.floor(minutes / 1440)}d left`;
-  return minutes >= 60 ? `${Math.floor(minutes / 60)}h left` : `${minutes}m left`;
+  if (minutes <= 0) return resolve(msg("Expired", { $context: "the room link has expired" }));
+  if (minutes >= 1440) {
+    return resolve(msg("{days}d left", { days: Math.floor(minutes / 1440) }));
+  }
+  return minutes >= 60
+    ? resolve(msg("{hours}h left", { hours: Math.floor(minutes / 60) }))
+    : resolve(msg("{minutes}m left", { minutes }));
 }

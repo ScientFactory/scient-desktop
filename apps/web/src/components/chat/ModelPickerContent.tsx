@@ -1224,6 +1224,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           label={modelSourceSectionLabel(
                             sourceSection.section,
                             selectedEntry?.displayName ?? "provider",
+                            // SCIENT-FORK: the section label in the picker's language.
+                            messages,
                           )}
                           count={sourceSection.count}
                           expanded={sourceSection.expanded}

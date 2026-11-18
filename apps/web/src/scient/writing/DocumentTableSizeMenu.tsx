@@ -8,7 +8,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { Table as TableIcon } from "lucide-react";
+import type { MessageResolver } from "~/i18n/messages";
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
 import { DockCommandItem as MenuItem } from "./dockChrome";
 import {
@@ -144,10 +146,16 @@ function continuedTableSizeFromPointer({
     : dimensions;
 }
 
-function tableSizeLabel(dimensions: ScientMarkdownTableDimensions): string {
-  const columnLabel = dimensions.columns === 1 ? "column" : "columns";
-  const rowLabel = dimensions.rows === 1 ? "row" : "rows";
-  return `${dimensions.columns} ${columnLabel} × ${dimensions.rows} ${rowLabel}`;
+function tableSizeLabel(
+  dimensions: ScientMarkdownTableDimensions,
+  resolve: MessageResolver,
+): string {
+  return resolve(
+    msg(
+      "{columns, plural, one {{columns} column} other {{columns} columns}} × {rows, plural, one {{rows} row} other {{rows} rows}}",
+      { columns: dimensions.columns, rows: dimensions.rows },
+    ),
+  );
 }
 
 export function DocumentTableSizeMenu({
@@ -157,9 +165,11 @@ export function DocumentTableSizeMenu({
   readonly onInsert: (dimensions: ScientMarkdownTableDimensions) => void;
   readonly onCustomSize?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   return (
     <DocumentGridSizeMenu
-      label="Table"
+      label={gt("Table", { $context: "insert a table" })}
+      kind="table"
       icon={<TableIcon className="size-4" />}
       onInsert={onInsert}
       onCustomSize={onCustomSize}
@@ -170,6 +180,7 @@ export function DocumentTableSizeMenu({
 /** Shared size picker for rectangular document objects. */
 export function DocumentGridSizeMenu({
   label,
+  kind,
   icon,
   options,
   commandScope,
@@ -178,6 +189,8 @@ export function DocumentGridSizeMenu({
   onCustomSize,
 }: {
   readonly label: string;
+  /** Names the object in the picker's sentences; without it they use `label`. */
+  readonly kind?: "table" | "matrix";
   readonly icon?: ReactNode;
   readonly options?: ReactNode;
   readonly commandScope?: string;
@@ -185,6 +198,8 @@ export function DocumentGridSizeMenu({
   readonly onInsert: (dimensions: ScientMarkdownTableDimensions) => void;
   readonly onCustomSize?: (() => void) | undefined;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const ownerId = useId();
   const [activeSize, setActiveSize] = useState<ScientMarkdownTableDimensions>(
@@ -460,7 +475,10 @@ export function DocumentGridSizeMenu({
           >
             <div
               role="group"
-              aria-label={`Choose ${label.toLowerCase()} size, columns by rows`}
+              aria-label={gt(
+                "{kind, select, table {Choose table size, columns by rows} matrix {Choose matrix size, columns by rows} other {Choose {object} size, columns by rows}}",
+                { kind: kind ?? "other", object: label.toLowerCase() },
+              )}
               className="grid gap-[3px]"
               data-scient-table-size-columns={visibleSize.columns}
               data-scient-table-size-rows={visibleSize.rows}
@@ -474,7 +492,14 @@ export function DocumentGridSizeMenu({
               {tableSizeChoices(visibleSize).map((dimensions) => {
                 const selected =
                   dimensions.columns <= activeSize.columns && dimensions.rows <= activeSize.rows;
-                const cellLabel = `Insert ${label.toLowerCase()} with ${tableSizeLabel(dimensions)}`;
+                const cellLabel = gt(
+                  "{kind, select, table {Insert table with {size}} matrix {Insert matrix with {size}} other {Insert {object} with {size}}}",
+                  {
+                    kind: kind ?? "other",
+                    object: label.toLowerCase(),
+                    size: tableSizeLabel(dimensions, m),
+                  },
+                );
                 return (
                   <MenuItem
                     key={`${dimensions.columns}×${dimensions.rows}`}
@@ -527,7 +552,11 @@ export function DocumentGridSizeMenu({
             {activeSize.columns} × {activeSize.rows}
           </div>
         </div>
-        {onCustomSize && <MenuItem onClick={onCustomSize}>Choose size</MenuItem>}
+        {onCustomSize && (
+          <MenuItem onClick={onCustomSize}>
+            <T>Choose size</T>
+          </MenuItem>
+        )}
       </MenuSubPopup>
     </MenuSub>
   );

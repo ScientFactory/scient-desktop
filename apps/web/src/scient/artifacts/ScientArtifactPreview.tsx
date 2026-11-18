@@ -2,6 +2,7 @@
 
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { PictureInPicture2, RefreshCw } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -22,6 +23,7 @@ export function ScientArtifactPreview(props: {
   readonly threadRef: ScopedThreadRef;
   readonly artifact: PreviewStaticImageSurfaceDescriptor;
 }) {
+  const gt = useGT();
   const [refreshToken, setRefreshToken] = useState(0);
   const asset = useAssetUrlState(props.environmentId, props.artifact.resource);
   const assetUrl = asset._tag === "Success" ? asset.url : null;
@@ -61,13 +63,15 @@ export function ScientArtifactPreview(props: {
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => setRefreshToken((value) => value + 1)}
-                aria-label="Reload figure"
+                aria-label={gt("Reload figure")}
               />
             }
           >
             <RefreshCw />
           </TooltipTrigger>
-          <TooltipPopup>Reload figure</TooltipPopup>
+          <TooltipPopup>
+            <T>Reload figure</T>
+          </TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -76,14 +80,16 @@ export function ScientArtifactPreview(props: {
                 variant={floated ? "secondary" : "ghost"}
                 size="icon-xs"
                 onClick={toggleFloating}
-                aria-label={floated ? "Close floating figure" : "Float figure over chat"}
+                aria-label={floated ? gt("Close floating figure") : gt("Float figure over chat")}
                 aria-pressed={floated ? "true" : "false"}
               />
             }
           >
             <PictureInPicture2 className={floated ? "text-primary" : undefined} />
           </TooltipTrigger>
-          <TooltipPopup>{floated ? "Close floating figure" : "Float over chat"}</TooltipPopup>
+          <TooltipPopup>
+            {floated ? gt("Close floating figure") : gt("Float over chat")}
+          </TooltipPopup>
         </Tooltip>
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden">

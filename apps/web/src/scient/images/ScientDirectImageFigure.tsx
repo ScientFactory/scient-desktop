@@ -1,4 +1,5 @@
 import { mediaReferenceFileName, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
@@ -22,6 +23,7 @@ export function ScientDirectImageFigure(props: {
   readonly caption?: string | undefined;
   readonly markdownSource: string;
 }) {
+  const gt = useGT();
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const [retry, setRetry] = useState(0);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
@@ -38,17 +40,19 @@ export function ScientDirectImageFigure(props: {
   const showContextMenu: ScientImageContextMenuHandler = async (items, position) =>
     (await readLocalApi()?.contextMenu.show([...items], position)) ?? null;
   const actions: readonly ScientImageAction[] = [
-    { id: "copy-image", label: "Copy image", run: () => copyStaticImage(props.src) },
+    { id: "copy-image", label: gt("Copy image"), run: () => copyStaticImage(props.src) },
     {
       id: "download",
-      label: "Download original",
+      label: gt("Download original"),
       run: () => downloadStaticImage(props.src, fileName),
     },
     {
       id: "copy-source",
-      label: "Copy image source",
+      label: gt("Copy image source"),
       run: () => {
-        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+        if (!navigator.clipboard?.writeText) {
+          throw new Error(gt("Clipboard access is unavailable."));
+        }
         return navigator.clipboard.writeText(props.authoredSource);
       },
     },
@@ -96,7 +100,7 @@ export function ScientDirectImageFigure(props: {
             "flex max-h-[32rem] max-w-full cursor-zoom-in items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
             !loaded && "opacity-0",
           )}
-          aria-label={`Expand ${displayName}`}
+          aria-label={gt("Expand {name}", { name: displayName })}
           disabled={!loaded}
           onClick={() => controls.current?.expand()}
         >
@@ -117,10 +121,10 @@ export function ScientDirectImageFigure(props: {
             role="status"
             className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 pt-8 pb-3 text-center text-xs text-muted-foreground"
           >
-            {failed ? "Unable to display this image" : "Loading image…"}
+            {failed ? gt("Unable to display this image") : gt("Loading image…")}
             {failed ? (
               <Button size="xs" variant="outline" type="button" onClick={retryImage}>
-                Try again
+                <T>Try again</T>
               </Button>
             ) : null}
           </span>

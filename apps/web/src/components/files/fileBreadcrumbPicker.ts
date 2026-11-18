@@ -1,4 +1,7 @@
 import type { ProjectEntry } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface FileBreadcrumbPickerEntry extends ProjectEntry {
   readonly label: string;
@@ -101,13 +104,16 @@ export function fileBreadcrumbBackTarget(
   return null;
 }
 
-export function resolveFileBreadcrumbPickerListing(input: {
-  readonly index: FileBreadcrumbEntryIndex | null;
-  readonly directoryPath: string;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly truncated: boolean;
-}): FileBreadcrumbPickerListing {
+export function resolveFileBreadcrumbPickerListing(
+  input: {
+    readonly index: FileBreadcrumbEntryIndex | null;
+    readonly directoryPath: string;
+    readonly error: string | null;
+    readonly isPending: boolean;
+    readonly truncated: boolean;
+  },
+  resolve: MessageResolver = m,
+): FileBreadcrumbPickerListing {
   if (input.index === null && input.isPending) return { state: "loading" };
   if (input.index === null) {
     return input.error ? { state: "error", message: input.error } : { state: "loading" };
@@ -122,14 +128,14 @@ export function resolveFileBreadcrumbPickerListing(input: {
       incomplete: true,
       message:
         entries.length === 0
-          ? "No listed entries. Workspace listing is incomplete."
-          : "Workspace listing may be incomplete.",
+          ? resolve(msg("No listed entries. Workspace listing is incomplete."))
+          : resolve(msg("Workspace listing may be incomplete.")),
     };
   }
   return {
     state: "ready",
     entries,
     incomplete: false,
-    message: entries.length === 0 ? "This folder is empty." : null,
+    message: entries.length === 0 ? resolve(msg("This folder is empty.")) : null,
   };
 }

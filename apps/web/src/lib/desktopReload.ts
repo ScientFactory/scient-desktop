@@ -1,6 +1,8 @@
+import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import {
   usePendingSurfaceDeparture,
   type PendingSurfaceDepartureOptions,
@@ -19,12 +21,12 @@ export function requestDesktopReload(ignoreCache: boolean): void {
     void nativeReload(ignoreCache)
       .then((accepted) => {
         if (!accepted) {
-          toastManager.add({ type: "warning", title: "Could not reload the app window" });
+          toastManager.add({ type: "warning", title: m(msg("Could not reload the app window")) });
         }
       })
       .catch((error: unknown) => {
         console.error("Could not reload the app window.", error);
-        toastManager.add({ type: "error", title: "Could not reload the app window" });
+        toastManager.add({ type: "error", title: m(msg("Could not reload the app window")) });
       });
   };
   if (beforeReload) beforeReload(reload);
@@ -40,8 +42,8 @@ export function startDesktopReloadHandling(): void {
   window.desktopBridge?.onReloadBlocked?.(() => {
     toastManager.add({
       type: "warning",
-      title: "Reload paused",
-      description: "A file has pending changes. Save or resolve them, then try again.",
+      title: m(msg("Reload paused")),
+      description: m(msg("A file has pending changes. Save or resolve them, then try again.")),
     });
   });
 }
@@ -63,10 +65,14 @@ export function useDesktopReloadGuard(
       options.onAttention?.(id);
       toastManager.add({
         type: "warning",
-        title: "Reload paused",
+        title: m(msg("Reload paused")),
         description:
           describeAttention(id) ??
-          "A file needs attention before Scient can reload. Resolve its save notice, then try again.",
+          m(
+            msg(
+              "A file needs attention before Scient can reload. Resolve its save notice, then try again.",
+            ),
+          ),
       });
     },
   });

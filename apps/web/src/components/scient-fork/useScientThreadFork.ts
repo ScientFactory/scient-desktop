@@ -14,6 +14,7 @@ import {
   type ForkOptions,
   type RunId,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
@@ -22,6 +23,7 @@ import {
   type PersistedComposerImageAttachment,
   useComposerDraftStore,
 } from "~/composerDraftStore";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { newThreadId } from "~/lib/utils";
 import { isImageAttachment, type ChatAttachment } from "~/types";
 import { threadEnvironment } from "../../state/threads";
@@ -73,8 +75,9 @@ export type ForkSource =
     }
   // The running turn, including the work it has done so far.
   | { readonly kind: "running-turn"; readonly runId: RunId };
-const UNSUPPORTED_FORK_MESSAGE =
-  "Update Scient on the computer that runs this conversation, then fork again.";
+const UNSUPPORTED_FORK_MESSAGE = msg(
+  "Update Scient on the computer that runs this conversation, then fork again.",
+);
 // The fork card's check is reused when its Fork button is pressed soon after.
 const CHECKED_FORK_OPTIONS_REUSE_MS = 30_000;
 
@@ -145,27 +148,41 @@ type NavigateToThread = (input: {
   };
 }) => Promise<void>;
 
-export function userFacingForkError(error: unknown): string {
+export function userFacingForkError(error: unknown, resolve: MessageResolver = m): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("not a supported image attachment")) {
-    return "Editing a fork from a message with file attachments is not supported yet. Fork from a completed response to keep the conversation and its files.";
+    return resolve(
+      msg(
+        "Editing a fork from a message with file attachments is not supported yet. Fork from a completed response to keep the conversation and its files.",
+      ),
+    );
   }
   if (message.includes("fork draft attachment")) {
-    return "One of this message's images could not be prepared for editing. Wait for it to load and try again.";
+    return resolve(
+      msg(
+        "One of this message's images could not be prepared for editing. Wait for it to load and try again.",
+      ),
+    );
   }
   if (message.includes("no ready Git checkpoint")) {
-    return "This point has no saved Git checkpoint for a new worktree. Fork here, or fork from another point.";
+    return resolve(
+      msg(
+        "This point has no saved Git checkpoint for a new worktree. Fork here, or fork from another point.",
+      ),
+    );
   }
   if (
     message.includes("not a completed conversation boundary") ||
     message.includes("not a terminal completed response") ||
     message.includes("not an available durable request")
   ) {
-    return "This message is no longer available as a fork point. Choose another message.";
+    return resolve(
+      msg("This message is no longer available as a fork point. Choose another message."),
+    );
   }
   return message && message !== "[object Object]"
     ? message
-    : "Unable to confirm this fork. Retry to resume the same attempt.";
+    : resolve(msg("Unable to confirm this fork. Retry to resume the same attempt."));
 }
 
 type PreparedDraftAttachment = {
@@ -386,7 +403,12 @@ export function useScientThreadFork({
     if (!supported) {
       if (!current()) return;
       setPreview({ key, options: null, checking: false, locked: false });
-      setErrorUpdate({ threadId: originId, environmentId, key, message: UNSUPPORTED_FORK_MESSAGE });
+      setErrorUpdate({
+        threadId: originId,
+        environmentId,
+        key,
+        message: m(UNSUPPORTED_FORK_MESSAGE),
+      });
       return;
     }
     try {
@@ -458,13 +480,13 @@ export function useScientThreadFork({
           threadId: originId,
           environmentId,
           key: forkAttemptKey(environmentId, originId, sourceKey(source)),
-          message: UNSUPPORTED_FORK_MESSAGE,
+          message: m(UNSUPPORTED_FORK_MESSAGE),
         });
       else
         toastManager.add({
           type: "error",
-          title: "This conversation cannot be forked here",
-          description: UNSUPPORTED_FORK_MESSAGE,
+          title: m(msg("This conversation cannot be forked here")),
+          description: m(UNSUPPORTED_FORK_MESSAGE),
         });
       return "not-accepted";
     }
@@ -612,7 +634,11 @@ export function useScientThreadFork({
           attemptStore.delete(key);
           // Said here unless the fork card showed this notice before the fork was made.
           if (workspaceNotice !== undefined && !(fromCard && workspaceNotice === cardNotice))
-            toastManager.add({ type: "info", title: "Forked", description: workspaceNotice });
+            toastManager.add({
+              type: "info",
+              title: m(msg("Forked", { $context: "the chat was forked" })),
+              description: workspaceNotice,
+            });
           return "accepted";
         } catch (cause) {
           if (mounted.current && activeOrigin.current === originKey) {
@@ -628,8 +654,17 @@ export function useScientThreadFork({
                 environmentId,
                 key,
                 message: pending?.ready
-                  ? "The fork is ready. Retry to open it; this will not create another conversation."
-                  : `${userFacingForkError(cause)}${pending ? " Retry to resume this same fork; your draft is saved." : ""}`,
+                  ? m(
+                      msg(
+                        "The fork is ready. Retry to open it; this will not create another conversation.",
+                      ),
+                    )
+                  : [
+                      userFacingForkError(cause),
+                      ...(pending
+                        ? [m(msg("Retry to resume this same fork; your draft is saved."))]
+                        : []),
+                    ].join(" "),
               });
               setPreview((current) =>
                 current?.key === key ? { ...current, locked: pending !== null } : current,
@@ -638,10 +673,27 @@ export function useScientThreadFork({
             }
             toastManager.add({
               type: "error",
-              title: pending?.ready ? "The fork is ready" : "The fork did not finish",
+              title: pending?.ready
+                ? m(msg("The fork is ready"))
+                : m(msg("The fork did not finish")),
               description: pending?.ready
-                ? "Fork from the same point again to open it; this will not create another conversation."
-                : `${userFacingForkError(cause)}${pending ? " Fork from the same point again to resume it; your draft is saved." : ""}`,
+                ? m(
+                    msg(
+                      "Fork from the same point again to open it; this will not create another conversation.",
+                    ),
+                  )
+                : [
+                    userFacingForkError(cause),
+                    ...(pending
+                      ? [
+                          m(
+                            msg(
+                              "Fork from the same point again to resume it; your draft is saved.",
+                            ),
+                          ),
+                        ]
+                      : []),
+                  ].join(" "),
             });
           }
           return "not-accepted";
@@ -654,15 +706,18 @@ export function useScientThreadFork({
           threadId: originId,
           environmentId,
           key: forkAttemptKey(environmentId, originId, sourceKey(source)),
-          message:
-            "A fork is already being prepared from this conversation. Wait for it to finish, then retry.",
+          message: m(
+            msg(
+              "A fork is already being prepared from this conversation. Wait for it to finish, then retry.",
+            ),
+          ),
         });
         return "not-accepted";
       }
       toastManager.add({
         type: "warning",
-        title: "A fork is already being prepared",
-        description: "Wait for it to finish, then fork again.",
+        title: m(msg("A fork is already being prepared")),
+        description: m(msg("Wait for it to finish, then fork again.")),
       });
     }
     return outcome ?? "not-accepted";

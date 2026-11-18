@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { DocumentPersistenceCurrentReview } from "@scientfactory/scient-document";
 import { History } from "lucide-react";
+import { msg, T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -18,6 +19,7 @@ import { normalizeRenamePath } from "~/components/files/FileRenameButton";
 import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
 import { normalizeMarkdownReadSnapshot } from "~/scient/markdownEditor/persistence/markdownReadSnapshot";
 import { documentCurrentMissingReview } from "~/scient/markdownEditor/persistence/documentFailureReason";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { OverleafKeptCopies } from "~/scient/overleaf/OverleafKeptCopies";
 
@@ -56,6 +58,7 @@ function ScientFileVersionHistoryPanel(props: {
   readonly onCompare: (version: Version) => Promise<boolean>;
   readonly onCopyText: (contents: string) => Promise<boolean>;
 }) {
+  const gt = useGT();
   const attention = props.history?.attention ?? props.publicationAttention ?? null;
   const [discard, setDiscard] = useState<string | null>(null);
   const [copy, setCopy] = useState<Version | null>(null);
@@ -65,19 +68,25 @@ function ScientFileVersionHistoryPanel(props: {
   return (
     <div className="mt-2 flex flex-col gap-3 text-xs">
       <p className="text-muted-foreground">
-        Versions retained by Scient survive closing the file and restarting. Outside handles may
-        still change their bytes. Open read-only to review before saving a separate copy.
+        <T>
+          Versions retained by Scient survive closing the file and restarting. Outside handles may
+          still change their bytes. Open read-only to review before saving a separate copy.
+        </T>
       </p>
       <Button size="xs" variant="outline" disabled={props.busy} onClick={props.onRefresh}>
-        Refresh versions
+        <T>Refresh versions</T>
       </Button>
       {props.error ? <p role="alert">{props.error}</p> : null}
       {attention ? (
         <div role="alert" className="flex flex-col gap-2">
-          <p className="font-medium">A save needs checking</p>
+          <p className="font-medium">
+            <T>A save needs checking</T>
+          </p>
           <p>
-            Check the file on disk and the earlier versions, then continue. Your text is kept.
-            Discarding versions doesn’t finish the check.
+            <T>
+              Check the file on disk and the earlier versions, then continue. Your text is kept.
+              Discarding versions doesn’t finish the check.
+            </T>
           </p>
           <Button
             size="xs"
@@ -85,7 +94,7 @@ function ScientFileVersionHistoryPanel(props: {
             disabled={props.busy}
             onClick={() => void props.onReviewCurrent()}
           >
-            Show file on disk
+            <T>Show file on disk</T>
           </Button>
           {attention.retainedPaths.map((path) => (
             <Button
@@ -95,7 +104,7 @@ function ScientFileVersionHistoryPanel(props: {
               title={path}
               onClick={() => props.onOpen(path)}
             >
-              Open earlier version
+              <T>Open earlier version</T>
             </Button>
           ))}
           {props.onAcceptCurrent ? (
@@ -113,21 +122,23 @@ function ScientFileVersionHistoryPanel(props: {
                 void props.onAcceptCurrent?.(attention.recoveryId, props.currentReview!.revision)
               }
             >
-              Continue from this version
+              <T>Continue from this version</T>
             </Button>
           ) : null}
         </div>
       ) : null}
       {props.reviewRequired && attention === null ? (
         <div role="alert" className="flex flex-col gap-2">
-          <p>Nothing was written. Check the file on disk, then continue. Your text is kept.</p>
+          <p>
+            <T>Nothing was written. Check the file on disk, then continue. Your text is kept.</T>
+          </p>
           <Button
             size="xs"
             variant="outline"
             disabled={props.busy}
             onClick={() => void props.onReviewCurrent()}
           >
-            Show file on disk
+            <T>Show file on disk</T>
           </Button>
           <Button
             size="xs"
@@ -141,7 +152,7 @@ function ScientFileVersionHistoryPanel(props: {
             }
             onClick={() => void props.onAcknowledgeRefusal?.(props.currentReview!.revision)}
           >
-            Continue from this version
+            <T>Continue from this version</T>
           </Button>
         </div>
       ) : null}
@@ -149,14 +160,18 @@ function ScientFileVersionHistoryPanel(props: {
         <div
           className="flex flex-col gap-2"
           role="group"
-          aria-label="Reviewed current disk version"
+          aria-label={gt("Reviewed current disk version")}
         >
           <p className="font-medium">
-            {props.currentReview.missing ? "The file is not on disk" : "On disk now"}
+            {props.currentReview.missing ? gt("The file is not on disk") : gt("On disk now")}
           </p>
-          <p>Continuing applies only to this version and keeps your text.</p>
+          <p>
+            <T>Continuing applies only to this version and keeps your text.</T>
+          </p>
           {props.currentReview.missing ? (
-            <p role="status">Continuing keeps your text and doesn’t create the file.</p>
+            <p role="status">
+              <T>Continuing keeps your text and doesn’t create the file.</T>
+            </p>
           ) : (
             <>
               <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2">
@@ -168,13 +183,17 @@ function ScientFileVersionHistoryPanel(props: {
                 disabled={props.busy}
                 onClick={() => void props.onCopyText(props.currentReview!.contents!)}
               >
-                Copy current text
+                <T>Copy current text</T>
               </Button>
             </>
           )}
           {props.comparison ? (
             <>
-              <p className="font-medium">Retained version · {props.comparison.version.versionId}</p>
+              <p className="font-medium">
+                <T>
+                  Retained version · <Var>{props.comparison.version.versionId}</Var>
+                </T>
+              </p>
               <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2">
                 {props.comparison.retained.contents}
               </pre>
@@ -184,7 +203,7 @@ function ScientFileVersionHistoryPanel(props: {
                 disabled={props.busy}
                 onClick={() => void props.onCopyText(props.comparison!.retained.contents)}
               >
-                Copy retained text
+                <T>Copy retained text</T>
               </Button>
             </>
           ) : null}
@@ -193,25 +212,28 @@ function ScientFileVersionHistoryPanel(props: {
       {props.history ? (
         <>
           <p>
-            {props.history.retainedBytes.toLocaleString()} retained bytes
+            {gt("{bytes} retained bytes", { bytes: props.history.retainedBytes.toLocaleString() })}
+            {" · "}
             {props.history.limitBytes === null
-              ? " · No retention limit configured"
-              : ` · Limit ${props.history.limitBytes.toLocaleString()} bytes`}
+              ? gt("No retention limit configured")
+              : gt("Limit {bytes} bytes", { bytes: props.history.limitBytes.toLocaleString() })}
           </p>
           {props.history.versions.length === 0 ? (
-            <p>No retained versions for this file.</p>
+            <p>
+              <T>No retained versions for this file.</T>
+            </p>
           ) : (
             <ul className="flex max-h-72 flex-col gap-3 overflow-y-auto">
               {props.history.versions.map((version) => (
                 <li key={version.versionId} className="flex flex-col gap-1">
                   <span>
                     {new Date(version.retainedAt).toLocaleString()} ·{" "}
-                    {version.byteLength.toLocaleString()} bytes
+                    {gt("{bytes} bytes", { bytes: version.byteLength.toLocaleString() })}
                   </span>
                   <span className="break-all text-muted-foreground">
                     {version.versionId}
                     {version.revision === null
-                      ? " · Revision unavailable"
+                      ? ` · ${gt("Revision unavailable")}`
                       : ` · ${version.revision}`}
                   </span>
                   <div className="flex flex-wrap gap-1">
@@ -220,7 +242,7 @@ function ScientFileVersionHistoryPanel(props: {
                       variant="outline"
                       onClick={() => props.onOpen(version.retainedPath)}
                     >
-                      Open read-only
+                      <T>Open read-only</T>
                     </Button>
                     <Button
                       size="xs"
@@ -228,7 +250,7 @@ function ScientFileVersionHistoryPanel(props: {
                       disabled={props.busy}
                       onClick={() => void props.onCompare(version)}
                     >
-                      Compare with current…
+                      <T>Compare with current…</T>
                     </Button>
                     <Button
                       size="xs"
@@ -242,7 +264,7 @@ function ScientFileVersionHistoryPanel(props: {
                         setInvalidPath(false);
                       }}
                     >
-                      Save copy…
+                      <T>Save copy…</T>
                     </Button>
                     <Button
                       size="xs"
@@ -253,7 +275,7 @@ function ScientFileVersionHistoryPanel(props: {
                         setCopy(null);
                       }}
                     >
-                      Discard…
+                      <T>Discard…</T>
                     </Button>
                   </div>
                 </li>
@@ -262,18 +284,22 @@ function ScientFileVersionHistoryPanel(props: {
           )}
         </>
       ) : props.busy ? (
-        <p role="status">Loading retained versions…</p>
+        <p role="status">
+          <T>Loading retained versions…</T>
+        </p>
       ) : null}
       {discard ? (
         <div
           className="flex flex-col gap-2"
           role="group"
-          aria-label="Confirm discard retained version"
+          aria-label={gt("Confirm discard retained version")}
         >
           <p>
-            Discard this retained version? This removes Scient’s retained name and cannot be undone
-            here. Late outside handles may still write the discarded inode. Discard does not resolve
-            an unknown mutation outcome.
+            <T>
+              Discard this retained version? This removes Scient’s retained name and cannot be
+              undone here. Late outside handles may still write the discarded inode. Discard does
+              not resolve an unknown mutation outcome.
+            </T>
           </p>
           <div className="flex gap-2">
             <Button
@@ -282,7 +308,7 @@ function ScientFileVersionHistoryPanel(props: {
               disabled={props.busy}
               onClick={() => setDiscard(null)}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               size="xs"
@@ -294,7 +320,7 @@ function ScientFileVersionHistoryPanel(props: {
                 })
               }
             >
-              Discard retained version
+              <T>Discard retained version</T>
             </Button>
           </div>
         </div>
@@ -315,12 +341,14 @@ function ScientFileVersionHistoryPanel(props: {
           }}
         >
           <p>
-            Save text as a new project file. Existing files are never replaced. For binary files,
-            open the retained version and use the viewer’s Save a copy action.
+            <T>
+              Save text as a new project file. Existing files are never replaced. For binary files,
+              open the retained version and use the viewer’s Save a copy action.
+            </T>
           </p>
           <Input
             size="compact"
-            aria-label="Copy file path"
+            aria-label={gt("Copy file path")}
             value={destination}
             disabled={props.busy}
             onChange={(event) => {
@@ -329,7 +357,11 @@ function ScientFileVersionHistoryPanel(props: {
               setInvalidPath(false);
             }}
           />
-          {invalidPath ? <p role="alert">Enter a relative path inside this workspace.</p> : null}
+          {invalidPath ? (
+            <p role="alert">
+              <T>Enter a relative path inside this workspace.</T>
+            </p>
+          ) : null}
           <div className="flex gap-2">
             <Button
               size="xs"
@@ -338,7 +370,7 @@ function ScientFileVersionHistoryPanel(props: {
               disabled={props.busy}
               onClick={() => setCopy(null)}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               size="xs"
@@ -346,15 +378,17 @@ function ScientFileVersionHistoryPanel(props: {
               type="submit"
               disabled={props.busy || !props.canWrite}
             >
-              Save new copy
+              <T>Save new copy</T>
             </Button>
           </div>
         </form>
       ) : null}
       {!props.canWrite ? (
         <p className="text-muted-foreground">
-          Read-only connection: versions can be reviewed, but not discarded or copied into the
-          project.
+          <T>
+            Read-only connection: versions can be reviewed, but not discarded or copied into the
+            project.
+          </T>
         </p>
       ) : null}
     </div>
@@ -377,6 +411,7 @@ export function ScientFileVersionHistory(props: {
   readonly reviewRequired?: boolean;
   readonly onReviewCurrent?: (currentRevision: string | null) => Promise<boolean>;
 }) {
+  const gt = useGT();
   const list = useAtomCommand(projectEnvironment.listFileVersions, { reportFailure: false });
   const discard = useAtomCommand(projectEnvironment.discardFileVersion, { reportFailure: false });
   const read = useAtomCommand(projectEnvironment.readFileOrdered, { reportFailure: false });
@@ -400,7 +435,7 @@ export function ScientFileVersionHistory(props: {
   const load = async () => {
     const result = await list(request);
     if (result._tag === "Failure") {
-      setError("Retained versions could not be loaded. Refresh versions to check again.");
+      setError(m(msg("Retained versions could not be loaded. Refresh versions to check again.")));
       return false;
     }
     setHistory(result.value);
@@ -417,7 +452,11 @@ export function ScientFileVersionHistory(props: {
       operation,
       () =>
         setError(
-          "The operation’s outcome could not be confirmed. Review the current file and retained versions before trying a new operation.",
+          m(
+            msg(
+              "The operation’s outcome could not be confirmed. Review the current file and retained versions before trying a new operation.",
+            ),
+          ),
         ),
       () => {
         operating.current = false;
@@ -443,7 +482,11 @@ export function ScientFileVersionHistory(props: {
     }
     if (current.truncated) {
       setError(
-        "The current file is too large to review completely here. Open it read-only and save a separate copy.",
+        m(
+          msg(
+            "The current file is too large to review completely here. Open it read-only and save a separate copy.",
+          ),
+        ),
       );
       return false;
     }
@@ -454,7 +497,11 @@ export function ScientFileVersionHistory(props: {
     ) {
       setCurrentReview(null);
       setError(
-        "The retained operation changed. Refresh versions and review the current file again.",
+        m(
+          msg(
+            "The retained operation changed. Refresh versions and review the current file again.",
+          ),
+        ),
       );
       return false;
     }
@@ -473,15 +520,17 @@ export function ScientFileVersionHistory(props: {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="Retained file versions"
-            title="Retained file versions"
+            aria-label={gt("Retained file versions")}
+            title={gt("Retained file versions")}
           />
         }
       >
         <History className="size-3.5" aria-hidden="true" />
       </PopoverTrigger>
       <PopoverPopup align="end" width="lg" padding="comfortable">
-        <PopoverTitle>Retained file versions</PopoverTitle>
+        <PopoverTitle>
+          <T>Retained file versions</T>
+        </PopoverTitle>
         <ScientFileVersionHistoryPanel
           history={history}
           {...(props.publicationAttention === undefined
@@ -502,7 +551,11 @@ export function ScientFileVersionHistory(props: {
               const retained = await readComplete(version.retainedPath);
               if (retained.truncated) {
                 setError(
-                  "This retained version is too large for a complete text comparison. Open it read-only and use Save a copy to preserve its original bytes.",
+                  m(
+                    msg(
+                      "This retained version is too large for a complete text comparison. Open it read-only and use Save a copy to preserve its original bytes.",
+                    ),
+                  ),
                 );
                 return false;
               }
@@ -525,7 +578,11 @@ export function ScientFileVersionHistory(props: {
                     const accepted = await props.onReviewCurrent!(currentRevision);
                     if (!accepted) {
                       setError(
-                        "The displayed revision could not be acknowledged. Local input is preserved; review the current file again.",
+                        m(
+                          msg(
+                            "The displayed revision could not be acknowledged. Local input is preserved; review the current file again.",
+                          ),
+                        ),
                       );
                       return false;
                     }
@@ -553,7 +610,9 @@ export function ScientFileVersionHistory(props: {
                   (beforeReview.publicationAttention &&
                     beforeReview.publicationAttention.recoveryId !== recoveryId)
                 ) {
-                  setError("The reviewed current state changed. Review it again before accepting.");
+                  setError(
+                    m(msg("The reviewed current state changed. Review it again before accepting.")),
+                  );
                   return false;
                 }
                 const resolved = await resolve({
@@ -567,7 +626,11 @@ export function ScientFileVersionHistory(props: {
                 });
                 if (resolved._tag === "Failure" || resolved.value.revision !== currentRevision) {
                   setError(
-                    "The backend did not authorize this reviewed current state. Your retained versions are preserved.",
+                    m(
+                      msg(
+                        "The backend did not authorize this reviewed current state. Your retained versions are preserved.",
+                      ),
+                    ),
                   );
                   return false;
                 }
@@ -585,7 +648,11 @@ export function ScientFileVersionHistory(props: {
               }
               if (!accepted) {
                 setError(
-                  "The current disk version could not be accepted. Local input is preserved; review the current file and retained versions again.",
+                  m(
+                    msg(
+                      "The current disk version could not be accepted. Local input is preserved; review the current file and retained versions again.",
+                    ),
+                  ),
                 );
                 return false;
               }
@@ -598,7 +665,11 @@ export function ScientFileVersionHistory(props: {
               const result = await discard({ ...request, input: { ...request.input, versionId } });
               if (result._tag === "Failure") {
                 setError(
-                  "The retained version could not be discarded. Refresh versions to check what remains.",
+                  m(
+                    msg(
+                      "The retained version could not be discarded. Refresh versions to check what remains.",
+                    ),
+                  ),
                 );
                 return false;
               }
@@ -613,7 +684,11 @@ export function ScientFileVersionHistory(props: {
                 const source = await readComplete(version.retainedPath);
                 if (source.truncated) {
                   setError(
-                    "This retained version could not be read as complete text. Open it read-only and use Save a copy to preserve the original bytes.",
+                    m(
+                      msg(
+                        "This retained version could not be read as complete text. Open it read-only and use Save a copy to preserve the original bytes.",
+                      ),
+                    ),
                   );
                   return false;
                 }
@@ -628,7 +703,11 @@ export function ScientFileVersionHistory(props: {
               const result = await write({ ...request, input: copyAttempt.current });
               if (result._tag === "Failure") {
                 setError(
-                  "The new copy could not be confirmed. Existing files are not replaced; review the destination before choosing another path.",
+                  m(
+                    msg(
+                      "The new copy could not be confirmed. Existing files are not replaced; review the destination before choosing another path.",
+                    ),
+                  ),
                 );
                 return false;
               }

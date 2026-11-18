@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -32,6 +33,7 @@ export function ScientImageDetails(props: {
   readonly onIndependentCaption: () => void;
 }) {
   const { session } = props;
+  const gt = useGT();
   const [src, setSource] = useState(session.src);
   const [alt, setAlt] = useState(session.alt);
   const [title, setTitle] = useState(session.title);
@@ -76,14 +78,16 @@ export function ScientImageDetails(props: {
       >
         <form className="flex min-w-0 flex-col gap-3" onSubmit={submit}>
           <PopoverTitle size="compact">
-            {session.intent === "caption" ? "Shared image caption" : "Image details"}
+            {session.intent === "caption" ? gt("Shared image caption") : gt("Image details")}
           </PopoverTitle>
           {session.referenceLabel !== null ? (
             <div className="flex min-w-0 flex-col gap-2 text-xs">
               <p className="wrap-anywhere text-muted-foreground">
                 {independent
-                  ? "This image will become independent when you apply."
-                  : `Source and title belong to the shared reference [${session.referenceLabel}].`}
+                  ? gt("This image will become independent when you apply.")
+                  : gt("Source and title belong to the shared reference [{label}].", {
+                      label: session.referenceLabel,
+                    })}
               </p>
               {!independent ? (
                 <div className="flex flex-wrap gap-1">
@@ -94,7 +98,7 @@ export function ScientImageDetails(props: {
                       type="button"
                       onClick={props.onEditReference}
                     >
-                      Edit shared reference
+                      <T>Edit shared reference</T>
                     </Button>
                   ) : null}
                   <Button
@@ -106,7 +110,7 @@ export function ScientImageDetails(props: {
                       else setIndependent(true);
                     }}
                   >
-                    Make independent
+                    <T>Make independent</T>
                   </Button>
                 </div>
               ) : null}
@@ -115,10 +119,12 @@ export function ScientImageDetails(props: {
           {session.intent === "details" ? (
             <>
               <label className="flex min-w-0 flex-col gap-1 text-xs">
-                <span>Image source</span>
+                <span>
+                  <T>Image source</T>
+                </span>
                 <Input
                   ref={inputRef}
-                  aria-label="Image source"
+                  aria-label={gt("Image source")}
                   dir="ltr"
                   size="compact"
                   value={src}
@@ -127,9 +133,11 @@ export function ScientImageDetails(props: {
                 />
               </label>
               <label className="flex min-w-0 flex-col gap-1 text-xs">
-                <span>Alt text</span>
+                <span>
+                  <T>Alt text</T>
+                </span>
                 <Input
-                  aria-label="Image alt text"
+                  aria-label={gt("Image alt text")}
                   dir="auto"
                   size="compact"
                   value={alt}
@@ -138,9 +146,11 @@ export function ScientImageDetails(props: {
               </label>
               {!session.standalone ? (
                 <label className="flex min-w-0 flex-col gap-1 text-xs">
-                  <span>Title</span>
+                  <span>
+                    <T context="image title field">Title</T>
+                  </span>
                   <Input
-                    aria-label="Image title"
+                    aria-label={gt("Image title")}
                     dir="auto"
                     size="compact"
                     value={title}
@@ -153,11 +163,11 @@ export function ScientImageDetails(props: {
           ) : null}
           <div className="flex justify-end gap-1">
             <Button size="xs" type="button" variant="ghost" onClick={() => props.onClose(true)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             {session.intent === "details" ? (
               <Button size="xs" type="submit">
-                Apply
+                <T context="button, applies the image details">Apply</T>
               </Button>
             ) : null}
           </div>

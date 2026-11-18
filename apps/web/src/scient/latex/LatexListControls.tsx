@@ -8,8 +8,10 @@ import { LatexFooterSubmenu } from "./LatexFooterSubmenu";
 import { LatexContextMenuForm } from "./LatexContextMenuForm";
 import { parseLatexListOptions } from "./latexListOptions";
 import { useLatexActionNotice } from "./latexObjectAuthoring";
+import { T, useGT } from "gt-react";
 
 export function LatexListControls({ editor }: { editor: Editor }) {
+  const gt = useGT();
   const list = useEditorState({
     editor,
     selector: ({ editor: current }) => {
@@ -37,7 +39,7 @@ export function LatexListControls({ editor }: { editor: Editor }) {
       ...changes,
     };
     if (!Number.isSafeInteger(next.start) || next.start < 1) {
-      setError("Use a positive start number.");
+      setError(gt("Use a positive start number."));
       return;
     }
     const options = [
@@ -59,25 +61,27 @@ export function LatexListControls({ editor }: { editor: Editor }) {
   return (
     <div
       role="toolbar"
-      aria-label="List options"
+      aria-label={gt("List options")}
       data-context-fallback=""
       data-context-presentation="inline"
-      data-context-position="List"
+      data-context-position={gt("List", { $context: "LaTeX list object" })}
       className="scient-latex-context-toolbar"
     >
       <DockMenu
         icon={undefined}
-        label="Numbering"
+        label={gt("Numbering")}
         commandScope="latex"
         disabled={!parsed || !editor.isEditable}
       >
         <MenuRadioGroup value={parsed?.label ?? ""}>
           {[
-            { value: "", label: "Document default" },
+            { value: "", label: gt("Document default") },
             { value: "\\arabic*.", label: "1. 2. 3." },
             { value: "\\alph*)", label: "a) b) c)" },
             { value: "\\Alph*.", label: "A. B. C." },
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- a numbering sample
             { value: "\\roman*.", label: "i. ii. iii." },
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- a numbering sample
             { value: "\\Roman*.", label: "I. II. III." },
             { value: "(\\arabic*)", label: "(1) (2) (3)" },
           ].map(({ value, label }) => (
@@ -92,7 +96,7 @@ export function LatexListControls({ editor }: { editor: Editor }) {
           ))}
         </MenuRadioGroup>
         <MenuSeparator />
-        <LatexFooterSubmenu label="Start at">
+        <LatexFooterSubmenu label={gt("Start at")}>
           <ListStartNumber
             key={`${list.position}:${list.node.attrs.start}`}
             value={Number(list.node.attrs.start ?? 1)}
@@ -105,7 +109,7 @@ export function LatexListControls({ editor }: { editor: Editor }) {
           closeOnClick={false}
           onCheckedChange={(resume) => update({ resume })}
         >
-          Continue previous
+          <T>Continue previous</T>
         </MenuCheckboxItem>
       </DockMenu>
     </div>
@@ -113,21 +117,22 @@ export function LatexListControls({ editor }: { editor: Editor }) {
 }
 
 function ListStartNumber(props: { value: number; onChange: (value: number) => void }) {
+  const gt = useGT();
   const [draft, setDraft] = useState(String(props.value));
   const valid = /^\d+$/u.test(draft) && Number.isSafeInteger(Number(draft)) && Number(draft) > 0;
   return (
-    <LatexContextMenuForm label="List start number" width="content">
+    <LatexContextMenuForm label={gt("List start number")} width="content">
       <Input
         size="compact"
         type="number"
         min={1}
-        aria-label="List start number"
+        aria-label={gt("List start number")}
         value={draft}
         aria-invalid={!valid}
         onChange={(event) => setDraft(event.target.value)}
       />
       <DockCommandItem disabled={!valid} onClick={() => props.onChange(Number(draft))}>
-        Apply
+        <T>Apply</T>
       </DockCommandItem>
     </LatexContextMenuForm>
   );

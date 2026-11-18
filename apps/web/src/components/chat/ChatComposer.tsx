@@ -1072,10 +1072,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     instanceId: liveVoiceCallInstance(selectedProviderEntry?.snapshot),
   });
   const showLiveVoice = selectedProvider === "scient" && typeof RTCPeerConnection !== "undefined";
-  const liveVoiceUnavailable = liveVoiceUnavailableReason({
-    provider: selectedProviderEntry?.snapshot,
-    threadStarted: hasStartedModelSession && activeThreadId !== null,
-  });
+  const liveVoiceUnavailable = liveVoiceUnavailableReason(
+    {
+      provider: selectedProviderEntry?.snapshot,
+      threadStarted: hasStartedModelSession && activeThreadId !== null,
+    },
+    m,
+  );
   // SCIENT-FORK:END
   // SCIENT-FORK:START — map historical Antigravity selections to live variants
   useReconcileAntigravityComposerSelection({
@@ -1206,6 +1209,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentId,
     environmentUnavailable,
     runtimeUpdate: providerRuntimeUpdate,
+    resolve: m,
   });
   // SCIENT-FORK:END
 
@@ -1451,14 +1455,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     : null;
   // SCIENT-FORK:START — agent-working placeholder advertising queue/steer keys.
-  const composerWorkingPlaceholder = resolveComposerWorkingPlaceholder({
-    isRunning: phase === "running",
-    isMobileViewport,
-    followUpBehavior,
-    sendShortcut: settings.sendShortcut,
-    prompt,
-    isMacPlatform: isMacPlatform(navigator.platform),
-  });
+  const composerWorkingPlaceholder = resolveComposerWorkingPlaceholder(
+    {
+      isRunning: phase === "running",
+      isMobileViewport,
+      followUpBehavior,
+      sendShortcut: settings.sendShortcut,
+      prompt,
+      isMacPlatform: isMacPlatform(navigator.platform),
+    },
+    m,
+  );
   // SCIENT-FORK:END
 
   const showResumeAction =
@@ -4203,7 +4210,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? gt("Enable a provider in Settings to send a message")
                               : // SCIENT-FORK:START — a Goal or Plan chip names what to write.
                                 composerMode !== null
-                                ? COMPOSER_MODE_PLACEHOLDERS[composerMode]
+                                ? m(COMPOSER_MODE_PLACEHOLDERS[composerMode])
                                 : // SCIENT-FORK:END
                                   phase === "disconnected"
                                   ? m(DISCONNECTED_COMPOSER_PLACEHOLDER)

@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ExternalLink } from "lucide-react";
 
 import type { PDFOutline, PDFOutlineItem } from "./pdfRuntime";
@@ -66,7 +67,11 @@ export function PdfOutline(props: {
   readonly onExternalUrl: (url: string) => void;
 }) {
   if (props.items.length === 0) {
-    return <p className="px-4 py-8 text-center text-xs text-muted-foreground">No outline</p>;
+    return (
+      <p className="px-4 py-8 text-center text-xs text-muted-foreground">
+        <T>No outline</T>
+      </p>
+    );
   }
   return (
     <ul className="scient-pdf-outline">

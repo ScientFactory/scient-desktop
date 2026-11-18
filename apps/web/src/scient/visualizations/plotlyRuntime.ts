@@ -1,4 +1,7 @@
+import { msg } from "gt-react";
 import type { Config, Data, Frame, Layout, PlotlyHTMLElement } from "plotly.js";
+
+import { m } from "~/i18n/messages";
 
 import { SCIENT_CHART_SERIES_COLORS } from "./chartPalette";
 import type { ParsedPlotlySource, PlotlyFigureDocument } from "./plotlySpec";
@@ -390,9 +393,17 @@ interface PlotlyEventGraph {
 function plotlyWebGlUnavailableMessage(graph: HTMLElement): string {
   const bounds = graph.getBoundingClientRect();
   if (!(bounds.width > 1 && bounds.height > 1)) {
-    return "This figure needs a measurable layout size before WebGL can start. Retry after the card has finished laying out.";
+    return m(
+      msg(
+        "This figure needs a measurable layout size before WebGL can start. Retry after the card has finished laying out.",
+      ),
+    );
   }
-  return "This figure needs WebGL, but a graphics context is not available. Scroll away from other 3D or high-density figures, then retry.";
+  return m(
+    msg(
+      "This figure needs WebGL, but a graphics context is not available. Scroll away from other 3D or high-density figures, then retry.",
+    ),
+  );
 }
 
 export async function mountPlotlyView(input: {

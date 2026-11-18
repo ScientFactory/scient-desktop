@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { Download } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -25,6 +26,7 @@ export function DocumentDownloadMenu(
     readonly onSaveCopy: () => void;
   },
 ) {
+  const gt = useGT();
   return (
     <Menu>
       <Tooltip>
@@ -35,7 +37,7 @@ export function DocumentDownloadMenu(
                 <Button
                   type="button"
                   className="shrink-0"
-                  aria-label="Download"
+                  aria-label={gt("Download", { $context: "verb, downloads the document" })}
                   variant="ghost"
                   size="icon-sm"
                 />
@@ -45,7 +47,9 @@ export function DocumentDownloadMenu(
         >
           <Download className="size-3.5" />
         </TooltipTrigger>
-        <TooltipPopup>Download</TooltipPopup>
+        <TooltipPopup>
+          <T context="verb, downloads the document">Download</T>
+        </TooltipPopup>
       </Tooltip>
       {/* As narrow as its three formats, with a little room after them. */}
       <MenuPopup align="end" className="w-max min-w-24">
@@ -58,6 +62,7 @@ export function DocumentDownloadMenu(
           PDF
         </MenuItem>
         <MenuItem disabled={props.wordDisabled} onClick={props.word}>
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- format name and file extension */}
           Word (.docx)
         </MenuItem>
       </MenuPopup>

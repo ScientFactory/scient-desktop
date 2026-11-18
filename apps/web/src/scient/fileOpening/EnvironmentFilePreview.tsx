@@ -13,9 +13,11 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { AlertTriangle, Download, Globe, LoaderCircle, Music2 } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
+import { m } from "~/i18n/messages";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
@@ -87,6 +89,7 @@ function useEnvironmentTextAsset(input: {
   readonly refresh: () => void;
   readonly refreshing: boolean;
 } {
+  const messages = useMessages();
   const asset = useAssetUrlState(
     input.environmentId,
     environmentFileAssetResource({ path: input.file.canonicalPath }),
@@ -121,7 +124,7 @@ function useEnvironmentTextAsset(input: {
     setPreviousReadInputs(readInputs);
     setState(
       assetFailed
-        ? { _tag: "Failure", message: "Scient could not authorize this file." }
+        ? { _tag: "Failure", message: messages(msg("Scient could not authorize this file.")) }
         : { _tag: "Loading" },
     );
   }
@@ -157,7 +160,7 @@ function useEnvironmentTextAsset(input: {
         if (controller.signal.aborted) return;
         setState({
           _tag: "Failure",
-          message: cause instanceof Error ? cause.message : "Unable to read this file.",
+          message: cause instanceof Error ? cause.message : m(msg("Unable to read this file.")),
         });
       });
     return () => controller.abort();
@@ -180,7 +183,7 @@ function useEnvironmentTextAsset(input: {
 
   return {
     state: assetFailed
-      ? { _tag: "Failure", message: "Scient could not authorize this file." }
+      ? { _tag: "Failure", message: messages(msg("Scient could not authorize this file.")) }
       : assetUrl === null
         ? { _tag: "Loading" }
         : state,
@@ -194,6 +197,8 @@ function EnvironmentImageSurface(props: {
   readonly file: EnvironmentFilePrepareResult;
   readonly refreshToken: number;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const asset = useAssetUrlState(
     props.environmentId,
     environmentFileAssetResource({ path: props.file.canonicalPath }),
@@ -225,16 +230,22 @@ function EnvironmentImageSurface(props: {
   if (asset._tag === "Failure") {
     return (
       <FileSurfaceFailure
-        title={MEDIA_FAILURE_COPY.image.title}
-        description="Scient could not authorize this image."
+        title={messages(MEDIA_FAILURE_COPY.image.title)}
+        description={gt("Scient could not authorize this image.")}
         retrying={asset.waiting === true}
         onRetry={refreshAsset}
       />
     );
   }
-  if (asset._tag !== "Success") return <CenteredLoading label="Preparing image…" />;
+  if (asset._tag !== "Success") return <CenteredLoading label={gt("Preparing image…")} />;
   if (failedUrl === asset.url) {
-    return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.image} onRetry={retry} />;
+    return (
+      <FileSurfaceFailure
+        title={messages(MEDIA_FAILURE_COPY.image.title)}
+        description={messages(MEDIA_FAILURE_COPY.image.description)}
+        onRetry={retry}
+      />
+    );
   }
   return (
     <>
@@ -245,10 +256,10 @@ function EnvironmentImageSurface(props: {
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
-            The latest version could not be loaded. Showing the last available copy.
+            <T>The latest version could not be loaded. Showing the last available copy.</T>
           </span>
           <Button size="xs" variant="outline" onClick={retry}>
-            Try again
+            <T>Try again</T>
           </Button>
         </div>
       ) : null}
@@ -281,6 +292,8 @@ function EnvironmentMediaSurface(props: {
   readonly refreshToken: number;
   readonly kind: "audio" | "video";
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const asset = useAssetUrlState(
     props.environmentId,
     environmentFileAssetResource({ path: props.file.canonicalPath }),
@@ -302,19 +315,19 @@ function EnvironmentMediaSurface(props: {
   if (asset._tag === "Failure") {
     return (
       <FileSurfaceFailure
-        title={MEDIA_FAILURE_COPY[props.kind].title}
-        description="Scient could not authorize this media file."
+        title={messages(MEDIA_FAILURE_COPY[props.kind].title)}
+        description={gt("Scient could not authorize this media file.")}
         retrying={asset.waiting === true}
         onRetry={refreshAsset}
       />
     );
   }
-  if (asset._tag !== "Success") return <CenteredLoading label="Preparing media…" />;
+  if (asset._tag !== "Success") return <CenteredLoading label={gt("Preparing media…")} />;
   if (failure?.url === asset.url && failure.refreshToken === props.refreshToken) {
     return (
       <FileSurfaceFailure
-        title={MEDIA_FAILURE_COPY[props.kind].title}
-        description="Its format or codec may not be supported here."
+        title={messages(MEDIA_FAILURE_COPY[props.kind].title)}
+        description={gt("Its format or codec may not be supported here.")}
         onRetry={() => {
           autoRetryRef.current = { refreshToken: props.refreshToken, attempted: false };
           setFailure(null);
@@ -346,7 +359,7 @@ function EnvironmentMediaSurface(props: {
             aria-label={props.file.fileName}
             onError={handleMediaError}
           >
-            Your browser cannot play this audio file.
+            <T>Your browser cannot play this audio file.</T>
           </audio>
         </div>
       ) : (
@@ -358,7 +371,7 @@ function EnvironmentMediaSurface(props: {
           aria-label={props.file.fileName}
           onError={handleMediaError}
         >
-          Your browser cannot play this video file.
+          <T>Your browser cannot play this video file.</T>
         </video>
       )}
     </div>
@@ -379,7 +392,8 @@ function ReadFailure(props: {
   readonly retrying?: boolean;
   readonly onRetry: () => void;
 }) {
-  const copy = fileReadFailureCopy({ failure: null, message: props.message });
+  const messages = useMessages();
+  const copy = fileReadFailureCopy({ failure: null, message: props.message, resolve: messages });
   return (
     <FileSurfaceFailure
       title={copy.title}
@@ -398,6 +412,7 @@ function EnvironmentTextSurface(props: {
   readonly refreshToken: number;
   readonly threadRef: ScopedThreadRef;
 }) {
+  const gt = useGT();
   const loadedAsset = useEnvironmentTextAsset(props);
   const load = loadedAsset.state;
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
@@ -419,7 +434,7 @@ function EnvironmentTextSurface(props: {
     revealedTargetRef.current = revealTarget;
   };
 
-  if (load._tag === "Loading") return <CenteredLoading label="Reading file…" />;
+  if (load._tag === "Loading") return <CenteredLoading label={gt("Reading file…")} />;
   if (load._tag === "Failure") {
     return (
       <ReadFailure
@@ -478,8 +493,11 @@ function EnvironmentTextSurface(props: {
 function TruncatedNotice(props: { readonly file: EnvironmentFilePrepareResult }) {
   return (
     <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
-      Read-only preview limited to the first {formatByteLength(ENVIRONMENT_TEXT_PREVIEW_BYTE_LIMIT)}{" "}
-      of a {formatByteLength(props.file.byteLength)} file.
+      <T>
+        Read-only preview limited to the first{" "}
+        <Var>{formatByteLength(ENVIRONMENT_TEXT_PREVIEW_BYTE_LIMIT)}</Var> of a{" "}
+        <Var>{formatByteLength(props.file.byteLength)}</Var> file.
+      </T>
     </div>
   );
 }
@@ -493,6 +511,8 @@ function EnvironmentFileBody(props: {
   /** Saves a copy to the viewing device, the one action left for a file with no preview. */
   readonly onSaveCopy?: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   switch (props.file.presentation.kind) {
     case "image":
       return (
@@ -503,7 +523,7 @@ function EnvironmentFileBody(props: {
       );
     case "pdf":
       return (
-        <Suspense fallback={<CenteredLoading label="Preparing PDF…" />}>
+        <Suspense fallback={<CenteredLoading label={gt("Preparing PDF…")} />}>
           <ScientPdfReader
             refreshKey={props.refreshToken}
             readerScope={props.threadRef.threadId}
@@ -527,19 +547,21 @@ function EnvironmentFileBody(props: {
     case "binary":
       return (
         <FileSurfaceMessage
-          title={UNSUPPORTED_PREVIEW_TITLE}
+          title={messages(UNSUPPORTED_PREVIEW_TITLE)}
           description={
             <>
               <span className="block">
                 {props.file.presentation.mediaType} · {formatByteLength(props.file.byteLength)}
               </span>
-              <span className="block">You can still save a copy of it.</span>
+              <span className="block">
+                <T>You can still save a copy of it.</T>
+              </span>
             </>
           }
         >
           {props.onSaveCopy ? (
             <Button type="button" size="xs" variant="outline" onClick={props.onSaveCopy}>
-              Save a copy
+              <T>Save a copy</T>
             </Button>
           ) : null}
         </FileSurfaceMessage>
@@ -558,6 +580,7 @@ export default function EnvironmentFilePreview(props: {
     environmentId: props.environmentId,
     path: props.surface.path,
   });
+  const gt = useGT();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
@@ -586,16 +609,16 @@ export default function EnvironmentFilePreview(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open HTML",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: m(msg("Unable to open HTML")),
+            description: cause instanceof Error ? cause.message : m(msg("An error occurred.")),
           }),
         );
       } catch (cause) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open HTML",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: m(msg("Unable to open HTML")),
+            description: cause instanceof Error ? cause.message : m(msg("An error occurred.")),
           }),
         );
       }
@@ -650,13 +673,15 @@ export default function EnvironmentFilePreview(props: {
                   variant="ghost"
                   size="icon-xs"
                   onClick={openHtml}
-                  aria-label="Open HTML in integrated browser"
+                  aria-label={gt("Open HTML in integrated browser")}
                 />
               }
             >
               <Globe />
             </TooltipTrigger>
-            <TooltipPopup>Open in Browser</TooltipPopup>
+            <TooltipPopup>
+              <T>Open in Browser</T>
+            </TooltipPopup>
           </Tooltip>
         ) : null}
         {file && httpBaseUrl ? (
@@ -667,19 +692,21 @@ export default function EnvironmentFilePreview(props: {
                   variant="ghost"
                   size="icon-xs"
                   onClick={saveCopy}
-                  aria-label="Save a copy to this device"
+                  aria-label={gt("Save a copy to this device")}
                 />
               }
             >
               <Download />
             </TooltipTrigger>
-            <TooltipPopup>Save a copy to this device</TooltipPopup>
+            <TooltipPopup>
+              <T>Save a copy to this device</T>
+            </TooltipPopup>
           </Tooltip>
         ) : null}
         <ScientFileReloadButton
           automaticRefreshUnavailable={freshness.automaticRefreshUnavailable}
           isPending={freshness.isPending}
-          label="Reload file"
+          label={gt("Reload file")}
           onReload={freshness.refresh}
           size="icon-xs"
         />
@@ -691,7 +718,7 @@ export default function EnvironmentFilePreview(props: {
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
-            The latest version could not be loaded. Showing the last available copy.
+            <T>The latest version could not be loaded. Showing the last available copy.</T>
           </span>
           <Button
             size="xs"
@@ -700,7 +727,7 @@ export default function EnvironmentFilePreview(props: {
             aria-busy={freshness.isPending}
             onClick={freshness.refresh}
           >
-            Try again
+            <T>Try again</T>
           </Button>
         </div>
       ) : null}
@@ -720,7 +747,7 @@ export default function EnvironmentFilePreview(props: {
           {...(httpBaseUrl ? { onSaveCopy: saveCopy } : {})}
         />
       ) : (
-        <CenteredLoading label="Inspecting file…" />
+        <CenteredLoading label={gt("Inspecting file…")} />
       )}
     </div>
   );

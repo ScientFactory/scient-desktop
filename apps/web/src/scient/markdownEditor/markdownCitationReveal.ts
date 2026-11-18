@@ -1,6 +1,8 @@
 import { EditorView as CodeMirrorView } from "@codemirror/view";
 import type { FileCitation } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { isMarkdownCitationTextRange, resolveMarkdownCitation } from "./markdownCitation";
 import { openScientRichFenceSource } from "./nodes/codeBlockNodeView";
 import type { ScientMarkdownEditorView } from "./prosemirror/view";
@@ -19,9 +21,12 @@ export function revealMarkdownCitation(
   ) {
     toastManager.add({
       type: "warning",
-      title: "The quoted text has changed",
-      description:
-        "Showing the file. The saved quote is unchanged; its exact location could not be verified.",
+      title: m(msg("The quoted text has changed")),
+      description: m(
+        msg(
+          "Showing the file. The saved quote is unchanged; its exact location could not be verified.",
+        ),
+      ),
     });
     return () => {};
   }
@@ -36,8 +41,10 @@ export function revealMarkdownCitation(
   if (richFence && !openScientRichFenceSource(richFence)) {
     toastManager.add({
       type: "warning",
-      title: "Open the diagram source to show this quote",
-      description: "The saved quote is unchanged, but its source editor is not available here.",
+      title: m(msg("Open the diagram source to show this quote")),
+      description: m(
+        msg("The saved quote is unchanged, but its source editor is not available here."),
+      ),
     });
     return () => {};
   }
@@ -59,8 +66,10 @@ export function revealMarkdownCitation(
     } else if (richFence) {
       toastManager.add({
         type: "warning",
-        title: "Could not open the diagram source",
-        description: "The saved quote is unchanged. Try opening the source and selecting it again.",
+        title: m(msg("Could not open the diagram source")),
+        description: m(
+          msg("The saved quote is unchanged. Try opening the source and selecting it again."),
+        ),
       });
       return;
     } else {

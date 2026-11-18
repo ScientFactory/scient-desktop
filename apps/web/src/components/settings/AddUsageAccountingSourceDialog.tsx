@@ -1,4 +1,5 @@
 import { type EnvironmentId, UsageAccountingSourceId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { ExternalLinkIcon, InfoIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -29,6 +30,7 @@ export function AddUsageAccountingSourceDialog({
   readonly environmentId: EnvironmentId;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const gt = useGT();
   const [managementKey, setManagementKey] = useState("");
   const canSave = managementKey.trim().length > 0;
 
@@ -52,9 +54,11 @@ export function AddUsageAccountingSourceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add OpenRouter billing</DialogTitle>
+          <DialogTitle>
+            <T>Add OpenRouter billing</T>
+          </DialogTitle>
           <DialogDescription>
-            Use a management key to import spend, tokens, and model usage.
+            <T>Use a management key to import spend, tokens, and model usage.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -67,7 +71,9 @@ export function AddUsageAccountingSourceDialog({
           >
             <div className="grid gap-1.5">
               <div className="flex items-center gap-1">
-                <Label htmlFor="usage-accounting-key">Management key</Label>
+                <Label htmlFor="usage-accounting-key">
+                  <T>Management key</T>
+                </Label>
                 <Tooltip>
                   <TooltipTrigger
                     delay={200}
@@ -76,15 +82,17 @@ export function AddUsageAccountingSourceDialog({
                         type="button"
                         size="icon-micro"
                         variant="ghost-muted"
-                        aria-label="About OpenRouter management keys"
+                        aria-label={gt("About OpenRouter management keys")}
                       >
                         <InfoIcon className="size-3.5" />
                       </Button>
                     }
                   />
                   <TooltipPopup side="top" className="max-w-72">
-                    A management key is an administrative credential. Scient stores it on this
-                    device and uses it only for read-only billing requests.
+                    <T>
+                      A management key is an administrative credential. Scient stores it on this
+                      device and uses it only for read-only billing requests.
+                    </T>
                   </TooltipPopup>
                 </Tooltip>
               </div>
@@ -97,13 +105,13 @@ export function AddUsageAccountingSourceDialog({
                 autoFocus
               />
               <a
-                aria-label="Create a management key in OpenRouter (opens in browser)"
+                aria-label={gt("Create a management key in OpenRouter (opens in browser)")}
                 className="inline-flex w-fit items-center gap-1 text-xs text-foreground/80 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
                 href={OPENROUTER_MANAGEMENT_KEYS_URL}
                 rel="noreferrer noopener"
                 target="_blank"
               >
-                Create a management key in OpenRouter
+                <T>Create a management key in OpenRouter</T>
                 <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
               </a>
             </div>
@@ -111,10 +119,14 @@ export function AddUsageAccountingSourceDialog({
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
-            <span className="text-[15px]">Cancel</span>
+            <span className="text-[15px]">
+              <T>Cancel</T>
+            </span>
           </Button>
           <Button size="sm" onClick={save} disabled={!canSave}>
-            <span className="text-[15px]">Add billing</span>
+            <span className="text-[15px]">
+              <T>Add billing</T>
+            </span>
           </Button>
         </DialogFooter>
       </DialogPopup>

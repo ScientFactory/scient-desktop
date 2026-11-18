@@ -1,7 +1,9 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
@@ -34,11 +36,11 @@ export function useConnectorAgentChat(environmentId: EnvironmentId) {
         ? await newThread(scopeProjectRef(project.environmentId, project.id), { prompt })
         : null;
       record(purpose, opened ? "ok" : "error");
-      if (!opened) toastManager.add({ type: "error", title: "Could not open a new chat" });
+      if (!opened) toastManager.add({ type: "error", title: m(msg("Could not open a new chat")) });
       return opened !== null;
     } catch {
       record(purpose, "error");
-      toastManager.add({ type: "error", title: "Could not open a new chat" });
+      toastManager.add({ type: "error", title: m(msg("Could not open a new chat")) });
       return false;
     }
   };
@@ -68,5 +70,6 @@ export const makeFromEntryPrompt = (entry: {
     entry.title === entry.registryName ? undefined : `MCP Registry: ${entry.registryName}`,
     entry.repositoryUrl === undefined ? undefined : `code: ${entry.repositoryUrl}`,
   ].filter((part) => part !== undefined);
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- first message sent to the agent
   return `${AUTHORING} Make a connector for “${entry.title}”${where.length > 0 ? ` (${where.join(", ")})` : ""}. Scient can't add it as it is${entry.reason ? `: ${entry.reason}` : ""}.`;
 };

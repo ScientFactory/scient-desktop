@@ -832,7 +832,8 @@ function surfaceTitle(
     case "agents":
       return resolve(msg("Agents"));
     case "scient":
-      return scientRightPanelSurfaceTitle(surface);
+      // SCIENT-FORK: Scient panel titles in the active language.
+      return scientRightPanelSurfaceTitle(surface, resolve);
 
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));

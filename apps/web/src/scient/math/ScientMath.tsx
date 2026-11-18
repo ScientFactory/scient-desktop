@@ -1,6 +1,8 @@
+import { msg, useMessages } from "gt-react";
 import { Suspense, use, useLayoutEffect, useRef, useState } from "react";
 
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
+import type { MessageResolver } from "~/i18n/messages";
 import { LRUCache } from "~/lib/lruCache";
 import { observeResize } from "~/lib/observeResize";
 
@@ -58,6 +60,7 @@ interface ScientMathProps {
 // SCIENT-FORK:START — shared clipboard metadata and keyboard access stay on the Scient surface.
 /** Math is reading, not a control: only a formula too wide to show needs keyboard scrolling. */
 function useMathOverflow<T extends HTMLElement>(focusable: boolean, content: string) {
+  const resolve = useMessages();
   const ref = useRef<T>(null);
   const [overflows, setOverflows] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures rendered math against its box, which only the browser knows
@@ -71,10 +74,15 @@ function useMathOverflow<T extends HTMLElement>(focusable: boolean, content: str
     return observeResize(formula ? [surface, formula] : surface, measure);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- New content replaces the formula element, so it needs a new measure and observer.
   }, [focusable, content]);
-  return { ref, scrollable: focusable && overflows };
+  return { ref, scrollable: focusable && overflows, resolve };
 }
 
-function mathSurfaceProps(tex: string, displayMode: boolean, scrollable: boolean) {
+function mathSurfaceProps(
+  tex: string,
+  displayMode: boolean,
+  scrollable: boolean,
+  resolve: MessageResolver,
+) {
   return {
     className: displayMode ? "scient-math-display" : "scient-math-inline",
     dir: "ltr" as const,
@@ -84,16 +92,20 @@ function mathSurfaceProps(tex: string, displayMode: boolean, scrollable: boolean
     tabIndex: scrollable ? 0 : undefined,
     "aria-label": scrollable
       ? displayMode
-        ? "Scroll display equation"
-        : "Scroll inline equation"
+        ? resolve(msg("Scroll display equation"))
+        : resolve(msg("Scroll inline equation"))
       : undefined,
   };
 }
 
 /** Loading and unsupported TeX retain the same atomic source-copy surface. */
 function ScientMathLiteral({ tex, displayMode, focusable }: Omit<ScientMathProps, "isStreaming">) {
-  const { ref, scrollable } = useMathOverflow<HTMLElement>(focusable, tex);
-  return <code ref={ref} {...mathSurfaceProps(tex, displayMode, scrollable)}>{`$$${tex}$$`}</code>;
+  const { ref, scrollable, resolve } = useMathOverflow<HTMLElement>(focusable, tex);
+  return (
+    <code ref={ref} {...mathSurfaceProps(tex, displayMode, scrollable, resolve)}>
+      {`$$${tex}$$`}
+    </code>
+  );
 }
 
 function ScientMathHtml({
@@ -102,12 +114,12 @@ function ScientMathHtml({
   displayMode,
   focusable,
 }: Omit<ScientMathProps, "isStreaming"> & { html: string }) {
-  const { ref, scrollable } = useMathOverflow<HTMLSpanElement>(focusable, html);
+  const { ref, scrollable, resolve } = useMathOverflow<HTMLSpanElement>(focusable, html);
   // KaTeX's escaped, untrusted-command-disabled output is the only injected markup.
   return (
     <span
       ref={ref}
-      {...mathSurfaceProps(tex, displayMode, scrollable)}
+      {...mathSurfaceProps(tex, displayMode, scrollable, resolve)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { EnvironmentId, ScientSourcesOrganizeResult } from "@t3tools/contracts";
 import { ArchiveRestore, Package, PackagePlus } from "lucide-react";
 import { useState } from "react";
@@ -75,6 +76,7 @@ function useProjectPackage(props: {
   readonly onChanged?: () => Promise<unknown>;
   readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
 }) {
+  const gt = useGT();
   const [working, setWorking] = useState(false);
   // A chosen folder names this computer's files, so only the local environment can use one.
   const local = props.environmentId === usePrimaryEnvironmentId();
@@ -106,7 +108,9 @@ function useProjectPackage(props: {
       });
       toastManager.add({
         type: "success",
-        title: `Saved the project package to ${result.packagePath ?? "the project"}`,
+        title: gt("Saved the project package to {packagePath}", {
+          packagePath: result.packagePath ?? gt("the project"),
+        }),
         ...(result.packageReport ? { description: exportedDescription(result.packageReport) } : {}),
       });
     }, "The project package was not saved");
@@ -126,8 +130,8 @@ function useProjectPackage(props: {
           type: "info",
           title:
             result.outcome === "already-undone"
-              ? "That import was already undone"
-              : "The import receipt was not found",
+              ? gt("That import was already undone")
+              : gt("The import receipt was not found"),
         });
         return;
       }
@@ -147,12 +151,12 @@ function useProjectPackage(props: {
         .join(" ");
       toastManager.add({
         type: "success",
-        title: "Import undone",
+        title: gt("Import undone"),
         ...(description ? { description } : {}),
         ...(retained.length > 0 && props.onShowSources
           ? {
               actionProps: {
-                children: "Show them",
+                children: gt("Show them"),
                 onClick: () => props.onShowSources?.(retained),
               },
             }
@@ -166,12 +170,15 @@ function useProjectPackage(props: {
       if (result.outcome === "package-changed") {
         toastManager.add({
           type: "error",
-          title: "Not imported: files in the package changed after it was saved",
+          title: gt("Not imported: files in the package changed after it was saved"),
         });
         return;
       }
       if (result.outcome === "not-a-package") {
-        toastManager.add({ type: "error", title: `${relativePath} is not a project package` });
+        toastManager.add({
+          type: "error",
+          title: gt("{relativePath} is not a project package", { relativePath }),
+        });
         return;
       }
       await changed();
@@ -179,12 +186,12 @@ function useProjectPackage(props: {
       const importId = report?.importId;
       const id = toastManager.add({
         type: report?.failed?.length ? "warning" : "success",
-        title: `Imported ${relativePath}`,
+        title: gt("Imported {relativePath}", { relativePath }),
         ...(report ? { description: importedDescription(report) } : {}),
         ...(importId
           ? {
               actionProps: {
-                children: "Undo",
+                children: gt("Undo", { $context: "verb, button that undoes a change" }),
                 onClick: () => {
                   toastManager.close(id);
                   void undoImport(importId);
@@ -208,12 +215,12 @@ function useProjectPackage(props: {
         type: result.outcome === "archive-changed" ? "error" : "info",
         title:
           result.outcome === "restored"
-            ? "Recovered sources from before the move"
+            ? gt("Recovered sources from before the move")
             : result.outcome === "no-archive"
-              ? "No copy from before the move was found"
+              ? gt("No copy from before the move was found")
               : result.outcome === "project-store-present"
-                ? "Sources are already in this project's folder"
-                : "The copy from before the move changed and was not recovered",
+                ? gt("Sources are already in this project's folder")
+                : gt("The copy from before the move changed and was not recovered"),
       });
     }, "Sources could not be recovered");
 
@@ -231,10 +238,12 @@ export function SaveProjectPackageItem(props: {
   const project = useProjectPackage(props);
   return (
     <MenuGroup>
-      <MenuGroupLabel>The whole project, with its PDFs and highlights</MenuGroupLabel>
+      <MenuGroupLabel>
+        <T>The whole project, with its PDFs and highlights</T>
+      </MenuGroupLabel>
       <MenuItem disabled={project.working} onClick={() => void project.savePackage()}>
         <Package />
-        Save a project package…
+        <T>Save a project package…</T>
       </MenuItem>
     </MenuGroup>
   );
@@ -264,18 +273,22 @@ export function ImportPackageSubmenu(props: {
     >
       <MenuSubTrigger disabled={project.working}>
         <PackagePlus />
-        Import a package
+        <T>Import a package</T>
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-56">
         {pickFolder ? (
           <MenuItem onClick={() => void project.importChosen(pickFolder)}>
-            Choose a folder…
+            <T>Choose a folder…</T>
           </MenuItem>
         ) : null}
         {packages === null ? (
-          <MenuItem disabled>Looking in this project…</MenuItem>
+          <MenuItem disabled>
+            <T>Looking in this project…</T>
+          </MenuItem>
         ) : packages.length === 0 ? (
-          <MenuItem disabled>No package folder in this project</MenuItem>
+          <MenuItem disabled>
+            <T>No package folder in this project</T>
+          </MenuItem>
         ) : (
           packages.map((entry) => (
             <MenuItem
@@ -306,7 +319,7 @@ export function RecoverPreMoveItem(props: {
   return (
     <MenuItem disabled={project.working} onClick={() => void project.recoverPreMove()}>
       <ArchiveRestore />
-      Recover sources from before the move
+      <T>Recover sources from before the move</T>
     </MenuItem>
   );
 }

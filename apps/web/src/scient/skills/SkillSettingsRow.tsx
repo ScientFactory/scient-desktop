@@ -1,4 +1,5 @@
 import type { ScientSkillCatalogItem, ScientSkillInvocationPolicy } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -15,7 +16,7 @@ import { cn } from "../../lib/utils";
 import { OPENABLE_ROW_CLASS, openFromRow } from "./skillRowOpen";
 
 const invocationPolicyLabel = (policy: ScientSkillInvocationPolicy): string =>
-  policy === "automatic" ? "Agent access" : "$name only";
+  policy === "automatic" ? msg("Agent access") : msg("$name only");
 
 const displaySkillName = (name: string): string =>
   name
@@ -37,6 +38,8 @@ export function SkillSettingsRow(props: {
   }) => void;
 }) {
   const { disabled, onUpdate, pending, skill } = props;
+  const gt = useGT();
+  const m = useMessages();
   return (
     <SettingsRow
       className={cn(
@@ -69,15 +72,17 @@ export function SkillSettingsRow(props: {
               variant="ghost"
               className="w-fit min-w-0"
               icon={<ChevronDownIcon className="size-3 opacity-70" strokeWidth={2.25} />}
-              aria-label={`${skill.name} use`}
+              aria-label={gt("{skill} use", { skill: skill.name })}
             >
               <SelectValue>
-                {skill.active ? invocationPolicyLabel(skill.invocationPolicy) : "Deactivated"}
+                {skill.active
+                  ? m(invocationPolicyLabel(skill.invocationPolicy))
+                  : gt("Deactivated")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup>
-              <SelectItem value="automatic">Agent access</SelectItem>
-              <SelectItem value="explicit">$name only</SelectItem>
+              <SelectItem value="automatic">{gt("Agent access")}</SelectItem>
+              <SelectItem value="explicit">{gt("$name only")}</SelectItem>
             </SelectPopup>
           </Select>
         </span>
@@ -91,7 +96,7 @@ export function SkillSettingsRow(props: {
             checked={skill.active}
             motion="none"
             disabled={pending || disabled}
-            aria-label={`Make ${skill.name} available`}
+            aria-label={gt("Make {skill} available", { skill: skill.name })}
             onCheckedChange={(checked) => onUpdate({ active: Boolean(checked) })}
           />
         </span>

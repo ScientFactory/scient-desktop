@@ -3,35 +3,38 @@ import type {
   ScientSourceRestoreResult,
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type EditorialStatus = NonNullable<ScientSourceDetailResult["editorialStatus"]>;
 type NoticeChange = NonNullable<ScientSourcesOverviewResult["noticeChanges"]>[number];
 type Verification = NonNullable<ScientSourceDetailResult["verification"]>;
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
-  type: "type",
-  customType: "type",
-  title: "title",
-  creators: "authors",
-  issuedRaw: "date",
-  issuedYear: "date",
-  identifiers: "identifiers",
-  abstract: "abstract",
-  abstractSections: "abstract",
-  note: "note",
-  containerTitle: "journal",
-  publisher: "publisher",
-  volume: "volume",
-  issue: "issue",
-  pages: "pages",
-  language: "language",
-  url: "link",
-  tags: "tags",
-  more: "more details",
-  attachments: "PDFs",
-  verification: "identifier check",
-  editorialStatus: "retraction status",
-  externalReferences: "Zotero link",
+  type: msg("type", { $context: "a source field named in a sentence" }),
+  customType: msg("type", { $context: "a source field named in a sentence" }),
+  title: msg("title", { $context: "a source field named in a sentence" }),
+  creators: msg("authors", { $context: "a source field named in a sentence" }),
+  issuedRaw: msg("date", { $context: "a source field named in a sentence" }),
+  issuedYear: msg("date", { $context: "a source field named in a sentence" }),
+  identifiers: msg("identifiers", { $context: "a source field named in a sentence" }),
+  abstract: msg("abstract", { $context: "a source field named in a sentence" }),
+  abstractSections: msg("abstract", { $context: "a source field named in a sentence" }),
+  note: msg("note", { $context: "a source field named in a sentence" }),
+  containerTitle: msg("journal", { $context: "a source field named in a sentence" }),
+  publisher: msg("publisher", { $context: "a source field named in a sentence" }),
+  volume: msg("volume", { $context: "a source field named in a sentence" }),
+  issue: msg("issue", { $context: "a source field named in a sentence" }),
+  pages: msg("pages", { $context: "a source field named in a sentence" }),
+  language: msg("language", { $context: "a source field named in a sentence" }),
+  url: msg("link", { $context: "a source field named in a sentence" }),
+  tags: msg("tags", { $context: "a source field named in a sentence" }),
+  more: msg("more details", { $context: "a source field named in a sentence" }),
+  attachments: msg("PDFs", { $context: "a source field named in a sentence" }),
+  verification: msg("identifier check", { $context: "a source field named in a sentence" }),
+  editorialStatus: msg("retraction status", { $context: "a source field named in a sentence" }),
+  externalReferences: msg("Zotero link", { $context: "a source field named in a sentence" }),
 };
 
 function shortDate(value: string): string {
@@ -42,52 +45,87 @@ function shortDate(value: string): string {
   );
 }
 
-const byLabel = (actor: "user" | "agent") => (actor === "agent" ? "by an agent" : "by you");
+const withDate = (label: string, date: string) => (date ? `${label} · ${date}` : label);
 
-export function removedLabel(entry: {
-  readonly removedAt: string;
-  readonly removedBy: "user" | "agent";
-}): string {
-  const date = shortDate(entry.removedAt);
-  return `Removed ${byLabel(entry.removedBy)}${date ? ` · ${date}` : ""}`;
+export function removedLabel(
+  entry: {
+    readonly removedAt: string;
+    readonly removedBy: "user" | "agent";
+  },
+  resolve: MessageResolver = m,
+): string {
+  const label =
+    entry.removedBy === "agent"
+      ? resolve(msg("Removed by an agent"))
+      : resolve(msg("Removed by you"));
+  return withDate(label, shortDate(entry.removedAt));
 }
 
-export function revisionLabel(revision: {
-  readonly savedAt: string;
-  readonly savedBy: "user" | "agent";
-  readonly changes: ReadonlyArray<string>;
-}): string {
-  const date = shortDate(revision.savedAt);
-  const verb = revision.changes.length === 0 ? "Saved" : "Edited";
-  return `${verb} ${byLabel(revision.savedBy)}${date ? ` · ${date}` : ""}`;
+export function revisionLabel(
+  revision: {
+    readonly savedAt: string;
+    readonly savedBy: "user" | "agent";
+    readonly changes: ReadonlyArray<string>;
+  },
+  resolve: MessageResolver = m,
+): string {
+  const saved = revision.changes.length === 0;
+  const label =
+    revision.savedBy === "agent"
+      ? saved
+        ? resolve(msg("Saved by an agent"))
+        : resolve(msg("Edited by an agent"))
+      : saved
+        ? resolve(msg("Saved by you"))
+        : resolve(msg("Edited by you"));
+  return withDate(label, shortDate(revision.savedAt));
 }
 
 /** Plain names for what a revision changed, without repeats or bookkeeping fields. */
-export function changedFieldsLabel(changes: ReadonlyArray<string>): string {
-  const labels = [...new Set(changes.map((field) => FIELD_LABELS[field] ?? field))];
+export function changedFieldsLabel(
+  changes: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
+): string {
+  const labels = [
+    ...new Set(
+      changes.map((field) => {
+        const label = FIELD_LABELS[field];
+        return label ? resolve(label) : field;
+      }),
+    ),
+  ];
   if (labels.length === 0) return "";
   const text = labels.join(", ");
-  return `Changed ${text}`;
+  return resolve(msg("Changed {fields}", { fields: text }));
 }
 
-export function restoreProblem(result: ScientSourceRestoreResult): string | null {
+export function restoreProblem(
+  result: ScientSourceRestoreResult,
+  resolve: MessageResolver = m,
+): string | null {
   switch (result.outcome) {
     case "restored":
       return null;
     case "not-found":
-      return "This source is no longer in the trash.";
+      return resolve(msg("This source is no longer in the trash."));
     case "exists":
-      return "This source is already in the Library.";
+      return resolve(msg("This source is already in the Library."));
     case "duplicate":
-      return "Another source in the Library has the same identifier. Remove it first to restore this one.";
+      return resolve(
+        msg(
+          "Another source in the Library has the same identifier. Remove it first to restore this one.",
+        ),
+      );
   }
 }
 
 const EDITORIAL_STATE_WORDS: Readonly<Record<Exclude<EditorialStatus["state"], "none">, string>> = {
-  retracted: "Retracted",
-  withdrawn: "Withdrawn",
-  "expression-of-concern": "Expression of concern",
-  corrected: "Corrected",
+  retracted: msg("Retracted", { $context: "editorial status of a paper" }),
+  withdrawn: msg("Withdrawn", { $context: "editorial status of a paper" }),
+  "expression-of-concern": msg("Expression of concern", {
+    $context: "editorial status of a paper",
+  }),
+  corrected: msg("Corrected", { $context: "editorial status of a paper" }),
 };
 
 const NOTICE_FOR_STATE = {
@@ -108,10 +146,14 @@ function noticeDate(value: string | undefined): string {
 }
 
 /** Evidence a project package brought: another computer's check, never one made here. */
-const CARRIED = " (from another computer's check)";
+const carried = (label: string, resolve: MessageResolver) =>
+  resolve(msg("{label} (from another computer's check)", { label }));
 
 /** The line shown on a source, or null when the registry reported nothing to warn about. */
-export function editorialStatusLine(status: EditorialStatus): {
+export function editorialStatusLine(
+  status: EditorialStatus,
+  resolve: MessageResolver = m,
+): {
   readonly text: string;
   readonly serious: boolean;
   readonly noticeDoi: string | null;
@@ -120,46 +162,77 @@ export function editorialStatusLine(status: EditorialStatus): {
   if (state === "none") return null;
   const notice = status.notices.find((entry) => entry.kind === NOTICE_FOR_STATE[state]);
   const date = noticeDate(notice?.date);
+  const word = resolve(EDITORIAL_STATE_WORDS[state]);
+  const dated = !date
+    ? word
+    : notice?.date?.length === 4
+      ? resolve(msg("{state} in {year}", { state: word, year: date }))
+      : resolve(msg("{state} on {date}", { state: word, date }));
   return {
-    text: `${EDITORIAL_STATE_WORDS[state]}${date ? ` ${notice?.date?.length === 4 ? "in" : "on"} ${date}` : ""}${status.carriedAt ? CARRIED : ""}`,
+    text: status.carriedAt ? carried(dated, resolve) : dated,
     serious: state === "retracted" || state === "withdrawn",
     noticeDoi: notice?.doi ?? null,
   };
 }
 
 /** A short row label for what the registry said about a source, or "" when nothing is wrong. */
-export function sourceTrustLabel(record: {
-  readonly editorialStatus?: EditorialStatus | undefined;
-  readonly verification?: Verification | undefined;
-}): string {
+export function sourceTrustLabel(
+  record: {
+    readonly editorialStatus?: EditorialStatus | undefined;
+    readonly verification?: Verification | undefined;
+  },
+  resolve: MessageResolver = m,
+): string {
   const editorial = record.editorialStatus?.state;
-  if (editorial && editorial !== "none") return ` · ${EDITORIAL_STATE_WORDS[editorial]}`;
-  return verificationProblemLabel(record.verification);
+  if (editorial && editorial !== "none") return ` · ${resolve(EDITORIAL_STATE_WORDS[editorial])}`;
+  return verificationProblemLabel(record.verification, resolve);
 }
 
-export function verificationProblemLabel(verification: Verification | undefined): string {
-  const carried = verification?.carriedAt ? CARRIED : "";
-  if (verification?.problem === "not-found") return ` · Not found in registry${carried}`;
-  if (verification?.problem === "mismatch") return ` · Identifier names another work${carried}`;
-  return "";
+export function verificationProblemLabel(
+  verification: Verification | undefined,
+  resolve: MessageResolver = m,
+): string {
+  const problem =
+    verification?.problem === "not-found"
+      ? resolve(msg("Not found in registry"))
+      : verification?.problem === "mismatch"
+        ? resolve(msg("Identifier names another work"))
+        : null;
+  if (problem === null) return "";
+  return ` · ${verification?.carriedAt ? carried(problem, resolve) : problem}`;
 }
 
 /** Above the list narrowed to the papers of the weekly check's line. */
-export const NOTICE_CHANGES_SHOWN = "Found by the weekly check";
+export const NOTICE_CHANGES_SHOWN = msg("Found by the weekly check");
 
 const NOTICE_CHANGE_WORDS = [
-  ["retraction", "was retracted", "were retracted"],
+  [
+    "retraction",
+    msg("{count, plural, one {{count} paper was retracted} other {{count} papers were retracted}}"),
+  ],
   [
     "expression-of-concern",
-    "was flagged with an expression of concern",
-    "were flagged with an expression of concern",
+    msg(
+      "{count, plural, one {{count} paper was flagged with an expression of concern} other {{count} papers were flagged with an expression of concern}}",
+    ),
   ],
-  ["correction", "was corrected", "were corrected"],
-  ["withdrawn", "was reinstated", "were reinstated"],
+  [
+    "correction",
+    msg("{count, plural, one {{count} paper was corrected} other {{count} papers were corrected}}"),
+  ],
+  [
+    "withdrawn",
+    msg(
+      "{count, plural, one {{count} paper was reinstated} other {{count} papers were reinstated}}",
+    ),
+  ],
 ] as const;
 
 /** What the weekly check found, each paper counted once under its most serious new notice. */
-export function noticeChangesLine(changes: ReadonlyArray<NoticeChange>): string | null {
+export function noticeChangesLine(
+  changes: ReadonlyArray<NoticeChange>,
+  resolve: MessageResolver = m,
+): string | null {
   const found = new Map<string, Set<string>>();
   for (const change of changes) {
     const kinds = found.get(change.sourceId) ?? new Set();
@@ -171,9 +244,11 @@ export function noticeChangesLine(changes: ReadonlyArray<NoticeChange>): string 
     const first = NOTICE_CHANGE_WORDS.find(([kind]) => kinds.has(kind))?.[0];
     if (first) counted.set(first, (counted.get(first) ?? 0) + 1);
   }
-  const parts = NOTICE_CHANGE_WORDS.flatMap(([kind, one, many]) => {
+  const parts = NOTICE_CHANGE_WORDS.flatMap(([kind, words]) => {
     const count = counted.get(kind) ?? 0;
-    return count === 0 ? [] : [count === 1 ? `1 paper ${one}` : `${count} papers ${many}`];
+    return count === 0 ? [] : [resolve(words, { count })];
   });
-  return parts.length > 0 ? `The weekly check found: ${parts.join(", ")}.` : null;
+  return parts.length > 0
+    ? resolve(msg("The weekly check found: {findings}.", { findings: parts.join(", ") }))
+    : null;
 }

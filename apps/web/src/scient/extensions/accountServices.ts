@@ -4,6 +4,9 @@ import type {
   ServerProvider,
   ServerProviderMcpServer,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import CLAUDE_CONNECTORS from "./claudeConnectors.json" with { type: "json" };
 import { providerLabel } from "./extensionsView";
@@ -17,6 +20,7 @@ export interface AccountService {
   readonly id: string;
   readonly name: string;
   readonly tagline: string;
+  /** A `msg()` string: resolve it where it is shown. */
   readonly description: string;
   readonly categories: ReadonlyArray<ExtensionCategory>;
   readonly websiteUrl?: string | undefined;
@@ -73,8 +77,9 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     id: "gmail",
     name: "Gmail",
     tagline: "Search, read and draft email",
-    description:
+    description: msg(
       "Each agent reaches Gmail through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+    ),
     categories: ["most-used", "communication"],
     websiteUrl: "https://mail.google.com",
     chatgptAppId: "connector_2128aebfecb84f64a069897515042a44",
@@ -84,8 +89,9 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     id: "google-calendar",
     name: "Google Calendar",
     tagline: "Check availability and manage events",
-    description:
+    description: msg(
       "Each agent reaches Google Calendar through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+    ),
     categories: ["most-used", "communication"],
     websiteUrl: "https://calendar.google.com",
     chatgptAppId: "connector_947e0d954944416db111db556030eea6",
@@ -95,8 +101,9 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     id: "google-drive",
     name: "Google Drive",
     tagline: "Find and read Docs, Sheets and files",
-    description:
+    description: msg(
       "Each agent reaches Google Drive through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+    ),
     categories: ["most-used", "files"],
     websiteUrl: "https://drive.google.com",
     chatgptAppId: "connector_5f3c8c41a1e54ad7a76272c89e2554fa",
@@ -146,8 +153,14 @@ export function accountServiceForApp(app: {
     name: app.name,
     tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "",
     description: claude
-      ? `Each agent reaches ${app.name} through its own ChatGPT or Claude account. Scient never holds that sign-in.`
-      : `Codex and Scient Agent reach ${app.name} through your ChatGPT account. Scient never holds that sign-in.`,
+      ? msg(
+          "Each agent reaches {name} through its own ChatGPT or Claude account. Scient never holds that sign-in.",
+          { name: app.name },
+        )
+      : msg(
+          "Codex and Scient Agent reach {name} through your ChatGPT account. Scient never holds that sign-in.",
+          { name: app.name },
+        ),
     categories: [],
     chatgptAppId: id,
     claude,
@@ -298,18 +311,48 @@ export function accountServiceRoutes(
   providers: ReadonlyArray<ServerProvider>,
   /** Whether an agent's inventory has been read; one not read yet without evidence is `checking`. */
   inventoryRead: (provider: ServerProvider) => boolean = () => true,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<AccountServiceRoute> {
-  return accountServiceRoutesFromInventory(service, providers).map((route) => {
+  return accountServiceRoutesFromInventory(service, providers, resolve).map((route) => {
     const provider = providers.find((entry) => entry.instanceId === route.instanceId);
     return route.state === "connect" && provider && !inventoryRead(provider)
-      ? { ...route, state: "checking", reason: "Checking its account…" }
+      ? { ...route, state: "checking", reason: resolve(msg("Checking its account…")) }
       : route;
   });
+}
+
+/** A Scient Agent route's reason when it is signed in to nothing; RouteAction offers ChatGPT. */
+export const NOT_SIGNED_IN_REASON = msg("Not signed in");
+
+function signedInElsewhereReason(
+  others: ReadonlyArray<string>,
+  service: string,
+  resolve: MessageResolver,
+): string {
+  const [first = "", second = ""] = others;
+  return others.length === 1
+    ? resolve(msg("Signed in with {first}; {service} needs its ChatGPT sign-in"), {
+        first,
+        service,
+      })
+    : others.length === 2
+      ? resolve(msg("Signed in with {first} and {second}; {service} needs its ChatGPT sign-in"), {
+          first,
+          second,
+          service,
+        })
+      : resolve(
+          msg(
+            "Signed in with {first} and {second} and others; {service} needs its ChatGPT sign-in",
+          ),
+          { first, second, service },
+        );
 }
 
 function accountServiceRoutesFromInventory(
   service: AccountService,
   providers: ReadonlyArray<ServerProvider>,
+  resolve: MessageResolver,
 ): ReadonlyArray<AccountServiceRoute> {
   const live = providers.filter((provider) => provider.enabled && provider.installed);
   const chatGptAccountsWith = new Set(
@@ -338,7 +381,9 @@ function accountServiceRoutesFromInventory(
           {
             ...chatgpt,
             state: "update",
-            reason: "Signed in to ChatGPT; ChatGPT apps come with the next Scient Agent update",
+            reason: resolve(
+              msg("Signed in to ChatGPT; ChatGPT apps come with the next Scient Agent update"),
+            ),
           },
         ];
       if (provider.accountAppsAvailable !== true) {
@@ -352,28 +397,44 @@ function accountServiceRoutesFromInventory(
             state: "sign-in",
             reason:
               others.length > 0
-                ? `Signed in with ${others.slice(0, 2).join(" and ")}${others.length > 2 ? " and others" : ""}; ${service.name} needs its ChatGPT sign-in`
-                : "Not signed in",
+                ? signedInElsewhereReason(others, service.name, resolve)
+                : resolve(NOT_SIGNED_IN_REASON),
           },
         ];
       }
       return [
         scientHas(provider, service)
           ? { ...chatgpt, state: "connected" }
-          : { ...chatgpt, state: "connect", reason: `Connect ${service.name} in ChatGPT` },
+          : {
+              ...chatgpt,
+              state: "connect",
+              reason: resolve(msg("Connect {service} in ChatGPT"), { service: service.name }),
+            },
       ];
     }
     if (provider.driver === "codex") {
       if (provider.auth.status !== "authenticated" || provider.auth.type !== "chatgpt")
-        return [{ ...chatgpt, state: "sign-in", reason: "Sign in to Codex with ChatGPT" }];
+        return [
+          { ...chatgpt, state: "sign-in", reason: resolve(msg("Sign in to Codex with ChatGPT")) },
+        ];
       const app = codexApp(provider, service);
       if (app === "off")
-        return [{ ...chatgpt, state: "off", reason: `${service.name} is turned off in Codex` }];
+        return [
+          {
+            ...chatgpt,
+            state: "off",
+            reason: resolve(msg("{service} is turned off in Codex"), { service: service.name }),
+          },
+        ];
       const email = chatGptEmail(provider);
       return [
         app === "on" || (email !== undefined && chatGptAccountsWith.has(email))
           ? { ...chatgpt, state: "connected" }
-          : { ...chatgpt, state: "connect", reason: `Connect ${service.name} in ChatGPT` },
+          : {
+              ...chatgpt,
+              state: "connect",
+              reason: resolve(msg("Connect {service} in ChatGPT"), { service: service.name }),
+            },
       ];
     }
     // Claude only for a service claude.ai has, with Anthropic's own page for it.
@@ -381,7 +442,11 @@ function accountServiceRoutesFromInventory(
       const claude = { ...base, family: "claude" as const, page: service.claude.page };
       if (provider.accountAppsAvailable !== true)
         return [
-          { ...claude, state: "sign-in", reason: "Needs Claude signed in with a Claude plan" },
+          {
+            ...claude,
+            state: "sign-in",
+            reason: resolve(msg("Needs Claude signed in with a Claude plan")),
+          },
         ];
       const connected = (provider.mcpServers ?? []).some(
         (server) => server.status === "connected" && serverIsService(provider, server, service),
@@ -393,7 +458,9 @@ function accountServiceRoutesFromInventory(
               ...claude,
               state: "connect",
               // claude.ai's own name for it, which can differ: Outlook is part of Microsoft 365.
-              reason: `Connect ${service.claude.name} on claude.ai`,
+              reason: resolve(msg("Connect {service} on claude.ai"), {
+                service: service.claude.name,
+              }),
             },
       ];
     }

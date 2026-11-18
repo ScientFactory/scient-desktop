@@ -5,6 +5,7 @@ import {
   MoreHorizontalIcon,
   XIcon,
 } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import type { ComputeLanguageRuntimeInventory, ComputeToolkitId } from "@t3tools/contracts";
 import { SettingsRow } from "~/components/settings/settingsLayout";
@@ -35,6 +36,7 @@ export function PythonToolkitSettings({
   readonly change: ToolkitChange | null;
   readonly onChange: (change: ToolkitChange | null) => void;
 }) {
+  const gt = useGT();
   const submitting = useRef(false);
   const requests = useRef(new Set<ComputeToolkitId>());
   const [pendingActions, setPendingActions] = useState<
@@ -116,18 +118,18 @@ export function PythonToolkitSettings({
         const phase = runtime.status?.operation?.phase;
         const label =
           pendingActions.get(toolkit.toolkitId) === "cancel"
-            ? "Cancelling…"
+            ? gt("Cancelling…")
             : pending
-              ? "Requesting…"
+              ? gt("Requesting…")
               : entry?.state === "queued"
-                ? "Queued"
+                ? gt("Queued")
                 : entry?.install === false
-                  ? "Removing…"
+                  ? gt("Removing…")
                   : phase === "verifying"
-                    ? "Checking…"
+                    ? gt("Checking…")
                     : phase === "installing-packages"
-                      ? "Installing…"
-                      : "Preparing…";
+                      ? gt("Installing…")
+                      : gt("Preparing…");
         const present = installed.has(toolkit.toolkitId);
         const available = runtime.status?.installed === true;
         const update = (add: boolean) => {
@@ -146,12 +148,17 @@ export function PythonToolkitSettings({
             }
             control={
               toolkit.required ? (
-                <span className="text-xs text-muted-foreground">Included</span>
+                <span className="text-xs text-muted-foreground">
+                  <T>Included</T>
+                </span>
               ) : queuedCommands && rowBusy ? (
                 <div
                   className="flex items-center gap-1"
                   role="status"
-                  aria-label={`${toolkit.displayName}: ${label}`}
+                  aria-label={gt("{toolkit}: {status}", {
+                    toolkit: toolkit.displayName,
+                    status: label,
+                  })}
                 >
                   <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
                   <span className="text-xs text-muted-foreground">{label}</span>
@@ -159,7 +166,7 @@ export function PythonToolkitSettings({
                     size="icon-xs"
                     variant="ghost-muted"
                     disabled={disabled || pending}
-                    aria-label={`Cancel ${toolkit.displayName}`}
+                    aria-label={gt("Cancel {toolkit}", { toolkit: toolkit.displayName })}
                     onClick={() =>
                       void send(
                         { toolkitId: toolkit.toolkitId, install: entry?.install ?? true },
@@ -189,10 +196,12 @@ export function PythonToolkitSettings({
                       />
                     }
                   >
-                    Retry
+                    <T>Retry</T>
                   </TooltipTrigger>
                   <TooltipPopup>
-                    {entry?.error ?? runtime.failure?.detail ?? "The request could not be sent."}
+                    {entry?.error ??
+                      runtime.failure?.detail ??
+                      gt("The request could not be sent.")}
                   </TooltipPopup>
                 </Tooltip>
               ) : active && runtime.busy ? (
@@ -204,18 +213,20 @@ export function PythonToolkitSettings({
                   disabled={disabled}
                   onClick={() => apply(change)}
                 >
-                  Retry
+                  <T>Retry</T>
                 </Button>
               ) : present ? (
                 <div className="flex items-center gap-1">
-                  <span className="text-xs text-muted-foreground">Installed</span>
+                  <span className="text-xs text-muted-foreground">
+                    <T>Installed</T>
+                  </span>
                   <Menu>
                     <MenuTrigger
                       render={
                         <Button
                           size="icon-xs"
                           variant="ghost-muted"
-                          aria-label={`Manage ${toolkit.displayName}`}
+                          aria-label={gt("Manage {toolkit}", { toolkit: toolkit.displayName })}
                           disabled={disabled}
                         />
                       }
@@ -229,7 +240,7 @@ export function PythonToolkitSettings({
                         disabled={disabled}
                         onClick={() => update(false)}
                       >
-                        Remove
+                        <T>Remove</T>
                       </MenuItem>
                     </MenuPopup>
                   </Menu>
@@ -242,17 +253,17 @@ export function PythonToolkitSettings({
                     <Button
                       size="xs"
                       variant="outline"
-                      aria-label={`Download ${toolkit.displayName}`}
+                      aria-label={gt("Download {toolkit}", { toolkit: toolkit.displayName })}
                       disabled={disabled || !available}
                       onClick={() => update(true)}
                     >
-                      <DownloadIcon aria-hidden /> Download
+                      <DownloadIcon aria-hidden /> <T>Download</T>
                     </Button>
                   </TooltipTrigger>
                   <TooltipPopup>
                     {!available
-                      ? "Set up Scient-managed Python first"
-                      : "Download into Scient-managed Python"}
+                      ? gt("Set up Scient-managed Python first")
+                      : gt("Download into Scient-managed Python")}
                   </TooltipPopup>
                 </Tooltip>
               )
@@ -260,7 +271,7 @@ export function PythonToolkitSettings({
           >
             <details className="group mt-1 text-xs text-muted-foreground">
               <summary className="flex w-fit cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
-                Packages
+                <T>Packages</T>
                 <ChevronDownIcon
                   aria-hidden
                   className="size-3 transition-transform group-open:rotate-180"

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useRef, useState, type ReactElement } from "react";
 
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "~/components/ui/preview-card";
@@ -19,6 +20,7 @@ export function TemplateCard(props: {
   readonly onExpand: (returnFocus: HTMLElement | null) => void;
   readonly children: ReactElement;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   if (!props.picture) return props.children;
@@ -42,7 +44,7 @@ export function TemplateCard(props: {
           <TemplatePage picture={props.picture} width={CARD_WIDTH} cropped />
           <button
             type="button"
-            aria-label={`Expand ${props.name} preview`}
+            aria-label={gt("Expand {name} preview", { name: props.name })}
             className="absolute inset-0 cursor-zoom-in rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={(event) => {
               event.stopPropagation();

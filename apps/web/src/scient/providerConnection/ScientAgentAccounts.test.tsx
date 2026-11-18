@@ -18,6 +18,10 @@ vi.mock("../../localApi", () => ({ ensureLocalApi: vi.fn() }));
 
 import { ScientAgentAccounts } from "./ScientAgentAccounts";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const entry = (
   id: string,
   overrides: Partial<ProviderConnectionAccount> = {},

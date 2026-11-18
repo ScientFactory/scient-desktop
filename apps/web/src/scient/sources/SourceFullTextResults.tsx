@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import type { MessageResolver } from "~/i18n/messages";
 import { foldText } from "@scientfactory/scient-sources/full-text";
 import type { EnvironmentId, ScientSourcesFullTextSearchResult } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
@@ -42,8 +45,13 @@ function passageSegments(
     });
 }
 
-function pendingLabel(pending: number): string {
-  return `Still reading ${pending} ${pending === 1 ? "PDF" : "PDFs"}. Full-text results may be incomplete.`;
+function pendingLabel(pending: number, resolve: MessageResolver): string {
+  return resolve(
+    msg(
+      "{count, plural, one {Still reading {count} PDF. Full-text results may be incomplete.} other {Still reading {count} PDFs. Full-text results may be incomplete.}}",
+      { count: pending },
+    ),
+  );
 }
 
 /**
@@ -60,6 +68,8 @@ export function SourceFullTextResults(props: {
   readonly sourceIds?: ReadonlyArray<string> | undefined;
   readonly onOpenHit: (hit: FullTextHit) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const query = props.query.trim();
   const searchable = query.length >= MINIMUM_QUERY_LENGTH;
   const [state, setState] = useState<SearchState>({ _tag: "Idle" });
@@ -99,15 +109,19 @@ export function SourceFullTextResults(props: {
   if (props.metadataMatchCount === 0 && hits.length === 0 && (answered || !searchable)) {
     return (
       <div className="p-8 text-center text-sm text-muted-foreground">
-        <p>No matching sources were found.</p>
-        {pending > 0 ? <p className="mt-1 text-xs">{pendingLabel(pending)}</p> : null}
+        <p>
+          <T>No matching sources were found.</T>
+        </p>
+        {pending > 0 ? <p className="mt-1 text-xs">{pendingLabel(pending, m)}</p> : null}
       </div>
     );
   }
   if (hits.length === 0) return null;
   return (
-    <section aria-label="Full-text matches" className="px-2 pt-3 pb-2">
-      <h3 className="px-1 pb-1 text-xs font-medium text-muted-foreground">In full text</h3>
+    <section aria-label={gt("Full-text matches")} className="px-2 pt-3 pb-2">
+      <h3 className="px-1 pb-1 text-xs font-medium text-muted-foreground">
+        <T>In full text</T>
+      </h3>
       <ul>
         {hits.map((hit) => (
           <li key={`${hit.sourceId}\0${hit.attachmentId}\0${hit.page}\0${hit.start}`}>
@@ -138,7 +152,7 @@ export function SourceFullTextResults(props: {
         ))}
       </ul>
       {pending > 0 ? (
-        <p className="px-1 pt-1 text-xs text-muted-foreground">{pendingLabel(pending)}</p>
+        <p className="px-1 pt-1 text-xs text-muted-foreground">{pendingLabel(pending, m)}</p>
       ) : null}
     </section>
   );

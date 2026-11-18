@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT } from "@scientfactory/scient-sources";
 import { MoreHorizontal, X } from "lucide-react";
 
@@ -11,6 +12,7 @@ import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
 
 function FilterChip(props: { readonly label: string; readonly onRemove: () => void }) {
+  const gt = useGT();
   return (
     <Badge variant="outline">
       <span className="max-w-40 truncate">{props.label}</span>
@@ -18,7 +20,7 @@ function FilterChip(props: { readonly label: string; readonly onRemove: () => vo
         type="button"
         size="icon-micro"
         variant="ghost-muted"
-        aria-label={`Remove filter: ${props.label}`}
+        aria-label={gt("Remove filter: {label}", { label: props.label })}
         onClick={props.onRemove}
       >
         <X />
@@ -33,6 +35,8 @@ export function SourcesActiveFilters(props: {
   readonly matchCount: number;
   readonly onRequestName: (request: SourcesNameRequest) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const { organize } = props;
   const { filter, collection, savedSearch } = organize;
   if (!organize.filterActive && !organize.readingFilterActive && !savedSearch) return null;
@@ -44,8 +48,8 @@ export function SourcesActiveFilters(props: {
   const renameCollection = () => {
     if (!collection) return;
     props.onRequestName({
-      title: "Rename collection",
-      label: "Collection name",
+      title: gt("Rename collection"),
+      label: gt("Collection name"),
       initialName: collection.name,
       action: "Rename",
       onSubmit: async (name) => {
@@ -60,8 +64,8 @@ export function SourcesActiveFilters(props: {
   const newSubcollection = () => {
     if (!collection) return;
     props.onRequestName({
-      title: `New collection in “${collection.name}”`,
-      label: "Collection name",
+      title: gt("New collection in “{name}”", { name: collection.name }),
+      label: gt("Collection name"),
       initialName: "",
       action: "Create",
       onSubmit: async (name) => {
@@ -73,8 +77,8 @@ export function SourcesActiveFilters(props: {
   };
   const saveSearch = () =>
     props.onRequestName({
-      title: savedSearch ? "Update saved search" : "Save search",
-      label: "Search name",
+      title: savedSearch ? gt("Update saved search") : gt("Save search"),
+      label: gt("Search name"),
       initialName: savedSearch?.name ?? "",
       action: "Save",
       onSubmit: async (name) => (await organize.saveSearch(name, savedSearch?.searchId)) !== null,
@@ -91,37 +95,37 @@ export function SourcesActiveFilters(props: {
       ))}
       {filter.type ? (
         <FilterChip
-          label={SCIENT_SOURCE_TYPE_LABELS[filter.type]}
+          label={m(SCIENT_SOURCE_TYPE_LABELS[filter.type])}
           onRemove={() => without("type")}
         />
       ) : null}
       {filter.studyDesign ? (
         <FilterChip
-          label={SCIENT_SOURCE_STUDY_DESIGN_LABELS[filter.studyDesign]}
+          label={m(SCIENT_SOURCE_STUDY_DESIGN_LABELS[filter.studyDesign])}
           onRemove={() => without("studyDesign")}
         />
       ) : null}
       {filter.topic ? <FilterChip label={filter.topic} onRemove={() => without("topic")} /> : null}
       {filter.hasPdf !== undefined ? (
         <FilterChip
-          label={filter.hasPdf ? "With PDF" : "Without PDF"}
+          label={filter.hasPdf ? gt("With PDF") : gt("Without PDF")}
           onRemove={() => without("hasPdf")}
         />
       ) : null}
       {organize.reading.unread ? (
         <FilterChip
-          label={LIBRARY_LABELS.unread}
+          label={m(LIBRARY_LABELS.unread)}
           onRemove={() => organize.setReading({ ...organize.reading, unread: undefined })}
         />
       ) : null}
       {organize.reading.starred ? (
         <FilterChip
-          label={LIBRARY_LABELS.starred}
+          label={m(LIBRARY_LABELS.starred)}
           onRemove={() => organize.setReading({ ...organize.reading, starred: undefined })}
         />
       ) : null}
       <span className="ms-auto tabular-nums" aria-live="polite">
-        {props.matchCount === 1 ? "1 source" : `${props.matchCount} sources`}
+        {props.matchCount === 1 ? gt("1 source") : `${props.matchCount} sources`}
       </span>
       <Menu>
         <MenuTrigger
@@ -130,7 +134,7 @@ export function SourcesActiveFilters(props: {
               type="button"
               size="icon-micro"
               variant="ghost-muted"
-              aria-label="Filter actions"
+              aria-label={gt("Filter actions")}
             />
           }
         >
@@ -140,11 +144,11 @@ export function SourcesActiveFilters(props: {
           {collection ? (
             <>
               <MenuItem disabled={!organize.canChange} onClick={renameCollection}>
-                Rename collection…
+                <T>Rename collection…</T>
               </MenuItem>
               {levelsAbove + 1 < SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT ? (
                 <MenuItem disabled={!organize.canChange} onClick={newSubcollection}>
-                  New subcollection…
+                  <T>New subcollection…</T>
                 </MenuItem>
               ) : null}
               <MenuItem
@@ -152,13 +156,13 @@ export function SourcesActiveFilters(props: {
                 disabled={!organize.canChange}
                 onClick={() => void organize.deleteCollection(collection.collectionId)}
               >
-                Delete collection
+                <T>Delete collection</T>
               </MenuItem>
               <MenuSeparator />
             </>
           ) : null}
           <MenuItem disabled={!organize.canChange} onClick={saveSearch}>
-            {savedSearch ? "Update saved search…" : "Save search…"}
+            {savedSearch ? gt("Update saved search…") : gt("Save search…")}
           </MenuItem>
           {savedSearch ? (
             <MenuItem
@@ -166,11 +170,13 @@ export function SourcesActiveFilters(props: {
               disabled={!organize.canChange}
               onClick={() => void organize.deleteSavedSearch(savedSearch.searchId)}
             >
-              Delete saved search
+              <T>Delete saved search</T>
             </MenuItem>
           ) : null}
           <MenuSeparator />
-          <MenuItem onClick={organize.clearFilter}>Clear filters</MenuItem>
+          <MenuItem onClick={organize.clearFilter}>
+            <T>Clear filters</T>
+          </MenuItem>
         </MenuPopup>
       </Menu>
     </div>

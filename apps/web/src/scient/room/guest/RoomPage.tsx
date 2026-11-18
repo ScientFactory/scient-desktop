@@ -1,9 +1,11 @@
 import { GUEST_NAME_MAX_LENGTH, ROOM_PAGE_PARAM, ROOM_PAGE_PATH } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useReducer, useState, type FormEvent } from "react";
 
 import type { MessagesTimelineHistoryControls } from "~/components/chat/MessagesTimeline";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { m } from "~/i18n/messages";
 import { RoomThread } from "./RoomThread";
 import {
   applyRoomStreamEvent,
@@ -16,6 +18,7 @@ import {
 import { fetchRoomHistory, joinRoom, roomResponseError } from "./roomGuestApi";
 
 export function RoomPage() {
+  const gt = useGT();
   const [entry, setEntry] = useState(() =>
     readRoomEntry(window.location.search, window.location.hash),
   );
@@ -40,7 +43,7 @@ export function RoomPage() {
       })
       .catch(() => {
         if (controller.signal.aborted) return;
-        setError("Could not reach the server. Try opening this link again.");
+        setError(m(msg("Could not reach the server. Try opening this link again.")));
         setAccess(entry.credential === null ? "none" : "name");
       });
     return () => controller.abort();
@@ -57,7 +60,7 @@ export function RoomPage() {
   return (
     <main className="flex h-dvh flex-col bg-background text-foreground">
       {access === "checking" ? (
-        <Notice message="Connecting…" />
+        <Notice message={gt("Connecting…")} />
       ) : access === "session" && entry.participantId !== null ? (
         <RoomSession key={entry.participantId} participantId={entry.participantId} />
       ) : access === "name" && entry.credential !== null ? (
@@ -76,7 +79,9 @@ export function RoomPage() {
           }}
         />
       ) : (
-        <Notice message={error ?? "This invite link is not valid. Ask the owner for a new link."} />
+        <Notice
+          message={error ?? gt("This invite link is not valid. Ask the owner for a new link.")}
+        />
       )}
     </main>
   );
@@ -99,6 +104,7 @@ function NameForm({
   readonly initialError: string | null;
   readonly onJoined: (participantId: string) => void;
 }) {
+  const gt = useGT();
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(initialError);
@@ -110,15 +116,17 @@ function NameForm({
     try {
       onJoined(await joinRoom(credential, trimmed));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not join this room. Try again.");
+      setError(cause instanceof Error ? cause.message : gt("Could not join this room. Try again."));
       setSubmitting(false);
     }
   };
   return (
     <form className="m-auto flex w-full max-w-sm flex-col gap-3 p-6" onSubmit={submit}>
-      <h1 className="text-base font-medium">Join a thread room</h1>
+      <h1 className="text-base font-medium">
+        <T>Join a thread room</T>
+      </h1>
       <label htmlFor="room-name" className="flex flex-col gap-1.5 text-sm">
-        Your name
+        <T>Your name</T>
         <Input
           id="room-name"
           autoFocus
@@ -129,7 +137,7 @@ function NameForm({
         />
       </label>
       <p className="text-xs text-muted-foreground">
-        Everyone in the room sees the thread and your name.
+        <T>Everyone in the room sees the thread and your name.</T>
       </p>
       {error !== null ? (
         <p role="alert" className="text-sm text-destructive">
@@ -137,13 +145,15 @@ function NameForm({
         </p>
       ) : null}
       <Button type="submit" disabled={submitting || name.trim() === ""}>
-        Join
+        <T context="verb, joins the room">Join</T>
       </Button>
     </form>
   );
 }
 
 function RoomSession({ participantId }: { readonly participantId: string }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [stream, dispatch] = useReducer(applyRoomStreamEvent, initialRoomStreamState);
   const [rejected, setRejected] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -162,7 +172,8 @@ function RoomSession({ participantId }: { readonly participantId: string }) {
     } catch (cause) {
       setHistoryLoad({
         cursor,
-        error: cause instanceof Error ? cause.message : "Could not load earlier turns. Try again.",
+        error:
+          cause instanceof Error ? cause.message : gt("Could not load earlier turns. Try again."),
       });
     }
   };
@@ -198,7 +209,7 @@ function RoomSession({ participantId }: { readonly participantId: string }) {
       void fetch(roomUrl("session", participantId), { signal: controller.signal })
         .then(async (response) =>
           response.ok
-            ? "The room connection ended. Open this link again to reconnect."
+            ? m(msg("The room connection ended. Open this link again to reconnect."))
             : roomResponseError(response),
         )
         .then((message) => {
@@ -206,7 +217,7 @@ function RoomSession({ participantId }: { readonly participantId: string }) {
         })
         .catch(() => {
           if (!controller.signal.aborted)
-            setRejected("Could not reach the server. Open this link again to reconnect.");
+            setRejected(m(msg("Could not reach the server. Open this link again to reconnect.")));
         });
     });
     return () => {
@@ -215,15 +226,15 @@ function RoomSession({ participantId }: { readonly participantId: string }) {
     };
   }, [participantId]);
 
-  if (stream.ended !== null) return <Notice message={roomEndedNotice[stream.ended]} />;
+  if (stream.ended !== null) return <Notice message={messages(roomEndedNotice[stream.ended])} />;
   if (rejected !== null) return <Notice message={rejected} />;
   if (stream.view === null || stream.thread.projection === null)
-    return <Notice message={reconnecting ? "Reconnecting…" : "Connecting…"} />;
+    return <Notice message={reconnecting ? gt("Reconnecting…") : gt("Connecting…")} />;
   return (
     <>
       {reconnecting ? (
         <p role="status" className="px-4 py-1 text-xs text-muted-foreground">
-          Reconnecting…
+          <T>Reconnecting…</T>
         </p>
       ) : null}
       <RoomThread

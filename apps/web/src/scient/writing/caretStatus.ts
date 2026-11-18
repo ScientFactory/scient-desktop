@@ -1,13 +1,24 @@
+import { msg } from "gt-react";
 import type { EditorState } from "prosemirror-state";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { countWords } from "./documentCounts";
 
 /** "Table · row 3, column 2" while the caret is in a table cell, otherwise null. */
-export function tableCaretPosition(state: EditorState): string | null {
+export function tableCaretPosition(
+  state: EditorState,
+  resolve: MessageResolver = m,
+): string | null {
   const { $from } = state.selection;
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     if ($from.node(depth).type.spec.tableRole === "row")
-      return `Table · row ${$from.index(depth - 1) + 1}, column ${$from.index(depth) + 1}`;
+      return resolve(
+        msg("Table · row {row}, column {column}", {
+          row: $from.index(depth - 1) + 1,
+          column: $from.index(depth) + 1,
+        }),
+      );
   }
   return null;
 }

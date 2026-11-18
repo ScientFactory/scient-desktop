@@ -9,6 +9,8 @@ import {
 import "./mathCommandCompletion.css";
 import { enterMathArgument, mathTextFormattingInput } from "./mathTextFormatting";
 import { latexArgumentChoices, type LatexCompletionContext } from "./latexCommandCompletion";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface CommandAtom {
   readonly type?: string;
@@ -56,7 +58,7 @@ export function installMathCommandCompletion(
   menu.className = "scient-latex-command-completion";
   menu.dataset.latexSelectOwner = math.id;
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "LaTeX completions");
+  menu.setAttribute("aria-label", m(msg("LaTeX completions")));
   menu.hidden = true;
   let choices: MathCommandCompletion[] = [];
   let active = 0;

@@ -1,5 +1,8 @@
 import type { EnvironmentRpcInput } from "@t3tools/client-runtime/rpc";
 import type { ServerProvider, ServerProviderUpdatedPayload, WS_METHODS } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface ProviderInventoryView {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -190,17 +193,20 @@ export function createProviderInventoryRequest({
   };
 }
 
-export function providerInventoryMessage(view: ProviderInventoryView): string {
+export function providerInventoryMessage(
+  view: ProviderInventoryView,
+  resolve: MessageResolver = m,
+): string {
   switch (view.phase) {
     case "unknown":
-      return "Agent extensions have not been checked yet.";
+      return resolve(msg("Agent extensions have not been checked yet."));
     case "checking":
-      return "Checking agent extensions across your projects…";
+      return resolve(msg("Checking agent extensions across your projects…"));
     case "error":
-      return "Could not load agent extensions.";
+      return resolve(msg("Could not load agent extensions."));
     case "partial":
-      return "Some agent inventories are unavailable. Showing what agents reported.";
+      return resolve(msg("Some agent inventories are unavailable. Showing what agents reported."));
     case "ready":
-      return "No agent plugins or MCP servers were reported.";
+      return resolve(msg("No agent plugins or MCP servers were reported."));
   }
 }

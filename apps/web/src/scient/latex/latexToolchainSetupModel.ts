@@ -4,6 +4,8 @@ import type {
   ScientLatexManagedInstallState,
   ScientLatexUnusableToolchain,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { LatexDocumentCompiler } from "./latexCompiler";
 
 export type LatexSetupCardKind = "offer" | "installing" | "failed" | "instructions";
@@ -84,39 +86,45 @@ export function formatLatexDownloadSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
 }
 
-function downloadBody(install: ScientLatexManagedInstallState): string {
+function downloadBody(install: ScientLatexManagedInstallState, resolve: MessageResolver): string {
   const { bytesReceived, totalBytes } = install;
   return bytesReceived === null || totalBytes === null || totalBytes <= 0
-    ? "Downloading TinyTeX…"
-    : `Downloading TinyTeX: ${formatLatexDownloadSize(bytesReceived)} of ${formatLatexDownloadSize(totalBytes)}.`;
+    ? resolve(msg("Downloading TinyTeX…"))
+    : resolve(
+        msg("Downloading TinyTeX: {received} of {total}.", {
+          received: formatLatexDownloadSize(bytesReceived),
+          total: formatLatexDownloadSize(totalBytes),
+        }),
+      );
 }
 
 function latexInstallFailureMessage(
   reason: ScientLatexManagedInstallFailureReason | null,
   step: ScientLatexManagedInstallFailureStep | undefined,
+  resolve: MessageResolver,
 ): string {
   switch (reason) {
     case "unsupported-platform":
-      return "Scient does not have a LaTeX distribution for this computer yet.";
+      return resolve(msg("Scient does not have a LaTeX distribution for this computer yet."));
     case "unsupported-archive":
-      return "Scient could not read the LaTeX download on this computer.";
+      return resolve(msg("Scient could not read the LaTeX download on this computer."));
     case "download-failed":
-      return "The download did not finish. Check the connection and try again.";
+      return resolve(msg("The download did not finish. Check the connection and try again."));
     case "checksum-mismatch":
-      return "The download did not match what Scient expected, so it was discarded.";
+      return resolve(msg("The download did not match what Scient expected, so it was discarded."));
     case "unpack-failed":
       switch (step) {
         case "engine-missing":
-          return "The download was unpacked, but the LaTeX engine was not in it.";
+          return resolve(msg("The download was unpacked, but the LaTeX engine was not in it."));
         case "engine-failed":
-          return "The download was unpacked, but its LaTeX engine would not start.";
+          return resolve(msg("The download was unpacked, but its LaTeX engine would not start."));
         case "extract":
         case undefined:
-          return "The download arrived but could not be unpacked.";
+          return resolve(msg("The download arrived but could not be unpacked."));
       }
     case "install-failed":
     case null:
-      return "The installation could not be finished.";
+      return resolve(msg("The installation could not be finished."));
   }
 }
 
@@ -125,19 +133,28 @@ function latexInstallFailureMessage(
  * install that finished without its packages is still a finished install, so
  * the note rides along beside whatever the phase already decided.
  */
-export function latexSetupCardModel(input: LatexSetupCardInput): LatexSetupCardModel {
-  const phase = latexSetupCardPhase(input);
+export function latexSetupCardModel(
+  input: LatexSetupCardInput,
+  resolve: MessageResolver = m,
+): LatexSetupCardModel {
+  const phase = latexSetupCardPhase(input, resolve);
   return {
     ...phase,
     warning: input.install?.packagesWarning ?? null,
-    detail: latexSetupCardDetail(input, phase.kind),
+    detail: latexSetupCardDetail(input, phase.kind, resolve),
   };
 }
 
-function latexSetupCardDetail(input: LatexSetupCardInput, kind: LatexSetupCardKind): string | null {
+function latexSetupCardDetail(
+  input: LatexSetupCardInput,
+  kind: LatexSetupCardKind,
+  resolve: MessageResolver,
+): string | null {
   if (kind === "failed") {
     const detail = input.install?.failureDetail;
-    return detail === undefined || detail === "" ? null : `Details: ${detail}`;
+    return detail === undefined || detail === ""
+      ? null
+      : resolve(msg("Details: {detail}", { detail }));
   }
   const unusable = input.unusableToolchain ?? null;
   if (unusable === null || !input.toolchainMissing || (input.requiredCompiler ?? null) !== null) {
@@ -147,18 +164,28 @@ function latexSetupCardDetail(input: LatexSetupCardInput, kind: LatexSetupCardKi
   // distribution this names is no longer the question.
   return kind === "installing" || input.install?.state === "ready"
     ? null
-    : `Scient found ${unusable.executable}, but it did not run: ${unusable.reason}`;
+    : resolve(
+        msg("Scient found {executable}, but it did not run: {reason}", {
+          executable: unusable.executable,
+          reason: unusable.reason,
+        }),
+      );
 }
 
 function latexSetupCardPhase(
   input: LatexSetupCardInput,
+  resolve: MessageResolver,
 ): Omit<LatexSetupCardModel, "warning" | "detail"> {
   const requiredCompiler = input.requiredCompiler ?? null;
   if (requiredCompiler === "tectonic") {
     return {
       kind: "instructions",
-      title: "This document needs Tectonic",
-      body: "Install Tectonic in this environment, then rebuild. TinyTeX does not provide Tectonic.",
+      title: resolve(msg("This document needs Tectonic")),
+      body: resolve(
+        msg(
+          "Install Tectonic in this environment, then rebuild. TinyTeX does not provide Tectonic.",
+        ),
+      ),
       actionLabel: null,
       busy: false,
       progressPercent: null,
@@ -168,22 +195,36 @@ function latexSetupCardPhase(
     requiredCompiler === null
       ? null
       : { pdflatex: "pdfLaTeX", xelatex: "XeLaTeX", lualatex: "LuaLaTeX" }[requiredCompiler];
-  const size =
+  const offerBody =
     input.downloadBytes == null
-      ? ""
-      : ` Base download: ${formatLatexDownloadSize(input.downloadBytes)}.`;
-  const offerBody = `One optional TinyTeX installation provides pdfLaTeX, XeLaTeX, and LuaLaTeX.${size} Additional LaTeX packages may be downloaded during setup or a document build. Nothing downloads until you choose Install.`;
+      ? resolve(
+          msg(
+            "One optional TinyTeX installation provides pdfLaTeX, XeLaTeX, and LuaLaTeX. Additional LaTeX packages may be downloaded during setup or a document build. Nothing downloads until you choose Install.",
+          ),
+        )
+      : resolve(
+          msg(
+            "One optional TinyTeX installation provides pdfLaTeX, XeLaTeX, and LuaLaTeX. Base download: {size}. Additional LaTeX packages may be downloaded during setup or a document build. Nothing downloads until you choose Install.",
+            { size: formatLatexDownloadSize(input.downloadBytes) },
+          ),
+        );
+  const needsTitle = (name: string | null) =>
+    name === null
+      ? resolve(msg("LaTeX tools are not installed"))
+      : resolve(msg("This document needs {compiler}", { compiler: name }));
   if (!input.canInstallManaged) {
     return {
       kind: "instructions",
-      title:
-        compilerName === null
-          ? "LaTeX tools are not installed"
-          : `This document needs ${compilerName}`,
+      title: needsTitle(compilerName),
       body:
         compilerName === null
-          ? "Install TeX Live, MiKTeX, or Tectonic on this computer, then rebuild."
-          : `Install a TeX distribution with ${compilerName} on this computer, then rebuild. The document's compiler will not be changed.`,
+          ? resolve(msg("Install TeX Live, MiKTeX, or Tectonic on this computer, then rebuild."))
+          : resolve(
+              msg(
+                "Install a TeX distribution with {compiler} on this computer, then rebuild. The document's compiler will not be changed.",
+                { compiler: compilerName },
+              ),
+            ),
       actionLabel: null,
       busy: false,
       progressPercent: null,
@@ -206,19 +247,26 @@ function latexSetupCardPhase(
 
   // A retry is progress the moment it is asked for: the server's last state is
   // still the old failure, and showing that back would read as a dead button.
-  if (input.requesting) return installing("Installing TinyTeX", "Starting the download…", 2);
+  const installingTitle = resolve(msg("Installing TinyTeX"));
+  if (input.requesting) {
+    return installing(installingTitle, resolve(msg("Starting the download…")), 2);
+  }
 
   switch (install?.state) {
     case "downloading":
-      return installing("Installing TinyTeX", downloadBody(install), downloadPercent(install));
+      return installing(installingTitle, downloadBody(install, resolve), downloadPercent(install));
     case "verifying":
-      return installing("Installing TinyTeX", "Checking the download…", VERIFYING_PERCENT);
+      return installing(installingTitle, resolve(msg("Checking the download…")), VERIFYING_PERCENT);
     case "unpacking":
-      return installing("Installing TinyTeX", "Unpacking the distribution…", UNPACKING_PERCENT);
+      return installing(
+        installingTitle,
+        resolve(msg("Unpacking the distribution…")),
+        UNPACKING_PERCENT,
+      );
     case "installing-packages":
       return installing(
-        "Installing TinyTeX",
-        "Installing common LaTeX packages…",
+        installingTitle,
+        resolve(msg("Installing common LaTeX packages…")),
         INSTALLING_PACKAGES_PERCENT,
       );
     case "ready":
@@ -230,32 +278,37 @@ function latexSetupCardPhase(
             kind: "offer",
             title:
               compilerName === null
-                ? "TinyTeX is installed, but no engine answered"
-                : `${compilerName} is still unavailable`,
-            body: "The installation finished, but the required compiler still cannot run. Review the installation details or install again. The document's compiler has not been changed.",
-            actionLabel: "Install again",
+                ? resolve(msg("TinyTeX is installed, but no engine answered"))
+                : resolve(msg("{compiler} is still unavailable", { compiler: compilerName })),
+            body: resolve(
+              msg(
+                "The installation finished, but the required compiler still cannot run. Review the installation details or install again. The document's compiler has not been changed.",
+              ),
+            ),
+            actionLabel: resolve(msg("Install again")),
             busy: false,
             progressPercent: null,
           }
-        : installing("TinyTeX is installed", "Preparing the first build…", 100);
+        : installing(
+            resolve(msg("TinyTeX is installed")),
+            resolve(msg("Preparing the first build…")),
+            100,
+          );
     case "failed":
       return {
         kind: "failed",
-        title: "TinyTeX could not be installed",
-        body: latexInstallFailureMessage(install.failureReason, install.failureStep),
-        actionLabel: "Try again",
+        title: resolve(msg("TinyTeX could not be installed")),
+        body: latexInstallFailureMessage(install.failureReason, install.failureStep, resolve),
+        actionLabel: resolve(msg("Try again")),
         busy: false,
         progressPercent: null,
       };
     default:
       return {
         kind: "offer",
-        title:
-          compilerName === null
-            ? "LaTeX tools are not installed"
-            : `This document needs ${compilerName}`,
+        title: needsTitle(compilerName),
         body: offerBody,
-        actionLabel: "Install LaTeX tools",
+        actionLabel: resolve(msg("Install LaTeX tools")),
         busy: false,
         progressPercent: null,
       };

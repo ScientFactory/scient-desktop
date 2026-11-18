@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { Fragment, type CSSProperties, type KeyboardEvent, type Ref } from "react";
 
 import { cn } from "~/lib/utils";
@@ -32,17 +33,24 @@ export function CitationActionBar({
   readonly onNote?: (() => void) | undefined;
   readonly onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }) {
-  const label = props.label ?? "Ask in chat";
+  const gt = useGT();
+  const label = props.label ?? gt("Ask in chat");
   const segments = [
-    { label: "Ask in side chat", onClick: props.onAskInSideChat },
-    { label: "Highlight", onClick: props.onHighlight },
-    { label: "Note", onClick: props.onNote },
+    { label: gt("Ask in side chat"), onClick: props.onAskInSideChat },
+    {
+      label: gt("Highlight", { $context: "verb, highlights the selection" }),
+      onClick: props.onHighlight,
+    },
+    {
+      label: gt("Note", { $context: "verb, adds a note to the selection" }),
+      onClick: props.onNote,
+    },
   ].flatMap((segment) => (segment.onClick ? [{ ...segment, onClick: segment.onClick }] : []));
   return (
     <div
       ref={ref}
       role="group"
-      aria-label="Ask about this selection"
+      aria-label={gt("Ask about this selection")}
       data-writing-menu-owner={props.ownerId}
       data-pdf-ask-in-chat={props.pdf ? "" : undefined}
       className={cn(

@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   ClipboardList,
@@ -76,6 +77,8 @@ export function SourcesHeaderMenu(props: {
   readonly onRestore?: () => void;
   readonly onAddFromLibrary?: () => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const trigger = useRef<HTMLButtonElement>(null);
   const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
   const [checkingReferences, setCheckingReferences] = useState(false);
@@ -97,7 +100,7 @@ export function SourcesHeaderMenu(props: {
               ref={trigger}
               size="icon-xs"
               variant="ghost"
-              aria-label="More Library actions"
+              aria-label={gt("More Library actions")}
             />
           }
         >
@@ -106,36 +109,38 @@ export function SourcesHeaderMenu(props: {
         <MenuPopup align="end" side="bottom" className="min-w-48">
           <MenuItem onClick={() => setCheckingReferences(true)}>
             <ListChecks />
-            Check references
+            <T>Check references</T>
           </MenuItem>
           <MenuItem onClick={props.onOpenReviews}>
             <ClipboardList />
-            Systematic reviews
+            <T>Systematic reviews</T>
           </MenuItem>
           {props.onOpenDuplicates ? (
             <MenuItem onClick={props.onOpenDuplicates}>
               <CopyCheck />
-              {DUPLICATE_LABELS.menuItem}
+              {m(DUPLICATE_LABELS.menuItem)}
             </MenuItem>
           ) : null}
           {props.missingPdfCount > 0 ? (
             <MenuItem onClick={props.onGetMissingPdfs}>
               <FileDown />
               {props.missingPdfCount === 1
-                ? "Get the missing PDF"
-                : `Get ${props.missingPdfCount} missing PDFs`}
+                ? gt("Get the missing PDF")
+                : gt("Get {missingPdfCount} missing PDFs", {
+                    missingPdfCount: props.missingPdfCount,
+                  })}
             </MenuItem>
           ) : null}
           {props.onRefreshZotero ? (
             <MenuItem onClick={props.onRefreshZotero}>
               <RefreshCw />
-              Refresh from Zotero
+              <T>Refresh from Zotero</T>
             </MenuItem>
           ) : null}
           <MenuSeparator />
           <MenuItem onClick={() => setPickingStyle(true)}>
             <PenLine />
-            Citation style…
+            <T>Citation style…</T>
           </MenuItem>
           {props.totalCount > 0 || props.canChangeProject ? (
             <SourcesExportSubmenu
@@ -158,13 +163,13 @@ export function SourcesHeaderMenu(props: {
           {props.onOpenRecentChanges ? (
             <MenuItem onClick={props.onOpenRecentChanges}>
               <History />
-              {RECENT_CHANGES_LABELS.menuItem}
+              {m(RECENT_CHANGES_LABELS.menuItem)}
             </MenuItem>
           ) : null}
           {props.trashedCount > 0 ? (
             <MenuItem onClick={() => setTrashOpen(true)}>
               <Trash2 />
-              Trash
+              <T context="the Library's Trash">Trash</T>
               <MenuItemDetail>{props.trashedCount.toLocaleString()}</MenuItemDetail>
             </MenuItem>
           ) : null}
@@ -174,25 +179,25 @@ export function SourcesHeaderMenu(props: {
               <MenuSub>
                 <MenuSubTrigger>
                   <ShieldCheck />
-                  Backup and recovery
+                  <T>Backup and recovery</T>
                 </MenuSubTrigger>
                 <MenuSubPopup className="min-w-56">
                   {props.onBackUp ? (
                     <MenuItem onClick={props.onBackUp}>
                       <HardDriveDownload />
-                      {BACKUP_LABELS.menuItem}
+                      {m(BACKUP_LABELS.menuItem)}
                     </MenuItem>
                   ) : null}
                   {props.onRestore ? (
                     <MenuItem onClick={props.onRestore}>
                       <HardDriveUpload />
-                      {RESTORE_LABELS.menuItem}
+                      {m(RESTORE_LABELS.menuItem)}
                     </MenuItem>
                   ) : null}
                   {props.onAddFromLibrary ? (
                     <MenuItem onClick={props.onAddFromLibrary}>
                       <LibraryBig />
-                      {JOIN_LABELS.menuItem}
+                      {m(JOIN_LABELS.menuItem)}
                     </MenuItem>
                   ) : null}
                   {backups && recovery ? <MenuSeparator /> : null}
@@ -206,7 +211,7 @@ export function SourcesHeaderMenu(props: {
                   {props.onMoveBack ? (
                     <MenuItem onClick={() => setConfirmingMoveBack(true)}>
                       <FolderInput />
-                      Keep this project's sources in its folder
+                      <T>Keep this project's sources in its folder</T>
                     </MenuItem>
                   ) : null}
                 </MenuSubPopup>

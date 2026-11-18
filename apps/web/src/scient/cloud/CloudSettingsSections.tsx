@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { shareLink, type ShareAccess, type ShareRecord } from "@scientfactory/scient-cloud/api";
 import { EnvironmentId, ThreadId, type ScientCloudStatus } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -26,6 +27,7 @@ import { expiryChoice, EXPIRY_CHOICES, expiresAtFor, type ExpiryChoice } from ".
 import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 import { useCloudStatus } from "./useCloudStatus";
 import { useCloudList } from "./useCloudList";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** Settings → Sharing & access: the computer's cloud copy and the person's shared links. */
 export function CloudSettingsSections({ environmentId }: { environmentId: EnvironmentId | null }) {
@@ -68,20 +70,30 @@ function formatWhen(iso: string): string {
     : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function statusLine(status: ScientCloudStatus): string {
-  if (!status.enabled) return "Off";
+function statusLine(status: ScientCloudStatus, resolve: MessageResolver = m): string {
+  if (!status.enabled) return resolve(msg("Off", { $context: "sync is turned off" }));
   if (status.paused !== null) return status.paused.message;
   switch (status.state) {
     case "not-enrolled":
-      return "Waiting to be linked to your account.";
+      return resolve(msg("Waiting to be linked to your account."));
     case "copying":
-      return `Syncing ${status.pendingThreads} conversation${status.pendingThreads === 1 ? "" : "s"}…`;
+      return resolve(
+        msg(
+          "{count, plural, one {Syncing {count} conversation…} other {Syncing {count} conversations…}}",
+          { count: status.pendingThreads },
+        ),
+      );
     case "retrying":
-      return "Scient Cloud can't be reached right now. Trying again soon.";
+      return resolve(msg("Scient Cloud can't be reached right now. Trying again soon."));
     default:
       return status.lastCopiedAt === null
-        ? "Nothing synced yet."
-        : `Last synced ${formatWhen(status.lastCopiedAt)} · ${status.copiedThreads} conversation${status.copiedThreads === 1 ? "" : "s"}`;
+        ? resolve(msg("Nothing synced yet."))
+        : resolve(
+            msg(
+              "{count, plural, one {Last synced {time} · {count} conversation} other {Last synced {time} · {count} conversations}}",
+              { count: status.copiedThreads, time: formatWhen(status.lastCopiedAt) },
+            ),
+          );
   }
 }
 
@@ -99,6 +111,8 @@ function CloudCopySection({
   const { status, replace } = useCloudStatus(environmentId);
   const [busy, setBusy] = useState<"switch" | "delete" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   if (status === null) return null;
 
   const act = async (kind: "switch" | "delete", run: () => Promise<ScientCloudStatus>) => {
@@ -107,38 +121,46 @@ function CloudCopySection({
     try {
       replace(await run());
     } catch (error) {
-      setProblem(error instanceof Error ? error.message : "That didn't work. Try again.");
+      setProblem(error instanceof Error ? error.message : m(msg("That didn't work. Try again.")));
     }
     setBusy(null);
   };
 
   const used =
     status.usedBytes !== null && status.freeBytes !== null
-      ? `${formatBytes(status.usedBytes)} of ${formatBytes(status.freeBytes)} used`
+      ? gt("{used} of {free} used", {
+          used: formatBytes(status.usedBytes),
+          free: formatBytes(status.freeBytes),
+        })
       : status.copiedBytes > 0
-        ? `${formatBytes(status.copiedBytes)} from this computer`
+        ? gt("{size} from this computer", { size: formatBytes(status.copiedBytes) })
         : null;
 
   return (
-    <SettingsSection id="cloud-copy" title="Sync">
+    <SettingsSection id="cloud-copy" title={gt("Sync", { $context: "noun, settings section" })}>
       <SettingsRow
         title={
           <span className="inline-flex items-center gap-1.5">
-            Sync conversations
-            <InfoTip label="About sync">
-              Encrypted with a key unique to your account. Scient's service holds the key so the web
-              app can open them. Turning this off keeps what's synced; delete it below.
+            <T>Sync conversations</T>
+            <InfoTip label={gt("About sync")}>
+              <T>
+                Encrypted with a key unique to your account. Scient's service holds the key so the
+                web app can open them. Turning this off keeps what's synced; delete it below.
+              </T>
             </InfoTip>
           </span>
         }
-        description="Read them at app.scientfactory.com or on your other computers. Project files stay here."
+        description={gt(
+          "Read them at {site} or on your other computers. Project files stay here.",
+          { site: "app.scientfactory.com" },
+        )}
         status={
           problem ??
           (status.enabled ? (
             <span className="inline-flex flex-wrap items-center gap-x-2">
-              {statusLine(status)}
+              {statusLine(status, messages)}
               <Link to="/cloud" className="text-foreground underline underline-offset-2">
-                Open
+                <T>Open</T>
               </Link>
             </span>
           ) : undefined)
@@ -146,13 +168,13 @@ function CloudCopySection({
         control={
           userId === null && !status.enabled ? (
             <Button size="sm" variant="outline" onClick={onSignIn}>
-              Sign in
+              <T>Sign in</T>
             </Button>
           ) : (
             <Switch
               checked={status.enabled}
               disabled={busy !== null}
-              aria-label="Sync conversations"
+              aria-label={gt("Sync conversations")}
               onCheckedChange={(checked) =>
                 act("switch", () =>
                   checked
@@ -166,8 +188,8 @@ function CloudCopySection({
       />
       {status.enrolledUserId !== null || status.copiedBytes > 0 ? (
         <SettingsRow
-          title="Synced conversations"
-          description={used ?? "This computer's conversations in Scient Cloud."}
+          title={gt("Synced conversations")}
+          description={used ?? gt("This computer's conversations in Scient Cloud.")}
           control={
             <Button
               size="sm"
@@ -175,7 +197,7 @@ function CloudCopySection({
               disabled={busy !== null}
               onClick={() => act("delete", () => deleteCloudCopies(environmentId))}
             >
-              {busy === "delete" ? "Deleting…" : "Delete from Scient Cloud"}
+              {busy === "delete" ? gt("Deleting…") : gt("Delete from Scient Cloud")}
             </Button>
           }
         />
@@ -184,32 +206,37 @@ function CloudCopySection({
   );
 }
 
-function accessLabel(access: ShareAccess): string {
+function accessLabel(access: ShareAccess, resolve: MessageResolver = m): string {
   switch (access.mode) {
     case "link":
-      return "Anyone with the link";
+      return resolve(msg("Anyone with the link"));
     case "me":
-      return "Only me";
+      return resolve(msg("Only me"));
     case "people":
-      return `${access.emails.length} ${access.emails.length === 1 ? "person" : "people"}`;
+      return resolve(
+        msg("{count, plural, one {{count} person} other {{count} people}}", {
+          count: access.emails.length,
+        }),
+      );
   }
 }
 
 function SharedLinksSection({ api, userId }: { api: CloudApi; userId: string }) {
   const shares = useCloudList(() => api.shares(), `shares:${userId}`);
   const threads = useThreadShells();
+  const gt = useGT();
   if (shares.items === null || shares.items.length === 0) return null;
   const threadFor = (share: ShareRecord) =>
     threads.find(
       (thread) => thread.environmentId === share.source.env && thread.id === share.source.thread,
     );
   return (
-    <SettingsSection id="shared-links" title="Shared links">
+    <SettingsSection id="shared-links" title={gt("Shared links")}>
       {shares.items.map((share) => (
         <SharedLinkRow
           key={share.id}
           share={share}
-          title={threadFor(share)?.title ?? "Shared conversation"}
+          title={threadFor(share)?.title ?? gt("Shared conversation")}
           canUpdate={threadFor(share) !== undefined}
           api={api}
           onChanged={shares.reload}
@@ -239,6 +266,8 @@ function SharedLinkRow({
       : shareLink(share.id, key ?? undefined, shareLinkOrigin());
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   const update = async (run: () => Promise<unknown>) => {
     setBusy(true);
     await run()
@@ -246,12 +275,12 @@ function SharedLinkRow({
       .finally(() => setBusy(false));
   };
   const facts = [
-    accessLabel(share.access),
-    share.expiresAt === null ? null : `expires ${formatWhen(share.expiresAt)}`,
+    accessLabel(share.access, messages),
+    share.expiresAt === null ? null : gt("expires {time}", { time: formatWhen(share.expiresAt) }),
     share.currentVersion !== null && share.versions.length > 1
-      ? `version ${share.currentVersion}`
+      ? gt("version {version}", { version: share.currentVersion })
       : null,
-    link === null ? "the full link can be copied only where it was created" : null,
+    link === null ? gt("the full link can be copied only where it was created") : null,
   ].filter((fact): fact is string => fact !== null);
   return (
     <SettingsRow
@@ -267,17 +296,19 @@ function SharedLinkRow({
                 : undefined
             }
           >
-            <SelectTrigger size="sm" className="w-auto" aria-label="Who can open it">
+            <SelectTrigger size="sm" className="w-auto" aria-label={gt("Who can open it")}>
               <SelectValue>
-                {(mode: "link" | "me") => (mode === "me" ? "Only me" : "Anyone with the link")}
+                {(mode: "link" | "me") =>
+                  mode === "me" ? gt("Only me") : gt("Anyone with the link")
+                }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup alignItemWithTrigger={false}>
               <SelectItem hideIndicator value="link">
-                Anyone with the link
+                <T>Anyone with the link</T>
               </SelectItem>
               <SelectItem hideIndicator value="me">
-                Only me
+                <T>Only me</T>
               </SelectItem>
             </SelectPopup>
           </Select>
@@ -289,17 +320,18 @@ function SharedLinkRow({
                 : void update(() => api.updateShare(share.id, { expiresAt: expiresAtFor(choice) }))
             }
           >
-            <SelectTrigger size="sm" className="w-auto" aria-label="Expires">
+            <SelectTrigger size="sm" className="w-auto" aria-label={gt("Expires")}>
               <SelectValue>
-                {(choice: ExpiryChoice) =>
-                  EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label
-                }
+                {(choice: ExpiryChoice) => {
+                  const label = EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label;
+                  return label === undefined ? undefined : messages(label);
+                }}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup alignItemWithTrigger={false}>
               {EXPIRY_CHOICES.map((entry) => (
                 <SelectItem hideIndicator key={entry.id} value={entry.id}>
-                  {entry.label}
+                  {messages(entry.label)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -311,7 +343,7 @@ function SharedLinkRow({
                 variant="ghost-muted"
                 render={<a href={link} target="_blank" rel="noreferrer" />}
               >
-                Open
+                <T>Open</T>
               </Button>
               <Button
                 size="sm"
@@ -321,7 +353,7 @@ function SharedLinkRow({
                   setCopied(true);
                 }}
               >
-                {copied ? "Copied" : "Copy link"}
+                {copied ? gt("Copied") : gt("Copy link")}
               </Button>
             </>
           ) : null}
@@ -336,7 +368,7 @@ function SharedLinkRow({
                 })
               }
             >
-              Update
+              <T>Update</T>
             </Button>
           ) : null}
           <Button
@@ -352,7 +384,7 @@ function SharedLinkRow({
               )
             }
           >
-            Stop sharing
+            <T>Stop sharing</T>
           </Button>
         </div>
       }

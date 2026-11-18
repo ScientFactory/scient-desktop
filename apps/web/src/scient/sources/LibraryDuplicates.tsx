@@ -5,6 +5,7 @@ import type {
   ScientSourcesDuplicatesResult,
 } from "@t3tools/contracts";
 import { LoaderCircle, RefreshCw } from "lucide-react";
+import { useGT, useMessages } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -70,6 +71,8 @@ export function LibraryDuplicatesView(props: {
   /** A merge landed: the merged-away source has left the Library. */
   readonly onMerged: (mergedSourceId: string) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [section, setSection] = useState<DuplicatesSection>(props.initialSection);
   // Merges Undo can reverse, or every merge with how it stands now.
   const [merges, setMerges] = useState<"undoable" | "all">("undoable");
@@ -144,11 +147,12 @@ export function LibraryDuplicatesView(props: {
                   : { ...shown, merges: [...shown.merges, ...next.merges] },
             };
           });
-          if (next.restarted) toastManager.add({ type: "info", title: DUPLICATE_LABELS.restarted });
+          if (next.restarted)
+            toastManager.add({ type: "info", title: m(DUPLICATE_LABELS.restarted) });
         } catch (cause) {
           toastManager.add({
             type: "warning",
-            title: DUPLICATE_LABELS.loadFailed,
+            title: m(DUPLICATE_LABELS.loadFailed),
             description: message(cause),
           });
         }
@@ -161,16 +165,19 @@ export function LibraryDuplicatesView(props: {
   const settle = (pair: Pair) => setSettled((previous) => new Set([...previous, pairKey(pair)]));
 
   const undoMerge = async (mergeId: string) => {
-    const result = await organize({ action: "undo-merge", mergeId }, DUPLICATE_LABELS.undoFailed);
+    const result = await organize(
+      { action: "undo-merge", mergeId },
+      m(DUPLICATE_LABELS.undoFailed),
+    );
     if (!result) return;
-    const problem = undoProblem(result);
+    const problem = undoProblem(result, m);
     toastManager.add(
       problem
-        ? { type: "warning", title: DUPLICATE_LABELS.undoFailed, description: problem }
+        ? { type: "warning", title: m(DUPLICATE_LABELS.undoFailed), description: problem }
         : {
             type: "success",
-            title: DUPLICATE_LABELS.mergeUndone,
-            description: unrevertedLabel(result.unrevertedFields) ?? undefined,
+            title: m(DUPLICATE_LABELS.mergeUndone),
+            description: unrevertedLabel(result.unrevertedFields, m) ?? undefined,
           },
     );
   };
@@ -182,7 +189,7 @@ export function LibraryDuplicatesView(props: {
         sourceIds: pair.sources.map((side) => side.sourceId),
         survivorId: keep,
       },
-      DUPLICATE_LABELS.mergeFailed,
+      m(DUPLICATE_LABELS.mergeFailed),
     );
     if (!result) return;
     settle(pair);
@@ -190,11 +197,11 @@ export function LibraryDuplicatesView(props: {
     if (!landed) {
       toastManager.add({
         type: "info",
-        title: DUPLICATE_LABELS.mergeFailed,
+        title: m(DUPLICATE_LABELS.mergeFailed),
         description:
           result.outcome === "already-merged"
-            ? "They were already merged."
-            : DUPLICATE_LABELS.oneGone,
+            ? gt("They were already merged.")
+            : m(DUPLICATE_LABELS.oneGone),
       });
       return;
     }
@@ -202,10 +209,10 @@ export function LibraryDuplicatesView(props: {
     const kept = pair.sources.find((side) => side.sourceId === landed.survivorId);
     const id = toastManager.add({
       type: "success",
-      title: mergedTitleLabel(kept?.title ?? null),
-      description: keptDifferentLabel(landed.keptDifferent) ?? undefined,
+      title: mergedTitleLabel(kept?.title ?? null, m),
+      description: keptDifferentLabel(landed.keptDifferent, m) ?? undefined,
       actionProps: {
-        children: DUPLICATE_LABELS.undo,
+        children: m(DUPLICATE_LABELS.undo),
         onClick: whenFree(() => {
           toastManager.close(id);
           void undoMerge(landed.mergeId);
@@ -218,32 +225,33 @@ export function LibraryDuplicatesView(props: {
     const sourceIds = [pair.sources[0].sourceId, pair.sources[1].sourceId] as const;
     const result = await organize(
       { action: "mark-distinct", sourceIds },
-      DUPLICATE_LABELS.notDuplicatesFailed,
+      m(DUPLICATE_LABELS.notDuplicatesFailed),
     );
     if (!result) return;
     settle(pair);
     if (result.outcome === "not-found") {
       toastManager.add({
         type: "info",
-        title: DUPLICATE_LABELS.notDuplicatesFailed,
-        description: DUPLICATE_LABELS.oneGone,
+        title: m(DUPLICATE_LABELS.notDuplicatesFailed),
+        description: m(DUPLICATE_LABELS.oneGone),
       });
       return;
     }
     const id = toastManager.add({
       type: "success",
-      title: DUPLICATE_LABELS.markedNotDuplicates,
-      description: DUPLICATE_LABELS.markedHelp,
+      title: m(DUPLICATE_LABELS.markedNotDuplicates),
+      description: m(DUPLICATE_LABELS.markedHelp),
       actionProps: {
-        children: DUPLICATE_LABELS.undo,
+        children: m(DUPLICATE_LABELS.undo),
         onClick: whenFree(() => {
           toastManager.close(id);
-          void organize({ action: "clear-distinct", sourceIds }, DUPLICATE_LABELS.undoFailed).then(
-            (cleared) => {
-              if (!cleared) return;
-              toastManager.add({ type: "success", title: DUPLICATE_LABELS.unmarked });
-            },
-          );
+          void organize(
+            { action: "clear-distinct", sourceIds },
+            m(DUPLICATE_LABELS.undoFailed),
+          ).then((cleared) => {
+            if (!cleared) return;
+            toastManager.add({ type: "success", title: m(DUPLICATE_LABELS.unmarked) });
+          });
         }),
       },
     });
@@ -255,10 +263,10 @@ export function LibraryDuplicatesView(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PanelHeader title={DUPLICATE_LABELS.title} onBack={props.onBack} />
+      <PanelHeader title={m(DUPLICATE_LABELS.title)} onBack={props.onBack} />
       <div className={`${SOURCES_COLUMN} shrink-0 px-3 pt-3`}>
         <ToggleGroup
-          aria-label={DUPLICATE_LABELS.title}
+          aria-label={m(DUPLICATE_LABELS.title)}
           className="w-full *:flex-1"
           value={[section]}
           onValueChange={(next) => {
@@ -267,16 +275,16 @@ export function LibraryDuplicatesView(props: {
           }}
         >
           <Toggle value="pairs">
-            {sectionCountLabel(DUPLICATE_LABELS.pairsSection, result?.pairsTotal ?? 0)}
+            {sectionCountLabel(m(DUPLICATE_LABELS.pairsSection), result?.pairsTotal ?? 0)}
           </Toggle>
           <Toggle value="merged">
-            {sectionCountLabel(DUPLICATE_LABELS.mergedSection, result?.mergesTotal ?? 0)}
+            {sectionCountLabel(m(DUPLICATE_LABELS.mergedSection), result?.mergesTotal ?? 0)}
           </Toggle>
         </ToggleGroup>
       </div>
       {result?.damagedReceipts ? (
         <p className={`${SOURCES_COLUMN} mt-3 px-3 text-xs text-muted-foreground`}>
-          {damagedReceiptsLabel(result.damagedReceipts.length)}
+          {damagedReceiptsLabel(result.damagedReceipts.length, m)}
         </p>
       ) : null}
       {current?.error ? (
@@ -284,11 +292,11 @@ export function LibraryDuplicatesView(props: {
           className={`${SOURCES_COLUMN} mt-3 flex items-center gap-2 px-3 text-xs text-destructive`}
         >
           <span className="min-w-0 flex-1">
-            {DUPLICATE_LABELS.loadFailed}: {current.error}
+            {m(DUPLICATE_LABELS.loadFailed)}: {current.error}
           </span>
           <Button size="xs" variant="ghost" onClick={reload}>
             <RefreshCw />
-            {DUPLICATE_LABELS.tryAgain}
+            {m(DUPLICATE_LABELS.tryAgain)}
           </Button>
         </div>
       ) : null}
@@ -301,7 +309,7 @@ export function LibraryDuplicatesView(props: {
       ) : section === "pairs" ? (
         pairs.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-            {DUPLICATE_LABELS.noPairs}
+            {m(DUPLICATE_LABELS.noPairs)}
           </p>
         ) : (
           <LegendList<Pair>
@@ -344,7 +352,7 @@ export function LibraryDuplicatesView(props: {
         <>
           <div className={`${SOURCES_COLUMN} shrink-0 px-3 pt-2`}>
             <ToggleGroup
-              aria-label={DUPLICATE_LABELS.mergedSection}
+              aria-label={m(DUPLICATE_LABELS.mergedSection)}
               className="w-full *:flex-1"
               value={[merges]}
               onValueChange={(next) => {
@@ -352,13 +360,13 @@ export function LibraryDuplicatesView(props: {
                 if (value === "undoable" || value === "all") setMerges(value);
               }}
             >
-              <Toggle value="undoable">{DUPLICATE_LABELS.canUndo}</Toggle>
-              <Toggle value="all">{DUPLICATE_LABELS.allMerges}</Toggle>
+              <Toggle value="undoable">{m(DUPLICATE_LABELS.canUndo)}</Toggle>
+              <Toggle value="all">{m(DUPLICATE_LABELS.allMerges)}</Toggle>
             </ToggleGroup>
           </div>
           {result.merges.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {merges === "all" ? DUPLICATE_LABELS.noMergesAtAll : DUPLICATE_LABELS.noMerges}
+              {merges === "all" ? m(DUPLICATE_LABELS.noMergesAtAll) : m(DUPLICATE_LABELS.noMerges)}
             </p>
           ) : (
             <ScrollArea className="mt-2 min-h-0 flex-1">
@@ -393,7 +401,8 @@ function ShowMore(props: {
   readonly loading: boolean;
   readonly onShowMore: () => void;
 }) {
-  const label = shownOfTotalLabel(props.shown, props.total);
+  const m = useMessages();
+  const label = shownOfTotalLabel(props.shown, props.total, m);
   if (!label) return null;
   return (
     <div
@@ -401,7 +410,7 @@ function ShowMore(props: {
     >
       <span className="min-w-0 flex-1">{label}</span>
       <Button size="xs" variant="ghost" disabled={props.loading} onClick={props.onShowMore}>
-        {DUPLICATE_LABELS.showMore}
+        {m(DUPLICATE_LABELS.showMore)}
       </Button>
     </div>
   );
@@ -416,18 +425,19 @@ function DuplicatePair(props: {
   readonly onMerge: () => void;
   readonly onNotDuplicates: () => void;
 }) {
+  const m = useMessages();
   const { pair } = props;
   const [left, right] = pair.sources;
   const differing = differingFields(left, right);
   return (
-    <section className="@container/pair px-3 py-3" aria-label={fieldValue(left, "title")}>
+    <section className="@container/pair px-3 py-3" aria-label={fieldValue(left, "title", m)}>
       <p className="mb-2 text-xs text-muted-foreground">
-        {[pairReasonLabel(pair), differsLabel(differing)].filter(Boolean).join(" ")}
+        {[pairReasonLabel(pair, m), differsLabel(differing, m)].filter(Boolean).join(" ")}
       </p>
       {props.canChange ? (
         // Each side is the choice of the one to keep; Merge merges at once and its toast undoes.
         <RadioGroup
-          aria-label={DUPLICATE_LABELS.keepThis}
+          aria-label={m(DUPLICATE_LABELS.keepThis)}
           className="grid @md/pair:grid-cols-2"
           value={props.keep}
           onValueChange={(value) => {
@@ -442,8 +452,8 @@ function DuplicatePair(props: {
               <span className="mb-1 flex items-center gap-2 text-muted-foreground">
                 <Radio value={side.sourceId} disabled={props.busy} />
                 {side.sourceId === pair.keptByDefault
-                  ? `${DUPLICATE_LABELS.keepThis} · ${DUPLICATE_LABELS.suggested}`
-                  : DUPLICATE_LABELS.keepThis}
+                  ? `${m(DUPLICATE_LABELS.keepThis)} · ${m(DUPLICATE_LABELS.suggested)}`
+                  : m(DUPLICATE_LABELS.keepThis)}
               </span>
               <DuplicateSide source={side} differing={differing} />
             </label>
@@ -464,10 +474,10 @@ function DuplicatePair(props: {
       {props.canChange ? (
         <div className="mt-2 flex justify-end gap-1">
           <Button size="xs" variant="ghost" disabled={props.busy} onClick={props.onNotDuplicates}>
-            {DUPLICATE_LABELS.notDuplicates}
+            {m(DUPLICATE_LABELS.notDuplicates)}
           </Button>
           <Button size="xs" variant="outline" disabled={props.busy} onClick={props.onMerge}>
-            {DUPLICATE_LABELS.merge}
+            {m(DUPLICATE_LABELS.merge)}
           </Button>
         </div>
       ) : null}
@@ -488,6 +498,7 @@ function DuplicateSide(props: {
   readonly source: ScientSourcesDuplicateSource;
   readonly differing: ReadonlyArray<DuplicateField>;
 }) {
+  const m = useMessages();
   const differs = (field: DuplicateField) => props.differing.includes(field);
   return (
     <>
@@ -495,10 +506,10 @@ function DuplicateSide(props: {
         className="block break-words text-sm font-medium"
         data-differs={differs("title") ? "true" : undefined}
       >
-        {fieldValue(props.source, "title")}
+        {fieldValue(props.source, "title", m)}
       </span>
       {SIDE_FIELDS.map((field) => {
-        const value = fieldValue(props.source, field);
+        const value = fieldValue(props.source, field, m);
         if (!value) return null;
         return (
           <span
@@ -525,27 +536,28 @@ function MergedRow(props: {
   readonly busy: boolean;
   readonly onUndo: () => void;
 }) {
+  const m = useMessages();
   const { merge } = props;
-  const kept = keptDifferentLabel(merge.keptDifferent);
-  const state = mergeStateLabel(merge.undo);
+  const kept = keptDifferentLabel(merge.keptDifferent, m);
+  const state = mergeStateLabel(merge.undo, m);
   // The first line names what differed only for two copies of one title still in the Library.
   const named =
     merge.kept && merge.kept.title === merge.mergedTitle
       ? null
-      : namedDifferencesLabel(merge.differences);
+      : namedDifferencesLabel(merge.differences, m);
   return (
     <li className="flex items-start gap-2 px-3 py-2.5 text-xs">
       <div className="min-w-0 flex-1">
-        <p className="break-words text-sm">{mergedRowLabel(merge)}</p>
+        <p className="break-words text-sm">{mergedRowLabel(merge, m)}</p>
         {merge.kept ? (
           <p className="mt-0.5 break-words text-muted-foreground">
-            {DUPLICATE_LABELS.keptSide}: {sideSummary(merge.kept, { projects: true })}
+            {m(DUPLICATE_LABELS.keptSide)}: {sideSummary(merge.kept, { projects: true }, m)}
           </p>
         ) : null}
         {merge.merged ? (
           <p className="mt-0.5 break-words text-muted-foreground">
-            {DUPLICATE_LABELS.mergedSide}:{" "}
-            {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false })}
+            {m(DUPLICATE_LABELS.mergedSide)}:{" "}
+            {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false }, m)}
           </p>
         ) : null}
         {merge.differences
@@ -554,14 +566,14 @@ function MergedRow(props: {
           .filter((difference) => difference.field !== "title" || !merge.kept)
           .map((difference) => (
             <p key={difference.field} className="mt-0.5 break-words text-muted-foreground">
-              {mergeDifferenceLabel(difference)}
+              {mergeDifferenceLabel(difference, m)}
             </p>
           ))}
         {named ? <p className="mt-0.5 break-words text-muted-foreground">{named}</p> : null}
         <p className="mt-0.5 text-muted-foreground">
           {[
             mergedDateLabel(merge.mergedAt),
-            merge.requested ? DUPLICATE_LABELS.requested : DUPLICATE_LABELS.automatic,
+            merge.requested ? m(DUPLICATE_LABELS.requested) : m(DUPLICATE_LABELS.automatic),
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -571,7 +583,7 @@ function MergedRow(props: {
       </div>
       {props.canChange && merge.undo === "available" ? (
         <Button size="xs" variant="ghost" disabled={props.busy} onClick={props.onUndo}>
-          {DUPLICATE_LABELS.undo}
+          {m(DUPLICATE_LABELS.undo)}
         </Button>
       ) : null}
     </li>

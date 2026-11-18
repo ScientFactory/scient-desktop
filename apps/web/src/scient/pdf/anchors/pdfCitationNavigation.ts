@@ -16,8 +16,10 @@ import { normalizeProjectPathForComparison, isWindowsAbsolutePath } from "@t3too
 import { formatPdfCitationHref, parsePdfCitationHref } from "@t3tools/shared/pdfCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
+import { msg } from "gt-react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 
 type GeneratedPdfSourceDescriptor = Extract<PdfSourceDescriptor, { _tag: "generated-pdf" }>;
@@ -103,8 +105,8 @@ function reveal(
 function unavailable() {
   toastManager.add({
     type: "error",
-    title: "Couldn't open the quoted PDF",
-    description: "The quote is kept; its PDF can't be opened from here.",
+    title: m(msg("Couldn't open the quoted PDF")),
+    description: m(msg("The quote is kept; its PDF can't be opened from here.")),
   });
 }
 
@@ -143,9 +145,12 @@ function openOriginalFile(
     act(revealed, () => useRightPanelStore.getState().openFile(ref, openedPath));
     toastManager.add({
       type: "info",
-      title: "Opening the original workspace file",
-      description:
-        "This conversation has moved to another workspace. The quote opens in the original PDF.",
+      title: m(msg("Opening the original workspace file")),
+      description: m(
+        msg(
+          "This conversation has moved to another workspace. The quote opens in the original PDF.",
+        ),
+      ),
     });
   });
 }

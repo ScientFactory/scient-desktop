@@ -10,6 +10,7 @@ import {
   RefreshCwIcon,
   MessageSquareIcon,
 } from "lucide-react";
+import { msg, T, useGT } from "gt-react";
 import { Suspense, use, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -18,6 +19,7 @@ import { AssistantCitationContext } from "~/components/chat/assistantCitationCon
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "~/components/chat/MarkdownCodeBlock";
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -86,7 +88,7 @@ type DiagramAction =
 function diagramErrorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.trim().length > 0
     ? cause.message
-    : "This Mermaid source could not be rendered.";
+    : m(msg("This Mermaid source could not be rendered."));
 }
 
 function DiagramActionButton({
@@ -130,6 +132,7 @@ export function MermaidDiagramCard({
   theme,
   title,
 }: MermaidDiagramCardProps) {
+  const gt = useGT();
   const { ref, isNearViewport } = useNearViewport();
   const composerRef = useComposerHandleContext();
   const citationSource = use(AssistantCitationContext);
@@ -144,7 +147,7 @@ export function MermaidDiagramCard({
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const renderGenerationRef = useRef(0);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const displayTitle = title || "Mermaid diagram";
+  const displayTitle = title || gt("Mermaid diagram");
   const markdownCopy = mermaidMarkdownCopySource(source, language, fenceMeta);
   const resultIsCurrent =
     "source" in diagramState &&
@@ -233,19 +236,19 @@ export function MermaidDiagramCard({
   const copySource = (text: string, recovered = false) => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
-      showActionError("Clipboard access is unavailable.");
+      showActionError(gt("Clipboard access is unavailable."));
       return;
     }
     setActiveAction(recovered ? "copy-recovered-source" : "copy-source");
     void navigator.clipboard.writeText(text).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(recovered ? "Recovered source copied" : "Source copied");
+        showTransientMessage(recovered ? gt("Recovered source copied") : gt("Source copied"));
       },
       (cause) => {
         console.error("[scient-diagrams] Failed to copy Mermaid source", cause);
         setActiveAction(null);
-        showActionError("Unable to copy the diagram source.");
+        showActionError(gt("Unable to copy the diagram source."));
       },
     );
   };
@@ -277,29 +280,29 @@ export function MermaidDiagramCard({
       diagramState.diagnostic,
     );
     if (!citation) {
-      showActionError("Unable to cite this diagram. Use Copy error and source.");
+      showActionError(gt("Unable to cite this diagram. Use Copy error and source."));
       return;
     }
     if (!addMermaidRepairToComposer(composerRef?.current, citation)) {
-      showActionError("The composer is unavailable right now.");
+      showActionError(gt("The composer is unavailable right now."));
     }
   };
 
   const handleCopyRepair = () => {
     if (repairRequest === null || activeAction !== null) return;
     if (!navigator.clipboard?.writeText) {
-      showActionError("Clipboard access is unavailable.");
+      showActionError(gt("Clipboard access is unavailable."));
       return;
     }
     setActiveAction("copy-repair");
     void navigator.clipboard.writeText(repairRequest).then(
       () => {
         setActiveAction(null);
-        showTransientMessage("Error and source copied");
+        showTransientMessage(gt("Error and source copied"));
       },
       () => {
         setActiveAction(null);
-        showActionError("Unable to copy the error and source.");
+        showActionError(gt("Unable to copy the error and source."));
       },
     );
   };
@@ -310,12 +313,12 @@ export function MermaidDiagramCard({
     void copyMermaidPng(readyResult.svg, theme).then(
       () => {
         setActiveAction(null);
-        showTransientMessage("Image copied");
+        showTransientMessage(gt("Image copied"));
       },
       (cause) => {
         console.error("[scient-diagrams] Failed to copy Mermaid PNG", cause);
         setActiveAction(null);
-        showActionError("Unable to copy the diagram image.");
+        showActionError(gt("Unable to copy the diagram image."));
       },
     );
   };
@@ -328,7 +331,7 @@ export function MermaidDiagramCard({
       (cause) => {
         console.error("[scient-diagrams] Failed to download Mermaid PNG", cause);
         setActiveAction(null);
-        showActionError("Unable to create the PNG image.");
+        showActionError(gt("Unable to create the PNG image."));
       },
     );
   };
@@ -339,7 +342,7 @@ export function MermaidDiagramCard({
       downloadMermaidSvg(readyResult.svg, title, theme);
     } catch (cause) {
       console.error("[scient-diagrams] Failed to download Mermaid SVG", cause);
-      showActionError("Unable to download the SVG image.");
+      showActionError(gt("Unable to download the SVG image."));
     }
   };
 
@@ -362,11 +365,11 @@ export function MermaidDiagramCard({
               {title}
             </span>
           ) : null}
-          <VisualCardToolbar label="Diagram actions">
+          <VisualCardToolbar label={gt("Diagram actions")}>
             {readyResult != null ? (
               <DiagramActionButton
                 disabled={activeAction != null}
-                label="Expand diagram"
+                label={gt("Expand diagram")}
                 onClick={() => setExpanded(true)}
               >
                 <Maximize2Icon className="size-3" strokeWidth={1.5} />
@@ -380,7 +383,7 @@ export function MermaidDiagramCard({
                     <MenuTrigger
                       render={
                         <Button
-                          aria-label="More diagram actions"
+                          aria-label={gt("More diagram actions")}
                           size="icon-xs"
                           type="button"
                           variant="ghost"
@@ -391,24 +394,30 @@ export function MermaidDiagramCard({
                 >
                   <EllipsisIcon className="size-3" />
                 </TooltipTrigger>
-                <TooltipPopup side="top">More diagram actions</TooltipPopup>
+                <TooltipPopup side="top">
+                  <T>More diagram actions</T>
+                </TooltipPopup>
               </Tooltip>
               <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
                 <VisualCardDetails
                   title={displayTitle}
                   detail={
-                    recovery ? `${readyResult?.diagramType} · Recovered` : readyResult?.diagramType
+                    recovery
+                      ? gt("{diagramType} · Recovered", {
+                          diagramType: readyResult?.diagramType ?? "",
+                        })
+                      : readyResult?.diagramType
                   }
                 />
                 {recovery ? (
                   <MenuItem disabled={activeAction != null} onClick={handleCopyRecoveredSource}>
-                    {actionMessage === "Recovered source copied" ? <CheckIcon /> : <CopyIcon />}
-                    Copy recovered source
+                    {actionMessage === gt("Recovered source copied") ? <CheckIcon /> : <CopyIcon />}
+                    <T>Copy recovered source</T>
                   </MenuItem>
                 ) : null}
                 <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                  {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
-                  {recovery ? "Copy original source" : "Copy source"}
+                  {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                  {recovery ? gt("Copy original source") : gt("Copy source")}
                 </MenuItem>
                 <RichFenceSourceMenuItem
                   authoringActions={authoringActions}
@@ -420,21 +429,21 @@ export function MermaidDiagramCard({
                   onClick={handleDownloadSvg}
                 >
                   <DownloadIcon />
-                  Download SVG
+                  <T>Download SVG</T>
                 </MenuItem>
                 <MenuItem
                   disabled={readyResult == null || activeAction != null}
                   onClick={handleCopyPng}
                 >
-                  {actionMessage === "Image copied" ? <CheckIcon /> : <ImageIcon />}
-                  {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
+                  {actionMessage === gt("Image copied") ? <CheckIcon /> : <ImageIcon />}
+                  {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy image")}
                 </MenuItem>
                 <MenuItem
                   disabled={readyResult == null || activeAction != null}
                   onClick={handleDownloadPng}
                 >
                   <FileImageIcon />
-                  {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
+                  {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download PNG")}
                 </MenuItem>
                 <VisualCardToolbarMenuItems />
               </VisualCardMenuPopup>
@@ -452,13 +461,13 @@ export function MermaidDiagramCard({
       (diagramState.status === "ready" && !resultIsCurrent) ? (
         <div className="flex min-h-44 items-center justify-center px-4 py-8 text-muted-foreground text-sm">
           {diagramState.status === "idle"
-            ? "Diagram will render when visible"
-            : "Rendering diagram…"}
+            ? gt("Diagram will render when visible")
+            : gt("Rendering diagram…")}
         </div>
       ) : diagramState.status === "error" ? (
         <div
           aria-busy={!resultIsCurrent}
-          aria-label="Diagram error"
+          aria-label={gt("Diagram error")}
           className="flex min-w-0 items-center gap-1.5 px-3 pb-1"
           role="group"
         >
@@ -472,7 +481,7 @@ export function MermaidDiagramCard({
                 />
               }
             >
-              {resultIsCurrent ? diagramState.message : "Rendering diagram…"}
+              {resultIsCurrent ? diagramState.message : gt("Rendering diagram…")}
             </TooltipTrigger>
             <TooltipPopup className="max-h-48 max-w-sm overflow-y-auto whitespace-pre-wrap wrap-anywhere">
               {resultIsCurrent ? diagramState.diagnostic : null}
@@ -481,13 +490,13 @@ export function MermaidDiagramCard({
           <div
             className="flex shrink-0 items-center gap-0.5"
             role="group"
-            aria-label="Diagram recovery"
+            aria-label={gt("Diagram recovery")}
           >
             {composerRef !== null && citationSource !== null ? (
               <DiagramActionButton
                 onClick={handleAskToFix}
                 disabled={repairRequest === null}
-                label="Ask agent to fix"
+                label={gt("Ask agent to fix")}
               >
                 <MessageSquareIcon className="size-3" strokeWidth={1.5} />
               </DiagramActionButton>
@@ -495,9 +504,9 @@ export function MermaidDiagramCard({
             <DiagramActionButton
               onClick={handleCopyRepair}
               disabled={repairRequest === null || activeAction !== null}
-              label="Copy error and source"
+              label={gt("Copy error and source")}
             >
-              {actionMessage === "Error and source copied" ? (
+              {actionMessage === gt("Error and source copied") ? (
                 <CheckIcon className="size-3" strokeWidth={1.5} />
               ) : (
                 <CopyIcon className="size-3" strokeWidth={1.5} />
@@ -506,7 +515,7 @@ export function MermaidDiagramCard({
             <DiagramActionButton
               onClick={() => setRetryVersion((version) => version + 1)}
               disabled={!resultIsCurrent}
-              label="Retry diagram"
+              label={gt("Retry diagram")}
             >
               <RefreshCwIcon className="size-3" strokeWidth={1.5} />
             </DiagramActionButton>
@@ -534,7 +543,7 @@ export function MermaidDiagramCard({
             fenceTitle={title}
             theme={theme}
             isStreaming={false}
-            onCopyFailure={() => showActionError("Unable to copy the diagram source.")}
+            onCopyFailure={() => showActionError(gt("Unable to copy the diagram source."))}
           >
             <MermaidSourceCode source={source} language={language} theme={theme} />
           </MarkdownCodeBlock>

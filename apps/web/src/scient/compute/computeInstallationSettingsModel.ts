@@ -11,6 +11,9 @@ import {
   type ComputeSettingsInstallation,
   type ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export {
   automaticComputeRuntimeLabel,
@@ -47,6 +50,7 @@ const onThisComputer = (runtime: ComputeLanguageRuntimeInventory | undefined) =>
 /** Every language in its one place, with what is on this computer leading each group. */
 export function computeLanguageGroups(
   languages: ReadonlyArray<ComputeLanguageRuntimeInventory>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ComputeLanguageGroup> {
   const reported = new Map<string, ComputeLanguageRuntimeInventory>(
     languages.map((language) => [language.descriptor.languageId, language]),
@@ -67,7 +71,7 @@ export function computeLanguageGroups(
     : [
         ...groups,
         {
-          title: "Other",
+          title: resolve(msg("Other", { $context: "languages outside the catalog groups" })),
           entries: other.map((runtime) => ({
             languageId: runtime.descriptor.languageId,
             name: runtime.descriptor.displayName,
@@ -112,13 +116,16 @@ export interface ComputeLanguagePrimaryAction {
 }
 
 /** The single action a language needs now, most urgent first. */
-export function computeLanguagePrimaryAction(input: {
-  readonly language: ComputeLanguageRuntimeInventory;
-  readonly summary: ComputeCurrentRuntimeSummary;
-  readonly managed: ComputeManagedRuntimeStatus | null;
-  readonly selected: ComputeSettingsInstallation | undefined;
-  readonly failureRetry: ComputeManagedRuntimeAction | null | undefined;
-}): ComputeLanguagePrimaryAction | null {
+export function computeLanguagePrimaryAction(
+  input: {
+    readonly language: ComputeLanguageRuntimeInventory;
+    readonly summary: ComputeCurrentRuntimeSummary;
+    readonly managed: ComputeManagedRuntimeStatus | null;
+    readonly selected: ComputeSettingsInstallation | undefined;
+    readonly failureRetry: ComputeManagedRuntimeAction | null | undefined;
+  },
+  resolve: MessageResolver = m,
+): ComputeLanguagePrimaryAction | null {
   const { language, summary, managed, selected, failureRetry } = input;
   const part = computeScientPart(language.descriptor.languageId);
   const isMatlab = part === "connection";
@@ -127,29 +134,29 @@ export function computeLanguagePrimaryAction(input: {
     managed?.selection === "managed" &&
     computeConnectionNeedsRetarget(managed, selected)
   ) {
-    return { label: "Set up connection", run: "repair", emphasis: false };
+    return { label: resolve(msg("Set up connection")), run: "repair", emphasis: false };
   }
   const connectionFailed = isMatlab && failureRetry != null && failureRetry !== "remove";
   if (summary.kind === "repair-connection" || connectionFailed) {
     return {
-      label: "Repair connection",
+      label: resolve(msg("Repair connection")),
       run: connectionFailed && failureRetry === "install" ? "install" : "repair",
       emphasis: false,
     };
   }
   if ((part === "managed-python" && !managed?.installed) || summary.kind === "setup") {
-    return { label: "Set up", run: "setup", emphasis: false };
+    return { label: resolve(msg("Set up", { $context: "verb" })), run: "setup", emphasis: false };
   }
   if (
     summary.kind === "repair-managed" ||
     (part === "managed-python" && computeManagedPrimaryAction(managed) === "repair")
   ) {
-    return { label: "Repair", run: "repair", emphasis: false };
+    return { label: resolve(msg("Repair", { $context: "verb" })), run: "repair", emphasis: false };
   }
   // Maintenance belongs to the installed capability, not the selected runtime.
   // For MATLAB this updates Scient's helper, never the user's MATLAB installation.
   return managed?.installed && managed.updateAvailable
-    ? { label: "Update", run: "update", emphasis: true }
+    ? { label: resolve(msg("Update", { $context: "verb" })), run: "update", emphasis: true }
     : null;
 }
 

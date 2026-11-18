@@ -1,3 +1,5 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+import { m as resolveMessage } from "~/i18n/messages";
 import {
   SCIENT_SOURCES_BULK_SOURCE_LIMIT,
   scientSourceTagCounts,
@@ -67,25 +69,30 @@ export function announceSourcesMovedToTrash(input: {
   if (input.notRemoved > 0) {
     toastManager.add({
       type: "warning",
-      title:
-        input.notRemoved === 1
-          ? "1 source was not moved to Trash"
-          : `${input.notRemoved} sources were not moved to Trash`,
-      description: "They changed while you worked. Review them, then try again.",
+      title: resolveMessage(
+        msg(
+          "{count, plural, =1 {1 source was not moved to Trash} other {{count} sources were not moved to Trash}}",
+          { count: input.notRemoved },
+        ),
+      ),
+      description: resolveMessage(
+        msg("They changed while you worked. Review them, then try again."),
+      ),
     });
   }
   if (input.sourceIds.length === 0) return;
   const id = toastManager.add({
     type: "success",
-    title:
-      input.sourceIds.length === 1
-        ? "Moved 1 source to Trash"
-        : `Moved ${input.sourceIds.length} sources to Trash`,
+    title: resolveMessage(
+      msg("{count, plural, =1 {Moved 1 source to Trash} other {Moved {count} sources to Trash}}", {
+        count: input.sourceIds.length,
+      }),
+    ),
     ...(input.alsoElsewhere
       ? { description: someAlsoInOtherProjectsLabel(input.alsoElsewhere) }
       : {}),
     actionProps: {
-      children: "Undo",
+      children: resolveMessage(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {
         toastManager.close(id);
         void restoreAll(input).then(input.onRestored);
@@ -110,8 +117,13 @@ async function restoreAll(input: {
   if (failed > 0) {
     toastManager.add({
       type: "error",
-      title: failed === 1 ? "1 source was not restored" : `${failed} sources were not restored`,
-      description: "Open the Trash to restore it.",
+      title: resolveMessage(
+        msg(
+          "{count, plural, =1 {1 source was not restored} other {{count} sources were not restored}}",
+          { count: failed },
+        ),
+      ),
+      description: resolveMessage(msg("Open the Trash to restore it.")),
     });
   }
 }
@@ -126,14 +138,14 @@ const READING_ACTIONS: ReadonlyArray<{
   { label: LIBRARY_LABELS.removeStar, change: { starred: false } },
 ];
 
-const COMPARE = "Compare";
-
 /**
  * Puts a request to compare the selected sources at the start of the chat draft, with the caret
  * after `Question: `; it never sends.
  */
 function CompareSourcesButton(props: { readonly records: ReadonlyArray<SourceSummary> }) {
+  const gt = useGT();
   const composer = useComposerHandleContext();
+  const label = gt("Compare", { $context: "verb, compares the selected sources" });
   const compare = () => {
     const handle = composer?.current;
     const draft = handle?.getSendContext();
@@ -143,8 +155,8 @@ function CompareSourcesButton(props: { readonly records: ReadonlyArray<SourceSum
       if (insertion.kind === "other-request") {
         toastManager.add({
           type: "error",
-          title: "Your draft already asks to compare other sources",
-          description: "Send or clear that request, then try again.",
+          title: gt("Your draft already asks to compare other sources"),
+          description: gt("Send or clear that request, then try again."),
         });
         return;
       }
@@ -152,8 +164,12 @@ function CompareSourcesButton(props: { readonly records: ReadonlyArray<SourceSum
         if (insertion.listed < props.records.length) {
           toastManager.add({
             type: "info",
-            title: `Only the first ${insertion.listed} sources are in the request`,
-            description: `You selected ${props.records.length}. Compare a few at a time.`,
+            title: gt("Only the first {listed} sources are in the request", {
+              listed: insertion.listed,
+            }),
+            description: gt("You selected {count}. Compare a few at a time.", {
+              count: props.records.length,
+            }),
           });
         }
         return;
@@ -161,26 +177,28 @@ function CompareSourcesButton(props: { readonly records: ReadonlyArray<SourceSum
     }
     toastManager.add({
       type: "error",
-      title: "Couldn't add to the chat",
+      title: gt("Couldn't add to the chat"),
       description: draft?.answeringPendingUserInput
-        ? "Answer the agent's question first, then try again."
-        : "The chat isn't ready for text right now.",
+        ? gt("Answer the agent's question first, then try again.")
+        : gt("The chat isn't ready for text right now."),
     });
   };
   return (
-    <ScientTooltip content={composer === null ? "Open a chat to compare these sources." : COMPARE}>
+    <ScientTooltip
+      content={composer === null ? gt("Open a chat to compare these sources.") : label}
+    >
       {/* A disabled button gets no pointer events, so the tooltip hangs on its wrapper. */}
       <span className="inline-flex">
         <Button
           type="button"
           size="xs"
           variant="ghost"
-          aria-label={`${COMPARE} ${props.records.length} selected sources`}
+          aria-label={gt("Compare {count} selected sources", { count: props.records.length })}
           disabled={composer === null}
           onClick={compare}
         >
           <Columns3Icon />
-          <span className="@max-[24rem]/bulk:hidden">{COMPARE}</span>
+          <span className="@max-[24rem]/bulk:hidden">{label}</span>
         </Button>
       </span>
     </ScientTooltip>
@@ -209,6 +227,8 @@ export function SourcesBulkBar(props: {
   readonly onRemove: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
   readonly library?: SourcesBulkLibrary;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const { organize, library } = props;
   const { progress } = organize;
   const [removing, setRemoving] = useState(false);
@@ -246,16 +266,16 @@ export function SourcesBulkBar(props: {
 
   const addTag = () =>
     props.onRequestName({
-      title: count === 1 ? "Add a tag" : `Add a tag to ${count} sources`,
-      label: "Tag",
+      title: count === 1 ? gt("Add a tag") : gt("Add a tag to {count} sources", { count }),
+      label: gt("Tag", { $context: "noun" }),
       initialName: "",
       action: "Add",
       onSubmit: (tag) => named(organize.bulk({ sourceIds, addTags: [tag] }, "Tag was not added")),
     });
   const newCollection = () =>
     props.onRequestName({
-      title: "New collection",
-      label: "Collection name",
+      title: gt("New collection"),
+      label: gt("Collection name"),
       initialName: "",
       action: "Create",
       onSubmit: (name) => named(organize.createCollection(name, sourceIds)),
@@ -267,7 +287,7 @@ export function SourcesBulkBar(props: {
     <div className="@container/bulk mt-2 mb-1 ml-3 mr-4 shrink-0 text-sm">
       <div className="flex min-h-8 flex-wrap items-center gap-1">
         <Checkbox
-          aria-label={allVisibleSelected ? "Clear selection" : "Select all shown sources"}
+          aria-label={allVisibleSelected ? gt("Clear selection") : gt("Select all shown sources")}
           checked={allVisibleSelected}
           indeterminate={!allVisibleSelected && count > 0}
           onCheckedChange={() =>
@@ -288,7 +308,7 @@ export function SourcesBulkBar(props: {
               }
             >
               <TagIcon />
-              Tag
+              <T context="noun">Tag</T>
             </MenuTrigger>
             <MenuPopup align="end" side="bottom" className="min-w-48">
               {tags.map((entry) => {
@@ -311,7 +331,9 @@ export function SourcesBulkBar(props: {
                 );
               })}
               {tags.length > 0 ? <MenuSeparator /> : null}
-              <MenuItem onClick={addTag}>New tag…</MenuItem>
+              <MenuItem onClick={addTag}>
+                <T>New tag…</T>
+              </MenuItem>
             </MenuPopup>
           </Menu>
           <Menu>
@@ -321,7 +343,7 @@ export function SourcesBulkBar(props: {
               }
             >
               <FolderIcon />
-              Collection
+              <T context="noun, a collection of sources">Collection</T>
             </MenuTrigger>
             <MenuPopup align="end" side="bottom" className="min-w-48">
               {orderedCollections(organize.organization.collections).map(
@@ -352,7 +374,9 @@ export function SourcesBulkBar(props: {
                 },
               )}
               {organize.organization.collections.length > 0 ? <MenuSeparator /> : null}
-              <MenuItem onClick={newCollection}>New collection…</MenuItem>
+              <MenuItem onClick={newCollection}>
+                <T>New collection…</T>
+              </MenuItem>
             </MenuPopup>
           </Menu>
           <Menu>
@@ -362,7 +386,7 @@ export function SourcesBulkBar(props: {
               }
             >
               <ShapesIcon />
-              Type
+              <T context="a source's type">Type</T>
             </MenuTrigger>
             <MenuPopup align="end" side="bottom">
               {BULK_TYPES.map((type) => (
@@ -370,7 +394,7 @@ export function SourcesBulkBar(props: {
                   key={type}
                   onClick={() => void organize.bulk({ sourceIds, type }, "Type was not changed")}
                 >
-                  {SCIENT_SOURCE_TYPE_LABELS[type]}
+                  {m(SCIENT_SOURCE_TYPE_LABELS[type])}
                 </MenuItem>
               ))}
             </MenuPopup>
@@ -383,7 +407,7 @@ export function SourcesBulkBar(props: {
                 }
               >
                 <BookmarkCheckIcon />
-                {LIBRARY_LABELS.readingMenu}
+                {m(LIBRARY_LABELS.readingMenu)}
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
                 {READING_ACTIONS.map((action) => (
@@ -394,19 +418,19 @@ export function SourcesBulkBar(props: {
                       if (onSet) runOnSelection(() => onSet(sourceIds, action.change), true);
                     }}
                   >
-                    {action.label}
+                    {m(action.label)}
                   </MenuItem>
                 ))}
               </MenuPopup>
             </Menu>
           ) : null}
           {library?.listed === "library" ? (
-            <ScientTooltip content={LIBRARY_LABELS.addToProject}>
+            <ScientTooltip content={m(LIBRARY_LABELS.addToProject)}>
               <Button
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`${LIBRARY_LABELS.addToProject}: ${count} selected`}
+                aria-label={gt("Add to project: {count} selected", { count })}
                 disabled={busy || notInProject.length === 0}
                 onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
               >
@@ -415,12 +439,12 @@ export function SourcesBulkBar(props: {
             </ScientTooltip>
           ) : null}
           {library?.listed === "project" ? (
-            <ScientTooltip content={LIBRARY_LABELS.removeFromProject}>
+            <ScientTooltip content={m(LIBRARY_LABELS.removeFromProject)}>
               <Button
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`${LIBRARY_LABELS.removeFromProject}: ${count} selected`}
+                aria-label={gt("Remove from this project: {count} selected", { count })}
                 disabled={busy || count === 0}
                 onClick={() => {
                   setRemoving(true);
@@ -438,7 +462,7 @@ export function SourcesBulkBar(props: {
               type="button"
               size="icon-xs"
               variant="ghost-destructive"
-              aria-label={`Move ${count} selected sources to Trash`}
+              aria-label={gt("Move {count} selected sources to Trash", { count })}
               disabled={busy || count === 0}
               onClick={() => runOnSelection(props.onRemove)}
             >
@@ -450,7 +474,7 @@ export function SourcesBulkBar(props: {
           type="button"
           size="icon-xs"
           variant="ghost"
-          aria-label="Done selecting"
+          aria-label={gt("Done selecting")}
           onClick={organize.clearSelection}
         >
           <X />
@@ -459,7 +483,15 @@ export function SourcesBulkBar(props: {
       {progress ? (
         <div className="flex min-h-8 items-center gap-2 ps-6">
           <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">
-            {`${progress.kind === "changing" ? "Changing" : "Undoing"} ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} sources`}
+            {progress.kind === "changing"
+              ? gt("Changing {done} of {total} sources", {
+                  done: progress.done.toLocaleString(),
+                  total: progress.total.toLocaleString(),
+                })
+              : gt("Undoing {done} of {total} sources", {
+                  done: progress.done.toLocaleString(),
+                  total: progress.total.toLocaleString(),
+                })}
           </span>
           {progress.kind === "changing" ? (
             <Button
@@ -469,7 +501,9 @@ export function SourcesBulkBar(props: {
               disabled={progress.stopping}
               onClick={organize.stopProgress}
             >
-              {progress.stopping ? "Stopping…" : "Stop"}
+              {progress.stopping
+                ? gt("Stopping…")
+                : gt("Stop", { $context: "verb, stops a bulk edit" })}
             </Button>
           ) : null}
         </div>

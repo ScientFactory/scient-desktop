@@ -15,9 +15,11 @@ import {
   type ThreadSectionProjectRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
@@ -342,9 +344,12 @@ export function useSidebarSections(input: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "No project to start the thread in",
-            description:
-              "This section is on another machine. Open a project there, then start the thread from the section.",
+            title: m(msg("No project to start the thread in")),
+            description: m(
+              msg(
+                "This section is on another machine. Open a project there, then start the thread from the section.",
+              ),
+            ),
           }),
         );
       }
@@ -367,12 +372,16 @@ export function useSidebarSections(input: {
     if (ref === null) return;
     void catalogs.rename(ref, name).then((result) => {
       if (result === null) {
-        toastManager.add(stackedThreadToast({ type: "error", title: "Failed to rename section" }));
+        toastManager.add(
+          stackedThreadToast({ type: "error", title: m(msg("Failed to rename section")) }),
+        );
       } else if (result.kind === "duplicate") {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `A section named “${result.existing.name}” already exists`,
+            title: m(
+              msg("A section named “{name}” already exists", { name: result.existing.name }),
+            ),
           }),
         );
       }
@@ -402,7 +411,7 @@ export function useSidebarSections(input: {
     void Promise.all(writes).then((saved) => {
       if (saved.some((ok) => !ok)) {
         toastManager.add(
-          stackedThreadToast({ type: "error", title: "Failed to reorder sections" }),
+          stackedThreadToast({ type: "error", title: m(msg("Failed to reorder sections")) }),
         );
       }
     });
@@ -422,22 +431,29 @@ export function useSidebarSections(input: {
     const confirmed = await settlePromise(() =>
       api.dialogs.confirm(
         memberCount === 0
-          ? `Delete the section “${section.name}”?`
-          : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to General. No conversations are deleted.`,
+          ? m(msg("Delete the section “{name}”?", { name: section.name }))
+          : `${m(msg("Delete the section “{name}”?", { name: section.name }))}\n\n${m(
+              msg(
+                "{count, plural, one {Its {count} thread will move to General. No conversations are deleted.} other {Its {count} threads will move to General. No conversations are deleted.}}",
+                { count: memberCount },
+              ),
+            )}`,
         { variant: "destructive" },
       ),
     );
     if (confirmed._tag === "Failure" || !confirmed.value) return;
     const removed = await catalogs.remove({ environmentId, sectionId: section.id });
     if (removed === null) {
-      toastManager.add(stackedThreadToast({ type: "error", title: "Failed to delete section" }));
+      toastManager.add(
+        stackedThreadToast({ type: "error", title: m(msg("Failed to delete section")) }),
+      );
       return;
     }
     toastManager.add({
       type: "success",
-      title: `Deleted section “${section.name}”`,
+      title: m(msg("Deleted section “{name}”", { name: section.name })),
       actionProps: {
-        children: "Undo",
+        children: m(msg("Undo")),
         onClick: () => {
           void catalogs.restore(environmentId, removed);
         },
@@ -465,17 +481,26 @@ export function useSidebarSections(input: {
     const clicked = await settlePromise(() =>
       api.contextMenu.show(
         [
-          { id: "new-thread", label: "New thread in section", icon: "message-square-plus" },
-          { id: "rename", label: "Rename section", icon: "pencil", separatorBefore: true },
-          { id: "move-up", label: "Move up", disabled: index <= 0 },
+          {
+            id: "new-thread",
+            label: m(msg("New thread in section")),
+            icon: "message-square-plus",
+          },
+          {
+            id: "rename",
+            label: m(msg("Rename section")),
+            icon: "pencil",
+            separatorBefore: true,
+          },
+          { id: "move-up", label: m(msg("Move up")), disabled: index <= 0 },
           {
             id: "move-down",
-            label: "Move down",
+            label: m(msg("Move down")),
             disabled: index < 0 || index >= order.length - 1,
           },
           {
             id: "delete",
-            label: "Delete section",
+            label: m(msg("Delete section")),
             icon: "trash",
             destructive: true,
             separatorBefore: true,

@@ -1,9 +1,11 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { openPreviewSession } from "~/components/preview/openPreviewSession";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { type RightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 
 /** Opens a second copy of a browser or terminal tab beside the others. */
@@ -35,7 +37,7 @@ export function duplicatePanelSurface<E>(input: {
       return;
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      toastManager.add({ type: "error", title: "The tab could not be duplicated." });
+      toastManager.add({ type: "error", title: m(msg("The tab could not be duplicated.")) });
     }
   });
 }

@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -51,7 +52,9 @@ function LanguageRow({
               {name}
             </Link>
             {comingSoon ? (
-              <span className="shrink-0 text-xs text-muted-foreground">Coming soon</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                <T>Coming soon</T>
+              </span>
             ) : null}
           </div>
           {detail ? <p className="truncate text-xs text-muted-foreground">{detail}</p> : null}
@@ -72,8 +75,9 @@ function LanguageEntry({
   inventory: ComputeLanguages;
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const row = { languageId, name, environmentId };
-  if (inventory.pending) return <LanguageRow {...row} detail="Checking…" />;
+  if (inventory.pending) return <LanguageRow {...row} detail={gt("Checking…")} />;
   if (runtime === undefined) return <LanguageRow {...row} comingSoon detail="" />;
   const status = computeLanguageStatus({
     language: runtime,
@@ -92,10 +96,10 @@ function LanguageEntry({
               <Button
                 size="xs"
                 variant="outline"
-                aria-label={`Get ${name}`}
+                aria-label={gt("Get {name}", { name })}
                 render={<a href={status.getUrl} target="_blank" rel="noreferrer" />}
               >
-                Get <ExternalLinkIcon />
+                {gt("Get", { $context: "verb, download a language" })} <ExternalLinkIcon />
               </Button>
             ),
           })}
@@ -104,11 +108,12 @@ function LanguageEntry({
 }
 
 function LanguagesOverview({ environmentId }: { environmentId: EnvironmentId }) {
+  const messages = useMessages();
   const inventory = useComputeLanguages(environmentId);
   return (
     <SettingsPageContainer>
       <div className="@container/extensions grid gap-10">
-        {computeLanguageGroups(inventory.languages).map((group, index) => (
+        {computeLanguageGroups(inventory.languages, messages).map((group, index) => (
           <ExtensionsSection
             key={group.title}
             title={group.title}

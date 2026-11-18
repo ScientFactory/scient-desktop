@@ -2,9 +2,11 @@ import type { RefObject } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { msg } from "gt-react";
 import { useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { scientDocumentPdfEnvironment } from "~/state/scientDocumentPdf";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -82,7 +84,7 @@ function createMarkdownPdfExport({
     if (!availability.available) {
       toastManager.add({
         type: "error",
-        title: "PDF export unavailable",
+        title: m(msg("PDF export unavailable")),
         description: availability.reason,
       });
       return;
@@ -90,14 +92,18 @@ function createMarkdownPdfExport({
     if (httpBaseUrl === null) {
       toastManager.add({
         type: "error",
-        title: "PDF export unavailable",
-        description: "This project's Scient environment is not connected.",
+        title: m(msg("PDF export unavailable")),
+        description: m(msg("This project's Scient environment is not connected.")),
       });
       return;
     }
     runningRef.current = true;
     const finish = beginScientUiOperation(target.environmentId, "pdf-export", "user");
-    const toastId = toastManager.add({ type: "loading", title: "Exporting PDF…", timeout: 0 });
+    const toastId = toastManager.add({
+      type: "loading",
+      title: m(msg("Exporting PDF…")),
+      timeout: 0,
+    });
     try {
       const published = await runMarkdownPdfExport(
         {
@@ -144,8 +150,8 @@ function createMarkdownPdfExport({
       toastManager.close(toastId);
       toastManager.add({
         type: "error",
-        title: "Unable to export PDF",
-        description: error instanceof Error ? error.message : "The PDF export failed.",
+        title: m(msg("Unable to export PDF")),
+        description: error instanceof Error ? error.message : m(msg("The PDF export failed.")),
       });
       finish("failed");
     } finally {

@@ -4,6 +4,8 @@ import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 import type {
   ScientRichFenceAuthoringActions,
@@ -111,10 +113,12 @@ class ScientCodeBlockNodeView implements NodeView {
     this.loadError.className = "scient-markdown-code-load-error";
     this.loadError.hidden = true;
     this.loadError.setAttribute("role", "status");
-    this.loadError.append("Code editor could not open. Markdown source is still available.");
+    this.loadError.append(
+      m(msg("Code editor could not open. Markdown source is still available.")),
+    );
     this.retryButton.type = "button";
-    this.retryButton.textContent = "Retry";
-    this.retryButton.setAttribute("aria-label", "Retry code editor");
+    this.retryButton.textContent = m(msg("Retry"));
+    this.retryButton.setAttribute("aria-label", m(msg("Retry code editor")));
     this.retryButton.addEventListener("click", this.retryEditor);
     this.loadError.append(this.retryButton);
     this.dom.append(this.loadError);
@@ -383,7 +387,7 @@ class ScientCodeBlockNodeView implements NodeView {
     const metadata = fenceMetadata(this.node);
     const theme = this.resolveTheme();
     this.header.updateTitle({
-      language: language === "text" ? "Plain text" : language,
+      language: language === "text" ? m(msg("Plain text")) : language,
       fenceTitle: extractFenceTitle(metadata),
       theme,
     });

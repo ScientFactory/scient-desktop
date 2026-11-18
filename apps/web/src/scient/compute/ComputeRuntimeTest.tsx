@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon, LoaderCircleIcon } from "lucide-react";
 import type { ComputeLanguageId, EnvironmentId } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ export function ComputeRuntimeTest({
   disabled?: boolean;
   onVersion?: ((version: string) => void) | undefined;
 }) {
+  const gt = useGT();
   const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
   const lock = useRef(false);
   const mounted = useRef(true);
@@ -67,10 +69,10 @@ export function ComputeRuntimeTest({
         }
         return readiness === "ready" && connection === "verified"
           ? null
-          : (message ?? "The connection could not be verified.");
+          : (message ?? gt("The connection could not be verified."));
       })
       .catch((cause: unknown) =>
-        cause instanceof Error ? cause.message : "The connection could not be verified.",
+        cause instanceof Error ? cause.message : gt("The connection could not be verified."),
       );
     lock.current = false;
     if (!mounted.current) return;
@@ -92,7 +94,7 @@ export function ComputeRuntimeTest({
         ) : (
           <CheckIcon aria-hidden className="size-3" />
         )}
-        {testing ? "Testing…" : "Test passed"}
+        {testing ? gt("Testing…") : gt("Test passed")}
       </span>
     );
   }
@@ -105,12 +107,12 @@ export function ComputeRuntimeTest({
               size="xs"
               variant="ghost-muted"
               disabled={disabled}
-              aria-label={`Test failed: ${error.slice(0, 200)}`}
+              aria-label={gt("Test failed: {error}", { error: error.slice(0, 200) })}
               onClick={() => void run()}
             />
           }
         >
-          Test failed
+          <T>Test failed</T>
         </TooltipTrigger>
         <TooltipPopup className="max-w-80">{error}</TooltipPopup>
       </Tooltip>
@@ -121,10 +123,10 @@ export function ComputeRuntimeTest({
       size="xs"
       variant="outline"
       disabled={disabled}
-      aria-label={`Test ${label}`}
+      aria-label={gt("Test {name}", { name: label })}
       onClick={() => void run()}
     >
-      Test
+      {gt("Test", { $context: "verb, tests a runtime" })}
     </Button>
   );
 }

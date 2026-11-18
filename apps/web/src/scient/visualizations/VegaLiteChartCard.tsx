@@ -12,7 +12,10 @@ import {
   RotateCcwIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { msg, T, useGT, useLocale, useMessages } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+
+import { m } from "~/i18n/messages";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
@@ -64,20 +67,29 @@ type ChartStatus =
 
 type ChartAction = "copy-source" | "copy-png" | "download-png" | "download-svg" | "reset" | null;
 
-const NETWORK_DATA_DESCRIPTION = "This chart loads HTTP(S) resources from the viewing device";
-const NETWORK_DATA_LABEL = `Network data. ${NETWORK_DATA_DESCRIPTION}`;
+const NETWORK_DATA_DESCRIPTION = msg("This chart loads HTTP(S) resources from the viewing device");
+const NETWORK_DATA_LABEL = msg(
+  "Network data. This chart loads HTTP(S) resources from the viewing device",
+);
 
+/**
+ * The parsed source keeps its identity while `source` and `locale` do, so state that follows it
+ * settles; a language switch parses again, with errors in the new language.
+ */
 function parseSource(
   source: string,
+  locale: string,
 ):
   | { readonly parsed: ParsedVegaLiteSource; readonly error: null }
   | { readonly parsed: null; readonly error: Error } {
+  void locale;
   try {
-    return { parsed: parseVegaLiteSource(source), error: null };
+    return { parsed: parseVegaLiteSource(source, m), error: null };
   } catch (cause) {
     return {
       parsed: null,
-      error: cause instanceof Error ? cause : new Error("Unable to parse the Vega-Lite source."),
+      error:
+        cause instanceof Error ? cause : new Error(m(msg("Unable to parse the Vega-Lite source."))),
     };
   }
 }
@@ -122,10 +134,13 @@ export function VegaLiteChartCard({
   theme,
   title,
 }: VegaLiteChartCardProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const { ref: viewportRef, isNearViewport } = useNearViewport();
   const controllerRef = useRef<VegaLiteViewController | null>(null);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const parsedSource = parseSource(source);
+  const locale = useLocale();
+  const parsedSource = parseSource(source, locale);
   const [status, setStatus] = useState<ChartStatus>(() => ({
     kind: isNearViewport && parsedSource.parsed != null ? "loading" : "idle",
   }));
@@ -135,7 +150,7 @@ export function VegaLiteChartCard({
   const [expandedState, setExpandedState] = useState<VegaLiteViewState | null>(null);
   const [activeAction, setActiveAction] = useState<ChartAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const displayTitle = title || "Vega-Lite chart";
+  const displayTitle = title || gt("Vega-Lite chart");
   const markdownCopy = vegaLiteMarkdownCopySource(source, language, fenceMeta);
 
   const [previousMount, setPreviousMount] = useState({
@@ -209,18 +224,18 @@ export function VegaLiteChartCard({
   const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
-      showPersistentMessage("Clipboard access is unavailable.");
+      showPersistentMessage(gt("Clipboard access is unavailable."));
       return;
     }
     setActiveAction("copy-source");
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage("Source copied");
+        showTransientMessage(gt("Source copied"));
       },
       () => {
         setActiveAction(null);
-        showPersistentMessage("Unable to copy the chart source.");
+        showPersistentMessage(gt("Unable to copy the chart source."));
       },
     );
   });
@@ -274,34 +289,34 @@ export function VegaLiteChartCard({
           </span>
         ) : null}
         {hasNetworkResources ? (
-          <ScientTooltip content={NETWORK_DATA_DESCRIPTION}>
+          <ScientTooltip content={messages(NETWORK_DATA_DESCRIPTION)}>
             <span
-              aria-label={NETWORK_DATA_LABEL}
+              aria-label={messages(NETWORK_DATA_LABEL)}
               className="shrink-0 rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
             >
-              Network data
+              <T>Network data</T>
             </span>
           </ScientTooltip>
         ) : null}
         <ChartActionButton
           disabled={!ready || activeAction != null}
-          label="Reset chart interaction"
+          label={gt("Reset chart interaction")}
           onClick={() =>
             runControllerAction(
               "reset",
               (controller) => controller.reset(),
-              "View reset",
-              "Unable to reset the chart view.",
+              gt("View reset"),
+              gt("Unable to reset the chart view."),
             )
           }
         >
           <RotateCcwIcon className="size-3.5" />
         </ChartActionButton>
-        <VisualCardToolbar label="Chart actions">
+        <VisualCardToolbar label={gt("Chart actions")}>
           {ready ? (
             <ChartActionButton
               disabled={activeAction != null}
-              label="Expand interactive chart"
+              label={gt("Expand interactive chart")}
               onClick={handleExpand}
             >
               <Maximize2Icon className="size-3" strokeWidth={1.5} />
@@ -315,7 +330,7 @@ export function VegaLiteChartCard({
                   <MenuTrigger
                     render={
                       <Button
-                        aria-label="More chart actions"
+                        aria-label={gt("More chart actions")}
                         size="icon-xs"
                         type="button"
                         variant="ghost"
@@ -326,13 +341,15 @@ export function VegaLiteChartCard({
               >
                 <EllipsisIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">More chart actions</TooltipPopup>
+              <TooltipPopup side="top">
+                <T>More chart actions</T>
+              </TooltipPopup>
             </Tooltip>
             <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
               <VisualCardDetails title={displayTitle} />
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
-                Copy source
+                {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                <T>Copy source</T>
               </MenuItem>
               <RichFenceSourceMenuItem
                 authoringActions={authoringActions}
@@ -341,7 +358,7 @@ export function VegaLiteChartCard({
               />
               <MenuItem onClick={() => downloadVegaLiteSource(source, title)}>
                 <FileBracesIcon />
-                Download Vega-Lite JSON
+                <T>Download Vega-Lite JSON</T>
               </MenuItem>
 
               <MenuItem
@@ -351,12 +368,12 @@ export function VegaLiteChartCard({
                     "download-svg",
                     (controller) => downloadVegaLiteSvg(controller, title),
                     null,
-                    "Unable to create the SVG image.",
+                    gt("Unable to create the SVG image."),
                   )
                 }
               >
                 <DownloadIcon />
-                Download current SVG
+                <T>Download current SVG</T>
               </MenuItem>
               <MenuItem
                 disabled={!ready || activeAction != null}
@@ -364,13 +381,13 @@ export function VegaLiteChartCard({
                   runControllerAction(
                     "copy-png",
                     copyVegaLitePng,
-                    "Image copied",
-                    "Copy image is unavailable. You can download the PNG instead.",
+                    gt("Image copied"),
+                    gt("Copy image is unavailable. You can download the PNG instead."),
                   )
                 }
               >
                 <ImageIcon />
-                {activeAction === "copy-png" ? "Copying image…" : "Copy current image"}
+                {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy current image")}
               </MenuItem>
               <MenuItem
                 disabled={!ready || activeAction != null}
@@ -379,12 +396,12 @@ export function VegaLiteChartCard({
                     "download-png",
                     (controller) => downloadVegaLitePng(controller, title),
                     null,
-                    "Unable to create the PNG image.",
+                    gt("Unable to create the PNG image."),
                   )
                 }
               >
                 <FileImageIcon />
-                {activeAction === "download-png" ? "Creating PNG…" : "Download current PNG"}
+                {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download current PNG")}
               </MenuItem>
               <VisualCardToolbarMenuItems />
             </VisualCardMenuPopup>
@@ -405,7 +422,9 @@ export function VegaLiteChartCard({
         <div className="space-y-3 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-medium text-sm">Unable to render this chart</p>
+              <p className="font-medium text-sm">
+                <T>Unable to render this chart</T>
+              </p>
               <p className="mt-1 text-muted-foreground text-xs">{visibleStatus.message}</p>
             </div>
             {parseError == null ? (
@@ -415,7 +434,7 @@ export function VegaLiteChartCard({
                 variant="outline"
               >
                 <RefreshCwIcon />
-                Retry
+                <T>Retry</T>
               </Button>
             ) : null}
           </div>
@@ -428,8 +447,8 @@ export function VegaLiteChartCard({
           {visibleStatus.kind !== "ready" ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
               {visibleStatus.kind === "idle"
-                ? "Chart will render when visible"
-                : "Rendering interactive chart…"}
+                ? gt("Chart will render when visible")
+                : gt("Rendering interactive chart…")}
             </div>
           ) : null}
           {isNearViewport && parsedSource.parsed != null ? (
@@ -452,9 +471,9 @@ export function VegaLiteChartCard({
         <details className="border-t border-border/60 bg-amber-500/5 px-3 py-2 text-xs">
           <summary className="flex cursor-pointer list-none items-center gap-2 text-amber-700 dark:text-amber-300">
             <TriangleAlertIcon className="size-3.5" />
-            {visibleStatus.warnings.length === 1
-              ? "1 chart warning"
-              : `${visibleStatus.warnings.length} chart warnings`}
+            {gt("{count, plural, one {{count} chart warning} other {{count} chart warnings}}", {
+              count: visibleStatus.warnings.length,
+            })}
           </summary>
           <ul className="mt-2 list-disc space-y-1 ps-6 text-muted-foreground">
             {visibleStatus.warnings.map((warning) => (

@@ -3,6 +3,8 @@ import {
   bibtexEntries,
   manualBibliography,
 } from "./latexBibliographyModel";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface LatexReferenceChoice {
   key: string;
@@ -24,7 +26,13 @@ export function withoutComments(source: string) {
     .join("\n");
 }
 
-export function documentReferenceChoices(source: string): LatexReferenceChoice[] {
+/** An equation's title; the references worker has no catalog, so its choices are re-titled here. */
+export const EQUATION_REFERENCE_TITLE = msg("Equation");
+
+export function documentReferenceChoices(
+  source: string,
+  resolve: MessageResolver = m,
+): LatexReferenceChoice[] {
   const text = withoutComments(source);
   return [...text.matchAll(/\\label\s*\{([^{}]+)\}/gu)].map((match) => {
     const before = text.slice(0, match.index);
@@ -63,7 +71,7 @@ export function documentReferenceChoices(source: string): LatexReferenceChoice[]
     return {
       key: match[1]!,
       title: equation
-        ? "Equation"
+        ? resolve(EQUATION_REFERENCE_TITLE)
         : statementType
           ? [statementType, statementTitle].filter(Boolean).join(": ")
           : (nearest?.[1] ?? match[1]!),

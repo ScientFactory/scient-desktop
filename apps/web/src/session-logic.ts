@@ -490,11 +490,15 @@ function projectedWorkEntry(
       };
     }
     case "dynamic_tool": {
-      const skillUsageLabel = scientSkillUsageLabel({
-        tool: item.toolName,
-        arguments: item.input,
-        status: item.status,
-      });
+      const skillUsageLabel = scientSkillUsageLabel(
+        {
+          tool: item.toolName,
+          arguments: item.input,
+          status: item.status,
+        },
+        // SCIENT-FORK: the skill row label in the active language.
+        resolve,
+      );
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
         data: { toolName: item.toolName ?? undefined, input: item.input },

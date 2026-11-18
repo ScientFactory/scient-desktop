@@ -2,6 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { VoicePhase } from "./useScientVoiceController.ts";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const controllerState = vi.hoisted(() => ({
   phase: "recording" as VoicePhase,
   levels: [] as number[],

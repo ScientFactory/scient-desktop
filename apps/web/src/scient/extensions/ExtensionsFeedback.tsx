@@ -5,9 +5,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
+import { msg, T, useGT } from "gt-react";
 import { InfoIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
+import { m } from "../../i18n/messages";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 
 const isExtensionsError = Schema.is(ExtensionsError);
@@ -22,8 +24,9 @@ export function commandFailureMessage(result: AtomCommandResult<unknown, unknown
   if (result._tag === "Success" || isAtomCommandInterrupted(result)) return null;
   const error = squashAtomCommandFailure(result);
   if (isExtensionsError(error)) return error.message;
-  if (isAuthorizationError(error)) return "This connection is not allowed to change extensions.";
-  return "Scient could not complete this request. Try again.";
+  if (isAuthorizationError(error))
+    return m(msg("This connection is not allowed to change extensions."));
+  return m(msg("Scient could not complete this request. Try again."));
 }
 
 export function ActionError({ message }: { readonly message: string | null }) {
@@ -50,6 +53,7 @@ export function ErrorNote({
   /** The one line shown for a long error; the message itself, cut short, if not given. */
   readonly summary?: string | undefined;
 }) {
+  const gt = useGT();
   if (message === null) return null;
   if (fitsInline(message)) {
     return (
@@ -69,7 +73,9 @@ export function ErrorNote({
         <PopoverTrigger
           openOnHover
           delay={150}
-          render={<Button size="icon-xs" variant="ghost-muted" aria-label="Show the full error" />}
+          render={
+            <Button size="icon-xs" variant="ghost-muted" aria-label={gt("Show the full error")} />
+          }
         >
           <InfoIcon aria-hidden />
         </PopoverTrigger>
@@ -88,15 +94,17 @@ export function SignInBlockedNotice({ url }: { readonly url: string | null }) {
   if (url === null) return null;
   return (
     <p role="alert" className="text-xs text-muted-foreground">
-      The sign-in window was blocked.{" "}
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="font-medium text-foreground underline underline-offset-2"
-      >
-        Open sign-in page
-      </a>
+      <T>
+        The sign-in window was blocked.{" "}
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-2"
+        >
+          Open sign-in page
+        </a>
+      </T>
     </p>
   );
 }

@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import type { GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
 import type { Editor } from "@pierre/diffs/edit";
+import { useGT } from "gt-react";
 import { MessageSquarePlus } from "lucide-react";
 import {
   useEffect,
@@ -369,10 +370,7 @@ export function scientEditorGutterUtility(
           <div className="flex items-center gap-px">
             {renderEditorGutterAction(getHoveredLine)}
             {enableFileComments ? (
-              <button
-                type="button"
-                className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                aria-label="Add comment"
+              <AddCommentGutterButton
                 onClick={() => {
                   const hoveredLine = getHoveredLine();
                   if (hoveredLine !== undefined) {
@@ -382,13 +380,25 @@ export function scientEditorGutterUtility(
                     });
                   }
                 }}
-              >
-                <MessageSquarePlus className="size-3" />
-              </button>
+              />
             ) : null}
           </div>
         ),
       };
+}
+
+function AddCommentGutterButton(props: { readonly onClick: () => void }) {
+  const gt = useGT();
+  return (
+    <button
+      type="button"
+      className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      aria-label={gt("Add comment")}
+      onClick={props.onClick}
+    >
+      <MessageSquarePlus className="size-3" />
+    </button>
+  );
 }
 
 function applyExternalProjection(apply: () => void, finish: () => void) {

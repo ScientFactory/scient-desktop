@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import type { ScientReviewStage, ScientSourcesOrganization } from "@scientfactory/scient-sources";
 import type {
   EnvironmentId,
@@ -74,6 +75,7 @@ function LogSearchDialog(props: {
   readonly selectedSourceIds: ReadonlyArray<string>;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const [database, setDatabase] = useState("");
   const [query, setQuery] = useState("");
   const [searchedOn, setSearchedOn] = useState(localToday);
@@ -82,9 +84,14 @@ function LogSearchDialog(props: {
     props.selectedSourceIds.length > 0 ? SELECTED : NO_RECORDS,
   );
   const choices = [
-    { value: NO_RECORDS, label: "Add records later" },
+    { value: NO_RECORDS, label: gt("Add records later") },
     ...(props.selectedSourceIds.length > 0
-      ? [{ value: SELECTED, label: `Selected sources (${props.selectedSourceIds.length})` }]
+      ? [
+          {
+            value: SELECTED,
+            label: gt("Selected sources ({count})", { count: props.selectedSourceIds.length }),
+          },
+        ]
       : []),
     ...props.organization.collections.map((collection) => ({
       value: collection.collectionId,
@@ -114,12 +121,16 @@ function LogSearchDialog(props: {
     <Dialog open={props.open} onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Log a search</DialogTitle>
+          <DialogTitle>
+            <T>Log a search</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-3">
             <Field>
-              <FieldLabel>Database</FieldLabel>
+              <FieldLabel>
+                <T>Database</T>
+              </FieldLabel>
               <Input
                 autoFocus
                 value={database}
@@ -129,7 +140,9 @@ function LogSearchDialog(props: {
               />
             </Field>
             <Field>
-              <FieldLabel>Search string</FieldLabel>
+              <FieldLabel>
+                <T>Search string</T>
+              </FieldLabel>
               <Textarea
                 value={query}
                 rows={3}
@@ -139,7 +152,9 @@ function LogSearchDialog(props: {
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field>
-                <FieldLabel>Date searched</FieldLabel>
+                <FieldLabel>
+                  <T>Date searched</T>
+                </FieldLabel>
                 <Input
                   type="date"
                   value={searchedOn}
@@ -147,17 +162,21 @@ function LogSearchDialog(props: {
                 />
               </Field>
               <Field>
-                <FieldLabel>Results reported</FieldLabel>
+                <FieldLabel>
+                  <T>Results reported</T>
+                </FieldLabel>
                 <Input
                   inputMode="numeric"
                   value={resultCount}
-                  placeholder="Optional"
+                  placeholder={gt("Optional")}
                   onChange={(event) => setResultCount(event.target.value.replace(/\D/gu, ""))}
                 />
               </Field>
             </div>
             <Field>
-              <FieldLabel>Records from this search</FieldLabel>
+              <FieldLabel>
+                <T>Records from this search</T>
+              </FieldLabel>
               <Select
                 value={records}
                 items={choices}
@@ -179,7 +198,7 @@ function LogSearchDialog(props: {
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="outline" size="sm" onClick={props.onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             type="button"
@@ -187,7 +206,7 @@ function LogSearchDialog(props: {
             disabled={!valid || props.reviews.disabled}
             onClick={() => void submit()}
           >
-            Log search
+            <T>Log search</T>
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -200,6 +219,7 @@ function EditReviewDialog(props: {
   readonly open: boolean;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const review = props.reviews.detail?.review;
   const [title, setTitle] = useState(review?.title ?? "");
   const [question, setQuestion] = useState(review?.question ?? "");
@@ -229,12 +249,16 @@ function EditReviewDialog(props: {
     <Dialog open={props.open} onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Edit review</DialogTitle>
+          <DialogTitle>
+            <T>Edit review</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-3">
             <Field>
-              <FieldLabel>Title</FieldLabel>
+              <FieldLabel>
+                <T context="a source field">Title</T>
+              </FieldLabel>
               <Input
                 value={title}
                 maxLength={200}
@@ -242,16 +266,20 @@ function EditReviewDialog(props: {
               />
             </Field>
             <Field>
-              <FieldLabel>Review question</FieldLabel>
+              <FieldLabel>
+                <T>Review question</T>
+              </FieldLabel>
               <Textarea
                 value={question}
                 rows={3}
-                placeholder="Population, intervention, comparator, outcomes"
+                placeholder={gt("Population, intervention, comparator, outcomes")}
                 onChange={(event) => setQuestion(event.target.value)}
               />
             </Field>
             <Field>
-              <FieldLabel>Exclusion reasons, one per line</FieldLabel>
+              <FieldLabel>
+                <T>Exclusion reasons, one per line</T>
+              </FieldLabel>
               <Textarea
                 value={reasons}
                 rows={6}
@@ -262,7 +290,7 @@ function EditReviewDialog(props: {
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="outline" size="sm" onClick={props.onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             type="button"
@@ -270,7 +298,7 @@ function EditReviewDialog(props: {
             disabled={!title.trim() || props.reviews.disabled}
             onClick={() => void submit()}
           >
-            Save
+            <T>Save</T>
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -285,6 +313,7 @@ function RecordsTab(props: {
   readonly selectedSourceIds: ReadonlyArray<string>;
   readonly onOpenSource: (sourceId: string) => void;
 }) {
+  const gt = useGT();
   const detail = props.reviews.detail!;
   const reviewId = detail.review.reviewId;
   const [logging, setLogging] = useState(false);
@@ -302,7 +331,7 @@ function RecordsTab(props: {
     <div className="space-y-5">
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <SectionTitle>Searches</SectionTitle>
+          <SectionTitle>{gt("Searches")}</SectionTitle>
           <Button
             type="button"
             size="compact"
@@ -312,11 +341,13 @@ function RecordsTab(props: {
             onClick={() => setLogging(true)}
           >
             <Plus />
-            Log search
+            <T>Log search</T>
           </Button>
         </div>
         {detail.review.searches.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No searches logged yet.</p>
+          <p className="text-sm text-muted-foreground">
+            <T>No searches logged yet.</T>
+          </p>
         ) : (
           <ul className="divide-y divide-border">
             {detail.review.searches.map((search) => (
@@ -327,9 +358,11 @@ function RecordsTab(props: {
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {" · "}
                       {search.searchedOn}
-                      {search.resultCount !== undefined ? ` · ${search.resultCount} results` : ""}
-                      {` · ${search.sourceIds.length} records`}
-                      {search.loggedBy === "agent" ? " · by agent" : ""}
+                      {search.resultCount !== undefined
+                        ? gt(" · {resultCount} results", { resultCount: search.resultCount })
+                        : ""}
+                      {gt(" · {count} records", { count: search.sourceIds.length })}
+                      {search.loggedBy === "agent" ? gt(" · by agent") : ""}
                     </span>
                   </p>
                   {search.query ? (
@@ -345,7 +378,7 @@ function RecordsTab(props: {
                         type="button"
                         size="icon-xs"
                         variant="ghost"
-                        aria-label="Search actions"
+                        aria-label={gt("Search actions")}
                       />
                     }
                   >
@@ -362,7 +395,7 @@ function RecordsTab(props: {
                         )
                       }
                     >
-                      Remove search
+                      <T>Remove search</T>
                     </MenuItem>
                   </MenuPopup>
                 </Menu>
@@ -373,7 +406,7 @@ function RecordsTab(props: {
       </section>
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <SectionTitle>Records found another way</SectionTitle>
+          <SectionTitle>{gt("Records found another way")}</SectionTitle>
           <Menu>
             <MenuTrigger
               render={
@@ -387,12 +420,14 @@ function RecordsTab(props: {
               }
             >
               <Plus />
-              Add records
+              <T>Add records</T>
             </MenuTrigger>
             <MenuPopup align="end" className="min-w-48">
               {props.selectedSourceIds.length > 0 ? (
                 <MenuItem onClick={() => void addInBatches(props.selectedSourceIds)}>
-                  Selected sources ({props.selectedSourceIds.length})
+                  <T>
+                    Selected sources (<Var>{props.selectedSourceIds.length}</Var>)
+                  </T>
                 </MenuItem>
               ) : null}
               {props.organization.collections
@@ -409,20 +444,22 @@ function RecordsTab(props: {
               props.organization.collections.every(
                 (collection) => collection.sourceIds.length === 0,
               ) ? (
-                <MenuItem disabled>Select sources or make a collection first</MenuItem>
+                <MenuItem disabled>
+                  <T>Select sources or make a collection first</T>
+                </MenuItem>
               ) : null}
             </MenuPopup>
           </Menu>
         </div>
         <p className="text-sm text-muted-foreground tabular-nums">
           {detail.prisma.identified.otherMethods === 0
-            ? "None, such as citation searching or a colleague’s suggestion."
+            ? gt("None, such as citation searching or a colleague’s suggestion.")
             : `${detail.prisma.identified.otherMethods} records`}
         </p>
       </section>
       {detail.possibleDuplicates.length > 0 ? (
         <section className="space-y-2">
-          <SectionTitle>Possible duplicates</SectionTitle>
+          <SectionTitle>{gt("Possible duplicates")}</SectionTitle>
           <ul className="divide-y divide-border">
             {detail.possibleDuplicates.map(([first, second]) => (
               <li key={`${first}:${second}`} className="space-y-1.5 py-2 text-sm">
@@ -459,7 +496,7 @@ function RecordsTab(props: {
                       )
                     }
                   >
-                    Keep first
+                    <T>Keep first</T>
                   </Button>
                   <Button
                     type="button"
@@ -478,7 +515,7 @@ function RecordsTab(props: {
                       )
                     }
                   >
-                    Keep second
+                    <T>Keep second</T>
                   </Button>
                   <Button
                     type="button"
@@ -492,7 +529,7 @@ function RecordsTab(props: {
                       )
                     }
                   >
-                    Not duplicates
+                    <T>Not duplicates</T>
                   </Button>
                 </div>
               </li>
@@ -502,7 +539,7 @@ function RecordsTab(props: {
       ) : null}
       {detail.review.duplicates.length > 0 ? (
         <section className="space-y-2">
-          <SectionTitle>Removed duplicates</SectionTitle>
+          <SectionTitle>{gt("Removed duplicates")}</SectionTitle>
           <ul className="divide-y divide-border">
             {detail.review.duplicates.map((entry) => (
               <li key={entry.sourceId} className="flex items-center gap-2 py-1.5 text-sm">
@@ -519,7 +556,7 @@ function RecordsTab(props: {
                     )
                   }
                 >
-                  Restore
+                  <T context="verb, button">Restore</T>
                 </Button>
               </li>
             ))}
@@ -540,6 +577,7 @@ function RecordsTab(props: {
 }
 
 function PrismaTab(props: { readonly reviews: SystematicReviews }) {
+  const gt = useGT();
   const detail = props.reviews.detail!;
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget("PRISMA diagram"),
@@ -554,7 +592,7 @@ function PrismaTab(props: { readonly reviews: SystematicReviews }) {
         onClick={() => copyToClipboard(`\`\`\`mermaid\n${detail.mermaid}\n\`\`\``)}
       >
         <Copy />
-        {isCopied ? "Copied" : "Copy as Mermaid"}
+        {isCopied ? gt("Copied", { $context: "state, after copying" }) : gt("Copy as Mermaid")}
       </Button>
     </div>
   );
@@ -572,6 +610,7 @@ export function SystematicReviewsView(props: {
   readonly onOpenSource: (sourceId: string) => void;
   readonly onBack: () => void;
 }) {
+  const gt = useGT();
   const reviews = useSystematicReviews({ environmentId: props.environmentId, root: props.root });
   const context = `${props.environmentId}\0${props.root}`;
   const [place] = useState(() => readLastReviewPlace(context));
@@ -614,8 +653,8 @@ export function SystematicReviewsView(props: {
 
   const newReview = () =>
     setNameRequest({
-      title: "New systematic review",
-      label: "Review title",
+      title: gt("New systematic review"),
+      label: gt("Review title"),
       initialName: "",
       action: "Create",
       onSubmit: async (title) => {
@@ -636,10 +675,10 @@ export function SystematicReviewsView(props: {
     reviews.open(null);
     toastManager.add({
       type: "success",
-      title: `Deleted review “${title}”`,
-      description: "Its sources stay in the Library.",
+      title: gt("Deleted review “{title}”", { title }),
+      description: gt("Its sources stay in the Library."),
       actionProps: {
-        children: "Undo",
+        children: gt("Undo", { $context: "verb, button that undoes a change" }),
         onClick: () => {
           void reviews.change({ action: "restore-review", reviewId }, "Review was not restored");
         },
@@ -654,26 +693,31 @@ export function SystematicReviewsView(props: {
           variant="ghost"
           size="xs"
           onClick={() => (openId ? reviews.open(null) : props.onBack())}
-          aria-label={openId ? "Back to reviews" : "Back to Library"}
+          aria-label={openId ? gt("Back to reviews") : gt("Back to Library")}
         >
           <ChevronLeft />
-          {openId ? "Reviews" : "Library"}
+          {openId ? gt("Reviews") : gt("Library", { $context: "the personal Library of sources" })}
         </Button>
         <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
-          {openId ? (openSummary?.title ?? detail?.review.title ?? "") : "Systematic reviews"}
+          {openId ? (openSummary?.title ?? detail?.review.title ?? "") : gt("Systematic reviews")}
         </h2>
         {openId && detail ? (
           <Menu>
             <MenuTrigger
               render={
-                <Button type="button" size="icon-xs" variant="ghost" aria-label="Review actions" />
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={gt("Review actions")}
+                />
               }
             >
               <MoreHorizontal />
             </MenuTrigger>
             <MenuPopup align="end">
               <MenuItem disabled={reviews.disabled} onClick={() => setEditing(true)}>
-                Edit review…
+                <T>Edit review…</T>
               </MenuItem>
               <MenuSeparator />
               <MenuItem
@@ -681,7 +725,7 @@ export function SystematicReviewsView(props: {
                 disabled={reviews.disabled}
                 onClick={() => void deleteReview(detail.review.reviewId, detail.review.title)}
               >
-                Delete review
+                <T>Delete review</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -694,7 +738,7 @@ export function SystematicReviewsView(props: {
             onClick={newReview}
           >
             <Plus />
-            New review
+            <T>New review</T>
           </Button>
         ) : null}
       </div>
@@ -705,7 +749,9 @@ export function SystematicReviewsView(props: {
           ) : null}
           {!openId ? (
             reviews.list === null ? null : reviews.list.reviews.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No systematic reviews yet.</p>
+              <p className="text-sm text-muted-foreground">
+                <T>No systematic reviews yet.</T>
+              </p>
             ) : (
               <ul className="divide-y divide-border">
                 {reviews.list.reviews.map((review) => (
@@ -720,9 +766,17 @@ export function SystematicReviewsView(props: {
                     >
                       <span className="block truncate text-sm font-medium">{review.title}</span>
                       <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">
-                        {review.searchCount === 1 ? "1 search" : `${review.searchCount} searches`}
-                        {` · ${review.prisma.screened} of ${review.prisma.screened + review.prisma.titleAbstract.maybe + review.prisma.titleAbstract.pending} screened`}
-                        {` · ${review.prisma.included} included`}
+                        {review.searchCount === 1
+                          ? gt("1 search")
+                          : `${review.searchCount} searches`}
+                        {gt(" · {screened} of {value} screened", {
+                          screened: review.prisma.screened,
+                          value:
+                            review.prisma.screened +
+                            review.prisma.titleAbstract.maybe +
+                            review.prisma.titleAbstract.pending,
+                        })}
+                        {gt(" · {included} included", { included: review.prisma.included })}
                       </span>
                     </button>
                   </li>
@@ -750,7 +804,7 @@ export function SystematicReviewsView(props: {
                 />
               ) : null}
               <ToggleGroup
-                aria-label="Review section"
+                aria-label={gt("Review section")}
                 className="w-full *:flex-1"
                 value={[tab]}
                 onValueChange={(next) => {
@@ -759,8 +813,12 @@ export function SystematicReviewsView(props: {
                     setTab(value);
                 }}
               >
-                <Toggle value="records">Records</Toggle>
-                <Toggle value="screening">Screening</Toggle>
+                <Toggle value="records">
+                  <T context="noun, search results in a review">Records</T>
+                </Toggle>
+                <Toggle value="screening">
+                  <T>Screening</T>
+                </Toggle>
                 <Toggle value="prisma">PRISMA</Toggle>
               </ToggleGroup>
               {tab === "records" ? (
@@ -774,15 +832,19 @@ export function SystematicReviewsView(props: {
               ) : tab === "screening" ? (
                 <>
                   <ToggleGroup
-                    aria-label="Screening stage"
+                    aria-label={gt("Screening stage")}
                     value={[stage]}
                     onValueChange={(next) => {
                       const value = next[0];
                       if (value === "title-abstract" || value === "full-text") setStage(value);
                     }}
                   >
-                    <Toggle value="title-abstract">Title and abstract</Toggle>
-                    <Toggle value="full-text">Full text</Toggle>
+                    <Toggle value="title-abstract">
+                      <T>Title and abstract</T>
+                    </Toggle>
+                    <Toggle value="full-text">
+                      <T>Full text</T>
+                    </Toggle>
                   </ToggleGroup>
                   <SystematicReviewScreening
                     key={`${detail.review.reviewId}:${stage}`}

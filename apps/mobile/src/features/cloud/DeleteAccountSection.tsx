@@ -8,23 +8,28 @@ import {
 import type { RelayAppleSignInRevocationRequest } from "@t3tools/contracts/relay";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Application from "expo-application";
+import { msg, useGT } from "gt-react-native";
 import { useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { deleteManagedRelayAccountCommand } from "./managedRelayState";
 
-const CONFIRM_MESSAGE =
-  "This deletes your Scient account and removes your linked computers from Scient Connect. This can't be undone.";
-const APPLE_CONFIRM_NOTE =
-  "\n\nYou signed in with Apple, so Apple asks you to confirm once. That also removes Scient from your Apple Account.";
+const CONFIRM_MESSAGE = msg(
+  "This deletes your Scient account and removes your linked computers from Scient Connect. This can't be undone.",
+);
+const APPLE_CONFIRM_NOTE = msg(
+  "You signed in with Apple, so Apple asks you to confirm once. That also removes Scient from your Apple Account.",
+);
 
 // Apple asks apps to direct people to revoke by hand when revoking fails (TN3194).
-const APPLE_MANUAL_REVOKE =
-  "Your Scient account was deleted, but Scient could not remove it from your Apple Account. To finish, open Settings, tap your name, then Sign-In & Security, Sign in with Apple, Scient, and stop using it.";
+const APPLE_MANUAL_REVOKE = msg(
+  "Your Scient account was deleted, but Scient could not remove it from your Apple Account. To finish, open Settings, tap your name, then Sign-In & Security, Sign in with Apple, Scient, and stop using it.",
+);
 
 /**
  * Apple requires that deleting an account also revokes its Sign in with Apple tokens (TN3194).
@@ -55,6 +60,7 @@ async function requestAppleSignInRevocation(): Promise<
 }
 
 export function DeleteAccountSection(props: { readonly accountId: string | null }) {
+  const gt = useGT();
   const clerk = useClerk();
   const { user } = useUser();
   const usesAppleSignIn =
@@ -70,9 +76,9 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
     } catch (cause) {
       console.warn("[scient-connect] Sign-out after account deletion failed", { cause });
       Dialog.alert(
-        "Account deleted",
-        "Your account was deleted, but this phone is still signed in.",
-        [{ text: "Sign out", onPress: () => void signOutDeletedAccount() }],
+        m(msg("Account deleted")),
+        m(msg("Your account was deleted, but this phone is still signed in.")),
+        [{ text: m(msg("Sign out")), onPress: () => void signOutDeletedAccount() }],
       );
     }
   };
@@ -89,8 +95,8 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
     );
     if (result._tag === "Success") {
       if (usesAppleSignIn && result.value.appleSignInRevoked !== true) {
-        Dialog.alert("Account deleted", APPLE_MANUAL_REVOKE, [
-          { text: "OK", onPress: () => void signOutDeletedAccount() },
+        Dialog.alert(m(msg("Account deleted")), m(APPLE_MANUAL_REVOKE), [
+          { text: m(msg("OK")), onPress: () => void signOutDeletedAccount() },
         ]);
         return;
       }
@@ -101,19 +107,20 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
     if (isAtomCommandInterrupted(result)) return;
 
     const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : "Could not delete your account.";
+    const message =
+      cause instanceof Error ? cause.message : m(msg("Could not delete your account."));
     const traceId = findErrorTraceId(cause);
     console.error("[scient-connect] Could not delete account", { message, traceId, cause });
     Dialog.alert(
-      "Could not delete account",
-      traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
+      m(msg("Could not delete account")),
+      traceId ? `${message}\n\n${m(msg("Trace ID: {traceId}", { traceId }))}` : message,
       traceId
         ? [
             {
-              text: "Copy trace ID",
+              text: m(msg("Copy trace ID")),
               onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
             },
-            { text: "OK", style: "cancel" },
+            { text: m(msg("OK")), style: "cancel" },
           ]
         : undefined,
     );
@@ -123,9 +130,11 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
   const confirmDelete = () => {
     if (!accountId || isDeleting) return;
     Dialog.confirm({
-      title: "Delete account?",
-      message: usesAppleSignIn ? CONFIRM_MESSAGE + APPLE_CONFIRM_NOTE : CONFIRM_MESSAGE,
-      confirmText: "Delete account",
+      title: m(msg("Delete account?")),
+      message: usesAppleSignIn
+        ? `${m(CONFIRM_MESSAGE)}\n\n${m(APPLE_CONFIRM_NOTE)}`
+        : m(CONFIRM_MESSAGE),
+      confirmText: m(msg("Delete account")),
       destructive: true,
       onConfirm: () => void handleDelete(accountId),
     });
@@ -141,14 +150,14 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
         className="flex-row items-center gap-3 border-y border-clerk-border px-6 py-4 active:opacity-60 disabled:opacity-50"
       >
         <Text className="min-w-0 flex-1 text-base font-semibold text-clerk-danger">
-          {isDeleting ? "Deleting account" : "Delete account"}
+          {isDeleting ? gt("Deleting account") : gt("Delete account")}
         </Text>
         {isDeleting ? (
           <AppActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
         ) : null}
       </Pressable>
       <Text className="px-6 pt-3 text-xs leading-normal text-clerk-foreground-muted">
-        Deletes your Scient account and removes your linked computers from Scient Connect.
+        {gt("Deletes your Scient account and removes your linked computers from Scient Connect.")}
       </Text>
     </View>
   );

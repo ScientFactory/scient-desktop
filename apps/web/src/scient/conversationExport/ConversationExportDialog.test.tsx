@@ -1,6 +1,6 @@
 import { MessageId, ThreadId, type ScientConversationExportPreparation } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ConversationExportForm } from "./ConversationExportDialog";
 import {
@@ -9,6 +9,10 @@ import {
   initialExportDialogState,
 } from "./exportDialog.logic";
 import { registeredConversationExportFormats } from "./formatRegistry";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const preparation: ScientConversationExportPreparation = {
   threadId: ThreadId.make("thread-1"),

@@ -3,6 +3,7 @@ import type {
   ScientPluginSummary,
   ServerProviderMcpServer,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 
@@ -146,6 +147,8 @@ function YoursTable({
   readonly curated: ReturnType<typeof useInstalledEntries>;
   readonly plugins: ReadonlyArray<ScientPluginSummary>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
   const { environmentId, canWrite, inventory, inventoryError, providerInventory } =
     useExtensionsEnvironment();
@@ -209,11 +212,11 @@ function YoursTable({
       className="grid gap-10 outline-none"
     >
       <ExtensionsSection
-        title="Yours"
+        title={gt("Yours", { $context: "the user's own extensions" })}
         action={
           <div className="flex items-center gap-2">
             <SectionAction icon={RefreshCwIcon} disabled={!canWrite} onClick={refreshAgents}>
-              Refresh
+              {gt("Refresh")}
             </SectionAction>
             {rows.length > PREVIEW_ROWS ? (
               <SectionShowAllToggle
@@ -225,11 +228,15 @@ function YoursTable({
           </div>
         }
       >
-        {inventory === null && inventoryError ? <MutedLine>Unavailable.</MutedLine> : null}
+        {inventory === null && inventoryError ? (
+          <MutedLine>
+            <T>Unavailable.</T>
+          </MutedLine>
+        ) : null}
         {connectorsNote ? <MutedLine>{connectorsNote}</MutedLine> : null}
         {/* A read that ended with gaps says which below; the rows are what the agents reported. */}
         {providerInventory.phase !== "ready" && providerInventory.phase !== "partial" ? (
-          <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
+          <MutedLine>{providerInventoryMessage(providerInventory, messages)}</MutedLine>
         ) : null}
         {providerInventory.errors.map((error) => (
           <MutedLine key={error}>{error}</MutedLine>
@@ -237,11 +244,17 @@ function YoursTable({
         {rows.length === 0 ? (
           <MutedLine>
             {inventory === null
-              ? "Loading…"
-              : "Nothing yet. Find something in Discover, or add your own."}
+              ? gt("Loading…")
+              : gt("Nothing yet. Find something in Discover, or add your own.")}
           </MutedLine>
         ) : (
-          <ExtensionTable label={selected ? "Yours, for this agent" : "Yours"}>
+          <ExtensionTable
+            label={
+              selected
+                ? gt("Yours, for this agent")
+                : gt("Yours", { $context: "the user's own extensions" })
+            }
+          >
             {expanded ? rows : rows.slice(0, PREVIEW_ROWS)}
           </ExtensionTable>
         )}
@@ -249,7 +262,7 @@ function YoursTable({
           <div className="flex flex-wrap gap-2">
             {chatGptApps ? (
               <Button variant="ghost-muted" size="sm" onClick={() => addMore(CHATGPT_APPS_PAGE)}>
-                Add apps on ChatGPT
+                <T>Add apps on ChatGPT</T>
               </Button>
             ) : null}
             {claudeConnectors ? (
@@ -258,7 +271,7 @@ function YoursTable({
                 size="sm"
                 onClick={() => addMore(CLAUDE_CONNECTORS_PAGE)}
               >
-                Add connectors on claude.ai
+                <T>Add connectors on claude.ai</T>
               </Button>
             ) : null}
           </div>
@@ -267,9 +280,9 @@ function YoursTable({
       {builtIn.length > 0 ? (
         <ExtensionsSection
           id={"extensions-scient-plugins" satisfies SettingsSearchItemId}
-          title="Built into Scient"
+          title={gt("Built into Scient")}
         >
-          <ExtensionTable label="Built into Scient">
+          <ExtensionTable label={gt("Built into Scient")}>
             {builtIn.map((plugin) => (
               <PluginItem key={plugin.pluginId} plugin={plugin} />
             ))}
@@ -284,7 +297,8 @@ const CHATGPT_APPS_PAGE = "https://chatgpt.com/apps";
 const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/customize/connectors";
 
 function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
-  useRememberListPage("Installed");
+  const gt = useGT();
+  useRememberListPage(gt("Installed"));
   const { environmentId, inventory, inventoryError, providers, providerInventory, canWrite } =
     useExtensionsEnvironment();
   const [worksWith, setWorksWith] = useState<ProviderInstanceId | null>(null);
@@ -315,7 +329,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
           <span className="w-56">
             <NativeSelect
               size="sm"
-              aria-label="Works with"
+              aria-label={gt("Works with")}
               value={worksWith ?? ""}
               onChange={(event) =>
                 setWorksWith(
@@ -324,7 +338,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
                 )
               }
             >
-              <option value="">Works with any agent</option>
+              <option value="">{gt("Works with any agent")}</option>
               {options.map((option) => (
                 <option key={option.instanceId} value={option.instanceId}>
                   {option.label}
@@ -345,7 +359,9 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
         </p>
       ))}
       {!canWrite ? (
-        <MutedLine>This connection can view extensions but not change them.</MutedLine>
+        <MutedLine>
+          <T>This connection can view extensions but not change them.</T>
+        </MutedLine>
       ) : null}
 
       {showsKind(kind, "plugins") ? (
@@ -355,7 +371,11 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
           connectorsNote={
             !connectorsReach(selected)
               ? (selected?.support?.reason ??
-                `${selected?.label ?? "This agent"} does not support remote MCP servers.`)
+                (selected === null
+                  ? gt("This agent does not support remote MCP servers.")
+                  : gt("{agent} does not support remote MCP servers.", {
+                      agent: selected.label,
+                    })))
               : selected?.support?.status === "conditional"
                 ? selected.support.reason
                 : undefined
@@ -369,20 +389,20 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
 
       {showsKind(kind, "skills") ? (
         <>
-          <ExtensionsSection title="Your skills">
+          <ExtensionsSection title={gt("Your skills")}>
             <PersonalSkillsSection environmentId={environmentId} providers={providers} />
           </ExtensionsSection>
           <ExtensionsSection title={<ScientSkillsTitle />}>
             <ScientSkillsLibrary environmentId={environmentId} providers={providers} onlyActive />
           </ExtensionsSection>
-          <ExtensionsSection title="Agent skills">
+          <ExtensionsSection title={gt("Agent skills")}>
             <AgentSkills
               environmentId={environmentId}
               providers={providers}
               instanceId={selected?.instanceId ?? null}
             />
           </ExtensionsSection>
-          <ExtensionsSection title="Project skills">
+          <ExtensionsSection title={gt("Project skills")}>
             <ProjectSkills environmentId={environmentId} />
           </ExtensionsSection>
         </>

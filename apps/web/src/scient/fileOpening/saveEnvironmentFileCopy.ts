@@ -6,7 +6,10 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
 import { resolveAssetUrl } from "~/assets/assetUrls";
+import { m } from "~/i18n/messages";
 import { ensureLocalApi } from "~/localApi";
 
 import { environmentFileAssetResource } from "./openEnvironmentFileInPreview";
@@ -56,38 +59,40 @@ export interface FileCopyNotice {
 export function fileCopyNotice(result: DesktopAssetCopyResult): FileCopyNotice | null {
   switch (result._tag) {
     case "saved":
-      return { type: "success", title: "Copy saved" };
+      return { type: "success", title: m(msg("Copy saved")) };
     case "download-started":
-      return { type: "success", title: "Download started" };
+      return { type: "success", title: m(msg("Download started")) };
     case "cancelled":
       return null;
     case "failed":
       switch (result.reason) {
         case "dialog-failed":
-          return { type: "error", title: "The Save dialog could not be opened" };
+          return { type: "error", title: m(msg("The Save dialog could not be opened")) };
         case "source-unavailable":
           return {
             type: "error",
-            title: "This file is no longer available",
-            description: "It may have been moved, renamed, or deleted, or it can't be read.",
+            title: m(msg("This file is no longer available")),
+            description: m(
+              msg("It may have been moved, renamed, or deleted, or it can't be read."),
+            ),
           };
         case "source-changed":
           return {
             type: "error",
-            title: "The file changed before it could be saved",
-            description: "Try saving again.",
+            title: m(msg("The file changed before it could be saved")),
+            description: m(msg("Try saving again.")),
           };
         case "network-failed":
           return {
             type: "error",
-            title: "The file could not be downloaded",
-            description: "Check the environment connection and try again.",
+            title: m(msg("The file could not be downloaded")),
+            description: m(msg("Check the environment connection and try again.")),
           };
         case "write-failed":
           return {
             type: "error",
-            title: "The copy could not be saved",
-            description: "Choose another location or check its permissions.",
+            title: m(msg("The copy could not be saved")),
+            description: m(msg("Choose another location or check its permissions.")),
           };
       }
   }

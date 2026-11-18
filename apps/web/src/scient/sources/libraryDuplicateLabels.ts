@@ -5,100 +5,125 @@ import type {
   ScientSourcesDuplicatesResult,
   ScientSourcesOrganizeResult,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /**
  * Words of the possible-duplicates screen. `libraryDuplicateLabels.test.ts` keeps the engine's
  * words ("pin", "alias", "survivor", "loser", "record") out of every one of them.
  */
 export const DUPLICATE_LABELS = {
-  menuItem: "Possible duplicates",
-  title: "Possible duplicates",
-  pairsSection: "Possible duplicates",
-  mergedSection: "Merged",
-  noPairs: "No possible duplicates in your Library.",
-  noMerges: "No merges that can be undone.",
-  noMergesAtAll: "No merges yet.",
-  canUndo: "Can undo",
-  allMerges: "All",
-  undoneState: "Undone",
-  loadFailed: "Possible duplicates could not be loaded",
-  tryAgain: "Try again",
-  merge: "Merge",
-  notDuplicates: "Not duplicates",
-  undo: "Undo",
-  review: "Review",
-  keepThis: "Keep this one",
-  suggested: "Suggested",
-  mergeFailed: "The sources were not merged",
-  notDuplicatesFailed: "The sources were not marked",
-  oneGone: "One of them is no longer in the Library.",
-  undoFailed: "The merge was not undone",
-  markedNotDuplicates: "Marked as not duplicates",
-  markedHelp: "They are not listed here again.",
-  unmarked: "Listed as possible duplicates again",
-  mergeUndone: "Merge undone",
-  inThisProject: "In this project",
-  notInThisProject: "Not in this project",
-  hasPdf: "Has a PDF",
-  noPdf: "No PDF",
-  untitled: "Untitled",
-  automatic: "Merged automatically when the Library moved",
-  requested: "Merged on request",
-  keptSide: "Kept",
-  mergedSide: "Merged away",
-  none: "none",
-  showMore: "Show more",
-  restarted: "The list changed, so it starts again from the top.",
+  menuItem: msg("Possible duplicates"),
+  title: msg("Possible duplicates"),
+  pairsSection: msg("Possible duplicates"),
+  mergedSection: msg("Merged", { $context: "section heading, sources merged earlier" }),
+  noPairs: msg("No possible duplicates in your Library."),
+  noMerges: msg("No merges that can be undone."),
+  noMergesAtAll: msg("No merges yet."),
+  canUndo: msg("Can undo", { $context: "filter, merges that can be undone" }),
+  allMerges: msg("All", { $context: "filter, every merge" }),
+  undoneState: msg("Undone", { $context: "state of a merge that was undone" }),
+  loadFailed: msg("Possible duplicates could not be loaded"),
+  tryAgain: msg("Try again"),
+  merge: msg("Merge", { $context: "verb, button" }),
+  notDuplicates: msg("Not duplicates"),
+  undo: msg("Undo", { $context: "verb, button" }),
+  review: msg("Review", { $context: "verb, button" }),
+  keepThis: msg("Keep this one"),
+  suggested: msg("Suggested", { $context: "the copy suggested to keep" }),
+  mergeFailed: msg("The sources were not merged"),
+  notDuplicatesFailed: msg("The sources were not marked"),
+  oneGone: msg("One of them is no longer in the Library."),
+  undoFailed: msg("The merge was not undone"),
+  markedNotDuplicates: msg("Marked as not duplicates"),
+  markedHelp: msg("They are not listed here again."),
+  unmarked: msg("Listed as possible duplicates again"),
+  mergeUndone: msg("Merge undone"),
+  inThisProject: msg("In this project"),
+  notInThisProject: msg("Not in this project"),
+  hasPdf: msg("Has a PDF"),
+  noPdf: msg("No PDF"),
+  untitled: msg("Untitled"),
+  automatic: msg("Merged automatically when the Library moved"),
+  requested: msg("Merged on request"),
+  keptSide: msg("Kept", { $context: "the copy a merge kept" }),
+  mergedSide: msg("Merged away", { $context: "the copy a merge removed" }),
+  none: msg("none", { $context: "no value for a field" }),
+  showMore: msg("Show more"),
+  restarted: msg("The list changed, so it starts again from the top."),
 } as const;
 
 /** How a merge's different-value fields read in a sentence. */
 const FIELD_WORDS: Readonly<Record<string, string>> = {
-  type: "type",
-  customType: "type",
-  title: "title",
-  creators: "authors",
-  issuedRaw: "date",
-  issuedYear: "year",
-  abstract: "abstract",
-  abstractSections: "abstract",
-  containerTitle: "journal",
-  publisher: "publisher",
-  volume: "volume",
-  issue: "issue",
-  pages: "pages",
-  language: "language",
-  url: "web address",
-  more: "more details",
-  identifiers: "identifiers",
-  attachments: "PDF",
-  note: "note",
-  readingStatus: "reading state",
-  starred: "star",
-  citationKey: "citation key",
-  verification: "registry check",
-  editorialStatus: "editorial notices",
+  type: msg("type", { $context: "a source field named in a sentence" }),
+  customType: msg("type", { $context: "a source field named in a sentence" }),
+  title: msg("title", { $context: "a source field named in a sentence" }),
+  creators: msg("authors", { $context: "a source field named in a sentence" }),
+  issuedRaw: msg("date", { $context: "a source field named in a sentence" }),
+  issuedYear: msg("year", { $context: "a source field named in a sentence" }),
+  abstract: msg("abstract", { $context: "a source field named in a sentence" }),
+  abstractSections: msg("abstract", { $context: "a source field named in a sentence" }),
+  containerTitle: msg("journal", { $context: "a source field named in a sentence" }),
+  publisher: msg("publisher", { $context: "a source field named in a sentence" }),
+  volume: msg("volume", { $context: "a source field named in a sentence" }),
+  issue: msg("issue", { $context: "a source field named in a sentence" }),
+  pages: msg("pages", { $context: "a source field named in a sentence" }),
+  language: msg("language", { $context: "a source field named in a sentence" }),
+  url: msg("web address", { $context: "a source field named in a sentence" }),
+  more: msg("more details", { $context: "a source field named in a sentence" }),
+  identifiers: msg("identifiers", { $context: "a source field named in a sentence" }),
+  attachments: msg("PDF", { $context: "a source field named in a sentence" }),
+  note: msg("note", { $context: "a source field named in a sentence" }),
+  readingStatus: msg("reading state", { $context: "a source field named in a sentence" }),
+  starred: msg("star", { $context: "a source field named in a sentence" }),
+  citationKey: msg("citation key", { $context: "a source field named in a sentence" }),
+  verification: msg("registry check", { $context: "a source field named in a sentence" }),
+  editorialStatus: msg("editorial notices", { $context: "a source field named in a sentence" }),
 };
 
-function joinWords(words: ReadonlyArray<string>): string {
+function joinWords(words: ReadonlyArray<string>, resolve: MessageResolver): string {
   if (words.length <= 1) return words.join("");
-  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+  return resolve(
+    msg("{items} and {last}", { items: words.slice(0, -1).join(", "), last: words.at(-1)! }),
+  );
 }
 
-function fieldWords(fields: ReadonlyArray<string>): string {
-  return joinWords([...new Set(fields.map((field) => FIELD_WORDS[field] ?? "other details"))]);
+function fieldWords(fields: ReadonlyArray<string>, resolve: MessageResolver): string {
+  return joinWords(
+    [
+      ...new Set(
+        fields.map((field) => {
+          const word = FIELD_WORDS[field];
+          return word ? resolve(word) : resolve(msg("other details"));
+        }),
+      ),
+    ],
+    resolve,
+  );
 }
 
-const quoted = (title: string | null) => `“${title ?? DUPLICATE_LABELS.untitled}”`;
+const quoted = (title: string | null, resolve: MessageResolver) =>
+  resolve(msg("“{title}”", { title: title ?? resolve(DUPLICATE_LABELS.untitled) }));
 
-export function mergedTitleLabel(keptTitle: string | null): string {
-  return `Merged into ${quoted(keptTitle)}`;
+const capitalized = (text: string) => `${text.charAt(0).toLocaleUpperCase()}${text.slice(1)}`;
+
+export function mergedTitleLabel(keptTitle: string | null, resolve: MessageResolver = m): string {
+  return resolve(msg("Merged into {title}", { title: quoted(keptTitle, resolve) }));
 }
 
 /** The toast's second sentence; null when the two had no different values. */
-export function keptDifferentLabel(fields: ReadonlyArray<string>): string | null {
+export function keptDifferentLabel(
+  fields: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
+): string | null {
   return fields.length === 0
     ? null
-    : `Where they differed, the kept one's ${fieldWords(fields)} stayed.`;
+    : resolve(
+        msg("Where they differed, the kept one's {fields} stayed.", {
+          fields: fieldWords(fields, resolve),
+        }),
+      );
 }
 
 type MergeDifference = ScientSourcesDuplicatesResult["merges"][number]["differences"][number];
@@ -112,35 +137,68 @@ export const hasMergeValues = (difference: MergeDifference): difference is Merge
  * `kept` is null once the kept source was merged again or moved to the Trash. Two copies with one
  * title are told apart by what differed: values the kept one kept, and ones it took from the other.
  */
-export function mergedRowLabel(merge: {
-  readonly mergedTitle: string | null;
-  readonly kept: { readonly title: string | null } | null;
-  readonly differences: ReadonlyArray<Pick<MergeDifference, "field">>;
-}): string {
+export function mergedRowLabel(
+  merge: {
+    readonly mergedTitle: string | null;
+    readonly kept: { readonly title: string | null } | null;
+    readonly differences: ReadonlyArray<Pick<MergeDifference, "field">>;
+  },
+  resolve: MessageResolver = m,
+): string {
   const { mergedTitle, kept } = merge;
-  if (!kept) return `${quoted(mergedTitle)} merged into a source no longer in your Library`;
-  if (kept.title !== mergedTitle) return `${quoted(mergedTitle)} merged into ${quoted(kept.title)}`;
+  const merged = quoted(mergedTitle, resolve);
+  if (!kept) {
+    return resolve(msg("{merged} merged into a source no longer in your Library", { merged }));
+  }
+  if (kept.title !== mergedTitle) {
+    return resolve(
+      msg("{merged} merged into {kept}", { merged, kept: quoted(kept.title, resolve) }),
+    );
+  }
   return merge.differences.length > 0
-    ? `Two copies of ${quoted(mergedTitle)} merged. Their ${fieldWords(merge.differences.map(({ field }) => field))} differed.`
-    : `Two copies of ${quoted(mergedTitle)} merged`;
+    ? resolve(
+        msg("Two copies of {merged} merged. Their {fields} differed.", {
+          merged,
+          fields: fieldWords(
+            merge.differences.map(({ field }) => field),
+            resolve,
+          ),
+        }),
+      )
+    : resolve(msg("Two copies of {merged} merged", { merged }));
 }
 
 /**
  * The fields named without values ("Identifiers and PDF differed."), for a row whose first line
  * does not already name what differed: two titles, or a kept source no longer in the Library.
  */
-export function namedDifferencesLabel(differences: ReadonlyArray<MergeDifference>): string | null {
+export function namedDifferencesLabel(
+  differences: ReadonlyArray<MergeDifference>,
+  resolve: MessageResolver = m,
+): string | null {
   const fields = differences.filter((difference) => !hasMergeValues(difference));
   if (fields.length === 0) return null;
-  const words = fieldWords(fields.map(({ field }) => field));
-  return `${words.charAt(0).toLocaleUpperCase()}${words.slice(1)} differed.`;
+  const words = fieldWords(
+    fields.map(({ field }) => field),
+    resolve,
+  );
+  return resolve(msg("{fields} differed.", { fields: capitalized(words) }));
 }
 
 /** One field the two differed in, with both values: "Volume: none (kept), 12 (merged away)". */
-export function mergeDifferenceLabel(difference: MergeValues): string {
-  const word = fieldWords([difference.field]);
-  const value = (text: string | null) => text ?? DUPLICATE_LABELS.none;
-  return `${word.charAt(0).toLocaleUpperCase()}${word.slice(1)}: ${value(difference.kept)} (kept), ${value(difference.other)} (merged away)`;
+export function mergeDifferenceLabel(
+  difference: MergeValues,
+  resolve: MessageResolver = m,
+): string {
+  const word = fieldWords([difference.field], resolve);
+  const value = (text: string | null) => text ?? resolve(DUPLICATE_LABELS.none);
+  return resolve(
+    msg("{field}: {kept} (kept), {other} (merged away)", {
+      field: capitalized(word),
+      kept: value(difference.kept),
+      other: value(difference.other),
+    }),
+  );
 }
 
 const SUMMARY_FIELDS: ReadonlyArray<DuplicateField> = ["authors", "year", "journal", "identifiers"];
@@ -149,9 +207,10 @@ const SUMMARY_FIELDS: ReadonlyArray<DuplicateField> = ["authors", "year", "journ
 export function sideSummary(
   source: ScientSourcesDuplicateSource,
   options: { readonly projects: boolean },
+  resolve: MessageResolver = m,
 ): string {
   return [...SUMMARY_FIELDS, ...(options.projects ? (["projects"] as const) : [])]
-    .map((field) => fieldValue(source, field))
+    .map((field) => fieldValue(source, field, resolve))
     .filter(Boolean)
     .join(" · ");
 }
@@ -168,41 +227,87 @@ export function sectionCountLabel(label: string, count: number): string {
   return count > 0 ? `${label} (${count.toLocaleString()})` : label;
 }
 
-export function shownOfTotalLabel(shown: number, total: number): string | null {
-  return total > shown ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}.` : null;
+export function shownOfTotalLabel(
+  shown: number,
+  total: number,
+  resolve: MessageResolver = m,
+): string | null {
+  return total > shown
+    ? resolve(
+        msg("Showing {shown} of {total}.", {
+          shown: shown.toLocaleString(),
+          total: total.toLocaleString(),
+        }),
+      )
+    : null;
 }
 
 const MATCH_WORDS: Readonly<Record<string, string>> = {
-  "possible-item-match": "Same Zotero item",
-  "possible-identifier-match": "Same identifier",
-  "possible-pdf-match": "Same PDF",
-  "possible-version-match": "Same title and first author",
+  "possible-item-match": msg("Same Zotero item"),
+  "possible-identifier-match": msg("Same identifier"),
+  "possible-pdf-match": msg("Same PDF"),
+  "possible-version-match": msg("Same title and first author"),
 };
 
 const REASON_WORDS: Readonly<Record<ScientSourcesDuplicateReason, string>> = {
-  "merge-undone": "but their merge was undone",
-  "merge-record-unreadable": "but the details of an earlier merge of one could not be read",
-  "title-missing": "but one has no title",
-  "titles-differ": "but the titles differ",
-  "type-unknown": "but one has no known type",
-  "preprint-and-published": "but one is a preprint and the other published",
-  "types-differ": "but the types differ",
-  "arxiv-versions-differ": "but different arXiv versions",
-  "identifiers-conflict": "but other identifiers differ",
-  "conflicting-group": "but it also links copies that disagree",
+  "merge-undone": msg("but their merge was undone", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "merge-record-unreadable": msg("but the details of an earlier merge of one could not be read", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "title-missing": msg("but one has no title", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "titles-differ": msg("but the titles differ", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "type-unknown": msg("but one has no known type", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "preprint-and-published": msg("but one is a preprint and the other published", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "types-differ": msg("but the types differ", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "arxiv-versions-differ": msg("but different arXiv versions", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "identifiers-conflict": msg("but other identifiers differ", {
+    $context: "after a match reason, why it was not merged",
+  }),
+  "conflicting-group": msg("but it also links copies that disagree", {
+    $context: "after a match reason, why it was not merged",
+  }),
 };
 
 /** Why Scient did not merge a pair that shares an item, identifier or PDF; null for the others. */
-export function pairReasonLabel(pair: {
-  readonly kind: string;
-  readonly reason?: ScientSourcesDuplicateReason;
-}): string | null {
+export function pairReasonLabel(
+  pair: {
+    readonly kind: string;
+    readonly reason?: ScientSourcesDuplicateReason;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   const match = MATCH_WORDS[pair.kind];
-  return match && pair.reason ? `${match}, ${REASON_WORDS[pair.reason]}.` : null;
+  return match && pair.reason
+    ? resolve(
+        msg("{match}, {reason}.", {
+          match: resolve(match),
+          reason: resolve(REASON_WORDS[pair.reason]),
+        }),
+      )
+    : null;
 }
 
-export function otherProjectsLabel(names: ReadonlyArray<string>): string | null {
-  return names.length === 0 ? null : `Also in ${joinWords(names)}`;
+export function otherProjectsLabel(
+  names: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
+): string | null {
+  return names.length === 0
+    ? null
+    : resolve(msg("Also in {projects}", { projects: joinWords(names, resolve) }));
 }
 
 /** What the pair's two sides differ in, in the order the rows show them. */
@@ -224,29 +329,44 @@ export const DUPLICATE_FIELDS = [
 ] as const;
 export type DuplicateField = (typeof DUPLICATE_FIELDS)[number];
 
-export function differsLabel(fields: ReadonlyArray<DuplicateField>): string {
-  const words: Record<DuplicateField, string> = {
-    title: "title",
-    authors: "authors",
-    year: "year",
-    journal: "journal",
-    identifiers: "identifiers",
-    pdf: "PDF",
-    projects: "projects",
-  };
+const DIFFERS_WORDS: Record<DuplicateField, string> = {
+  title: msg("title", { $context: "a source field named in a sentence" }),
+  authors: msg("authors", { $context: "a source field named in a sentence" }),
+  year: msg("year", { $context: "a source field named in a sentence" }),
+  journal: msg("journal", { $context: "a source field named in a sentence" }),
+  identifiers: msg("identifiers", { $context: "a source field named in a sentence" }),
+  pdf: msg("PDF", { $context: "a source field named in a sentence" }),
+  projects: msg("projects", { $context: "a source field named in a sentence" }),
+};
+
+export function differsLabel(
+  fields: ReadonlyArray<DuplicateField>,
+  resolve: MessageResolver = m,
+): string {
   return fields.length === 0
-    ? "Same details."
-    : `Different ${joinWords(fields.map((field) => words[field]))}.`;
+    ? resolve(msg("Same details."))
+    : resolve(
+        msg("Different {fields}.", {
+          fields: joinWords(
+            fields.map((field) => resolve(DIFFERS_WORDS[field])),
+            resolve,
+          ),
+        }),
+      );
 }
 
 const authorName = (creator: ScientSourcesDuplicateSource["creators"][number]) =>
   creator.literalName ?? [creator.givenName, creator.familyName].filter(Boolean).join(" ").trim();
 
 /** The text a row shows for one field; equal text on both sides means "same". */
-export function fieldValue(source: ScientSourcesDuplicateSource, field: DuplicateField): string {
+export function fieldValue(
+  source: ScientSourcesDuplicateSource,
+  field: DuplicateField,
+  resolve: MessageResolver = m,
+): string {
   switch (field) {
     case "title":
-      return source.title ?? DUPLICATE_LABELS.untitled;
+      return source.title ?? resolve(DUPLICATE_LABELS.untitled);
     case "authors":
       return source.creators.map(authorName).filter(Boolean).join(", ");
     case "year":
@@ -259,12 +379,14 @@ export function fieldValue(source: ScientSourcesDuplicateSource, field: Duplicat
         .join(", ");
     case "pdf":
       return source.attachments.some((attachment) => attachment.kind === "pdf")
-        ? DUPLICATE_LABELS.hasPdf
-        : DUPLICATE_LABELS.noPdf;
+        ? resolve(DUPLICATE_LABELS.hasPdf)
+        : resolve(DUPLICATE_LABELS.noPdf);
     case "projects":
       return [
-        source.pinned ? DUPLICATE_LABELS.inThisProject : DUPLICATE_LABELS.notInThisProject,
-        otherProjectsLabel(source.otherProjects),
+        source.pinned
+          ? resolve(DUPLICATE_LABELS.inThisProject)
+          : resolve(DUPLICATE_LABELS.notInThisProject),
+        otherProjectsLabel(source.otherProjects, resolve),
       ]
         .filter(Boolean)
         .join(" · ");
@@ -272,46 +394,72 @@ export function fieldValue(source: ScientSourcesDuplicateSource, field: Duplicat
 }
 
 /** What an Undo answer means, or null when it undid the merge. */
-export function undoProblem(result: ScientSourcesOrganizeResult): string | null {
+export function undoProblem(
+  result: ScientSourcesOrganizeResult,
+  resolve: MessageResolver = m,
+): string | null {
   switch (result.outcome) {
     case "undone":
       return null;
     case "already-undone":
-      return "This merge was already undone.";
+      return resolve(msg("This merge was already undone."));
     case "survivor-missing":
-      return "The kept source was merged again or moved to the Trash since. Undo that first.";
+      return resolve(
+        msg("The kept source was merged again or moved to the Trash since. Undo that first."),
+      );
     case "loser-missing":
-      return "The other source is no longer in the Trash, so it cannot come back.";
+      return resolve(msg("The other source is no longer in the Trash, so it cannot come back."));
     default:
-      return "This merge is no longer listed.";
+      return resolve(msg("This merge is no longer listed."));
   }
 }
 
 /** The sentence after Undo, when edits made after the merge were kept. */
-export function unrevertedLabel(fields: ReadonlyArray<string> | undefined): string | null {
+export function unrevertedLabel(
+  fields: ReadonlyArray<string> | undefined,
+  resolve: MessageResolver = m,
+): string | null {
   return fields && fields.length > 0
-    ? `Changes made after the merge were kept: ${fieldWords(fields)}.`
+    ? resolve(
+        msg("Changes made after the merge were kept: {fields}.", {
+          fields: fieldWords(fields, resolve),
+        }),
+      )
     : null;
 }
 
 /** Why a merge in the full list has no Undo; null when Undo can run. */
-export function mergeStateLabel(undo: ScientSourcesMergeUndoState): string | null {
+export function mergeStateLabel(
+  undo: ScientSourcesMergeUndoState,
+  resolve: MessageResolver = m,
+): string | null {
   switch (undo) {
     case "available":
       return null;
     case "undone":
-      return DUPLICATE_LABELS.undoneState;
+      return resolve(DUPLICATE_LABELS.undoneState);
     case "kept-source-gone":
-      return "Can no longer be undone: the kept source was merged again or moved to the Trash.";
+      return resolve(
+        msg("Can no longer be undone: the kept source was merged again or moved to the Trash."),
+      );
     case "merged-source-gone":
-      return "Can no longer be undone: the merged-away source left the Trash.";
+      return resolve(msg("Can no longer be undone: the merged-away source left the Trash."));
   }
 }
 
 /** Merge files hold the Undo decisions, so one Scient cannot read is said plainly. */
-export function damagedReceiptsLabel(count: number): string | null {
+export function damagedReceiptsLabel(count: number, resolve: MessageResolver = m): string | null {
   if (count === 0) return null;
   return count === 1
-    ? "The details of one merge could not be read. The sources it names are not merged automatically until its file is repaired."
-    : `The details of ${count} merges could not be read. The sources they name are not merged automatically until their files are repaired.`;
+    ? resolve(
+        msg(
+          "The details of one merge could not be read. The sources it names are not merged automatically until its file is repaired.",
+        ),
+      )
+    : resolve(
+        msg(
+          "The details of {count} merges could not be read. The sources they name are not merged automatically until their files are repaired.",
+          { count },
+        ),
+      );
 }

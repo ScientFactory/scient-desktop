@@ -6,6 +6,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Plus, Square, Variable } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useStore } from "zustand";
 
@@ -148,6 +149,7 @@ export default function ScientNotebookSurface(props: {
   /** Changes when the file changes on disk. */
   readonly fileRevision: string;
 }) {
+  const gt = useGT();
   const controller = useNotebookController(props);
   const status = useStore(controller.store, (state) => state.status);
   const languageId = useStore(controller.store, (state) => state.language);
@@ -276,7 +278,7 @@ export default function ScientNotebookSurface(props: {
       },
     });
     if (restarted._tag !== "Success") {
-      toastManager.add({ type: "error", title: "The session could not be restarted" });
+      toastManager.add({ type: "error", title: gt("The session could not be restarted") });
       return;
     }
     useComputeContextStore.getState().bindSession({
@@ -321,8 +323,8 @@ export default function ScientNotebookSurface(props: {
     focusCell(next, "cell");
     toastManager.add({
       type: "info",
-      title: "Cell deleted",
-      actionProps: { children: "Undo", onClick: undoDelete },
+      title: gt("Cell deleted"),
+      actionProps: { children: gt("Undo"), onClick: undoDelete },
     });
   };
   const runAndAdvance = (cellId: string, advance: boolean) => {
@@ -405,7 +407,7 @@ export default function ScientNotebookSurface(props: {
     if (status === "failed") return;
     const { cellId } = revealing.place;
     if (!order.includes(cellId)) {
-      toastManager.add({ type: "warning", title: "That cell is no longer in this notebook" });
+      toastManager.add({ type: "warning", title: gt("That cell is no longer in this notebook") });
       return;
     }
     focusCell(cellId, "cell");
@@ -437,7 +439,11 @@ export default function ScientNotebookSurface(props: {
   };
 
   if (status === "failed") {
-    return <p className="p-6 text-sm text-muted-foreground">This notebook could not be read.</p>;
+    return (
+      <p className="p-6 text-sm text-muted-foreground">
+        <T>This notebook could not be read.</T>
+      </p>
+    );
   }
 
   const selectedIndex = (() => {
@@ -483,43 +489,48 @@ export default function ScientNotebookSurface(props: {
             runMenu={
               <>
                 <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
-                  Run out-of-date cells
+                  <T>Run out-of-date cells</T>
                 </MenuItem>
                 <MenuItem
                   disabled={selectedIndex <= 0}
                   onClick={() => runCells(codeCellIds(0, selectedIndex))}
                 >
-                  Run cells above
+                  <T>Run cells above</T>
                 </MenuItem>
                 <MenuItem
                   disabled={selectedIndex < 0}
                   onClick={() => runCells(codeCellIds(selectedIndex))}
                 >
-                  Run from this cell
+                  <T>Run from this cell</T>
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem disabled={busy} onClick={() => void restartAndRunAll()}>
-                  Restart and run all
+                  <T>Restart and run all</T>
                 </MenuItem>
                 <MenuItem disabled={busy} onClick={controller.clearOutputs}>
-                  Clear all outputs
+                  <T>Clear all outputs</T>
                 </MenuItem>
               </>
             }
             leadingActions={
               <>
                 {busy ? (
-                  <ScientTooltip content="Stop">
-                    <Button size="icon-xs" variant="outline" aria-label="Stop" onClick={stop}>
+                  <ScientTooltip content={gt("Stop", { $context: "verb, stops running cells" })}>
+                    <Button
+                      size="icon-xs"
+                      variant="outline"
+                      aria-label={gt("Stop", { $context: "verb, stops running cells" })}
+                      onClick={stop}
+                    >
                       <Square />
                     </Button>
                   </ScientTooltip>
                 ) : null}
-                <ScientTooltip content="Variables">
+                <ScientTooltip content={gt("Variables")}>
                   <Button
                     size="icon-xs"
                     variant={panelView === null ? "ghost-muted" : "secondary"}
-                    aria-label="Variables"
+                    aria-label={gt("Variables")}
                     aria-pressed={panelView !== null}
                     onClick={() => setPanelView(panelView === null ? "variables" : null)}
                   >
@@ -556,10 +567,10 @@ export default function ScientNotebookSurface(props: {
           {status === "ready" ? (
             <div className="flex gap-1 pt-3 pl-9">
               <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "code")}>
-                <Plus className="size-3.5" /> Code
+                <Plus className="size-3.5" /> {gt("Code", { $context: "inserts a code cell" })}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "markdown")}>
-                <Plus className="size-3.5" /> Text
+                <Plus className="size-3.5" /> {gt("Text", { $context: "inserts a text cell" })}
               </Button>
             </div>
           ) : null}

@@ -3,6 +3,7 @@
 // choice edits the text through the editor, so it is undoable and saved like
 // any edit.
 import type { Editor } from "@pierre/diffs/edit";
+import { msg, useGT, useMessages } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { observeResize } from "~/lib/observeResize";
@@ -31,9 +32,9 @@ const ACTIONS: ReadonlyArray<{
   readonly resolution: OverleafConflictResolution;
   readonly label: string;
 }> = [
-  { resolution: "mine", label: "Use mine" },
-  { resolution: "theirs", label: "Use Overleaf's" },
-  { resolution: "both", label: "Keep both" },
+  { resolution: "mine", label: msg("Use mine") },
+  { resolution: "theirs", label: msg("Use Overleaf's") },
+  { resolution: "both", label: msg("Keep both") },
 ];
 
 /** Every shadow root under `root`, where the editor draws its rows. */
@@ -155,6 +156,8 @@ export function OverleafConflictActions<Annotation>(props: {
   readonly disabled: boolean;
 }) {
   const { editor, surface, source, disabled } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const blocks = overleafConflictBlocks(source);
   const [layout, setLayout] = useState<{
     readonly source: string;
@@ -217,7 +220,7 @@ export function OverleafConflictActions<Annotation>(props: {
           {block.startVisible ? (
             <div
               role="group"
-              aria-label={`Overleaf conflict at line ${block.startLine + 1}`}
+              aria-label={gt("Overleaf conflict at line {line}", { line: block.startLine + 1 })}
               className="pointer-events-auto absolute flex items-center gap-0.5 rounded-md border border-border/70 bg-popover px-0.5 shadow-xs"
               style={{ top: block.top + 1, right: 12 }}
             >
@@ -237,7 +240,7 @@ export function OverleafConflictActions<Annotation>(props: {
                     if (editor && !disabled) resolveBlock(editor, block, action.resolution);
                   }}
                 >
-                  {action.label}
+                  {messages(action.label)}
                 </button>
               ))}
             </div>

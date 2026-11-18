@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+
+import type { MessageResolver } from "~/i18n/messages";
 import type {
   EnvironmentId,
   ScientSourceUseOccurrence,
@@ -15,21 +18,33 @@ type SourceUsesState =
   | { readonly status: "failed" }
   | { readonly status: "ready"; readonly uses: ScientSourceUses };
 
-const times = (count: number) => (count === 1 ? "once" : `${count} times`);
-const documents = (count: number) => (count === 1 ? "1 document" : `${count} documents`);
-
 /** "Cited 6 times in 3 documents", or what the reading found and what it could not read. */
-function summary(uses: ScientSourceUses, documentCount: number): string {
+function summary(uses: ScientSourceUses, documentCount: number, resolve: MessageResolver): string {
   const cited = uses.occurrences.length;
   const unread = uses.skipped.length;
   if (cited === 0) {
     return uses.complete
-      ? "Not cited in this project's documents yet."
-      : `No citations found in the ${documents(uses.documents)} read; ${unread} could not be read.`;
+      ? resolve(msg("Not cited in this project's documents yet."))
+      : resolve(
+          msg(
+            "No citations found in the {documents, plural, =1 {1 document} other {{documents} documents}} read; {unread} could not be read.",
+            { documents: uses.documents, unread },
+          ),
+        );
   }
   return uses.complete
-    ? `Cited ${times(cited)} in ${documents(documentCount)}.`
-    : `Cited at least ${times(cited)} in ${documents(documentCount)}; ${unread} could not be read.`;
+    ? resolve(
+        msg(
+          "Cited {cited, plural, =1 {once} other {{cited} times}} in {documents, plural, =1 {1 document} other {{documents} documents}}.",
+          { cited, documents: documentCount },
+        ),
+      )
+    : resolve(
+        msg(
+          "Cited at least {cited, plural, =1 {once} other {{cited} times}} in {documents, plural, =1 {1 document} other {{documents} documents}}; {unread} could not be read.",
+          { cited, documents: documentCount, unread },
+        ),
+      );
 }
 
 function OccurrenceText(props: { readonly occurrence: ScientSourceUseOccurrence }) {
@@ -49,18 +64,22 @@ function Occurrence(props: {
   readonly occurrence: ScientSourceUseOccurrence;
   readonly onOpenFile: ((path: string, line: number) => void) | undefined;
 }) {
+  const gt = useGT();
   const { occurrence, onOpenFile } = props;
   const through = occurrence.through;
   const details = (
     <>
       <span className="block text-xs text-muted-foreground">
-        Line {occurrence.line}
-        {occurrence.locator ? ` · ${occurrence.locator}` : ""}
+        {occurrence.locator
+          ? gt("Line {line} · {locator}", { line: occurrence.line, locator: occurrence.locator })
+          : gt("Line {line}", { line: occurrence.line })}
       </span>
       <OccurrenceText occurrence={occurrence} />
       {through.kind === "bibliography" && !through.confirmed ? (
         <span className="block text-xs text-muted-foreground">
-          Through {through.path}, not confirmed to be this source
+          <T>
+            Through <Var>{through.path}</Var>, not confirmed to be this source
+          </T>
         </span>
       ) : null}
     </>
@@ -88,15 +107,17 @@ function SourceUsesSection(props: {
   return (
     <section className="space-y-2" aria-busy={state.status === "loading"}>
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Used in this project
+        <T>Used in this project</T>
       </h3>
       {state.status === "loading" ? (
-        <p className="text-sm text-muted-foreground">Looking for citations…</p>
+        <p className="text-sm text-muted-foreground">
+          <T>Looking for citations…</T>
+        </p>
       ) : state.status === "failed" ? (
         <p role="alert" className="text-sm text-muted-foreground">
-          Could not look for citations.{" "}
+          <T>Could not look for citations. </T>
           <Button variant="link" size="micro" onClick={props.onRetry}>
-            Retry
+            <T context="verb, button">Retry</T>
           </Button>
         </p>
       ) : (
@@ -110,6 +131,7 @@ function SourceUsesResult(props: {
   readonly uses: ScientSourceUses;
   readonly onOpenFile: ((path: string, line: number) => void) | undefined;
 }) {
+  const m = useMessages();
   const { uses } = props;
   const byDocument = new Map<string, ScientSourceUseOccurrence[]>();
   for (const occurrence of uses.occurrences) {
@@ -120,10 +142,12 @@ function SourceUsesResult(props: {
   const listedIn = [...new Set(uses.listed.map((entry) => entry.path))];
   return (
     <div className="space-y-2">
-      <p className="text-sm text-muted-foreground">{summary(uses, byDocument.size)}</p>
+      <p className="text-sm text-muted-foreground">{summary(uses, byDocument.size, m)}</p>
       {listedIn.length > 0 ? (
         <p className="text-xs text-muted-foreground">
-          Also listed without a citation (\nocite) in {listedIn.join(", ")}.
+          <T>
+            Also listed without a citation (\nocite) in <Var>{listedIn.join(", ")}</Var>.
+          </T>
         </p>
       ) : null}
       {byDocument.size > 0 ? (
@@ -157,14 +181,17 @@ function SourceUsesResult(props: {
       ) : null}
       {uses.elsewhere.map((entry) => (
         <p key={`${entry.path}:${entry.key}`} className="text-sm text-muted-foreground">
-          {entry.path}: {entry.key} names another work in {entry.bibliography}
+          <T>
+            <Var>{entry.path}</Var>: <Var>{entry.key}</Var> names another work in{" "}
+            <Var>{entry.bibliography}</Var>
+          </T>
         </p>
       ))}
       {uses.skipped.length > 0 ? (
         <Collapsible>
           <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <ChevronRightIcon className="size-3 in-data-panel-open:rotate-90" aria-hidden />
-            Details
+            <T context="noun, more information">Details</T>
           </CollapsibleTrigger>
           <CollapsiblePanel animate={false}>
             <ul className="space-y-0.5 py-1 pl-4 text-xs text-muted-foreground">

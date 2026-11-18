@@ -13,6 +13,8 @@ import {
   type MarkdownDraftCheckpointStore,
 } from "./markdownDraftCheckpoint";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 
 /** A rejected intent can be definitive; a lost reply is not proof of no rename. */
@@ -81,8 +83,10 @@ function participantsReady(documentId: string): boolean {
 }
 
 /** A rename cannot dispatch until its exact namespace identity is durable. */
-export const RECOVERY_COPY_UNSETTLED =
-  "This file's rename intent could not be saved. Your source and input have been preserved.";
+/** A `msg()` string: resolve it where it is shown or thrown. */
+export const RECOVERY_COPY_UNSETTLED = msg(
+  "This file's rename intent could not be saved. Your source and input have been preserved.",
+);
 
 export type ServerRenameResult =
   | { readonly ok: true; readonly destinationRelativePath: string; readonly revision: string }
@@ -278,7 +282,7 @@ export async function readMetadataRenameIntent(
   from: MarkdownPersistenceTarget,
   store: MarkdownDraftCheckpointStore = indexedDbMarkdownDrafts,
 ): Promise<MetadataFileRenameIntent | null> {
-  if (!store.readMetadataRename) throw new Error(RECOVERY_COPY_UNSETTLED);
+  if (!store.readMetadataRename) throw new Error(m(RECOVERY_COPY_UNSETTLED));
   const current = await store.readMetadataRename(projectFileOperationKey(from));
   if (!current) return null;
   if (
@@ -315,7 +319,7 @@ export async function renameMetadataFile(input: {
 }): Promise<MetadataFileRenameResult> {
   const store = input.store ?? indexedDbMarkdownDrafts;
   if (!store.readMetadataRename || !store.replaceMetadataRename)
-    return { kind: "failed", cause: new Error(RECOVERY_COPY_UNSETTLED) };
+    return { kind: "failed", cause: new Error(m(RECOVERY_COPY_UNSETTLED)) };
   const fromKey = projectFileOperationKey(input.from);
   const toKey = projectFileOperationKey(input.destination);
   if (

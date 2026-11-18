@@ -1,5 +1,6 @@
 import type { ComputeSubscriptionState } from "@t3tools/client-runtime/state/compute";
 import type { ComputeExecutionRecord, ComputeSessionRecord } from "@t3tools/contracts";
+import { T } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -166,7 +167,7 @@ export function ComputeResultsFeed(
                 setShown((current) => current + FEED_PAGE);
               }}
             >
-              Show earlier runs
+              <T>Show earlier runs</T>
             </Button>
           </div>
         ) : null}
@@ -179,7 +180,7 @@ export function ComputeResultsFeed(
                   role="separator"
                   className="px-3 py-1 text-center text-[11px] text-muted-foreground"
                 >
-                  Restarted
+                  <T>Restarted</T>
                 </div>
               );
             case "fresh":

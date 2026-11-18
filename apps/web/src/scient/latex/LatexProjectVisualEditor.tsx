@@ -34,6 +34,8 @@ import { projectVisualNavigation, type LatexSourceNavigation } from "./latexSour
 import { toastManager } from "~/components/ui/toast";
 import { beginScientUiOperation } from "~/scient/analytics/client";
 import { createVisualEditAnalytics } from "./visualEditAnalytics";
+import { msg, T, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface FileState {
   data: VisualProjectFile | null;
@@ -171,6 +173,7 @@ function ProjectFileSession(props: {
   reported: (path: string, value: boolean) => void;
   detach: (path: string) => void;
 }) {
+  const gt = useGT();
   const { owner, path } = props;
   const { environmentId, cwd } = owner;
   const selected = path === owner.relativePath;
@@ -239,7 +242,9 @@ function ProjectFileSession(props: {
       ? null
       : admissionError !== null
         ? (documentFailureReason(admissionError) ??
-          (admissionError instanceof Error ? admissionError.message : `Could not open ${path}.`))
+          (admissionError instanceof Error
+            ? admissionError.message
+            : gt("Could not open {path}.", { path })))
         : query.error;
 
   const { pending, failure, reported, update } = props;
@@ -255,7 +260,9 @@ function ProjectFileSession(props: {
   useEffect(() => {
     failure(
       path,
-      needsAttention ? `Could not save ${path}. Open its Source view to resolve the save.` : null,
+      needsAttention
+        ? m(msg("Could not save {path}. Open its Source view to resolve the save.", { path }))
+        : null,
     );
   }, [path, needsAttention, failure]);
   const saved = useEffectEvent((source: string) => {
@@ -464,11 +471,11 @@ export function LatexProjectVisualEditor(props: Props) {
     warnedNavigation.current = request.requestId;
     toastManager.add({
       type: "warning",
-      title: "Could not locate this source in Visual",
+      title: m(msg("Could not locate this source in Visual")),
       description:
         files.get(request.path)?.contents !== request.source
-          ? "The draft has changed. Double-click the source again."
-          : "This source line has no displayed content in Visual.",
+          ? m(msg("The draft has changed. Double-click the source again."))
+          : m(msg("This source line has no displayed content in Visual.")),
     });
   }, [document, files, props.sourceNavigation, visualNavigation]);
   // A document compiled outside this environment still has its last printed
@@ -609,7 +616,7 @@ export function LatexProjectVisualEditor(props: Props) {
       current.document.missing.length ||
       request.snapshot.id !== current.editorSnapshot.id
     )
-      return refuse("The source context changed while this edit was being prepared.");
+      return refuse(m(msg("The source context changed while this edit was being prepared.")));
     for (const path of current.document.paths) {
       const file = current.files.get(path);
       if (!file?.owner) continue;
@@ -621,7 +628,7 @@ export function LatexProjectVisualEditor(props: Props) {
         live.owner.editVersion !== file.owner.editVersion ||
         saveErrors.has(path)
       )
-        return refuse("The source changed while this edit was being prepared.");
+        return refuse(m(msg("The source changed while this edit was being prepared.")));
     }
     const plan = planVisualProjectEdit(current.document, request.edit, current.files, root);
     if (plan.error) return refuse(plan.error);
@@ -632,7 +639,7 @@ export function LatexProjectVisualEditor(props: Props) {
     for (const [path, edit] of plan.edits) {
       const file = current.files.get(path)!;
       const state = current.states.get(path);
-      if (!state) return refuse(`The source session for ${path} is unavailable.`);
+      if (!state) return refuse(m(msg("The source session for {path} is unavailable.", { path })));
       if (path === props.relativePath) {
         const outcome = props.onEdit({
           snapshot: current.selectedSnapshot,
@@ -642,7 +649,10 @@ export function LatexProjectVisualEditor(props: Props) {
         selectedSnapshot = outcome.snapshot;
       } else {
         const outcome = state.applyEdit(edit);
-        if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
+        if (!outcome.accepted)
+          return refuse(
+            m(msg("The source edit was refused ({reason}).", { reason: outcome.reason })),
+          );
       }
       const lease =
         path === props.relativePath
@@ -807,7 +817,7 @@ export function LatexProjectVisualEditor(props: Props) {
               onClick={props.onRetryRootResolution}
               disabled={props.rootResolutionPending}
             >
-              Retry opening document
+              <T>Retry opening document</T>
             </button>
           ) : null}
         </div>

@@ -1,19 +1,24 @@
+import { useGT } from "gt-react";
+
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
 import { useSearchableSetting } from "../../components/settings/settingsSearch";
 import { Switch } from "../../components/ui/switch";
 import { useAutomaticPlacementPreference } from "./automaticPlacementPreference";
 
 export function AutomaticThreadPlacementSettings() {
+  const gt = useGT();
   const setting = useSearchableSetting();
   const { enabled, setEnabled } = useAutomaticPlacementPreference();
   return (
     <SettingsRow
       {...setting("automatic-thread-placement")}
-      description="Move working, monitoring, unread, and attention-needed threads near the top of the sidebar and each section. Your manual moves are respected. The Working section (beta) keeps its own order."
+      description={gt(
+        "Move working, monitoring, unread, and attention-needed threads near the top of the sidebar and each section. Your manual moves are respected. The Working section (beta) keeps its own order.",
+      )}
       resetAction={
         !enabled ? (
           <SettingResetButton
-            ariaLabel="Reset automatic thread placement to default"
+            ariaLabel={gt("Reset automatic thread placement to default")}
             onClick={() => setEnabled(true)}
           />
         ) : null
@@ -22,7 +27,7 @@ export function AutomaticThreadPlacementSettings() {
         <Switch
           checked={enabled}
           onCheckedChange={setEnabled}
-          aria-label="Keep active threads near the top"
+          aria-label={gt("Keep active threads near the top")}
         />
       }
     />

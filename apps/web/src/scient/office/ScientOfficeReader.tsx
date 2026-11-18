@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { T, useGT } from "gt-react";
 import { ListChecks } from "lucide-react";
 
 import { DropdownMenuItem, DropdownMenuSeparator } from "~/components/ui/menu";
@@ -97,8 +98,13 @@ export function ScientOfficeReader(props: {
 }) {
   const { document: office, scrollRef } = props;
   const { find: findIn } = office;
-  const pageLabel = office.kind === "presentation" ? "Slide" : "Page";
-  const label = office.kind;
+  const gt = useGT();
+  const presentation = office.kind === "presentation";
+  const pageLabel = presentation ? gt("Slide") : gt("Page", { $context: "a page of a document" });
+  // The file's kind inside the reader's sentences: "Search presentation".
+  const label = presentation
+    ? gt("presentation", { $context: "kind of file, inside a sentence" })
+    : gt("document", { $context: "kind of file, inside a sentence" });
   const rootRef = useRef<HTMLDivElement>(null);
   const file = use(OfficeFileContext);
   // A quote opened from the chat: its page, and its text marked there until the reader is used.
@@ -273,7 +279,7 @@ export function ScientOfficeReader(props: {
     <div
       ref={rootRef}
       className="scient-pdf-reader"
-      aria-label={`${pageLabel}s`}
+      aria-label={presentation ? gt("Slides") : gt("Pages")}
       // Reading on before the remembered place is reached keeps where the reader went.
       onPointerDownCapture={stopRestoring}
       onWheelCapture={stopRestoring}
@@ -284,7 +290,11 @@ export function ScientOfficeReader(props: {
         ready={office.pages.length > 0}
         page={page + 1}
         pageCount={office.pages.length}
-        sidebarContents={`${pageLabel.toLowerCase()}s`}
+        sidebarContents={
+          presentation
+            ? gt("slides", { $context: "inside a sentence: Show slides" })
+            : gt("pages", { $context: "inside a sentence: Show pages" })
+        }
         scale={scale}
         sidebarOpen={sidebarOpen}
         searchOpen={query !== ""}
@@ -301,7 +311,7 @@ export function ScientOfficeReader(props: {
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setCheckingReferences(true)}>
-                <ListChecks /> Check references
+                <ListChecks /> <T>Check references</T>
               </DropdownMenuItem>
             </>
           ) : undefined

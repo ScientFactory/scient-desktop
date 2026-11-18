@@ -8,6 +8,9 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS } from "~/pierre-tree-theme";
 import { projectEnvironment } from "~/state/projects";
@@ -55,6 +58,7 @@ export function scientReadOnlyRowDecoration(
   loadingDirectoriesRef: RefObject<ReadonlySet<string>>,
   /** Folders linked to Overleaf: they carry its mark. */
   overleafFoldersRef?: RefObject<ReadonlySet<string>>,
+  resolve: MessageResolver = m,
 ): FileTreeRowDecorationRenderer {
   return ({ item, row }) => {
     const relativePath = item.path.replace(/\/$/, "");
@@ -63,13 +67,13 @@ export function scientReadOnlyRowDecoration(
       row.isExpanded &&
       loadingDirectoriesRef.current.has(relativePath)
     ) {
-      return { icon: "t3-tree-icon-loading", title: "Loading…" };
+      return { icon: "t3-tree-icon-loading", title: resolve(msg("Loading…")) };
     }
     if (row.kind === "directory" && overleafFoldersRef?.current.has(relativePath)) {
-      return { icon: OVERLEAF_TREE_ICON, title: "Linked to Overleaf" };
+      return { icon: OVERLEAF_TREE_ICON, title: resolve(msg("Linked to Overleaf")) };
     }
     return treeEntriesRef.current.get(relativePath)?.readOnly
-      ? { icon: "file-tree-icon-lock", title: "Read-only in Files" }
+      ? { icon: "file-tree-icon-lock", title: resolve(msg("Read-only in Files")) }
       : null;
   };
 }

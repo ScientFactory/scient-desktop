@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { BotIcon } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -14,6 +15,7 @@ export function RoomAgentToggle({
   /** The composer's own buttons are icon-sm; the guest page's box is smaller. */
   readonly size?: "icon-xs" | "icon-sm";
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -24,7 +26,7 @@ export function RoomAgentToggle({
             // Shaped and hovered like the microphone beside it; blue while it is on.
             variant={on ? "ghost-primary" : "ghost"}
             className="shrink-0"
-            aria-label="Send straight to the agent"
+            aria-label={gt("Send straight to the agent")}
             aria-pressed={on}
             onClick={() => onChange(!on)}
           />
@@ -33,7 +35,7 @@ export function RoomAgentToggle({
         <BotIcon />
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {on ? "Messages go straight to the agent" : "Send straight to the agent"}
+        {on ? gt("Messages go straight to the agent") : gt("Send straight to the agent")}
       </TooltipPopup>
     </Tooltip>
   );

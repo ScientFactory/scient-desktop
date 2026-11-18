@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type {
   AccountStoresStatus,
   AccountWriteStore,
@@ -19,6 +20,7 @@ export function SaveStores({
   selected: ReadonlyArray<AccountWriteStore>;
   onChange: (stores: ReadonlyArray<AccountWriteStore>) => void;
 }) {
+  const gt = useGT();
   const vaults = writableOnePasswordVaults(stores.onePassword);
   const existing = kept ? [kept.source, ...(kept.copies ?? [])] : [];
   const has = (type: AccountWriteStore["type"]) => existing.some((source) => source.type === type);
@@ -45,8 +47,12 @@ export function SaveStores({
     );
   return (
     <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-      <legend className="sr-only">Save in</legend>
-      <span className="text-muted-foreground">Save in</span>
+      <legend className="sr-only">
+        <T>Save in</T>
+      </legend>
+      <span className="text-muted-foreground">
+        <T>Save in</T>
+      </span>
       <label className="flex items-center gap-2">
         <Checkbox
           disabled={has("scient")}
@@ -62,7 +68,7 @@ export function SaveStores({
             checked={has("keychain") || selected.some((store) => store.type === "keychain")}
             onCheckedChange={(checked) => toggle({ type: "keychain" }, checked === true)}
           />
-          System keychain
+          <T>System keychain</T>
         </label>
       ) : null}
       {vaults[0] ? (
@@ -79,7 +85,7 @@ export function SaveStores({
       ) : null}
       {onePassword && vaults.length > 1 ? (
         <NativeSelect
-          aria-label="1Password vault"
+          aria-label={gt("1Password vault")}
           value={onePassword.vaultId}
           onChange={(event) => toggle({ type: "1password", vaultId: event.target.value }, true)}
         >

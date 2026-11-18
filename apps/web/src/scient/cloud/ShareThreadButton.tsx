@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ShareIcon } from "lucide-react";
@@ -30,7 +31,7 @@ export function ShareThreadButton({ threadRef }: { threadRef: ScopedThreadRef })
         }
       >
         <ShareIcon aria-hidden />
-        Share
+        <T>Share</T>
       </Button>
     </>
   );

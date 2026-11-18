@@ -3,6 +3,7 @@ import { ChevronUp, X } from "lucide-react";
 import { dockButtonClass } from "../writing/dockChrome";
 import { isLatexContextEvent } from "./latexContextEvents";
 import "./latexContextTools.css";
+import { useGT } from "gt-react";
 
 /** One object inspector. Its portal destination and unfinished fields stay mounted. */
 export function LatexContextTools(props: {
@@ -17,6 +18,7 @@ export function LatexContextTools(props: {
   const trigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const [open, setOpen] = useState(false);
+  const gt = useGT();
   const [label, setLabel] = useState<string | null>(null);
   const [inline, setInline] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- watches the slot DOM node for toolbar selection changes to mirror the active context toolbar
@@ -100,7 +102,7 @@ export function LatexContextTools(props: {
         type="button"
         className={dockButtonClass(open)}
         hidden={label === null || inline}
-        aria-label={`${label ?? "Object"} options`}
+        aria-label={label === null ? gt("Object options") : gt("{label} options", { label })}
         aria-expanded={open && label !== null}
         aria-controls={panelId}
         aria-haspopup="dialog"
@@ -127,7 +129,7 @@ export function LatexContextTools(props: {
         id={panelId}
         className="scient-latex-context-inspector"
         role={!inline && open && label !== null ? "dialog" : undefined}
-        aria-label={`${label ?? "Object"} options`}
+        aria-label={label === null ? gt("Object options") : gt("{label} options", { label })}
         inert={(!inline && !open) || label === null}
       >
         <div className="scient-latex-context-inspector-heading">
@@ -135,7 +137,7 @@ export function LatexContextTools(props: {
           <button
             type="button"
             className={dockButtonClass()}
-            aria-label="Close object options"
+            aria-label={gt("Close object options")}
             onClick={close}
           >
             <X aria-hidden="true" />

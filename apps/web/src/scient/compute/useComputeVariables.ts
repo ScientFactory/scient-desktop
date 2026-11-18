@@ -9,8 +9,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -88,7 +90,7 @@ export function useComputeVariables(input: {
     setState((previous) => ({
       ...previous,
       loading: false,
-      error: error instanceof Error ? error.message : "Couldn't read variables.",
+      error: error instanceof Error ? error.message : m(msg("Couldn't read variables.")),
     }));
   });
 
