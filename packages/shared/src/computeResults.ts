@@ -120,6 +120,9 @@ export function resultCaption(output: string, scriptPath: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** What a caption line holds before its link: `Table: ` (Pandoc also reads a bare `: `). */
+const TABLE_CAPTION_START = /^\s{0,3}(?:Table)?:\s*$/u;
+
 /** Tables are linked from their caption, `Table: [Table 1](scient-result:<revision>/table1.csv)`. */
 export const isResultTableOutput = (output: string) => /\.csv$/iu.test(output);
 
@@ -147,7 +150,10 @@ export function findMarkdownResultReferences(
     const label = source.slice(open + 1, at);
     const figure = FIGURE_LABEL.exec(label);
     references.push(
-      !figure && target.pointer === null && isResultTableOutput(target.output)
+      !figure &&
+        target.pointer === null &&
+        isResultTableOutput(target.output) &&
+        TABLE_CAPTION_START.test(source.slice(source.lastIndexOf("\n", open) + 1, open))
         ? {
             ...target,
             kind: "table",
@@ -270,6 +276,7 @@ export type ResultReferenceState =
   | "missing"
   | "unrecorded";
 
+/** Cells compared as a Markdown table keeps them: pipe tables trim the space around a cell. */
 const sameRows = (
   left: ReadonlyArray<ReadonlyArray<string>>,
   right: ReadonlyArray<ReadonlyArray<string>>,
@@ -278,7 +285,7 @@ const sameRows = (
   left.every(
     (row, index) =>
       row.length === right[index]!.length &&
-      row.every((cell, column) => cell === right[index]![column]),
+      row.every((cell, column) => cell.trim() === right[index]![column]!.trim()),
   );
 
 export function resultReferenceState(

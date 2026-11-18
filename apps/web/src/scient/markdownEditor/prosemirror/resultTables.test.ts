@@ -65,4 +65,13 @@ describe("linked result tables", () => {
       `| Arm | Patients | Rate |\n| --- | ---: | ---: |\n| Treatment | 611 | 2.06 |\n| Control | 567 | 2.73 |\n\nTable: [Table 1](${SECOND})`,
     );
   });
+
+  it("binds a table only to a caption line, not to a sentence that cites its file", () => {
+    const sentence = scientMarkdownParser.parse(
+      `| Arm |\n| --- |\n| A |\n\nSee [the table](${FIRST}) for counts.`,
+    );
+    expect(editorResultReferences(sentence).filter((ref) => ref.kind === "table")).toEqual([]);
+    const caption = scientMarkdownParser.parse(`| Arm |\n| --- |\n| A |\n\n: [Arms](${FIRST})`);
+    expect(editorResultReferences(caption)).toMatchObject([{ kind: "table", caption: "Arms" }]);
+  });
 });

@@ -118,4 +118,14 @@ describe("linked result references", () => {
     expect(resultReferenceState({ kind: "table", rows: null }, resolved(rows))).toBe("current");
     expect(resultReferenceState({ kind: "table", rows }, resolved(null))).toBe("missing");
   });
+
+  it("reads a CSV link as a table only on a caption line", () => {
+    const link = `[t](scient-result:${revision}/table1.csv)`;
+    expect(findMarkdownResultReferences(`See ${link} here.`).map((ref) => ref.kind)).toEqual([
+      "value",
+    ]);
+    expect(findMarkdownResultReferences(`Table: ${link}`).map((ref) => ref.kind)).toEqual([
+      "table",
+    ]);
+  });
 });

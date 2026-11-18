@@ -28,6 +28,8 @@ export type EditorResultReference = ResultTarget & {
         readonly rows: ReadonlyArray<ReadonlyArray<string>>;
         readonly caption: string;
         readonly captionPosition: number;
+        /** The caption's result atom, which is what a click lands on. */
+        readonly atomPosition: number;
       }
   );
 
@@ -47,17 +49,25 @@ const isTableTarget = (href: string) => {
 };
 
 /**
- * The caption's link to a CSV table. Markdown reads `[Table 1](scient-result:…)` as a result atom,
- * so the caption holds one, labelled with the caption text.
+ * The caption's link to a CSV table: a paragraph that is `Table: ` (or Pandoc's bare `: `) and one
+ * result atom, which is how Markdown reads `Table: [Table 1](scient-result:…)`. A sentence that
+ * merely cites a table's file is not its caption.
  */
 function tableCaptionLink(paragraph: ProseMirrorNode) {
-  let found: { href: string; caption: string } | null = null;
-  paragraph.forEach((child) => {
-    if (found !== null || child.type !== scientMarkdownSchema.nodes.result_value) return;
-    const href = String(child.attrs.target);
-    if (isTableTarget(href)) found = { href, caption: String(child.attrs.text) };
+  let prefix = "";
+  let found: { href: string; caption: string; offset: number } | null = null;
+  let valid = true;
+  paragraph.forEach((child, offset) => {
+    if (!valid) return;
+    if (found === null && child.isText) prefix += child.text ?? "";
+    else if (found === null && child.type === scientMarkdownSchema.nodes.result_value) {
+      const href = String(child.attrs.target);
+      if (isTableTarget(href) && /^\s*(?:Table)?:\s*$/u.test(prefix))
+        found = { href, caption: String(child.attrs.text), offset };
+      else valid = false;
+    } else if (!(child.isText && (child.text ?? "").trim() === "")) valid = false;
   });
-  return found as { href: string; caption: string } | null;
+  return valid ? (found as { href: string; caption: string; offset: number } | null) : null;
 }
 
 const tableRows = (table: ProseMirrorNode): ReadonlyArray<ReadonlyArray<string>> => {
@@ -86,6 +96,7 @@ export function editorResultReferences(doc: ProseMirrorNode): ReadonlyArray<Edit
           rows: tableRows(table),
           caption: link.caption,
           captionPosition: position,
+          atomPosition: position + 1 + link.offset,
         });
       // Values can sit in a caption too, so its children are still read.
     }

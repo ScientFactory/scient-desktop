@@ -30,7 +30,7 @@ import { ResultPicker, resultErrorMessage, type ResultChoice } from "./ResultPic
 import { RESULT_STATE_LABEL, resultCauseText } from "./resultState";
 
 export interface MarkdownResultsHandle {
-  readonly openCard: (href: string, anchor: HTMLElement) => void;
+  readonly openCard: (href: string, anchor: HTMLElement, position?: number) => void;
   readonly openPicker: () => void;
 }
 
@@ -62,7 +62,11 @@ export function MarkdownResults(props: {
     () => new Map(),
   );
   const [refreshTick, setRefreshTick] = useState(0);
-  const [card, setCard] = useState<{ href: string; anchor: HTMLElement } | null>(null);
+  const [card, setCard] = useState<{
+    href: string;
+    anchor: HTMLElement;
+    position?: number | undefined;
+  } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const resolveCommand = useAtomCommand(computeEnvironment.resultsResolve, {
@@ -137,8 +141,8 @@ export function MarkdownResults(props: {
   useEffect(
     () =>
       register({
-        openCard: (href, anchor) => {
-          setCard({ href, anchor });
+        openCard: (href, anchor, position) => {
+          setCard({ href, anchor, position });
           setRefreshTick((tick) => tick + 1);
         },
         openPicker: () => setPickerOpen(true),
@@ -146,7 +150,16 @@ export function MarkdownResults(props: {
     [register],
   );
 
-  const cardReference = card === null ? undefined : references.find((r) => r.href === card.href);
+  // Two results can cite the same output; the card is for the one clicked.
+  const cardReference =
+    card === null
+      ? undefined
+      : (references.find(
+          (reference) =>
+            reference.href === card.href &&
+            (reference.position === card.position ||
+              (reference.kind === "table" && reference.atomPosition === card.position)),
+        ) ?? references.find((reference) => reference.href === card.href));
   return (
     <>
       <Popover

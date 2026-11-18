@@ -161,7 +161,8 @@ export interface ScientMarkdownEditorViewOptions {
   /** Opens what a clicked citation names; false leaves the click to the editor. */
   readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
   /** Shows a linked result's card beside the value or figure that was clicked. */
-  readonly onOpenResult?: (href: string, anchor: HTMLElement) => void;
+  /** `position` is the clicked result's, when the click landed on one, so the card shows that one. */
+  readonly onOpenResult?: (href: string, anchor: HTMLElement, position?: number) => void;
   /** Opens the picker the Result command inserts from. */
   readonly selectResult?: () => void;
 }
@@ -1251,7 +1252,7 @@ export class ScientMarkdownEditorView {
         if (node.type === scientMarkdownSchema.nodes.result_value && this.options.onOpenResult) {
           const element = this.editorView?.nodeDOM(nodePosition);
           if (!(element instanceof HTMLElement)) return false;
-          this.options.onOpenResult(String(node.attrs.target), element);
+          this.options.onOpenResult(String(node.attrs.target), element, nodePosition);
           return true;
         }
         if (node.type === scientMarkdownSchema.nodes.citation) {
