@@ -4030,14 +4030,66 @@ describe("Codex restored FinalAnswers", () => {
       ),
     );
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+    const finalAnswerRows = [
+      [
+        "preserves a sole empty final answer",
+        "codex-sole-empty-final",
+        [{ id: "answer-empty", text: "" }],
+        [""],
+      ],
+      [
+        "suppresses a second empty final answer",
+        "codex-duplicate-empty-final",
+        [
+          { id: "answer-empty-original", text: "" },
+          { id: "answer-empty-duplicate", text: "" },
+        ],
+        [""],
+      ],
+      [
+        "preserves an empty final answer when only commentary preceded it",
+        "codex-commentary-then-empty-final",
+        [
+          { id: "answer-commentary", text: "Working on it.", phase: "commentary" },
+          { id: "answer-empty", text: "" },
+        ],
+        ["Working on it.", ""],
+      ],
+      [
+        "suppresses an empty final answer after a non-empty unknown-phase answer",
+        "codex-unknown-non-empty-then-empty-final",
+        [
+          { id: "answer-non-empty", text: "CODEX_RECOVERY_OK", phase: null },
+          { id: "answer-empty", text: "" },
+        ],
+        ["CODEX_RECOVERY_OK"],
+      ],
+      [
+        "suppresses a trailing empty answer with an omitted phase",
+        "codex-final-then-empty-unknown",
+        [
+          { id: "answer-non-empty", text: "CODEX_RECOVERY_OK" },
+          { id: "answer-empty", text: "", omitPhase: true },
+        ],
+        ["CODEX_RECOVERY_OK"],
+      ],
+      [
+        "keeps a later non-empty final answer after an initial empty final answer",
+        "codex-empty-then-non-empty-final",
+        [
+          { id: "answer-empty", text: "" },
+          { id: "answer-non-empty", text: "CODEX_RECOVERY_OK" },
+        ],
+        ["", "CODEX_RECOVERY_OK"],
+      ],
+    ] as const satisfies ReadonlyArray<
+      readonly [string, string, Parameters<typeof finalAnswerTranscript>[1], ReadonlyArray<string>]
+    >;
 
-    it.effect("preserves a sole empty final answer", () =>
+    it.effect.each(finalAnswerRows)("%s", ([, scenario, answers, expectedTexts]) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const transcript = finalAnswerTranscript("codex-sole-empty-final", [
-            { id: "answer-empty", text: "" },
-          ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
+          const harness = yield* makeCodexReplayHarness(finalAnswerTranscript(scenario, answers));
           const now = yield* DateTime.now;
 
           yield* harness.runtime.startTurn(
@@ -4045,7 +4097,7 @@ describe("Codex restored FinalAnswers", () => {
               threadId: harness.threadId,
               providerThread: harness.providerThread,
               now,
-              attemptId: RunAttemptId.make("attempt-codex-sole-empty-final"),
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
               text: "Reply with the requested recovery marker.",
             }),
           );
@@ -4053,157 +4105,7 @@ describe("Codex restored FinalAnswers", () => {
 
           assert.deepEqual(
             assistantMessages(harness.events).map((event) => event.message.text),
-            [""],
-          );
-        }).pipe(Effect.provide(adapterServices)),
-      ),
-    );
-    // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
-    it.effect("suppresses a second empty final answer", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const transcript = finalAnswerTranscript("codex-duplicate-empty-final", [
-            { id: "answer-empty-original", text: "" },
-            { id: "answer-empty-duplicate", text: "" },
-          ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
-          const now = yield* DateTime.now;
-
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-duplicate-empty-final"),
-              text: "Reply with the requested recovery marker.",
-            }),
-          );
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
-
-          assert.deepEqual(
-            assistantMessages(harness.events).map((event) => event.message.text),
-            [""],
-          );
-        }).pipe(Effect.provide(adapterServices)),
-      ),
-    );
-    // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
-    it.effect("preserves an empty final answer when only commentary preceded it", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const transcript = finalAnswerTranscript("codex-commentary-then-empty-final", [
-            { id: "answer-commentary", text: "Working on it.", phase: "commentary" },
-            { id: "answer-empty", text: "" },
-          ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
-          const now = yield* DateTime.now;
-
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-commentary-then-empty-final"),
-              text: "Reply with the requested recovery marker.",
-            }),
-          );
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
-
-          assert.deepEqual(
-            assistantMessages(harness.events).map((event) => event.message.text),
-            ["Working on it.", ""],
-          );
-        }).pipe(Effect.provide(adapterServices)),
-      ),
-    );
-    // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
-    it.effect("suppresses an empty final answer after a non-empty unknown-phase answer", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const transcript = finalAnswerTranscript("codex-unknown-non-empty-then-empty-final", [
-            { id: "answer-non-empty", text: "CODEX_RECOVERY_OK", phase: null },
-            { id: "answer-empty", text: "" },
-          ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
-          const now = yield* DateTime.now;
-
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-unknown-non-empty-then-empty-final"),
-              text: "Reply with the requested recovery marker.",
-            }),
-          );
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
-
-          assert.deepEqual(
-            assistantMessages(harness.events).map((event) => event.message.text),
-            ["CODEX_RECOVERY_OK"],
-          );
-        }).pipe(Effect.provide(adapterServices)),
-      ),
-    );
-    // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
-    it.effect("suppresses a trailing empty answer with an omitted phase", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const transcript = finalAnswerTranscript("codex-final-then-empty-unknown", [
-            { id: "answer-non-empty", text: "CODEX_RECOVERY_OK" },
-            { id: "answer-empty", text: "", omitPhase: true },
-          ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
-          const now = yield* DateTime.now;
-
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-final-then-empty-unknown"),
-              text: "Reply with the requested recovery marker.",
-            }),
-          );
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
-
-          assert.deepEqual(
-            assistantMessages(harness.events).map((event) => event.message.text),
-            ["CODEX_RECOVERY_OK"],
-          );
-        }).pipe(Effect.provide(adapterServices)),
-      ),
-    );
-    // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
-    it.effect("keeps a later non-empty final answer after an initial empty final answer", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const transcript = finalAnswerTranscript("codex-empty-then-non-empty-final", [
-            { id: "answer-empty", text: "" },
-            { id: "answer-non-empty", text: "CODEX_RECOVERY_OK" },
-          ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
-          const now = yield* DateTime.now;
-
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-empty-then-non-empty-final"),
-              text: "Reply with the requested recovery marker.",
-            }),
-          );
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
-
-          assert.deepEqual(
-            assistantMessages(harness.events).map((event) => event.message.text),
-            ["", "CODEX_RECOVERY_OK"],
+            [...expectedTexts],
           );
         }).pipe(Effect.provide(adapterServices)),
       ),
