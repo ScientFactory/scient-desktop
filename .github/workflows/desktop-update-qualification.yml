@@ -89,6 +89,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "$source_sha" "$target_sha"
           git diff --quiet "$source_sha" "$target_sha" -- . \
             ':(exclude)docs' \
+            ':(exclude).repos' \
             ':(exclude)scripts/qualify-desktop-update.mjs' \
             ':(exclude)scripts/qualify-desktop-update.test.mjs' \
             ':(exclude).github/workflows/desktop-update-qualification.yml' || {

@@ -982,6 +982,42 @@ async function qualify(options) {
         }
         await page.getByRole("button", { name: /^Update:/ }).click();
         await page.getByRole("button", { name: "Restart now", exact: true }).click();
+        // The restart saves twice: at consent, and again just before shutdown for edits made while
+        // macOS prepares. On macOS (preparation takes seconds) the first save must land while the
+        // app is still preparing; a second edit typed then must be saved by the final save alone.
+        const checksFinalSave = checksUnsavedEdit && platform === "darwin";
+        const duringPreparation = "Edited while the update prepared.\n";
+        if (checksFinalSave) {
+          const sentinelPath = NodePath.join(project, "sentinel.txt");
+          const deadline = Date.now() + 60_000;
+          while (NodeFS.readFileSync(sentinelPath, "utf8") !== editedSentinel) {
+            NodeAssert.ok(Date.now() < deadline, "The consent save did not write the edit");
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          const preparing = await page.evaluate(() => window.desktopBridge.getUpdateState());
+          NodeAssert.equal(preparing.status, "preparing", "The first save must precede shutdown");
+          NodeAssert.doesNotMatch(
+            preparing.message ?? "",
+            /Saving your work/,
+            "The second edit must be made before the final save starts",
+          );
+          await page.evaluate(() => {
+            const schedule = window.setTimeout;
+            window.__qualificationRestoreTimers = () => {
+              window.setTimeout = schedule;
+            };
+            window.setTimeout = (handler, delay, ...args) =>
+              delay === 500 ? 0 : schedule(handler, delay, ...args);
+          });
+          await page
+            .locator("[data-content] > [data-line]")
+            .filter({ hasText: "Unsaved edit must survive native restart." })
+            .first()
+            .click();
+          await page.keyboard.press("Meta+ArrowDown");
+          await page.keyboard.insertText(duringPreparation);
+          await page.evaluate(() => window.__qualificationRestoreTimers());
+        }
         const events = await completion;
         const successfulEvents =
           recoveredPreparationAttempt === undefined
@@ -998,7 +1034,11 @@ async function qualify(options) {
           verifySignature(NodePath.resolve(executable, "../../.."), platform);
         NodeAssert.equal(
           NodeFS.readFileSync(NodePath.join(project, "sentinel.txt"), "utf8"),
-          checksUnsavedEdit ? editedSentinel : sentinel,
+          checksFinalSave
+            ? `${editedSentinel}${duringPreparation}`
+            : checksUnsavedEdit
+              ? editedSentinel
+              : sentinel,
         );
         if (checksUnsavedEdit) {
           const confirmedAt = successfulEvents.find((event) => event.event === "confirmed")?.atMs;
@@ -1033,6 +1073,7 @@ async function qualify(options) {
                 : "native-verified",
           preparationFailureRecovered: recoveredPreparationAttempt !== undefined,
           unsavedEditPreserved: checksUnsavedEdit ? true : "not-checked-windows-file-access",
+          finalSaveChecked: checksFinalSave,
           ...restoredControls,
           ...timings,
           passed: true,
