@@ -1144,6 +1144,11 @@ describe("native import continuation and forks", () => {
           (thread) => thread.id === first.thread.activeProviderThreadId,
         )!;
         assert.isString(firstProvider.nativeThreadRef?.nativeId);
+        // The handoff's receipt names the native thread it reached and omits nothing.
+        const firstDelivery = first.contextHandoffs.at(-1)?.delivery;
+        assert.strictEqual(firstDelivery?.status, "inline");
+        assert.strictEqual(firstDelivery?.nativeThreadId, firstProvider.nativeThreadRef?.nativeId);
+        assert.deepStrictEqual(firstDelivery?.omittedItemIds, []);
         yield* continueImport(
           result.threadId,
           MessageId.make("same-import-session"),
@@ -1335,12 +1340,19 @@ describe("native import continuation and forks", () => {
             fork.forkLineage?.sourceImport,
           );
           assert.isUndefined(transfer.frozenSource);
+          // A portable fork carries no provider identity from its source.
+          assert.isNotNull(transfer.portableReason ?? null);
+          assert.isUndefined(transfer.sourcePoint.providerThreadRef);
+          assert.isNull(nativeFork.thread.forkedFrom);
+          assert.isNull(nativeFork.thread.activeProviderThreadId);
+          assert.strictEqual((yield* conversationForkOf(forkId))?.status, "ready");
           yield* continueImport(
             forkId,
             MessageId.make("fork-continuation"),
             "Continue from answer two",
           );
           const contextPreamble = (yield* ImportPeer).prompts.at(-1)!;
+          assert.include(contextPreamble, "Known source omissions (unverified)");
           assert.include(contextPreamble, "Question 1");
           assert.include(contextPreamble, "Answer 2");
           assert.include(contextPreamble, "range-truncated");
