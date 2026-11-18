@@ -51,13 +51,7 @@ const workflow = YAML.parse(
   NodeFS.readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"),
 ) as { jobs: Record<string, Job> };
 
-function simulate(
-  files: string[],
-  eventName = "pull_request",
-  reused = false,
-  focused = false,
-  baseRef = "main",
-) {
+function simulate(files: string[], eventName = "pull_request", reused = false, baseRef = "main") {
   // Main pushes and the nightly run select every lane; only PR and queue gates narrow them.
   const full = eventName !== "pull_request" && eventName !== "merge_group";
   const outputs = decide(eventName === "schedule" ? null : files, readWorkspace(), full).outputs;
@@ -102,7 +96,6 @@ function simulate(
         }),
       );
       needs[id] = { result: run ? "success" : "skipped", outputs: {} };
-      if (run && id === "release_notes") needs[id].outputs = { qualified: String(focused) };
       if (run && id === "queue_ci")
         needs[id].outputs = {
           reused: String(reused),
@@ -181,7 +174,6 @@ describe("CI workflow decisions", () => {
     const f = simulate(
       ["apps/web/src/authBootstrap.test.ts"],
       "pull_request",
-      false,
       false,
       "feature/parent",
     );
@@ -358,7 +350,6 @@ describe("CI workflow decisions", () => {
     expect(reused.failures).toEqual([]);
     for (const [id, job] of Object.entries(reused.needs)) {
       const expected = [
-        "release_notes",
         "queue_ci",
         "test_web_reused",
         "test_server_reused",
@@ -439,7 +430,7 @@ describe("CI workflow decisions", () => {
       ).toBe(true);
   });
 
-  it("exact queue reuse requires reporters while release notes still run every test lane", () => {
+  it("exact queue reuse requires reporters", () => {
     const reused = simulate(["apps/web/src/authBootstrap.test.ts"], "merge_group", true);
     expect(reused.failures).toEqual([]);
     for (const id of [
@@ -454,46 +445,30 @@ describe("CI workflow decisions", () => {
       expect(reused.needs[id]!.result).toBe("skipped");
     for (const id of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
       expect(reused.needs[id]!.result).toBe("success");
-    for (const event of ["pull_request", "merge_group"]) {
-      const focused = simulate(["apps/web/src/scient/releaseNotes/catalog.ts"], event, false, true);
-      expect(focused.failures).toEqual([]);
-      for (const id of [
-        "lint",
-        "build",
-        "test",
-        "test_web",
-        "test_server",
-        "changes",
-        "qualification",
-      ])
-        expect(focused.needs[id]!.result).toBe("success");
-      for (const id of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
-        expect(focused.needs[id]!.result).toBe("skipped");
-    }
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 45],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 51],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 45],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 44],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 50],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 44],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 60],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 59],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 59],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 58],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      69,
+      68,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 54],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 45],
-    // The probe, release notes, two suite reporters, four stable contexts, the receipt and Check.
-    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 10],
-    ["main push", "docs/operations/development.md", "push", false, 73],
-    ["nightly", "docs/operations/development.md", "schedule", false, 72],
-    // Probe, release notes, two suite reporters, four stable contexts, the store refresh, Check.
-    ["reused main push", "docs/operations/development.md", "push", true, 10],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 53],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 44],
+    // The probe, two suite reporters, four stable contexts, the receipt and Check.
+    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 9],
+    ["main push", "docs/operations/development.md", "push", false, 72],
+    ["nightly", "docs/operations/development.md", "schedule", false, 71],
+    // Probe, two suite reporters, four stable contexts, the store refresh, Check.
+    ["reused main push", "docs/operations/development.md", "push", true, 9],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

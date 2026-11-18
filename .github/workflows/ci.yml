@@ -25,66 +25,9 @@ concurrency:
 
 jobs:
   # SCIENT-FORK:START — hosted runners throughout; no paid Blacksmith fleet.
-  # Release-note content retains its additional catalog and rendering qualification.
-  release_notes:
-    name: Release notes qualification
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    outputs:
-      qualified: ${{ steps.complete.outputs.qualified }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-          sparse-checkout: .github/scripts
-      - name: Classify immutable release-note diff
-        id: detect
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-        run: node .github/scripts/release-notes-ci-gate.mjs
-      - name: Checkout focused test inputs
-        if: steps.detect.outputs.only == 'true'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-      - name: Setup Vite+
-        if: steps.detect.outputs.only == 'true'
-        uses: ./.github/actions/setup-ci-deps
-      - name: Check release-note formatting and lint
-        if: steps.detect.outputs.only == 'true'
-        run: |
-          vp fmt --check apps/web/src/scient/releaseNotes
-          vp lint apps/web/src/scient/releaseNotes --report-unused-disable-directives
-      - name: Typecheck web
-        if: steps.detect.outputs.only == 'true'
-        run: vp run --filter @t3tools/web typecheck
-      - name: Install Chromium
-        if: steps.detect.outputs.only == 'true'
-        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
-      - name: Validate catalog and test release-note rendering
-        if: steps.detect.outputs.only == 'true'
-        run: |
-          node --input-type=module <<'NODE'
-          import { SCIENT_RELEASE_NOTES } from './apps/web/src/scient/releaseNotes/catalog.ts';
-          import { validateScientReleaseNotesCatalog } from './apps/web/src/scient/releaseNotes/model.ts';
-          const errors = validateScientReleaseNotesCatalog(SCIENT_RELEASE_NOTES);
-          if (errors.length) throw new Error(errors.join('\n'));
-          NODE
-          vp run --filter @t3tools/web test src/scient/releaseNotes
-      - name: Confirm focused qualification
-        id: complete
-        if: steps.detect.outputs.only == 'true'
-        run: |
-          echo "qualified=true" >> "$GITHUB_OUTPUT"
-          echo 'Release-note content passed catalog validation, web types, formatting, lint, and Chromium rendering tests. Full product suites also run.' >> "$GITHUB_STEP_SUMMARY"
-
   # Reuse is an optimization only: unavailable evidence runs normal CI. A queue entry reuses
   # its PR run, and a main push its queue runs, only for the exact same content and base.
   queue_ci:
-    needs: release_notes
     name: Reuse exact CI
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-24.04
@@ -137,7 +80,7 @@ jobs:
   # Unknown diffs fail open; the nightly run and a main push that cannot reuse run every lane.
   # SCIENT-FORK:END
   changes:
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Changes
     runs-on: ubuntu-24.04
@@ -207,7 +150,7 @@ jobs:
   # file, docs included. The `Check` job at the end of this file passes only
   # when every other job passes or was skipped by `changes`.
   lint:
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Lint
     runs-on: ubuntu-24.04
@@ -276,7 +219,7 @@ jobs:
 
   build:
     name: Build and Typecheck
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -354,7 +297,7 @@ jobs:
     # plugin and each half of mobile run alone: together they set this lane's longest runner.
     name: ${{ matrix.part == 1 && 'Test' || format('Test {0}', matrix.part) }}
     # SCIENT-FORK:END
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: ubuntu-24.04
     # SCIENT-FORK:START — retain the measured standard-runner workspace ceiling.
@@ -500,7 +443,7 @@ jobs:
   # so it is advisory: Check gates the shards, not this job.
   shard_weights:
     name: Shard weights
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -547,7 +490,7 @@ jobs:
   # that gated every run. release.yml mirrors this test, test_web, and test_server split.
   # SCIENT-FORK:START — duration-balanced hosted shards, JSON reports and performance suites.
   test_web:
-    needs: [queue_ci, release_notes, changes, shard_weights]
+    needs: [queue_ci, changes, shard_weights]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-24.04
@@ -668,7 +611,7 @@ jobs:
   # still runs in its own process.
   test_server:
     # The organization allows 60 concurrent jobs; sixteen runners keep each near three minutes.
-    needs: [queue_ci, release_notes, changes, shard_weights]
+    needs: [queue_ci, changes, shard_weights]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
@@ -818,7 +761,7 @@ jobs:
 
   # SCIENT-FORK:START — the production boot and timing budgets, beside the correctness shards.
   test_web_performance:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Web performance
     runs-on: ubuntu-24.04
@@ -874,7 +817,7 @@ jobs:
 
   # SCIENT-FORK:START — server measurements and the Python bridge, beside the correctness shards.
   test_server_performance:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server performance
     runs-on: ubuntu-24.04
@@ -930,7 +873,7 @@ jobs:
 
   rust:
     name: Rust
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -964,7 +907,7 @@ jobs:
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.mobile_native != 'false' }}
     runs-on: macos-26
     timeout-minutes: 10
@@ -1011,7 +954,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -1038,7 +981,7 @@ jobs:
   # Sources ride this job to reuse its install: a job of their own would wait for a runner and install again.
   overleaf_windows:
     name: Overleaf Windows
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 30
@@ -1114,7 +1057,7 @@ jobs:
   # identity, path budget) and sync, recovery and process death on its disk; not a required check.
   overleaf_macos:
     name: Overleaf macOS
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     # Nothing waits on it in the merge queue, so it runs on pull requests and main pushes that
     # could not reuse the queue's qualification of the same content.
     if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.queue_ci.outputs.reused != 'true' }}
@@ -1155,7 +1098,7 @@ jobs:
   # which pull requests restore. Save only a store the merged lockfile does not have yet.
   main_caches:
     name: Main dependency store
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && github.event_name == 'push' && needs.queue_ci.outputs.reused == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -1175,7 +1118,7 @@ jobs:
 
   # SCIENT-FORK:START — native qualification stays under the same required gate.
   compute_native:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.compute_changed != 'false' }}
     uses: ./.github/workflows/scient-compute-python-kernel.yml
     with:
@@ -1185,7 +1128,7 @@ jobs:
       platforms: ${{ needs.changes.outputs.compute_platforms == 'linux' && 'linux' || 'all' }}
 
   windows_packaging:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}
     # SCIENT-FORK:START — the installer job waits on its Linux prerequisites through the API.
     permissions:
@@ -1195,18 +1138,18 @@ jobs:
     uses: ./.github/workflows/windows-packaging.yml
 
   remote_server_packaging:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}
     uses: ./.github/workflows/remote-server-packaging.yml
 
   linux_packaging:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.linux_changed != 'false' }}
     uses: ./.github/workflows/linux-packaging.yml
 
   # Only Check is required, so one reporter per reused suite is sufficient.
   test_web_reused:
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' }}
     name: Test Web (qualified)
     runs-on: ubuntu-24.04
@@ -1219,7 +1162,7 @@ jobs:
           printf 'All suites passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
 
   test_server_reused:
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' }}
     name: Test Server (qualified)
     runs-on: ubuntu-24.04
@@ -1234,7 +1177,7 @@ jobs:
   # SCIENT-FORK:START — release/stable's protection requires these names on the promoted commit.
   # A skipped matrix reports one unexpanded name, so a reused run reports each one here.
   stable_contexts_reused:
-    needs: [queue_ci, release_notes]
+    needs: [queue_ci]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' }}
     name: ${{ matrix.check }}
     strategy:
@@ -1252,7 +1195,7 @@ jobs:
 
   qualification:
     name: Qualification receipt
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
+    needs: [queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1287,7 +1230,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
+    needs: [queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     # SCIENT-FORK:START — the quarantine reads failed jobs' logs.
