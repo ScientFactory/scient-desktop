@@ -19,6 +19,18 @@ on:
       - "apps/server/src/processRunner.ts"
       - "packages/shared/src/hostProcess.ts"
       - "scripts/stage-synctex-runtime.ts"
+      # The build service's real-engine scenarios, run on the Linux leg.
+      - "apps/server/src/scient/latex/LatexRealEngine.test.ts"
+      - "apps/server/src/scient/latex/latexRealEngine.testkit.ts"
+      - "apps/server/src/scient/latex/LatexBuildService.ts"
+      - "apps/server/src/scient/latex/latexBuildCompletion.testkit.ts"
+      - "apps/server/src/scient/execution/LocalExecutionProcess.ts"
+      - "apps/server/src/scient/execution/LocalOwnedProcess.ts"
+      - "apps/server/src/scient/documentArtifacts/GeneratedDocumentStore.ts"
+      - "apps/server/src/scient/workspace/fileExchange.testkit.ts"
+      - "apps/server/src/scient/workspace/filePublicationTestBuild.ts"
+      - "scripts/stage-file-exchange.ts"
+      - "native/file-exchange/**"
 
 permissions:
   contents: read
@@ -48,6 +60,7 @@ jobs:
             runtime_arch: x64
             runtime_key: linux-x64
             runtime_executable: synctex
+            real_engine: "1"
           - platform: macOS Apple Silicon
             runner: macos-15
             runtime_platform: mac
@@ -75,9 +88,11 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
+          # The real-engine leg also builds the file-publication helper, a root script.
           run-install: |
             args:
               - --filter=t3...
+              - ${{ matrix.real_engine == '1' && '--filter=@t3tools/scripts...' || '--filter=t3...' }}
 
       - name: Build verified bundled SyncTeX helper
         run: >-
@@ -87,9 +102,20 @@ jobs:
           --output native/synctex-runtime/${{ matrix.runtime_key }}
           --verbose
 
+      # The real-engine round trip reads each published PDF with Poppler.
+      - name: Provide Poppler
+        if: ${{ matrix.real_engine == '1' }}
+        run: |
+          set -euo pipefail
+          if ! command -v pdftotext >/dev/null || ! command -v pdftoppm >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends poppler-utils
+          fi
+
       - name: Verify pinned native TinyTeX asset
         working-directory: apps/server
         env:
           SCIENT_TINYTEX_ASSET_SMOKE: "1"
+          SCIENT_LATEX_REAL_ENGINE_QUALIFICATION: ${{ matrix.real_engine || '0' }}
           SCIENT_SYNCTEX_RUNTIME: ${{ github.workspace }}/native/synctex-runtime/${{ matrix.runtime_key }}/${{ matrix.runtime_executable }}
         run: vp test run src/scient/latex/TinyTexAssetSmoke.test.ts

@@ -88,15 +88,6 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
   };
 });
 
-/** Direct controls retain their existing immediate preparation/publication boundary. */
-export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (
-  input: Parameters<typeof prepareScientV2SkillScope>[0],
-) {
-  const prepared = yield* prepareScientV2SkillScope(input);
-  yield* prepared.publish;
-  return prepared.text;
-});
-
 /** A steering message's skill scope, prepared from its persisted selection but not
  * published; the caller publishes after its recheck. Built synchronously and
  * returned unevaluated, so the steer yields exactly the preparation it always did. */

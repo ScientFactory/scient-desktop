@@ -43,6 +43,7 @@ import {
   type Step,
   type StepFacts,
 } from "./libraryModel.ts";
+import { sourceCandidate } from "./sourceFixtures.ts";
 
 /** A Library and three projects in one folder, all at fixed paths so a snapshot can be put back. */
 export interface Scenario {
@@ -97,32 +98,22 @@ function operationIdOf(label: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-const candidateOf = (label: string, pdf: boolean): ScientSourceCandidate => ({
-  sourceKey: label,
-  type: "article",
-  customType: null,
-  title: initialTitle(label),
-  creators: [
-    { creatorType: "author", givenName: "Ada", familyName: `Author${label}`, literalName: null },
-  ],
-  issuedRaw: "2026",
-  issuedYear: 2026,
-  identifiers: [{ scheme: "doi", value: `10.1000/fixture.${label.toLowerCase()}` }],
-  abstract: null,
-  containerTitle: "Journal of Fixtures",
-  publisher: null,
-  volume: null,
-  issue: null,
-  pages: null,
-  language: "en",
-  url: null,
-  tags: [],
-  externalReferences: [],
-  fieldProvenance: [],
-  pdfAvailable: pdf,
-  pdfFileName: pdf ? `${label}.pdf` : null,
-  pdfAttachmentCount: pdf ? 1 : 0,
-});
+const candidateOf = (label: string, pdf: boolean): ScientSourceCandidate =>
+  sourceCandidate({
+    sourceKey: label,
+    title: initialTitle(label),
+    creators: [
+      { creatorType: "author", givenName: "Ada", familyName: `Author${label}`, literalName: null },
+    ],
+    issuedRaw: "2026",
+    issuedYear: 2026,
+    identifiers: [{ scheme: "doi", value: `10.1000/fixture.${label.toLowerCase()}` }],
+    containerTitle: "Journal of Fixtures",
+    language: "en",
+    pdfAvailable: pdf,
+    pdfFileName: pdf ? `${label}.pdf` : null,
+    pdfAttachmentCount: pdf ? 1 : 0,
+  });
 
 function unexpected(step: Step, outcome: string): never {
   throw new Error(`Step ${JSON.stringify(step)} ended as "${outcome}".`);

@@ -13,12 +13,13 @@ import {
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
   SCIENT_AGENT_TARGETS,
-  MUSE_TARGETS,
   resolveMuseArtifactPolicy,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
+import { MUSE_SUPPORTED_TARGETS as MUSE_TARGETS } from "@scientfactory/provider-runtime/testing";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";

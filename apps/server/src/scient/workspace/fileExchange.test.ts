@@ -5,7 +5,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { createDiskImage, diskImagesAvailable, type DiskImageFormat } from "./diskImage.testkit.ts";
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 
-import { bindNativeFilePublication, runNativeFilePublication } from "./NativeFilePublication.ts";
+import {
+  bindNativeFilePublication,
+  withNativeFilePublicationLease,
+} from "./NativeFilePublication.ts";
+import { publicationLeaseBindings } from "./RetainedFileMutation.ts";
 
 const publication = await filePublicationTestHelper();
 /** Mounts a fresh disk image of `format`, runs `body` in a folder on it, then detaches. */
@@ -43,13 +47,20 @@ describe.skipIf(publication === undefined || !diskImagesAvailable)(
             },
             "bound-object",
           );
-          const result = await runNativeFilePublication(publication!, {
-            binding,
-            operation: "exchange",
-            authority: "bound-object",
-            sourceName: "staged",
-            destinationName: "target",
-          });
+          // The lease retained mutation holds: the target's parent and the record folder.
+          const result = await withNativeFilePublicationLease(
+            publication!,
+            await publicationLeaseBindings(publication!, [binding], [recordPath]),
+            (lease) =>
+              lease.run({
+                binding,
+                operation: "exchange",
+                authority: "bound-object",
+                sourceName: "staged",
+                destinationName: "target",
+              }),
+            { mode: "exclusive" },
+          );
           if (format === "APFS") {
             expect(result.code).toBe(0);
             expect(result.outcome).toBe("applied");

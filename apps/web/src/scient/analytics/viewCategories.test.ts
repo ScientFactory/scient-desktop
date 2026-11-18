@@ -1,11 +1,7 @@
 import { expect, it } from "vite-plus/test";
+import { SETTINGS_SECTION_LABELS } from "~/components/settings/settingsSearch";
 import type { RightPanelSurface } from "~/rightPanelStore";
-import {
-  panelCategory,
-  panelViewProperties,
-  SETTINGS_ANALYTICS_SECTIONS,
-  settingsCategory,
-} from "./viewCategories";
+import { panelCategory, panelViewProperties, settingsCategory } from "./viewCategories";
 
 type RightPanelFileAttachment = NonNullable<
   Extract<RightPanelSurface, { kind: "file" }>["attachment"]
@@ -42,12 +38,16 @@ it("never uses panel identity, path or titles as categories", () => {
   ).toBe("compute");
 });
 it("reports every settings page by name, never as other", () => {
-  expect(settingsCategory("/settings/documents")).toBe("documents");
-  expect(settingsCategory("/settings/maintenance")).toBe("storage");
-  expect(SETTINGS_ANALYTICS_SECTIONS.size).toBeGreaterThan(10);
-  for (const section of SETTINGS_ANALYTICS_SECTIONS) {
-    expect(section, `settings section "${section}" is sent by name`).toMatch(SENT_AS_IS);
+  const paths = Object.keys(SETTINGS_SECTION_LABELS);
+  expect(paths.length).toBeGreaterThan(10);
+  for (const path of paths) {
+    const section = settingsCategory(path);
+    expect(section, `${path} is reported by name`).not.toBe("other");
+    expect(section, `${path} is sent by name`).toMatch(SENT_AS_IS);
   }
+  expect(settingsCategory("/settings/documents")).toBe("documents");
+  // A page split from one the contract names reports as that page.
+  expect(settingsCategory("/settings/maintenance")).toBe("storage");
 });
 it("reports a file tab's extension and nothing else about it", () => {
   const file = (relativePath: string, attachmentName?: string) =>

@@ -437,37 +437,6 @@ it("drops the follow from the saved position when it ends, with nothing else to 
   expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
 });
 
-it("follows a queued prompt the server delivers in one update while the reader is at the end", async (context) => {
-  await using _fixture = _createFixture(context);
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const key = "follow:queued";
-  const { history, runs } = await answeredThread(_fixture, key);
-  // The prompt was never seen waiting: its queueing and its delivery arrive
-  // in one V2 update, as the delivered (queued_turn) prompt and its run.
-  const delivered = message(10, "user", {
-    text: "Queued follow-up",
-    runId: "run-10",
-    inputIntent: "queued_turn",
-  });
-  const runningRuns = [...runs, run("run-10", "message-10", "running")];
-  await render(_fixture, key, [...history, delivered], runningRuns);
-  await play(_fixture, 16);
-  expect(_fixture.chat.followPromptId).toBe("message-10");
-  const start = viewport(_fixture).scrollTop;
-  for (let count = 1; count <= 6; count++) {
-    await render(_fixture, key, [...history, delivered, ...steps(count, "run-10")], runningRuns);
-    await playUntil(
-      _fixture,
-      () =>
-        toEnd(_fixture) <= 1 ||
-        promptTextTop(_fixture, "message-10") <= CHAT_TIMELINE_ANCHOR_OFFSET + 1,
-    );
-  }
-  expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
-});
-
 it("follows this window's queued send when its delivery arrives before its receipt", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

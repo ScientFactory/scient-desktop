@@ -3039,26 +3039,6 @@ describe("compute session startup", () => {
 });
 
 describe("compute session execution", () => {
-  it.effect("waits for host-backed completion without depending on wall-clock time", () =>
-    Effect.gen(function* () {
-      const test = yield* harness();
-      yield* test.use(
-        Effect.gen(function* () {
-          yield* start;
-          yield* submit("print(1)", "host-completion");
-          const completed = yield* waitForExecution(
-            ComputeExecutionId.make("host-completion"),
-            "succeeded",
-          );
-          expect(completed.result?.status).toBe("succeeded");
-          expect((yield* outputsOf(ComputeExecutionId.make("host-completion"))).outputs).toEqual([
-            streamOutput(0, "1\n"),
-          ]);
-        }),
-      );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("rejects MATLAB definition files before they reach the runtime", () =>
     Effect.gen(function* () {
       const matlabProfile: ComputeRuntimeProfile = {

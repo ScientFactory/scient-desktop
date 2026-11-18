@@ -5,7 +5,7 @@ import {
   piCustomModelReasoning,
   piNativeProviderId,
 } from "./PiCustomModels.ts";
-import { piDiscoveredModelToServerProviderModel } from "@t3tools/provider-pi/server/model";
+import { piModelCapabilities } from "@t3tools/provider-pi/server/model";
 
 it("inherits only from an exact native endpoint and API format", () => {
   expect(piNativeProviderId("https://api.openai.com/v1", "openai-responses")).toBe("openai");
@@ -25,13 +25,12 @@ it("applies explicit reasoning overrides without a derived metadata snapshot", (
     reasoningOverride: { supported: true, levels: ["low", "high"] as const },
   };
   const config = piCustomModelReasoning(model, "openai-completions");
-  const result = piDiscoveredModelToServerProviderModel({
-    provider: "scient_fixture",
-    id: model.modelId,
-    name: model.name,
-    ...config,
-  });
-  expect(result?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+  // The composer offers what Pi's own model inventory reports for this configuration.
+  const capabilities = piModelCapabilities(
+    { provider: "scient_fixture", id: model.modelId, name: model.name, ...config },
+    undefined,
+  );
+  expect(capabilities.optionDescriptors?.[0]).toMatchObject({
     options: [{ id: "low" }, { id: "high" }],
   });
   expect(config.compat).toMatchObject({ supportsReasoningEffort: true });
@@ -142,9 +141,7 @@ it.each([false, true])(
       contextWindow: automatic ? 200000 : 32000,
       maxTokens: automatic ? 64000 : 4096,
     });
-    expect(
-      piDiscoveredModelToServerProviderModel(inherited!)?.capabilities?.optionDescriptors?.[0],
-    ).toMatchObject({
+    expect(piModelCapabilities(inherited!, undefined).optionDescriptors?.[0]).toMatchObject({
       options: [{ id: "low" }, { id: "high" }, { id: "max" }],
     });
     expect(unknown?.reasoning).toBe(false);

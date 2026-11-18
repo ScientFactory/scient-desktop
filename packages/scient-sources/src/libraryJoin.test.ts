@@ -52,6 +52,7 @@ import {
 } from "./testing/libraryModel.ts";
 import { checkLibraryRules } from "./testing/libraryRules.ts";
 import { createScenario, libraryOf, runStep, type Scenario } from "./testing/librarySteps.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const roots: string[] = [];
 
@@ -526,37 +527,22 @@ describe("adding what another Library holds", () => {
     ]);
     const ours = await built([{ op: "add", label: "same", pdf: false }]);
     const original = workOf(theirs.model, "orig").sourceId;
-    const candidate = (sourceKey: string, title: string) => ({
-      sourceKey,
-      type: "article" as const,
-      customType: null,
-      title,
-      creators: [
-        {
-          creatorType: "author" as const,
-          givenName: "Ada",
-          familyName: "Byron",
-          literalName: null,
-        },
-      ],
-      issuedRaw: "2019",
-      issuedYear: 2019,
-      identifiers: [],
-      abstract: null,
-      containerTitle: null,
-      publisher: null,
-      volume: null,
-      issue: null,
-      pages: null,
-      language: null,
-      url: null,
-      tags: [],
-      externalReferences: [],
-      fieldProvenance: [],
-      pdfAvailable: false,
-      pdfFileName: null,
-      pdfAttachmentCount: 0,
-    });
+    const candidate = (sourceKey: string, title: string) =>
+      sourceCandidate({
+        sourceKey,
+        type: "article" as const,
+        title,
+        creators: [
+          {
+            creatorType: "author" as const,
+            givenName: "Ada",
+            familyName: "Byron",
+            literalName: null,
+          },
+        ],
+        issuedRaw: "2019",
+        issuedYear: 2019,
+      });
     const add = (library: typeof ours.library, key: string, title: string, rebuiltFrom?: string) =>
       importScientSource({
         root: library,
@@ -613,30 +599,7 @@ describe("adding what another Library holds", () => {
       importScientSource({
         root: library,
         operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
-        candidate: {
-          sourceKey: `rebuilt-${title}`,
-          type: "article",
-          customType: null,
-          title,
-          creators: [],
-          issuedRaw: null,
-          issuedYear: null,
-          identifiers: [],
-          abstract: null,
-          containerTitle: null,
-          publisher: null,
-          volume: null,
-          issue: null,
-          pages: null,
-          language: null,
-          url: null,
-          tags: [],
-          externalReferences: [],
-          fieldProvenance: [],
-          pdfAvailable: false,
-          pdfFileName: null,
-          pdfAttachmentCount: 0,
-        },
+        candidate: sourceCandidate({ sourceKey: `rebuilt-${title}`, title }),
         hydratedFromProjectSourceId: "source_project_original",
         actor: "user",
         intake: "file",
@@ -1297,37 +1260,22 @@ describe("what differs between the two Libraries, and taking one thing at a time
       sourceId: string,
     ) => Promise<unknown>,
   ) {
-    const candidate = (sourceKey: string) => ({
-      sourceKey,
-      type: "article" as const,
-      customType: null,
-      title: "A study with no identifier",
-      creators: [
-        {
-          creatorType: "author" as const,
-          givenName: "Ada",
-          familyName: "Byron",
-          literalName: null,
-        },
-      ],
-      issuedRaw: "2019",
-      issuedYear: 2019,
-      identifiers: [],
-      abstract: null,
-      containerTitle: null,
-      publisher: null,
-      volume: null,
-      issue: null,
-      pages: null,
-      language: null,
-      url: null,
-      tags: [],
-      externalReferences: [],
-      fieldProvenance: [],
-      pdfAvailable: false,
-      pdfFileName: null,
-      pdfAttachmentCount: 0,
-    });
+    const candidate = (sourceKey: string) =>
+      sourceCandidate({
+        sourceKey,
+        type: "article" as const,
+        title: "A study with no identifier",
+        creators: [
+          {
+            creatorType: "author" as const,
+            givenName: "Ada",
+            familyName: "Byron",
+            literalName: null,
+          },
+        ],
+        issuedRaw: "2019",
+        issuedYear: 2019,
+      });
     const add = (library: Awaited<ReturnType<typeof built>>["library"], key: string) =>
       importScientSource({
         root: library,

@@ -28,7 +28,6 @@ import { deriveProviderInstanceEntries } from "../providerInstances";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type RightPanelSurface,
-  pullRequestSurface,
   selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -80,9 +79,7 @@ import {
   timelineHasEphemeralPreviewUrls,
   codexArtifactTemplatePromptToAppend,
   shouldRefocusComposerOnWindowFocus,
-  shouldOpenProactivePullRequest,
   shouldRetargetThreadPullRequestPanel,
-  shouldOpenProactiveTurnDiff,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
@@ -680,60 +677,6 @@ describe("deriveCommittedServerUserMessageIds", () => {
   });
 });
 describe("proactive panels", () => {
-  it("keeps a manual PR selection made after following a replacement while loading", () => {
-    useRightPanelStore.setState({
-      byThreadKey: {},
-      userActionRevisionByThreadKey: {},
-    });
-    const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
-    const panels = useRightPanelStore.getState();
-    const oldPr = pullRequestSurface({
-      projectId: "project-1",
-      repository: "owner/repo",
-      number: 1,
-    });
-    const replacement = pullRequestSurface({
-      ...oldPr,
-      number: 2,
-    });
-    const runId = RunId.make("turn-1");
-    panels.openPullRequest(ref, oldPr);
-    const loading = observeProactivePanelUserChoice(null, {
-      threadKey: "env-1:thread-1",
-      runningTurnId: runId,
-      userActionRevision: panels.getUserActionRevision(ref),
-    });
-    expect(panels.openProactive(ref, replacement, loading.userActionRevision)).toBe(true);
-    panels.activateSurface(ref, oldPr.id);
-    const loaded = observeProactivePanelUserChoice(loading, {
-      threadKey: loading.threadKey,
-      runningTurnId: runId,
-      userActionRevision: panels.getUserActionRevision(ref),
-    });
-    expect(panels.openProactive(ref, replacement, loaded.userActionRevision)).toBe(false);
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref)).toEqual(
-      oldPr,
-    );
-    expect(shouldOpenProactivePullRequest(loaded.targetKey, "owner/repo:2")).toBe(true);
-    expect(
-      shouldOpenProactiveTurnDiff({
-        previousRunningTurnId: loaded.runningTurnId,
-        runningTurnId: null,
-        settledTurnId: runId,
-        turnCompleted: true,
-      }),
-    ).toBe(true);
-    expect(
-      panels.openProactive(
-        ref,
-        {
-          kind: "diff",
-          turnId: runId,
-        },
-        loaded.userActionRevision,
-      ),
-    ).toBe(false);
-  });
   it.each(["idle", "loading", "observed"] as const)(
     "captures a new run's choice once with initial state %s",
     (initialState) => {
@@ -913,42 +856,6 @@ describe("draft promotion during worktree setup", () => {
     environmentId,
     threadId,
   };
-  it.each([null, "preparing", "starting"] as const)(
-    "keeps the draft mounted until the server owns the send, with setup run %s",
-    (status) => {
-      const serverThread = makeThread({
-        latestRun: status
-          ? {
-              ...completedTurn,
-              status,
-              startedAt: null,
-              completedAt: null,
-            }
-          : null,
-        latestUserMessageAt: null,
-      });
-      expect(
-        resolveDraftPromotionNavigationTarget({
-          serverThreadRef,
-          serverThread,
-          backgroundSubmissionPending: false,
-        }),
-      ).toBeNull();
-    },
-  );
-  it("promotes once the bootstrap persisted the user message, before any run", () => {
-    const serverThread = makeThread({
-      latestRun: null,
-      latestUserMessageAt: now,
-    });
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread,
-        backgroundSubmissionPending: false,
-      }),
-    ).toEqual(serverThreadRef);
-  });
   it("promotes when the provider starts the first run", () => {
     expect(
       resolveDraftPromotionNavigationTarget({

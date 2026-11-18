@@ -363,7 +363,7 @@ function IncludeCaution({
 }
 
 /** The export choices. Inclusion choices live in the dialog; the caution is local and temporary. */
-export function ConversationExportForm(props: {
+function ConversationExportForm(props: {
   readonly preparation: ScientConversationExportPreparation;
   readonly registrations: ReadonlyArray<ConversationExportFormatRegistration>;
   readonly state: ExportDialogState;

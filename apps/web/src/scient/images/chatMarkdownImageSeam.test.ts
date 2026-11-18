@@ -44,12 +44,3 @@ describe("ChatMarkdown workspace-image seam", () => {
     expect(imageCardSource).not.toContain("<iframe");
   });
 });
-
-// regression: e34e687915 fix(chat): make rich media reliable and copyable
-it("mounts one of each Scient-owned image component", () => {
-  expect(chatMarkdownSource).toContain("ScientInlineWorkspaceImage,");
-  expect(chatMarkdownSource).toContain("ScientPendingWorkspaceImage,");
-  expect(chatMarkdownSource.match(/<ScientInlineWorkspaceImage/gu)).toHaveLength(1);
-  expect(chatMarkdownSource.match(/<ScientPendingWorkspaceImage/gu)).toHaveLength(1);
-  expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
-});

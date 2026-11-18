@@ -11,7 +11,6 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
-  type OrchestrationThreadActivity,
   type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
@@ -194,28 +193,6 @@ export const CHATGPT_WORKSPACE_ADMIN_REQUEST =
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
-}
-
-/** A historical limit must not turn an unrelated current failure into a usage notice. */
-export function isChatGptUsageLimitError(
-  activities: readonly OrchestrationThreadActivity[],
-  error: string | null | undefined,
-): boolean {
-  if (!error) return false;
-  for (let index = activities.length - 1; index >= 0; index--) {
-    const activity = activities[index]!;
-    if (activity.kind !== "runtime.error") continue;
-    const payload = activity.payload;
-    return (
-      typeof payload === "object" &&
-      payload !== null &&
-      "code" in payload &&
-      payload.code === CHATGPT_USAGE_LIMIT_CODE &&
-      "message" in payload &&
-      payload.message === error
-    );
-  }
-  return false;
 }
 
 export const CURSOR_USAGE_WINDOWS = [
