@@ -213,14 +213,18 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
  * deliver SIGKILL to an unrelated process.
  */
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
-  kill: (signal: NodeJS.Signals) => boolean,
+  // SCIENT-FORK:START — signal 0 probes whether any member of the group is still alive.
+  kill: (signal: NodeJS.Signals | 0) => boolean,
+  // SCIENT-FORK:END
   hasExited: () => boolean,
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  // SCIENT-FORK:START — the grace is an upper bound: stop waiting once the process group is gone.
+  // SCIENT-FORK:START — the grace is an upper bound: stop waiting once no member of the group is
+  // left, extension children included. The escalation decision below is unchanged. A recycled
+  // group id can only make this wait the full grace.
   yield* Effect.sleep(TERMINATION_EXIT_POLL).pipe(
-    Effect.repeat({ until: () => hasExited() }),
+    Effect.repeat({ until: () => !kill(0) }),
     Effect.timeoutOption(TERMINATION_GRACE),
   );
   // SCIENT-FORK:END
@@ -256,7 +260,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   let childExited = false;
   let diagnosingStdoutClose = false;
 
-  const killProcessGroup = (signal: NodeJS.Signals): boolean => {
+  // SCIENT-FORK:START — also takes signal 0, the group liveness probe.
+  const killProcessGroup = (signal: NodeJS.Signals | 0): boolean => {
+    // SCIENT-FORK:END
     try {
       if (platform === "win32") {
         process.kill(Number(child.pid), signal);
