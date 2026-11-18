@@ -13,6 +13,7 @@ import {
   type ComputeResultsRerunResult,
 } from "@t3tools/contracts";
 import { findMarkdownResultReferences, resultReferenceState } from "@t3tools/shared/computeResults";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -21,6 +22,13 @@ import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.t
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type { ComputeRuntimeDescriptor } from "../compute/ComputeSessionService.ts";
 import type { ComputeResults } from "./ComputeResults.ts";
+import {
+  placeLatexResult,
+  placementStatus,
+  undoPlacedFilesUpdate,
+  updatePlacedFiles,
+  type ProjectFiles,
+} from "./resultPlacements.ts";
 
 const failure = (message: string) => (cause: unknown) =>
   new ComputeResultsError({
@@ -49,6 +57,22 @@ async function sameCopyInProject(root: string, relativePath: string, bytes: Uint
   }
 }
 
+/** Bytes of a regular file inside the project, links resolved, or null. */
+async function readProjectFile(root: string, relativePath: string): Promise<Uint8Array | null> {
+  try {
+    const target = NodePath.join(root, ...relativePath.split("/"));
+    const [realRoot, realTarget] = await Promise.all([
+      NodeFSP.realpath(root),
+      NodeFSP.realpath(target),
+    ]);
+    if (!realTarget.startsWith(`${realRoot}${NodePath.sep}`)) return null;
+    if (!(await NodeFSP.stat(realTarget)).isFile()) return null;
+    return new Uint8Array(await NodeFSP.readFile(realTarget));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The linked-results operations both doors use: the app's RPC and the agents' tools. Each takes the
  * project folder and resolves its Compute project the same way Compute does.
@@ -62,7 +86,7 @@ export function makeResultOperations(input: {
   readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
   readonly workspace: Pick<
     WorkspaceFileSystem.WorkspaceFileSystem["Service"],
-    "readFile" | "createBinaryFile"
+    "readFile" | "createBinaryFile" | "writeBinaryFile"
   >;
 }) {
   const project = (cwd: string) =>
@@ -232,7 +256,136 @@ export function makeResultOperations(input: {
     });
   });
 
-  return { resolve, list, placeFigure, rerun, check };
+  /**
+   * Project files through the workspace's guarded writer: a write lands only on the bytes the
+   * caller saw, and an open editor hears about it.
+   */
+  const projectFiles = (root: string): ProjectFiles => ({
+    read: (path) => readProjectFile(root, path),
+    write: (path, bytes, expectedSha256) =>
+      Effect.runPromise(
+        input.workspace
+          .writeBinaryFile({
+            cwd: root,
+            relativePath: path,
+            bytes,
+            ...(expectedSha256 === null
+              ? { createOnly: true as const }
+              : { expectedRevision: `sha256:${expectedSha256}` }),
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.catchTags({
+              WorkspaceFileExistsError: () => Effect.succeed(false),
+              WorkspaceFileRevisionConflictError: () => Effect.succeed(false),
+            }),
+          ),
+      ),
+  });
+
+  const documentText = (root: string, documentPath: string) =>
+    input.workspace.readFile({ cwd: root, relativePath: documentPath }).pipe(
+      Effect.map((file) => file.contents),
+      Effect.mapError(failure(`${documentPath} could not be read.`)),
+    );
+
+  const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
+  /** Places a value, table or figure for a LaTeX paper and says what to insert. */
+  const placeLatex = Effect.fn("ResultOperations.placeLatex")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly revision: string;
+    readonly output: string;
+    readonly pointer: string | null;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const placedAt = yield* now;
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        placeLatexResult(context, {
+          documentPath: request.documentPath,
+          documentText: text,
+          revision: request.revision,
+          output: request.output,
+          pointer: request.pointer,
+          now: placedAt,
+        }),
+    );
+  });
+
+  /** The placed files under a LaTeX paper's root, and whether the shown PDF used them. */
+  const placements = Effect.fn("ResultOperations.placements")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly build: {
+      readonly finishedAt: string;
+      readonly digests: Readonly<Record<string, string>>;
+    } | null;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        placementStatus(context, { documentPath: request.documentPath, build: request.build }),
+    );
+  });
+
+  const updateFiles = Effect.fn("ResultOperations.updateFiles")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly scriptPath: string;
+    readonly replaceEdited: boolean;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const updatedAt = yield* now;
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        updatePlacedFiles(context, {
+          documentPath: request.documentPath,
+          documentText: text,
+          script: request.scriptPath,
+          replaceEdited: request.replaceEdited,
+          now: updatedAt,
+        }),
+    );
+  });
+
+  const undoUpdate = Effect.fn("ResultOperations.undoUpdate")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly scriptPath: string;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        undoPlacedFilesUpdate(context, {
+          documentPath: request.documentPath,
+          script: request.scriptPath,
+        }),
+    );
+  });
+
+  return {
+    resolve,
+    list,
+    placeFigure,
+    rerun,
+    check,
+    placeLatex,
+    placements,
+    updateFiles,
+    undoUpdate,
+  };
 }
 
 export type ResultOperations = ReturnType<typeof makeResultOperations>;

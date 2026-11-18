@@ -60,7 +60,13 @@ describe("Linked results client authorization", () => {
       scopes: [AuthOrchestrationOperateScope],
       permissions: [AuthOrchestrationOperateScope],
     };
-    for (const method of [WS_METHODS.computeResultsPlaceFigure, WS_METHODS.computeResultsRerun]) {
+    for (const method of [
+      WS_METHODS.computeResultsPlaceFigure,
+      WS_METHODS.computeResultsRerun,
+      WS_METHODS.computeResultsPlaceLatex,
+      WS_METHODS.computeResultsUpdateFiles,
+      WS_METHODS.computeResultsUndoUpdate,
+    ]) {
       const scopes = clientRpcRequiredScopes(method, {});
       expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
       expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);

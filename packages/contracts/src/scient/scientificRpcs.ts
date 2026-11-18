@@ -61,6 +61,13 @@ import {
 } from "../scientCompute.ts";
 import {
   ComputeResultsError,
+  ComputeResultsFilesChangeResult,
+  ComputeResultsPlaceLatexInput,
+  ComputeResultsPlaceLatexResult,
+  ComputeResultsPlacementsInput,
+  ComputeResultsPlacementsResult,
+  ComputeResultsUndoUpdateInput,
+  ComputeResultsUpdateFilesInput,
   ComputeResultsListInput,
   ComputeResultsListResult,
   ComputeResultsPlaceFigureInput,
@@ -128,6 +135,10 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeResultsList: "compute.results.list",
   computeResultsPlaceFigure: "compute.results.placeFigure",
   computeResultsRerun: "compute.results.rerun",
+  computeResultsPlaceLatex: "compute.results.placeLatex",
+  computeResultsPlacements: "compute.results.placements",
+  computeResultsUpdateFiles: "compute.results.updateFiles",
+  computeResultsUndoUpdate: "compute.results.undoUpdate",
   notebookRead: "notebook.read",
   notebookReadOutput: "notebook.readOutput",
   notebookEdit: "notebook.edit",
@@ -399,6 +410,42 @@ const WsComputeResultsRerunRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeRe
   error: ComputeResultsRpcError,
 });
 
+const WsComputeResultsPlaceLatexRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPlaceLatex,
+  {
+    payload: ComputeResultsPlaceLatexInput,
+    success: ComputeResultsPlaceLatexResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsPlacementsRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsPlacements,
+  {
+    payload: ComputeResultsPlacementsInput,
+    success: ComputeResultsPlacementsResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsUpdateFilesRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsUpdateFiles,
+  {
+    payload: ComputeResultsUpdateFilesInput,
+    success: ComputeResultsFilesChangeResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
+const WsComputeResultsUndoUpdateRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeResultsUndoUpdate,
+  {
+    payload: ComputeResultsUndoUpdateInput,
+    success: ComputeResultsFilesChangeResult,
+    error: ComputeResultsRpcError,
+  },
+);
+
 const WsComputeSaveConsoleNotebookRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeSaveConsoleNotebook,
   {
@@ -486,6 +533,10 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeResultsListRpc,
   WsComputeResultsPlaceFigureRpc,
   WsComputeResultsRerunRpc,
+  WsComputeResultsPlaceLatexRpc,
+  WsComputeResultsPlacementsRpc,
+  WsComputeResultsUpdateFilesRpc,
+  WsComputeResultsUndoUpdateRpc,
   WsComputeSubmitCellsRpc,
   WsNotebookReadRpc,
   WsNotebookReadOutputRpc,

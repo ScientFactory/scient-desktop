@@ -28,7 +28,14 @@ export const ComputeResultInput = Schema.Struct({
 });
 export type ComputeResultInput = typeof ComputeResultInput.Type;
 
-export const ComputeResultOutputKind = Schema.Literals(["values", "figure", "file"]);
+/** `table` is a CSV; `latex` is a `.tex` file the script wrote itself, such as a finished table. */
+export const ComputeResultOutputKind = Schema.Literals([
+  "values",
+  "figure",
+  "table",
+  "latex",
+  "file",
+]);
 export type ComputeResultOutputKind = typeof ComputeResultOutputKind.Type;
 
 export const ComputeResultOutput = Schema.Struct({
@@ -154,7 +161,10 @@ export type ComputeResultsListInput = typeof ComputeResultsListInput.Type;
 export const ComputeResultScript = Schema.Struct({
   latest: ComputeResultSummary,
   values: Schema.Array(ComputeResultValue),
+  /** Includes PDF figures, which LaTeX papers take and Markdown papers cannot show. */
   figures: Schema.Array(ProjectPath),
+  /** CSV tables and `.tex` files; optional so an older server's answer still reads. */
+  tables: Schema.optional(Schema.Array(ProjectPath)),
   revisions: Schema.Number,
 });
 export type ComputeResultScript = typeof ComputeResultScript.Type;
@@ -190,6 +200,115 @@ export const ComputeResultsRerunResult = Schema.Union([
   Schema.TaggedStruct("failed", { message: Text }),
 ]);
 export type ComputeResultsRerunResult = typeof ComputeResultsRerunResult.Type;
+
+/**
+ * LaTeX papers take results as ordinary files at stable paths beside the root document, under
+ * `results/<script>/`. Scient places them from one revision and replaces them only on Update files.
+ */
+export const ComputeResultsPlaceLatexInput = Schema.Struct({
+  cwd: Cwd,
+  /** The root document, whose folder LaTeX resolves `\input` and `\includegraphics` from. */
+  documentPath: ProjectPath,
+  revision: Text,
+  output: ProjectPath,
+  /** For a value: its JSON Pointer in `output`. */
+  pointer: Schema.NullOr(Text),
+});
+export type ComputeResultsPlaceLatexInput = typeof ComputeResultsPlaceLatexInput.Type;
+
+export const ComputeResultsPlaceLatexResult = Schema.Struct({
+  /** LaTeX for the cursor: a macro call inline, or a `figure`/`table` environment as a block. */
+  insert: Schema.Struct({ kind: Schema.Literals(["inline", "block"]), source: Text }),
+  /** For a value: the macro and its LaTeX definition, so an editor can show it before compiling. */
+  macro: Schema.NullOr(Schema.Struct({ name: Text, definition: Text })),
+  /** A preamble line the insertion needs, already absent-checked by the caller: `\input{…}`. */
+  preambleInput: Schema.NullOr(Text),
+  /** Packages the inserted LaTeX needs, such as `booktabs` for a table. */
+  packages: Schema.Array(Text),
+  /** Project paths written or confirmed. */
+  files: Schema.Array(ProjectPath),
+});
+export type ComputeResultsPlaceLatexResult = typeof ComputeResultsPlaceLatexResult.Type;
+
+export const ComputeResultFileState = Schema.Literals([
+  /** Matches its run, and nothing the run used has changed. */
+  "current",
+  /** Matches its run, but the script or an input changed since. */
+  "out-of-date",
+  /** Changed in the project since Scient placed it. */
+  "edited",
+  "missing",
+]);
+export type ComputeResultFileState = typeof ComputeResultFileState.Type;
+
+export const ComputeResultPlacedFile = Schema.Struct({
+  path: ProjectPath,
+  state: ComputeResultFileState,
+  /** The open PDF was built from a different version of this file: recompile to see it. */
+  differsFromBuild: Schema.Boolean,
+});
+export type ComputeResultPlacedFile = typeof ComputeResultPlacedFile.Type;
+
+export const ComputeResultPlacedScript = Schema.Struct({
+  /** The revision the placed files come from. */
+  summary: ComputeResultSummary,
+  /** A newer successful revision Update files would place. */
+  newer: Schema.NullOr(ComputeResultSummary),
+  /** Why Update files would refuse the newer revision, such as a value it no longer produces. */
+  updateBlocked: Schema.NullOr(Text),
+  /** What Update files would change, as people read it: `\resultAnalysisHr: 0.75 → 0.73`. */
+  changes: Schema.Array(Text),
+  files: Schema.Array(ComputeResultPlacedFile),
+  /** The last Update files can still be undone. */
+  canUndo: Schema.Boolean,
+});
+export type ComputeResultPlacedScript = typeof ComputeResultPlacedScript.Type;
+
+export const ComputeResultsPlacementsInput = Schema.Struct({
+  cwd: Cwd,
+  documentPath: ProjectPath,
+  /**
+   * What the shown PDF was built from: `.tex` paths with `sha256:<hex>` digests, and when the
+   * build finished. Null when there is no build, or its dependency record was incomplete.
+   */
+  build: Schema.NullOr(
+    Schema.Struct({
+      finishedAt: Text,
+      digests: Schema.Record(Schema.String, Schema.String),
+    }),
+  ),
+});
+export type ComputeResultsPlacementsInput = typeof ComputeResultsPlacementsInput.Type;
+
+export const ComputeResultsPlacementsResult = Schema.Struct({
+  scripts: Schema.Array(ComputeResultPlacedScript),
+  /** "build" when the PDF's dependency record was compared; "placed" when only Scient's record was. */
+  coverage: Schema.Literals(["build", "placed"]),
+});
+export type ComputeResultsPlacementsResult = typeof ComputeResultsPlacementsResult.Type;
+
+export const ComputeResultsUpdateFilesInput = Schema.Struct({
+  cwd: Cwd,
+  documentPath: ProjectPath,
+  scriptPath: ProjectPath,
+  /** Replace files changed since they were placed; their bytes are kept for Undo. */
+  replaceEdited: Schema.Boolean,
+});
+export type ComputeResultsUpdateFilesInput = typeof ComputeResultsUpdateFilesInput.Type;
+
+export const ComputeResultsUndoUpdateInput = Schema.Struct({
+  cwd: Cwd,
+  documentPath: ProjectPath,
+  scriptPath: ProjectPath,
+});
+export type ComputeResultsUndoUpdateInput = typeof ComputeResultsUndoUpdateInput.Type;
+
+export const ComputeResultsFilesChangeResult = Schema.Union([
+  Schema.TaggedStruct("changed", { files: Schema.Array(ProjectPath) }),
+  /** Nothing was written. `edited` lists files changed since placement, which a retry may replace. */
+  Schema.TaggedStruct("refused", { message: Text, edited: Schema.Array(ProjectPath) }),
+]);
+export type ComputeResultsFilesChangeResult = typeof ComputeResultsFilesChangeResult.Type;
 
 export class ComputeResultsError extends Schema.TaggedError<ComputeResultsError>()(
   "ComputeResultsError",

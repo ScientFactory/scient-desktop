@@ -85,6 +85,12 @@ function outputKind(name: string): { kind: ComputeResultOutputKind; mediaType: s
       return { kind: "figure", mediaType: "image/jpeg" };
     case ".svg":
       return { kind: "figure", mediaType: "image/svg+xml" };
+    case ".pdf":
+      return { kind: "figure", mediaType: "application/pdf" };
+    case ".csv":
+      return { kind: "table", mediaType: "text/csv" };
+    case ".tex":
+      return { kind: "latex", mediaType: "text/x-tex" };
     default:
       return { kind: "file", mediaType: "application/octet-stream" };
   }
@@ -426,6 +432,12 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
         figures: latest.outputs
           .filter((output) => output.kind === "figure" && output.pruned !== true)
           .map((output) => output.name),
+        tables: latest.outputs
+          .filter(
+            (output) =>
+              (output.kind === "table" || output.kind === "latex") && output.pruned !== true,
+          )
+          .map((output) => output.name),
         revisions: revisions.filter((candidate) => candidate.script.path === latest.script.path)
           .length,
       });
@@ -443,5 +455,15 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     return path === null ? null : { path, sha256: output.sha256 };
   };
 
-  return { resolve, list, figure };
+  /** A stored output's file, for any kind, or null when it is unknown or pruned. */
+  const outputFile = async (revision: ComputeResultRevision, outputName: string) => {
+    const output = revision.outputs.find((candidate) => candidate.name === outputName);
+    if (output === undefined || output.pruned === true) return null;
+    const path = revisionOutputPath(layout, projectId, revision.revision, output.name);
+    return path === null ? null : { path, output };
+  };
+
+  return { resolve, list, figure, revisions: all, summary, outputFile };
 }
+
+export type ResultsReader = ReturnType<typeof makeResultsReader>;

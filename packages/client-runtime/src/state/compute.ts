@@ -568,6 +568,22 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeResultsRerun,
       scheduler: executionScheduler,
     }),
+    resultsPlaceLatex: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-place-latex",
+      tag: WS_METHODS.computeResultsPlaceLatex,
+    }),
+    resultsPlacements: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-placements",
+      tag: WS_METHODS.computeResultsPlacements,
+    }),
+    resultsUpdateFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-update-files",
+      tag: WS_METHODS.computeResultsUpdateFiles,
+    }),
+    resultsUndoUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-undo-update",
+      tag: WS_METHODS.computeResultsUndoUpdate,
+    }),
     saveConsoleNotebook: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:save-console-notebook",
       tag: WS_METHODS.computeSaveConsoleNotebook,

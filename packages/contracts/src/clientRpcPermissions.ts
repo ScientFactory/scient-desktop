@@ -26,9 +26,12 @@ export * from "./scient/sourcesPermissions.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
-  // SCIENT-FORK:START — linked results: copying a figure writes the project; re-run starts a run.
+  // SCIENT-FORK:START — linked results: placing, updating and undoing write the project; re-run starts a run.
   [WS_METHODS.computeResultsPlaceFigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsPlaceLatex]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsUpdateFiles]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsUndoUpdate]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
   ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,

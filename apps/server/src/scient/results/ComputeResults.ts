@@ -18,6 +18,11 @@ import * as ServerConfig from "../../config.ts";
 import { computeResultsStagingFolder } from "../compute/LocalComputeStore.ts";
 import * as ComputeSessionService from "../compute/ComputeSessionService.ts";
 import {
+  isPlacementRefusal,
+  type PlacementContext,
+  type ProjectFiles,
+} from "./resultPlacements.ts";
+import {
   makeResultsReader,
   publishScriptRun,
   summarizeRevision,
@@ -57,6 +62,15 @@ export class ComputeResults extends Context.Service<
       revision: string,
       output: string,
     ) => Effect.Effect<Uint8Array | null, ComputeResultsError>;
+    /**
+     * Runs a LaTeX placement step against the project's record. A refusal becomes the error's
+     * message, which the app shows as it is.
+     */
+    readonly placements: <A>(
+      project: ResultsProject,
+      files: ProjectFiles,
+      use: (context: PlacementContext) => Promise<A>,
+    ) => Effect.Effect<A, ComputeResultsError>;
     /** Ends the wait for a run that will never settle, such as one whose runtime never started. */
     readonly abandon: (sessionId: string, executionId: string) => Effect.Effect<void>;
     /** What publishing a run's results came to; it waits for the run to settle. */
@@ -224,7 +238,20 @@ const make = Effect.gen(function* () {
       message: "The run stopped before it started.",
     }).pipe(Effect.asVoid);
 
-  return ComputeResults.of({ resolve, list, figure, publication, abandon });
+  const placements = <A>(
+    project: ResultsProject,
+    files: ProjectFiles,
+    use: (context: PlacementContext) => Promise<A>,
+  ) =>
+    Effect.tryPromise({
+      try: () => use({ layout, projectId: project.projectId, reader: reader(project), files }),
+      catch: (cause) =>
+        isPlacementRefusal(cause)
+          ? new ComputeResultsError({ message: cause.message })
+          : new ComputeResultsError({ message: "The results files could not be changed.", cause }),
+    }).pipe(Effect.withSpan("ComputeResults.placements"));
+
+  return ComputeResults.of({ resolve, list, figure, placements, publication, abandon });
 });
 
 export const layer = Layer.effect(ComputeResults, make);
