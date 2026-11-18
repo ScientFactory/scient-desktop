@@ -165,6 +165,8 @@ function lifecycleEvent(
       // The UI message is deliberately not inspected: it can contain paths,
       // credentials, provider output, or URLs. The owner sets the typed class.
       ...(next.outcome === "failed" ? { failureClass: next.failureClass ?? "unknown" } : {}),
+      // A sign-in that ended before it waited on any page waited on none.
+      ...(next.action === "sign-in" && next.outcome !== null ? { signInPage: "none" } : {}),
       ...next.details,
     },
   };

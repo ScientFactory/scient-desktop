@@ -628,13 +628,12 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       const accountConnected = Effect.gen(function* () {
         while (true) {
           yield* Effect.sleep(ACCOUNT_CONNECTED_POLL);
-          const providers = yield* providerRegistry
-            .refreshInstanceStrict(input.instanceId)
+          // Canonical evidence: a proven authentication failure from before this sign-in
+          // still overlays published snapshots, and only the final verification clears it.
+          const fresh = yield* providerRegistry
+            .readFreshInstance(input.instanceId)
             .pipe(Effect.option);
-          const refreshed = Option.getOrUndefined(providers)?.find(
-            (provider) => provider.instanceId === input.instanceId,
-          );
-          if (refreshed?.auth.status === "authenticated") return;
+          if (Option.getOrUndefined(fresh)?.auth.status === "authenticated") return;
         }
       });
       const completion =

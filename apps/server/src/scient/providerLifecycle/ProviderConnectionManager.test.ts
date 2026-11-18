@@ -113,6 +113,8 @@ function makeHarness(options?: {
     refreshCount: number,
   ) => Effect.Effect<void>;
   readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
+  /** What a fresh, unpublished probe sees; defaults to `refreshProvider`. */
+  readonly freshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
   readonly failStrictRefreshAt?: number;
   readonly useProductionLayer?: boolean;
 }) {
@@ -183,6 +185,18 @@ function makeHarness(options?: {
         ),
       refreshWorkspaceSnapshot: () => SubscriptionRef.get(providersRef),
       refreshInstanceStrict: (instanceId) => refreshInstance(instanceId, true),
+      // As the registry does: probe now, publish nothing, apply no failure overlay.
+      readFreshInstance: (instanceId) =>
+        Effect.gen(function* () {
+          const refreshCount = yield* Ref.updateAndGet(refreshCountRef, (count) => count + 1);
+          const provider = (yield* SubscriptionRef.get(providersRef)).find(
+            (candidate) => candidate.instanceId === instanceId,
+          )!;
+          return (
+            (options?.freshProvider ?? options?.refreshProvider)?.(provider, refreshCount) ??
+            provider
+          );
+        }),
       refreshInstanceAfterAccountChange: (instanceId) =>
         Ref.update(accountChangeRefreshCountRef, (count) => count + 1).pipe(
           Effect.andThen(refreshInstance(instanceId, true)),
@@ -2503,6 +2517,28 @@ describe("ProviderConnectionManager finishing from the account", () => {
       assert.strictEqual(yield* Ref.get(finished), 1);
       // The usual final verification still decides.
       assert.strictEqual(yield* Ref.get(accountChangeRefreshCountRef), 1);
+    }),
+  );
+
+  it.effect("sees a fresh sign-in while an earlier authentication failure still shows", () =>
+    Effect.gen(function* () {
+      const finished = yield* Ref.make(0);
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions: waitingForever(finished),
+        // Published snapshots keep the earlier failure until the final verification (4).
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 4 ? authenticatedProvider(provider) : provider,
+        // The provider's own fresh check sees the new account at the second wait check (3).
+        freshProvider: (provider, refreshCount) =>
+          refreshCount >= 3 ? authenticatedProvider(provider) : provider,
+      });
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      yield* TestClock.adjust("30 seconds");
+      const transitions = yield* awaitState(transitionsRef, (items) =>
+        items.some((item) => item?.status === "connected"),
+      );
+      assert.strictEqual(transitions.at(-1)?.status, "connected");
+      assert.strictEqual(yield* Ref.get(finished), 1);
     }),
   );
 

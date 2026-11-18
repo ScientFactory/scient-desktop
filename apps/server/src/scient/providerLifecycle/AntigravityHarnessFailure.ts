@@ -77,9 +77,12 @@ export async function readAntigravityUserToolServers(
 ): Promise<ReadonlySet<string> | undefined> {
   try {
     const configPath = NodePath.join(profileDirectory, "config", "mcp_config.json");
-    const info = await NodeFSP.lstat(configPath).catch(() => undefined);
-    // No file means the user configured none.
-    if (info === undefined) return new Set();
+    const info = await NodeFSP.lstat(configPath).catch((error: unknown) =>
+      (error as { readonly code?: unknown } | null)?.code === "ENOENT" ? null : undefined,
+    );
+    // No file means the user configured none; a file Scient cannot inspect means it cannot tell.
+    if (info === null) return new Set();
+    if (info === undefined) return undefined;
     if (!info.isFile() || info.size > MAX_CONFIG_BYTES) return undefined;
     const text = await NodeFSP.readFile(configPath, "utf8");
     // Antigravity writes an empty file before any server exists.
