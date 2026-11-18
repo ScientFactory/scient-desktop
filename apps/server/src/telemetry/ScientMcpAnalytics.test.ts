@@ -297,6 +297,27 @@ describe("Scient MCP analytics input", () => {
             ),
           ),
         ).toMatchObject({ failureOwner: "unknown" });
+        const execution = (detail: unknown) =>
+          recorded(
+            withRemoteFailureClass(
+              new PreviewAutomationExecutionError({
+                ...request,
+                ...answered,
+                operation: "navigate",
+              }),
+              { _tag: "PreviewAutomationExecutionError", detail },
+            ),
+          );
+        expect(yield* execution({ failureClass: "navigation_network", url: "x" })).toMatchObject({
+          failureClass: "navigation_network",
+          failureOwner: "external",
+        });
+        // A frameless screenshot keeps its reason but no owner; an unlisted reason is dropped.
+        expect(yield* execution({ failureClass: "screenshot_no_frames" })).toMatchObject({
+          failureClass: "screenshot_no_frames",
+          failureOwner: "unknown",
+        });
+        expect(yield* execution({ failureClass: "page text" })).not.toHaveProperty("failureClass");
       }),
   );
 

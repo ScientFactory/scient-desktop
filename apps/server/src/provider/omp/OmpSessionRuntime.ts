@@ -618,7 +618,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return {
         outcome,
         detail: clipOmpErrorMessage(input.target, failureDetail),
-        ...(commandRejected ? { source: "command" as const, failureCode: "command_rejected" } : {}),
+        ...(commandRejected
+          ? { source: "command" as const, failureCode: "command_rejected" }
+          : { failureCode: "prompt_command_failed" }),
       };
     }
     // After a later run, prompt_result describes only the prompt's own run, so the latest run's
