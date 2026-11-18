@@ -740,8 +740,19 @@ permission), `external` (a network or remote service), `cancelled` or `unknown`.
 the typed failure is still in hand, with a closed `failureCategory` beside it. A runtime-reported
 error is the code's own, unless its error class names a missing package, memory or network; a
 missing package in Scient-managed Python stays `unknown`, since its Toolkits are Scient's promise.
-A run that never reached the kernel, an app restart or a broken bridge connection is Scient's. A
-runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
+A run that never reached the kernel, an app restart or a broken bridge connection is Scient's, and
+so are an admission the runtime never acknowledged (`admission-timeout`), session state Scient
+could not save (`persistence-failed`), a bridge protocol error (`protocol-error`) and a bridge
+missing what Scient needs (`missing-capability`). A kernel that died (`kernel-exited`) or stopped
+answering (`kernel-connection`), and any other runtime exit (`runtime-exited`), stays `unknown`. A
+run Scient refused because its source changed is `input` (`source-conflict`). A run file that never
+started says why: `source-changed` (`input`) or `runtime-missing` (`environment`). A PDF export
+reports its typed error code as the category (`renderer-unavailable`, `publication-failed` and
+`partial-publication` are Scient's; `output-write-failed` is `environment`; `render-failed` stays
+`unknown`; the rest are `input`); an export from the editor or the Browser names the step it failed
+at (`unsaved-changes`, `prepare-failed`, `render-failed`, `publication-failed`, `source-changed`,
+`renderer-unavailable`, `delivery-failed`). Builds up to 0.6.30 sent no reason for PDF exports.
+Error names and messages never leave the computer.
 A tool call that ends with no result is `exception` and Scient's, except arguments the tool refused
 (`invalid_params`, `input`) and a cancelled call (`interrupted`, `cancelled`).
 A broad tool failure built from a more specific cause keeps that cause as a fixed `failureClass`

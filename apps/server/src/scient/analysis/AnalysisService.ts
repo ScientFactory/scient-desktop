@@ -242,6 +242,8 @@ const make = Effect.gen(function* () {
     ),
   );
   const runsRef = yield* Ref.make(new Map<string, AnalysisRunSnapshot>());
+  // Why a run could not start, by run id, kept only until its failure is measured.
+  const notStartedReasons = new Map<string, "source-changed" | "runtime-missing">();
   const loadedProjectsRef = yield* Ref.make(new Set<string>());
   const dirtyIndexProjectsRef = yield* Ref.make(new Set<string>());
   const runtimeQueuesRef = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
@@ -299,9 +301,16 @@ const make = Effect.gen(function* () {
         entry: "run-file",
         language: run.runtime.kind,
         ...(receipt.status === "failed" || receipt.status === "lost"
-          ? { attribution: programRunAttribution(receipt.status, receipt.exitCode) }
+          ? {
+              attribution: programRunAttribution(
+                receipt.status,
+                receipt.exitCode,
+                notStartedReasons.get(String(receipt.runId)),
+              ),
+            }
           : {}),
       });
+      if (isTerminal(receipt.status)) notStartedReasons.delete(String(receipt.runId));
     }
 
     // Capture is a separate persisted outcome: code can succeed without its figures.
@@ -1212,6 +1221,13 @@ const make = Effect.gen(function* () {
             latest = (yield* Ref.get(runsRef)).get(runId) ?? latest;
           }
           const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+          if (
+            status === "failed" &&
+            isOperationError(failure) &&
+            (failure.reason === "source-changed" || failure.reason === "runtime-missing")
+          ) {
+            notStartedReasons.set(runId, failure.reason);
+          }
           yield* finishRun(
             runId,
             status,
