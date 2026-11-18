@@ -491,18 +491,41 @@ function requireSingleMain(pid, executable, platform) {
       .map((row) => Number(row[1]));
   } else {
     const actual = NodeFS.readlinkSync(`/proc/${pid}/exe`);
+    // /proc/<pid>/stat is "pid (comm) state ppid …"; comm may itself contain ") ".
+    const parentOf = (child) => {
+      const stat = NodeFS.readFileSync(`/proc/${child}/stat`, "utf8");
+      return Number(stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[1]);
+    };
+    // The app's own children (its backend runs the same executable as Node) are not another main.
+    const descendsFromMain = (candidate) => {
+      for (let current = candidate, depth = 0; current > 1 && depth < 64; depth++) {
+        current = parentOf(current);
+        if (current === pid) return true;
+      }
+      return false;
+    };
     pids = NodeFS.readdirSync("/proc")
       .filter((name) => /^\d+$/.test(name))
       .flatMap((name) => {
         try {
           return NodeFS.readlinkSync(`/proc/${name}/exe`) === actual &&
-            !NodeFS.readFileSync(`/proc/${name}/cmdline`, "utf8").includes("--type=")
+            !NodeFS.readFileSync(`/proc/${name}/cmdline`, "utf8").includes("--type=") &&
+            !descendsFromMain(Number(name))
             ? [Number(name)]
             : [];
         } catch {
           return [];
         }
       });
+    if (pids.length !== 1 || pids[0] !== pid)
+      console.error(
+        "Main-process candidates:",
+        pids.map((candidate) => ({
+          pid: candidate,
+          parent: parentOf(candidate),
+          cmdline: NodeFS.readFileSync(`/proc/${candidate}/cmdline`, "utf8").replaceAll("\0", " "),
+        })),
+      );
   }
   NodeAssert.deepEqual(pids, [pid], "Exactly one updated main process must be running");
 }
