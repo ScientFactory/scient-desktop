@@ -2187,10 +2187,18 @@ export const layer: Layer.Layer<
           let runtimeInstruction = usesRuntimeInstruction
             ? preparedSkills.runtimeInstruction
             : undefined;
+          const missedAttachments =
+            compact || goalCommand
+              ? []
+              : retryHandoff.attachments.filter(
+                  (missed) =>
+                    !turnInput.message.attachments.some((current) => current.id === missed.id),
+                );
           const validateCurrent = (text: string) =>
             validateProviderCurrentInput({
               text,
-              attachments: providerMessage.attachments,
+              // SCIENT-FORK: recovered attachments are sent with this turn, so its input limit counts them.
+              attachments: [...missedAttachments, ...providerMessage.attachments],
               attachmentsDir: serverConfig.attachmentsDir,
               ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
             }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
@@ -2276,13 +2284,6 @@ export const layer: Layer.Layer<
           const startInput = noteContinuation ? promptedInput : turnInput;
           const { resume: _resume, ...contextInput } = startInput;
           const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
-          const missedAttachments =
-            compact || goalCommand
-              ? []
-              : retryHandoff.attachments.filter(
-                  (missed) =>
-                    !turnInput.message.attachments.some((current) => current.id === missed.id),
-                );
           // Like pending history, pending images need a prompt; native resume carries none.
           const prompted = context !== "" || missedAttachments.length > 0;
           const operation =

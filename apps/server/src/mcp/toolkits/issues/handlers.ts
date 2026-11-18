@@ -1,4 +1,5 @@
 import {
+  IssueOperationError,
   threadIssueKeysEqual,
   type IssueRef,
   type OrchestrationV2ThreadShell,
@@ -68,6 +69,17 @@ const make = Effect.gen(function* () {
         );
   });
 
+  // SCIENT-FORK:START — a native thread credential reaches only its own project; an external
+  // client keeps its environment grant. `null` is a caller thread that no longer exists.
+  const callerBoundary = Effect.fn("IssuesToolkit.callerBoundary")(function* () {
+    const scope = yield* McpInvocationContext.requireMcpCapability("issues");
+    if (scope.thread === undefined) return undefined;
+    return (yield* callerThread())?.projectId ?? null;
+  });
+  const withinBoundary = (boundary: ProjectId | null | undefined, projectId: ProjectId) =>
+    boundary === undefined || boundary === projectId;
+  // SCIENT-FORK:END
+
   const requireThread = Effect.fn("IssuesToolkit.requireThread")(function* (
     requested: ThreadId | undefined,
   ) {
@@ -78,7 +90,12 @@ const make = Effect.gen(function* () {
       Effect.map(Option.fromNullishOr),
       Effect.mapError((cause) => new IssueLinkFailedError({ cause })),
     );
-    if (Option.isNone(thread) || thread.value.deletedAt !== null) {
+    if (
+      Option.isNone(thread) ||
+      thread.value.deletedAt !== null ||
+      // SCIENT-FORK: a thread outside the caller's project reads as missing.
+      !withinBoundary(yield* callerBoundary(), thread.value.projectId)
+    ) {
       return yield* new IssueThreadNotFoundError({ threadId });
     }
     return thread.value;
@@ -92,6 +109,10 @@ const make = Effect.gen(function* () {
     yield* McpInvocationContext.requireMcpCapability("issues");
     const projectId = requested ?? (yield* callerThread())?.projectId;
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
+    // SCIENT-FORK: another project than the caller's reads as missing.
+    if (!withinBoundary(yield* callerBoundary(), projectId)) {
+      return yield* new IssueProjectNotFoundError({ projectId });
+    }
     return yield* issues
       .projectScope(projectId)
       .pipe(Effect.mapError(() => new IssueProjectNotFoundError({ projectId })));
@@ -108,7 +129,20 @@ const make = Effect.gen(function* () {
     yield* McpInvocationContext.requireMcpCapability("issues");
     if (input.url !== undefined) {
       const preferred = input.projectId ?? (yield* callerThread())?.projectId;
+      // SCIENT-FORK:START — a URL resolves only through the caller's own project.
+      const boundary = yield* callerBoundary();
+      if (input.projectId !== undefined && !withinBoundary(boundary, input.projectId)) {
+        return yield* new IssueProjectNotFoundError({ projectId: input.projectId });
+      }
       const resolved = yield* issues.resolveUrl(input.url, preferred);
+      if (!withinBoundary(boundary, resolved.projectId)) {
+        return yield* new IssueOperationError({
+          operation: "resolveUrl",
+          reason: "not-found",
+          detail: "This issue URL does not belong to this thread's project.",
+        });
+      }
+      // SCIENT-FORK:END
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();

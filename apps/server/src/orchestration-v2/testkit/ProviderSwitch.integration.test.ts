@@ -6,6 +6,8 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   type ChatAttachment,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
   EventId,
   MessageId,
   type ModelSelection,
@@ -2292,6 +2294,114 @@ describe("orchestration v2 provider switching", () => {
       }),
     ),
   );
+
+  // SCIENT-FORK:START — recovered attachments count against Scient's current-input limit.
+  it.live("refuses a prompt that recovered attachments push over the input limit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("recovered-attachment-limit");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const refuseStarts = yield* Ref.make(0);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            refuseStarts,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          // Fits by itself, as does the later prompt; together they do not.
+          const capture: ChatAttachment = {
+            type: "image",
+            id: "recovered-capture",
+            name: "window.png",
+            mimeType: "image/png",
+            sizeBytes: 100_000,
+            source: {
+              kind: "snap-shot",
+              capturedAt: "2026-08-24T11:00:00.000Z",
+              appName: "Editor",
+              windowTitle: "notes.md",
+              accessibleText: "c".repeat(SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS),
+            },
+          };
+          const run = Effect.fn("run")(function* (
+            ordinal: number,
+            text: string,
+            attachments: ReadonlyArray<ChatAttachment>,
+          ) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`recovered-limit:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`recovered-limit:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("recovered-limit:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Recovered attachment limit",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(yield* run(1, "Request 1", []), "completed");
+          yield* Ref.set(refuseStarts, 1);
+          assert.equal(yield* run(2, "Request 2", [capture]), "failed");
+          assert.equal(
+            yield* run(3, "r".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 31_000), []),
+            "failed",
+          );
+          assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "recovered-attachment-limit",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+              { contextHandoffPolicy: "byte" },
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
 
   for (const status of ["failed", "interrupted", "cancelled"] as const) {
     for (const queued of [false, true]) {
