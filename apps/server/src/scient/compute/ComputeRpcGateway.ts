@@ -390,7 +390,14 @@ export function makeComputeRpcGateway(input: {
       projectChoice === undefined
         ? hostPreference
         : { ...hostPreference, executable: projectChoice };
-    if (request.runOnce !== undefined) yield* validateSource(project.root, request.runOnce);
+    const savedFile =
+      request.runOnce === undefined ? null : yield* validateSource(project.root, request.runOnce);
+    // Only the whole saved file run from scratch is a recipe someone can rerun.
+    const publishResults =
+      savedFile !== null &&
+      request.runOnce?.source._tag === "document" &&
+      request.runOnce.source.origin === "file" &&
+      request.runOnce.code === savedFile;
     return yield* input.compute.startSession({
       projectId: project.projectId,
       sessionId: request.sessionId,
@@ -401,7 +408,9 @@ export function makeComputeRpcGateway(input: {
       configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
       ...(projectChoice === undefined ? {} : { chosenForProject: true }),
       ...(request.executable === null ? {} : { requestedExecutable: request.executable }),
-      ...(request.runOnce === undefined ? {} : { runOnce: request.runOnce }),
+      ...(request.runOnce === undefined
+        ? {}
+        : { runOnce: { ...request.runOnce, ...(publishResults ? { publishResults } : {}) } }),
     });
   });
 
@@ -499,8 +508,10 @@ export function makeComputeRpcGateway(input: {
             "The submitted code does not match the claimed saved source range.",
           );
         }
+        return file.contents;
       }
     }
+    return null;
   });
 
   const submitExecution = Effect.fn("ComputeRpcGateway.submitExecution")(function* (

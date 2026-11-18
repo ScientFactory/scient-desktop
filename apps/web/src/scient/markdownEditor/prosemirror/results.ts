@@ -1,10 +1,12 @@
 import {
   parseResultTarget,
   RESULT_PROTOCOL,
+  type ResultReferenceState,
   type ResultTarget,
 } from "@t3tools/shared/computeResults";
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import { type EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
+import { closeHistory } from "prosemirror-history";
 import { Decoration, DecorationSet } from "prosemirror-view";
 
 import { scientMarkdownSchema } from "./schema";
@@ -19,7 +21,7 @@ export type EditorResultReference = ResultTarget & {
   );
 
 /** The one mark a result shows; current shows none. */
-export type ResultMarkState = "current" | "newer" | "stale" | "edited" | "missing" | "unrecorded";
+export type ResultMarkState = ResultReferenceState;
 
 const resultLink = (marks: ReadonlyArray<Mark>) =>
   marks.find(
@@ -162,26 +164,23 @@ export function updateResults(
       );
     }
   }
-  return transaction.docChanged ? transaction : null;
+  // Its own undo step, never merged with the typing before it.
+  return transaction.docChanged ? closeHistory(transaction) : null;
 }
 
-export function insertResultValue(state: EditorState, href: string, text: string) {
-  const valueType = scientMarkdownSchema.nodes.result_value;
-  if (!valueType) return null;
-  return state.tr.replaceSelectionWith(valueType.create({ target: href, text }), false);
+export function resultValueNode(href: string, text: string) {
+  return scientMarkdownSchema.nodes.result_value?.create({ target: href, text }) ?? null;
 }
 
-export function insertResultFigure(
-  state: EditorState,
-  input: { readonly href: string; readonly src: string; readonly alt: string },
-) {
+export function resultFigureNode(input: {
+  readonly href: string;
+  readonly src: string;
+  readonly alt: string;
+}) {
   const image = scientMarkdownSchema.nodes.image;
   const link = scientMarkdownSchema.marks.link;
   if (!image || !link) return null;
-  return state.tr.replaceSelectionWith(
-    image.create({ src: input.src, alt: input.alt, title: null }, null, [
-      link.create({ href: input.href, title: null }),
-    ]),
-    false,
-  );
+  return image.create({ src: input.src, alt: input.alt, title: null }, null, [
+    link.create({ href: input.href, title: null }),
+  ]);
 }

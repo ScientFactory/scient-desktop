@@ -25,6 +25,9 @@ describe("linked results in the Markdown editor", () => {
       ["figure", null],
     ]);
     expect(references[1]).toMatchObject({ kind: "value", text: "<0.72" });
+    const caret = `[\\^1](scient-result:${OLD}/values.json#/note)\n`;
+    const footnoteLike = new ScientProseMirrorSession({ source: caret, revision: "r0" });
+    expect(editorResultReferences(footnoteLike.state.doc)).toMatchObject([{ text: "^1" }]);
     expect(session.session.draftSource).toBe(source);
   });
 

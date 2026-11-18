@@ -1,3 +1,5 @@
+import type { ComputeResultResolution } from "@t3tools/contracts";
+
 /**
  * Manuscript references to linked results: `[0.72](scient-result:<revision>/values.json#/hr)` for a
  * value and `[![alt](assets/results/km-<revision>.png)](scient-result:<revision>/km.png)` for a
@@ -17,13 +19,14 @@ export interface ResultTarget {
   readonly pointer: string | null;
 }
 
-const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+// Parentheses would end the Markdown link destination, so they are encoded too.
+const encodeSegment = (segment: string) =>
+  encodeURIComponent(segment).replaceAll("(", "%28").replaceAll(")", "%29");
+const encodePath = (path: string) => path.split("/").map(encodeSegment).join("/");
 
 export function formatResultTarget(target: ResultTarget): string {
   const pointer =
-    target.pointer === null
-      ? ""
-      : `#${target.pointer.split("/").map(encodeURIComponent).join("/")}`;
+    target.pointer === null ? "" : `#${target.pointer.split("/").map(encodeSegment).join("/")}`;
   return `${RESULT_PROTOCOL}${target.revision}/${encodePath(target.output)}${pointer}`;
 }
 
@@ -70,7 +73,7 @@ function pointerKeys(pointer: string): ReadonlyArray<string> {
     .map((key) => key.replaceAll("~1", "/").replaceAll("~0", "~"));
 }
 
-const MARKDOWN_LABEL_SPECIAL = /[\\[\]*_`<>]/gu;
+const MARKDOWN_LABEL_SPECIAL = /[\\[\]*_`<>^]/gu;
 
 export function escapeMarkdownLabel(text: string): string {
   return text.replace(MARKDOWN_LABEL_SPECIAL, (character) => `\\${character}`);
@@ -203,7 +206,8 @@ export function readResultValues(text: string): ReadonlyArray<JsonLeaf> | null {
     if (leaves.length >= MAX_VALUES) return;
     if (typeof node === "string" || node instanceof LiteralNumber) {
       const value = typeof node === "string" ? node : node.source;
-      if (keys.length > 0 && value.length <= MAX_VALUE_LENGTH)
+      // A value reads inline in a sentence; a line break would split the paragraph.
+      if (keys.length > 0 && value.length <= MAX_VALUE_LENGTH && !/[\r\n]/u.test(value))
         leaves.push({ pointer: resultPointer(keys), value });
       return;
     }
@@ -218,11 +222,42 @@ export function readResultValues(text: string): ReadonlyArray<JsonLeaf> | null {
 }
 
 export function resultValueAt(text: string, pointer: string): string | null {
-  const keys = pointerKeys(pointer).join("\u0000");
+  const keys = JSON.stringify(pointerKeys(pointer));
   return (
-    readResultValues(text)?.find((leaf) => pointerKeys(leaf.pointer).join("\u0000") === keys)
+    readResultValues(text)?.find((leaf) => JSON.stringify(pointerKeys(leaf.pointer)) === keys)
       ?.value ?? null
   );
+}
+
+/** What the reader must act on first; a figure counts as present when the revision has it. */
+export type ResultReferenceState =
+  | "current"
+  | "newer"
+  | "stale"
+  | "edited"
+  | "missing"
+  | "unrecorded";
+
+export function resultReferenceState(
+  reference: { readonly kind: "value"; readonly text: string } | { readonly kind: "figure" },
+  resolution: ComputeResultResolution | undefined,
+): ResultReferenceState {
+  if (resolution === undefined || resolution._tag === "unrecorded") return "unrecorded";
+  if (!(reference.kind === "value" ? resolution.value !== null : resolution.figure))
+    return "missing";
+  if (resolution.summary.causes.length > 0) return "stale";
+  if (reference.kind === "value" && reference.text !== resolution.value) return "edited";
+  if (resultHasNewer(reference, resolution)) return "newer";
+  return "current";
+}
+
+export function resultHasNewer(
+  reference: { readonly kind: "value" | "figure" },
+  resolution: Extract<ComputeResultResolution, { readonly _tag: "resolved" }>,
+): boolean {
+  const newer = resolution.newer;
+  if (newer === null) return false;
+  return reference.kind === "figure" ? newer.figure : newer.value !== null;
 }
 
 class LiteralNumber {

@@ -9,7 +9,7 @@ import {
   readResultValues,
   resultPointer,
   resultValueAt,
-} from "./computeResults";
+} from "./computeResults.ts";
 
 const revision = "r0123456789ab";
 
@@ -23,6 +23,9 @@ describe("linked result references", () => {
     const href = formatResultTarget(target);
     expect(href).not.toMatch(/\s/u);
     expect(parseResultTarget(href)).toEqual(target);
+    const parenthesized = { revision, output: "fig (a).png", pointer: null };
+    expect(formatResultTarget(parenthesized)).not.toMatch(/[()]/u);
+    expect(parseResultTarget(formatResultTarget(parenthesized))).toEqual(parenthesized);
     expect(parseResultTarget(`scient-result:${revision}/../values.json#/a`)).toBeNull();
     expect(parseResultTarget("scient-result:not-a-revision/values.json")).toBeNull();
   });
@@ -56,5 +59,8 @@ describe("linked result references", () => {
     expect(resultValueAt(text, "/hr")).toBe("0.720");
     expect(resultValueAt(text, "/fit/ok")).toBeNull();
     expect(readResultValues("not json")).toBeNull();
+    // A value inside a sentence cannot hold a paragraph break.
+    expect(readResultValues('{"note": "a\\n\\nb"}')).toEqual([]);
+    expect(resultValueAt('{"a\\u0000b": "1", "a": {"b": "2"}}', "/a/b")).toBe("2");
   });
 });

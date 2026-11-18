@@ -329,7 +329,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computeSaveConsoleNotebook]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeResultsResolve]: AuthOrchestrationReadScope,
   [WS_METHODS.computeResultsList]: AuthOrchestrationReadScope,
-  [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsPlaceFigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeSubmitCells]: AuthOrchestrationOperateScope,
   [WS_METHODS.notebookRead]: AuthFilesystemReadScope,

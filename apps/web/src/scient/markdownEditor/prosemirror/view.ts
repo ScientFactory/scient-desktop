@@ -105,14 +105,20 @@ import {
 import { RESULT_PROTOCOL } from "@t3tools/shared/computeResults";
 import {
   editorResultReferences,
-  insertResultFigure,
-  insertResultValue,
+  resultFigureNode,
+  resultValueNode,
   setResultMarks,
   updateResults,
   type EditorResultReference,
   type ResultMarkState,
   type ResultUpdate,
 } from "./results";
+
+export interface ResultInsertionPoint {
+  readonly doc: ProseMirrorNode;
+  readonly from: number;
+  readonly to: number;
+}
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -667,6 +673,12 @@ export class ScientMarkdownEditorView {
     );
   }
 
+  /** Where an insertion that first waits on the server was asked for. */
+  insertionPoint(): ResultInsertionPoint | null {
+    const state = this.editorView?.state;
+    return state ? { doc: state.doc, from: state.selection.from, to: state.selection.to } : null;
+  }
+
   insertResult(
     input:
       | { readonly kind: "value"; readonly href: string; readonly text: string }
@@ -676,14 +688,22 @@ export class ScientMarkdownEditorView {
           readonly src: string;
           readonly alt: string;
         },
+    at: ResultInsertionPoint | null = null,
   ): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
-    const transaction =
-      input.kind === "value"
-        ? insertResultValue(view.state, input.href, input.text)
-        : insertResultFigure(view.state, input);
-    if (transaction === null) return false;
+    const node =
+      input.kind === "value" ? resultValueNode(input.href, input.text) : resultFigureNode(input);
+    if (node === null) return false;
+    const transaction = view.state.tr;
+    // If the document changed while the server worked, insert at the caret and replace nothing.
+    if (at !== null)
+      transaction.setSelection(
+        view.state.doc === at.doc
+          ? TextSelection.create(transaction.doc, at.from, at.to)
+          : TextSelection.create(transaction.doc, view.state.selection.to),
+      );
+    transaction.replaceSelectionWith(node, false);
     view.dispatch(transaction.scrollIntoView());
     view.focus();
     return true;

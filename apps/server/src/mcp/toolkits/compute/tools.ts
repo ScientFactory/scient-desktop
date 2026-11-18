@@ -526,14 +526,8 @@ const ScientResultsCheckTool = Tool.make("scient_results_check", {
         line: Schema.Int,
         kind: Schema.Literals(["value", "figure"]),
         shown: Schema.String,
-        state: Schema.Literals([
-          "current",
-          "out-of-date",
-          "newer-run",
-          "edited",
-          "missing",
-          "no-record",
-        ]),
+        /** current, newer-run, out-of-date, edited, missing or no-record. */
+        state: Schema.String,
         revision: Schema.String,
         value: Schema.NullOr(Schema.String),
         newerRevision: Schema.NullOr(Schema.String),

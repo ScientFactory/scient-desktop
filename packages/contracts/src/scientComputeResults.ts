@@ -19,6 +19,8 @@ export const ComputeResultInput = Schema.Struct({
   size: Schema.Number,
   /** Decimal nanoseconds, compared exactly with what the runtime saw. */
   modifiedAtNs: Schema.String,
+  /** Status-change time, which no ordinary tool can set back, so equal times mean equal bytes. */
+  changedAtNs: Schema.String,
   /** Null above the hashing limit, where size and modification time are all that is compared. */
   sha256: Schema.NullOr(Sha256),
   /** The file was different at the end of the run from when the script opened it. */

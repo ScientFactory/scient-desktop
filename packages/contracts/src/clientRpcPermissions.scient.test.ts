@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   sessionGrantsScope,
@@ -37,6 +38,32 @@ describe("Accounts client authorization", () => {
       const scopes = clientRpcRequiredScopes(method, {});
       expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
       expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
+    }
+  });
+});
+
+describe("Linked results client authorization", () => {
+  it("lets a reader see results but not copy figures into the project or re-run scripts", () => {
+    const reader: AuthSessionState = {
+      authenticated: true,
+      scopes: [AuthOrchestrationReadScope],
+      permissions: [AuthOrchestrationReadScope],
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "synthetic",
+      },
+    };
+    const operator = {
+      ...reader,
+      scopes: [AuthOrchestrationOperateScope],
+      permissions: [AuthOrchestrationOperateScope],
+    };
+    for (const method of [WS_METHODS.computeResultsPlaceFigure, WS_METHODS.computeResultsRerun]) {
+      const scopes = clientRpcRequiredScopes(method, {});
+      expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
+      expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);
     }
   });
 });

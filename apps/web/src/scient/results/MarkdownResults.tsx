@@ -4,8 +4,14 @@ import type {
   ComputeResultSummary,
   EnvironmentId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { formatResultTarget, parseResultTarget } from "@t3tools/shared/computeResults";
+import {
+  formatResultTarget,
+  parseResultTarget,
+  resultHasNewer,
+  resultReferenceState as resultMarkState,
+} from "@t3tools/shared/computeResults";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -20,6 +26,7 @@ import {
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { computeEnvironment } from "~/state/compute";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   type EditorResultReference,
@@ -28,12 +35,7 @@ import {
   resultMarkKey,
 } from "../markdownEditor/prosemirror/results";
 import type { ScientMarkdownEditorView } from "../markdownEditor/prosemirror/view";
-import {
-  RESULT_STATE_LABEL,
-  resultCauseText,
-  resultHasNewer,
-  resultMarkState,
-} from "./resultState";
+import { RESULT_STATE_LABEL, resultCauseText } from "./resultState";
 
 export interface MarkdownResultsHandle {
   readonly openCard: (href: string, anchor: HTMLElement) => void;
@@ -75,7 +77,10 @@ export function MarkdownResults(props: {
   const [refreshTick, setRefreshTick] = useState(0);
   const [card, setCard] = useState<{ href: string; anchor: HTMLElement } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const resolve = useAtomCommand(computeEnvironment.resultsResolve, { reportFailure: false });
+  const resolveCommand = useAtomCommand(computeEnvironment.resultsResolve, {
+    reportFailure: false,
+  });
+  const resolve = useStableCallback(resolveCommand);
 
   // Asking again (focus, a card, an action) changes the key, so the same document re-resolves.
   const requestKey = `${refreshTick}\n${hrefKey}`;
@@ -206,11 +211,10 @@ function SummaryLines({ summary }: { readonly summary: ComputeResultSummary }) {
             ? "Scient saw it read no project files."
             : `Inputs Scient saw it read: ${summary.inputs.join(", ")}${summary.inputsTruncated ? ", and more" : ""}.`}
       </span>
-      {summary.runtime.version === null ? null : (
-        <span>
-          {summary.language} {summary.runtime.version}. Package changes are not checked.
-        </span>
-      )}
+      <span>
+        {summary.runtime.version === null ? "" : `${summary.language} ${summary.runtime.version}. `}
+        Package changes are not checked.
+      </span>
     </div>
   );
 }
@@ -235,6 +239,12 @@ function ResultCard(props: {
   const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
     reportFailure: false,
   });
+  const canPlace = useAtomValue(
+    computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
+  );
+  const canRerun = useAtomValue(
+    computeEnvironment.resultsRerun.permissionAtom(props.environmentId),
+  );
   const shown = reference.kind === "value" ? reference.text : reference.alt || "Figure";
 
   if (resolution === undefined || resolution._tag === "unrecorded")
@@ -263,6 +273,26 @@ function ResultCard(props: {
           ? [{ candidate, newer: found.newer }]
           : [];
       });
+      // One script's results move to one revision together, or not at all: a mix would put
+      // numbers from two different runs side by side.
+      const dropped = props.references.filter((candidate) => {
+        const found = props.resolutions.get(candidate.href);
+        return (
+          found?._tag === "resolved" &&
+          found.summary.scriptPath === scriptPath &&
+          found.newer !== null &&
+          !resultHasNewer(candidate, found)
+        );
+      });
+      if (dropped.length > 0) {
+        const names = [
+          ...new Set(dropped.map((item) => (item.pointer ?? item.output).replace(/^\//u, ""))),
+        ];
+        setMessage(
+          `The newest run of ${scriptPath} has no ${names.join(", ")}. Remove ${names.length === 1 ? "it" : "them"} from the document or have the script write ${names.length === 1 ? "it" : "them"} again, then update.`,
+        );
+        return;
+      }
       const placed = new Map<string, string>();
       for (const { candidate, newer } of group) {
         if (candidate.kind !== "figure" || placed.has(candidate.href)) continue;
@@ -406,7 +436,7 @@ function ResultCard(props: {
             Use {resolution.value}
           </Button>
         ) : null}
-        {editable && updateCount > 0 ? (
+        {editable && canPlace && updateCount > 0 ? (
           <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
             {busy === "update"
               ? "Updating…"
@@ -415,14 +445,16 @@ function ResultCard(props: {
                 : `Update ${updateCount} results`}
           </Button>
         ) : null}
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={busy !== null}
-          onClick={() => void rerunScript()}
-        >
-          {busy === "rerun" ? "Running…" : `Re-run ${scriptPath.split("/").at(-1)}`}
-        </Button>
+        {canRerun ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => void rerunScript()}
+          >
+            {busy === "rerun" ? "Running…" : `Re-run ${scriptPath.split("/").at(-1)}`}
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -435,7 +467,9 @@ function ResultPicker(props: {
   readonly documentPath: string;
   readonly controller: ScientMarkdownEditorView;
 }) {
-  const list = useAtomCommand(computeEnvironment.resultsList, { reportFailure: false });
+  const list = useStableCallback(
+    useAtomCommand(computeEnvironment.resultsList, { reportFailure: false }),
+  );
   const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
     reportFailure: false,
   });
@@ -466,6 +500,7 @@ function ResultPicker(props: {
     needle.length === 0 || text.toLocaleLowerCase().includes(needle);
 
   const insertFigure = async (script: ComputeResultScript, output: string) => {
+    const at = props.controller.insertionPoint();
     const result = await placeFigure({
       environmentId: props.environmentId,
       input: {
@@ -480,12 +515,15 @@ function ResultPicker(props: {
       return;
     }
     props.onClose();
-    props.controller.insertResult({
-      kind: "figure",
-      href: formatResultTarget({ revision: script.latest.revision, output, pointer: null }),
-      src: result.value.src,
-      alt: output.replace(/^.*\//u, "").replace(/\.[^.]+$/u, ""),
-    });
+    props.controller.insertResult(
+      {
+        kind: "figure",
+        href: formatResultTarget({ revision: script.latest.revision, output, pointer: null }),
+        src: result.value.src,
+        alt: output.replace(/^.*\//u, "").replace(/\.[^.]+$/u, ""),
+      },
+      at,
+    );
   };
 
   return (

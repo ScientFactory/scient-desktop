@@ -2665,14 +2665,13 @@ const make = Effect.gen(function* () {
       definedEnvironment(hostEnvironment),
     );
     const once = input.runOnce;
-    // A fresh run of a whole file may publish linked results; what it leaves here is collected
-    // only after it succeeds, so nothing else can be attributed to the run.
+    const publishes = once?.publishResults === true;
     const environment =
-      once?.source._tag === "document" && once.source.origin === "file"
+      publishes && once !== undefined
         ? {
             ...hostRuntimeEnvironment,
             [RESULTS_FOLDER_VARIABLE]: yield* store
-              .prepareResultsFolder(input.projectId, once.executionId)
+              .prepareResultsFolder(input.projectId, input.sessionId, once.executionId)
               .pipe(
                 Effect.mapError((cause) =>
                   computeError(

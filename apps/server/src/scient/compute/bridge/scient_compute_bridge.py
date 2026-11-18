@@ -315,11 +315,22 @@ def _scient_install_write_recorder():
         try:
             if event == "open":
                 mode, flags = args[1], args[2]
-                if (isinstance(flags, int) and flags & write_flags) or (
+                writes = (isinstance(flags, int) and flags & write_flags) or (
                     isinstance(mode, str) and any(c in mode for c in "wax+")
-                ):
+                )
+                if writes:
                     note(args[0])
-                else:
+                # r+ (and O_RDWR without truncation) reads what was there before writing.
+                if (
+                    not writes
+                    or (isinstance(mode, str) and "r" in mode and "+" in mode)
+                    or (
+                        not isinstance(mode, str)
+                        and isinstance(flags, int)
+                        and flags & os.O_RDWR
+                        and not flags & os.O_TRUNC
+                    )
+                ):
                     note_read(args[0])
             elif event in destination_events:
                 note(args[1])

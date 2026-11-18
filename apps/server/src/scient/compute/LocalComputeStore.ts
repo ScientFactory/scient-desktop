@@ -201,6 +201,7 @@ export class LocalComputeStore extends Context.Service<
     /** A new, empty folder a fresh script run writes its linked results into. */
     readonly prepareResultsFolder: (
       projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
       executionId: ComputeExecutionId,
     ) => Effect.Effect<string, LocalComputeStoreError>;
   }
@@ -210,10 +211,11 @@ export class LocalComputeStore extends Context.Service<
 export function computeResultsStagingFolder(
   computeDir: string,
   projectId: string,
+  sessionId: string,
   executionId: string,
 ): string | null {
-  if (!isSafeSegment(projectId) || !isSafeSegment(executionId)) return null;
-  return NodePath.join(computeDir, "results", projectId, "staging", executionId);
+  if (![projectId, sessionId, executionId].every(isSafeSegment)) return null;
+  return NodePath.join(computeDir, "results", projectId, "staging", sessionId, executionId);
 }
 
 async function sha256Bytes(bytes: Uint8Array): Promise<string> {
@@ -1013,9 +1015,15 @@ const make = Effect.gen(function* () {
 
   const prepareResultsFolder = Effect.fn("LocalComputeStore.prepareResultsFolder")(function* (
     projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
   ) {
-    const folder = computeResultsStagingFolder(config.computeDir, projectId, executionId);
+    const folder = computeResultsStagingFolder(
+      config.computeDir,
+      projectId,
+      sessionId,
+      executionId,
+    );
     if (folder === null)
       return yield* storeError(
         "results-folder",

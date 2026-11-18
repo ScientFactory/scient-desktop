@@ -585,25 +585,33 @@ gfmTokenizer.inline.ruler.before("link", "scient_footnote_reference", (state, si
 
 // A linked result's value. Its figure form, `[![alt](src)](scient-result:…)`, stays an ordinary
 // linked image so every image feature keeps working.
-gfmTokenizer.inline.ruler.before("link", "scient_result_value", (state, silent) => {
-  const start = state.pos;
-  if (state.src[start] !== "[" || state.src[start + 1] === "!") return false;
-  const labelEnd = state.md.helpers.parseLinkLabel(state, start, true);
-  if (labelEnd < 0 || state.src[labelEnd + 1] !== "(") return false;
-  if (!state.src.startsWith(RESULT_PROTOCOL, labelEnd + 2)) return false;
-  const destination = state.md.helpers.parseLinkDestination(state.src, labelEnd + 2, state.posMax);
-  if (!destination.ok || state.src[destination.pos] !== ")") return false;
-  if (parseResultTarget(destination.str) === null) return false;
-  if (!silent) {
-    const token = state.push("scient_result_value", "span", 0);
-    token.meta = {
-      target: destination.str,
-      text: unescapeMarkdownLabel(state.src.slice(start + 1, labelEnd)),
-    };
-  }
-  state.pos = destination.pos + 1;
-  return true;
-});
+gfmTokenizer.inline.ruler.before(
+  "scient_footnote_reference",
+  "scient_result_value",
+  (state, silent) => {
+    const start = state.pos;
+    if (state.src[start] !== "[" || state.src[start + 1] === "!") return false;
+    const labelEnd = state.md.helpers.parseLinkLabel(state, start, true);
+    if (labelEnd < 0 || state.src[labelEnd + 1] !== "(") return false;
+    if (!state.src.startsWith(RESULT_PROTOCOL, labelEnd + 2)) return false;
+    const destination = state.md.helpers.parseLinkDestination(
+      state.src,
+      labelEnd + 2,
+      state.posMax,
+    );
+    if (!destination.ok || state.src[destination.pos] !== ")") return false;
+    if (parseResultTarget(destination.str) === null) return false;
+    if (!silent) {
+      const token = state.push("scient_result_value", "span", 0);
+      token.meta = {
+        target: destination.str,
+        text: unescapeMarkdownLabel(state.src.slice(start + 1, labelEnd)),
+      };
+    }
+    state.pos = destination.pos + 1;
+    return true;
+  },
+);
 
 gfmTokenizer.inline.ruler.before("link", "scient_citation", (state, silent) => {
   const start = state.pos;

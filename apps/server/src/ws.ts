@@ -342,7 +342,10 @@ import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+// SCIENT-FORK:START — linked results: what fresh script runs published, for manuscripts.
 import * as ComputeResults from "./scient/results/ComputeResults.ts";
+import { makeResultOperations } from "./scient/results/resultOperations.ts";
+// SCIENT-FORK:END
 import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
 import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
@@ -2017,7 +2020,6 @@ export const layerWsRpc = (
       const analysis = yield* AnalysisService.AnalysisService;
       const dataTables = yield* DataTables.DataTables;
       const compute = yield* ComputeSessionService.ComputeSessionService;
-      const computeResults = yield* ComputeResults.ComputeResults;
       const computeGateway = makeComputeRpcGateway({
         workspaceResolver: yield* WorkspaceBindingResolver,
         compute,
@@ -4243,13 +4245,14 @@ export const layerWsRpc = (
           notebooks: yield* NotebookStore.NotebookStore,
           saveConsoleNotebook,
           computeNotebookOutputs,
-          computeResults,
-          resultScripts: {
+          // SCIENT-FORK:START — linked results share Compute's project resolution.
+          results: makeResultOperations({
             gateway: computeGateway,
-            results: computeResults,
+            results: yield* ComputeResults.ComputeResults,
             runtimeDescriptors: compute.runtimeDescriptors,
-            readFile: workspaceFileSystem.readFile,
-          },
+            workspace: workspaceFileSystem,
+          }),
+          // SCIENT-FORK:END
         }),
       });
       // SCIENT-FORK:START — Scient extensions RPCs.

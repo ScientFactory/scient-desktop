@@ -51,7 +51,7 @@ function revisionOutputPath(
   return resolved.startsWith(`${outputs}${NodePath.sep}`) ? resolved : null;
 }
 
-export async function sha256File(path: string): Promise<string> {
+async function sha256File(path: string): Promise<string> {
   const hash = NodeCrypto.createHash("sha256");
   for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk as Buffer);
   return hash.digest("hex");
@@ -135,23 +135,36 @@ async function recordInput(
   const relative = projectRelative(root, read.path);
   if (relative === null) return null;
   const status = await NodeFSP.stat(read.path, { bigint: true }).catch(() => null);
-  if (status === null || !status.isFile()) return null;
-  const changedDuringRun =
-    Number(status.size) !== read.size || status.mtimeNs.toString() !== read.modifiedAtNs;
+  if (status === null || !status.isFile())
+    return {
+      path: relative,
+      size: read.size,
+      modifiedAtNs: read.modifiedAtNs,
+      changedAtNs: "0",
+      sha256: null,
+      changedDuringRun: true,
+    };
   return {
     path: relative,
     size: Number(status.size),
     modifiedAtNs: status.mtimeNs.toString(),
+    changedAtNs: status.ctimeNs.toString(),
     sha256: status.size <= MAXIMUM_HASHED_INPUT_BYTES ? await sha256File(read.path) : null,
-    changedDuringRun,
+    changedDuringRun:
+      Number(status.size) !== read.size || status.mtimeNs.toString() !== read.modifiedAtNs,
   };
 }
 
-/** Collects what a fresh script run left in its results folder into one revision. */
+/**
+ * Collects what a fresh script run left in its results folder into one revision. Outputs are
+ * copied, not moved, so a hard link or an open handle in the script cannot change them afterwards.
+ */
 export async function publishScriptRun(
   layout: ResultsLayout,
   run: SettledScriptRun,
 ): Promise<PublishOutcome> {
+  const revisionId = newRevisionId();
+  const pending = NodePath.join(revisionsFolder(layout, run.projectId), `.${revisionId}`);
   try {
     if (!run.succeeded) return { _tag: "failed", message: "The run did not succeed." };
     const files = await listFiles(run.stagingFolder);
@@ -164,14 +177,19 @@ export async function publishScriptRun(
     let bytes = 0;
     for (const name of files) {
       if (outputs.length >= MAXIMUM_OUTPUT_FILES) break;
-      const path = NodePath.join(run.stagingFolder, ...name.split("/"));
-      const size = (await NodeFSP.stat(path)).size;
-      if (bytes + size > MAXIMUM_OUTPUT_BYTES) continue;
+      const target = NodePath.join(pending, "outputs", ...name.split("/"));
+      await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+      await NodeFSP.copyFile(NodePath.join(run.stagingFolder, ...name.split("/")), target);
+      const size = (await NodeFSP.stat(target)).size;
+      if (bytes + size > MAXIMUM_OUTPUT_BYTES) {
+        await NodeFSP.rm(target);
+        continue;
+      }
       const classified = outputKind(name);
       const kind =
         classified.kind === "values" &&
         (size > MAXIMUM_VALUES_FILE_BYTES ||
-          readResultValues(await NodeFSP.readFile(path, "utf8")) === null)
+          readResultValues(await NodeFSP.readFile(target, "utf8")) === null)
           ? "file"
           : classified.kind;
       bytes += size;
@@ -179,14 +197,9 @@ export async function publishScriptRun(
         name,
         kind,
         mediaType: classified.mediaType,
-        sha256: await sha256File(path),
+        sha256: await sha256File(target),
         size,
       });
-    }
-    const kept = new Set(outputs.map((output) => output.name));
-    for (const name of files) {
-      if (!kept.has(name))
-        await NodeFSP.rm(NodePath.join(run.stagingFolder, ...name.split("/")), { force: true });
     }
     const inputs: ComputeResultInput[] = [];
     for (const read of run.reads?.files ?? []) {
@@ -194,7 +207,7 @@ export async function publishScriptRun(
       if (input !== null && input.path !== run.scriptPath) inputs.push(input);
     }
     const revision: ComputeResultRevision = decodeRevision({
-      revision: newRevisionId(),
+      revision: revisionId,
       script: { path: run.scriptPath, language: run.language, sha256: sha256Text(run.code) },
       run: {
         sessionId: run.sessionId,
@@ -212,13 +225,13 @@ export async function publishScriptRun(
       outputs,
       omitted: files.length - outputs.length,
     });
-    const folder = revisionFolder(layout, run.projectId, revision.revision);
-    await NodeFSP.mkdir(folder, { recursive: true });
-    await NodeFSP.rename(run.stagingFolder, NodePath.join(folder, "outputs"));
-    await writeRevision(folder, revision);
-    await pruneFigureBytes(layout, run.projectId, run.scriptPath);
+    await writeRevision(pending, revision);
+    await NodeFSP.rename(pending, revisionFolder(layout, run.projectId, revisionId));
+    // Retention is housekeeping; a failure here must not undo a published revision.
+    await pruneFigureBytes(layout, run.projectId, run.scriptPath).catch(() => undefined);
     return { _tag: "published", revision };
   } finally {
+    await NodeFSP.rm(pending, { recursive: true, force: true });
     await NodeFSP.rm(run.stagingFolder, { recursive: true, force: true });
   }
 }
@@ -238,6 +251,7 @@ async function readRevisions(
   const names = await NodeFSP.readdir(folder).catch(() => []);
   const revisions: ComputeResultRevision[] = [];
   for (const name of names) {
+    if (name.startsWith(".")) continue;
     try {
       const text = await NodeFSP.readFile(NodePath.join(folder, name, "revision.json"), "utf8");
       revisions.push(decodeRevision(JSON.parse(text)));
@@ -245,8 +259,10 @@ async function readRevisions(
       // A half-written or foreign folder is not a revision.
     }
   }
-  return revisions.toSorted((left, right) =>
-    right.run.finishedAt.localeCompare(left.run.finishedAt),
+  return revisions.toSorted(
+    (left, right) =>
+      right.run.finishedAt.localeCompare(left.run.finishedAt) ||
+      right.revision.localeCompare(left.revision),
   );
 }
 
@@ -275,7 +291,11 @@ async function fileChanged(root: string, input: ComputeResultInput): Promise<boo
   const path = NodePath.join(root, ...input.path.split("/"));
   const status = await NodeFSP.stat(path, { bigint: true }).catch(() => null);
   if (status === null || !status.isFile()) return null;
-  if (Number(status.size) === input.size && status.mtimeNs.toString() === input.modifiedAtNs)
+  if (
+    Number(status.size) === input.size &&
+    status.mtimeNs.toString() === input.modifiedAtNs &&
+    status.ctimeNs.toString() === input.changedAtNs
+  )
     return false;
   if (input.sha256 === null) return true;
   return (await sha256File(path)) !== input.sha256;

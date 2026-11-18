@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- a placed figure is copied into the project with Node.
+// @effect-diagnostics nodeBuiltinImport:off -- a run's results folder is checked on disk.
 import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
 
 import {
   ComputeResultsError,
@@ -21,7 +20,6 @@ import * as ComputeSessionService from "../compute/ComputeSessionService.ts";
 import {
   makeResultsReader,
   publishScriptRun,
-  sha256File,
   summarizeRevision,
   type PublishOutcome,
   type ResultsLayout,
@@ -32,11 +30,17 @@ export interface ResultsProject {
   readonly root: string;
 }
 
+export type ResultPublication =
+  | { readonly _tag: "published"; readonly summary: ComputeResultSummary }
+  | { readonly _tag: "failed"; readonly message: string };
+
+/** Finished publications kept for a caller that asks after the run settled. */
 const MAXIMUM_REMEMBERED_PUBLICATIONS = 200;
 
 const resultsError = (message: string) => (cause: unknown) =>
   new ComputeResultsError({ message, cause });
 
+/** The record of what fresh script runs published, on this computer. */
 export class ComputeResults extends Context.Service<
   ComputeResults,
   {
@@ -47,66 +51,39 @@ export class ComputeResults extends Context.Service<
     readonly list: (
       project: ResultsProject,
     ) => Effect.Effect<ReadonlyArray<ComputeResultScript>, ComputeResultsError>;
-    /** Copies a revision's figure beside the manuscript and returns its path from there. */
-    readonly placeFigure: (
+    /** The stored bytes of a revision's figure, or null once retention removed them. */
+    readonly figure: (
       project: ResultsProject,
-      input: { readonly documentPath: string; readonly revision: string; readonly output: string },
-    ) => Effect.Effect<string, ComputeResultsError>;
-    /** What publishing the run's results came to, once the run has settled. */
+      revision: string,
+      output: string,
+    ) => Effect.Effect<Uint8Array | null, ComputeResultsError>;
+    /** What publishing a run's results came to; it waits for the run to settle. */
     readonly publication: (
+      sessionId: string,
       executionId: string,
-    ) => Effect.Effect<
-      | { readonly _tag: "published"; readonly summary: ComputeResultSummary }
-      | { readonly _tag: "failed"; readonly message: string }
-    >;
+    ) => Effect.Effect<ResultPublication>;
   }
 >()("t3/scient/results/ComputeResults") {}
-
-function insideProject(root: string, relativePath: string): string | null {
-  const resolved = NodePath.resolve(root, ...relativePath.split("/"));
-  return resolved.startsWith(`${root}${NodePath.sep}`) ? resolved : null;
-}
-
-async function placeFigureFile(
-  root: string,
-  source: { readonly path: string; readonly sha256: string },
-  documentPath: string,
-  revision: string,
-  output: string,
-): Promise<string> {
-  const document = insideProject(root, documentPath);
-  if (document === null) throw new Error("The manuscript is outside this project.");
-  const extension = NodePath.extname(output);
-  const stem = NodePath.basename(output, extension).replace(/[^\p{L}\p{N}._-]+/gu, "-") || "figure";
-  const folder = NodePath.join(NodePath.dirname(document), "assets", "results");
-  await NodeFSP.mkdir(folder, { recursive: true });
-  for (let attempt = 1; attempt <= 100; attempt += 1) {
-    const name = `${stem}-${revision}${attempt === 1 ? "" : `-${attempt}`}${extension}`;
-    const target = NodePath.join(folder, name);
-    const relative = `assets/results/${name}`;
-    try {
-      await NodeFSP.copyFile(source.path, target, NodeFSP.constants.COPYFILE_EXCL);
-      return relative;
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
-      if ((await sha256File(target)) === source.sha256) return relative;
-    }
-  }
-  throw new Error("Too many files already use this figure's name.");
-}
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const layout: ResultsLayout = { computeDir: config.computeDir };
   const publications = new Map<string, Deferred.Deferred<PublishOutcome>>();
-  const publicationFor = (executionId: string) => {
-    const existing = publications.get(executionId);
+  const publicationFor = (sessionId: string, executionId: string) => {
+    const key = `${sessionId}/${executionId}`;
+    const existing = publications.get(key);
     if (existing !== undefined) return existing;
     const created = Deferred.makeUnsafe<PublishOutcome>();
-    publications.set(executionId, created);
-    if (publications.size > MAXIMUM_REMEMBERED_PUBLICATIONS)
-      publications.delete(publications.keys().next().value!);
+    publications.set(key, created);
+    // A caller may still be waiting on an unfinished one, so only finished ones are forgotten.
+    if (publications.size > MAXIMUM_REMEMBERED_PUBLICATIONS) {
+      for (const [candidate, deferred] of publications) {
+        if (!Deferred.isDoneUnsafe(deferred)) continue;
+        publications.delete(candidate);
+        break;
+      }
+    }
     return created;
   };
 
@@ -116,25 +93,26 @@ const make = Effect.gen(function* () {
     const { request, result } = settled.execution;
     const source = request.source;
     if (source._tag !== "document" || source.origin !== "file" || result === null) return;
+    const publication = publicationFor(request.sessionId, request.executionId);
     const stagingFolder = computeResultsStagingFolder(
       config.computeDir,
       settled.projectId,
+      request.sessionId,
       request.executionId,
     );
-    if (stagingFolder === null) return;
-    const staged = yield* Effect.promise(() =>
-      NodeFSP.stat(stagingFolder).then(
-        (status) => status.isDirectory(),
-        () => false,
-      ),
-    );
-    if (!staged) {
-      const waiting = publications.get(request.executionId);
-      if (waiting !== undefined)
-        yield* Deferred.succeed(waiting, {
-          _tag: "failed",
-          message: "The run had no results folder, so no results were published.",
-        });
+    const staged =
+      stagingFolder !== null &&
+      (yield* Effect.promise(() =>
+        NodeFSP.stat(stagingFolder).then(
+          (status) => status.isDirectory(),
+          () => false,
+        ),
+      ));
+    if (stagingFolder === null || !staged) {
+      yield* Deferred.succeed(publication, {
+        _tag: "failed",
+        message: "Only a whole saved script run from scratch publishes results.",
+      });
       return;
     }
     const { session } = settled;
@@ -154,9 +132,8 @@ const make = Effect.gen(function* () {
           finishedAt: result.finishedAt ?? request.submittedAt,
           threadId: request.actor?.threadId,
           runtime: {
-            executable: session?.runtime?.executable ?? null,
-            version:
-              session?.identity?.languageVersion ?? session?.runtime?.languageVersion ?? null,
+            executable: session.runtime?.executable ?? null,
+            version: session.identity?.languageVersion ?? session.runtime?.languageVersion ?? null,
             fingerprint: request.environmentFingerprint?.hash ?? null,
           },
           reads: result.reads,
@@ -175,7 +152,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
-    yield* Deferred.succeed(publicationFor(request.executionId), outcome);
+    yield* Deferred.succeed(publication, outcome);
   });
 
   yield* compute.settledRuns.pipe(
@@ -208,33 +185,25 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const placeFigure = Effect.fn("ComputeResults.placeFigure")(function* (
+  const figure = Effect.fn("ComputeResults.figure")(function* (
     project: ResultsProject,
-    input: { readonly documentPath: string; readonly revision: string; readonly output: string },
+    revision: string,
+    output: string,
   ) {
     return yield* Effect.tryPromise({
       try: async () => {
-        const figure = await reader(project).figure(input.revision, input.output);
-        if (figure === null)
-          throw new Error("This revision's figure is no longer stored. Re-run the script.");
-        return placeFigureFile(
-          project.root,
-          figure,
-          input.documentPath,
-          input.revision,
-          input.output,
-        );
+        const stored = await reader(project).figure(revision, output);
+        return stored === null ? null : new Uint8Array(await NodeFSP.readFile(stored.path));
       },
-      catch: (cause) =>
-        new ComputeResultsError({
-          message: cause instanceof Error ? cause.message : "The figure could not be placed.",
-          cause,
-        }),
+      catch: resultsError("The figure could not be read."),
     });
   });
 
-  const publication = Effect.fn("ComputeResults.publication")(function* (executionId: string) {
-    const outcome = yield* Deferred.await(publicationFor(executionId));
+  const publication = Effect.fn("ComputeResults.publication")(function* (
+    sessionId: string,
+    executionId: string,
+  ) {
+    const outcome = yield* Deferred.await(publicationFor(sessionId, executionId));
     if (outcome._tag === "failed") return outcome;
     return {
       _tag: "published" as const,
@@ -247,7 +216,7 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return ComputeResults.of({ resolve, list, placeFigure, publication });
+  return ComputeResults.of({ resolve, list, figure, publication });
 });
 
 export const layer = Layer.effect(ComputeResults, make);
