@@ -407,6 +407,21 @@ function waitForTrace(filename, predicate, signal, timeout = TIMEOUT) {
   });
 }
 
+// Polls from Node: waitForFunction does not await an async predicate, so its promise passed at once.
+async function waitForUpdateState(page, predicate, timeout = TIMEOUT) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const state = await page.evaluate(() => window.desktopBridge.getUpdateState());
+    if (predicate(state)) return state;
+    const { status, errorContext, availableVersion, downloadedVersion } = state;
+    NodeAssert.ok(
+      Date.now() < deadline,
+      `Timed out waiting for an update state; last ${JSON.stringify({ status, errorContext, availableVersion, downloadedVersion })}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 function stopOwnedUpdatedProcess(pid, executable, platform) {
   let actual;
   if (platform === "win32") {
@@ -426,18 +441,16 @@ function stopOwnedUpdatedProcess(pid, executable, platform) {
   } else {
     const environment = NodeFS.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
     const appImage = environment.find((entry) => entry.startsWith("APPIMAGE="))?.slice(9);
-    // Under APPIMAGE_EXTRACT_AND_RUN (runners cannot mount FUSE) the relaunched AppImage runs from
-    // its extracted copy without APPIMAGE; requireSingleMain already tied this PID to the trace
-    // the synthetic profile recorded, so the extracted executable is the owner.
-    const extracted =
-      appImage === undefined &&
-      environment.includes("APPIMAGE_EXTRACT_AND_RUN=1") &&
-      /\/appimage_extracted_[0-9a-f]+\//.test(NodeFS.readlinkSync(`/proc/${pid}/exe`));
+    const exe = NodeFS.readlinkSync(`/proc/${pid}/exe`);
+    // A relaunched AppImage can run from its FUSE mount or, under APPIMAGE_EXTRACT_AND_RUN, its
+    // extracted copy, without APPIMAGE; requireSingleMain already tied this PID to the trace the
+    // synthetic profile recorded, so such a copy is the owner.
+    const appImageCopy = /\/(\.mount_[^/]+|appimage_extracted_[0-9a-f]+)\//.test(exe);
     NodeAssert.ok(
-      extracted ||
-        (appImage !== undefined &&
-          NodeFS.realpathSync(appImage) === NodeFS.realpathSync(executable)),
-      `Updated PID is not this qualification AppImage (APPIMAGE=${appImage ?? "unset"})`,
+      appImage === undefined
+        ? appImageCopy
+        : NodeFS.realpathSync(appImage) === NodeFS.realpathSync(executable),
+      `Updated PID is not this qualification AppImage (APPIMAGE=${appImage ?? "unset"}, exe=${exe})`,
     );
     actual = executable;
   }
@@ -708,25 +721,18 @@ async function qualify(options) {
     await composer.waitFor({ state: "visible", timeout: TIMEOUT });
     await page.evaluate(() => window.desktopBridge.checkForUpdate());
     if (corrupt.value) {
-      await page.waitForFunction(
-        async () => {
-          const state = await window.desktopBridge.getUpdateState();
-          return state.errorContext === "download" && state.downloadedVersion === null;
-        },
-        undefined,
-        { timeout: TIMEOUT },
+      await waitForUpdateState(
+        page,
+        (state) => state.errorContext === "download" && state.downloadedVersion === null,
       );
       NodeAssert.equal(await app.evaluate(({ app }) => app.getVersion()), source.manifest.version);
       corrupt.value = false;
       await page.evaluate(() => window.desktopBridge.downloadUpdate());
     }
-    await page.waitForFunction(
-      async (version) => {
-        const state = await window.desktopBridge.getUpdateState();
-        return state.status === "downloaded" && state.downloadedVersion === version;
-      },
-      target.manifest.version,
-      { timeout: TIMEOUT },
+    await waitForUpdateState(
+      page,
+      (state) =>
+        state.status === "downloaded" && state.downloadedVersion === target.manifest.version,
     );
     await page.screenshot({ path: NodePath.join(evidence, "before-restart.png") });
     const video = page.video();
@@ -735,13 +741,9 @@ async function qualify(options) {
     if (options.scenario === "preparation-recovery") {
       await page.getByRole("button", { name: /^Update:/ }).click();
       await page.getByRole("button", { name: "Restart now", exact: true }).click();
-      await page.waitForFunction(
-        async () => {
-          const state = await window.desktopBridge.getUpdateState();
-          return state.errorContext === "download" && state.downloadedVersion === null;
-        },
-        undefined,
-        { timeout: TIMEOUT },
+      await waitForUpdateState(
+        page,
+        (state) => state.errorContext === "download" && state.downloadedVersion === null,
       );
       overrides.clear();
       NodeAssert.equal(
@@ -774,13 +776,10 @@ async function qualify(options) {
       }
       await page.evaluate(() => window.desktopBridge.checkForUpdate());
       await page.evaluate(() => window.desktopBridge.downloadUpdate());
-      await page.waitForFunction(
-        async (version) => {
-          const state = await window.desktopBridge.getUpdateState();
-          return state.status === "downloaded" && state.downloadedVersion === version;
-        },
-        target.manifest.version,
-        { timeout: TIMEOUT },
+      await waitForUpdateState(
+        page,
+        (state) =>
+          state.status === "downloaded" && state.downloadedVersion === target.manifest.version,
       );
     }
     if (options.scenario === "ordinary-quit") {
