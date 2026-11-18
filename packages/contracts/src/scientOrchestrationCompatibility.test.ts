@@ -30,7 +30,6 @@ import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
-  ProjectFaviconPath,
   ProjectIconOverride,
   ProjectUpdatePayload,
   ReceivedProjectIcon,
@@ -67,7 +66,6 @@ const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFul
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
 const encodeModelSelection = Schema.encodeUnknownEffect(ModelSelection);
 const decodeCommandId = Schema.decodeUnknownEffect(CommandId);
-const decodeProjectFaviconPath = Schema.decodeUnknownEffect(ProjectFaviconPath);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
@@ -1066,15 +1064,6 @@ it.effect("ModelSelection encodes to the canonical instanceId wire form", () =>
       model: "llama3:70b",
       options: [{ id: "temperature", value: "0.4" }],
     });
-  }),
-);
-
-it.effect("project favicon overrides accept only supported image files", () =>
-  Effect.gen(function* () {
-    const valid = yield* decodeProjectFaviconPath("brand/icon.svg");
-    assert.strictEqual(valid, "brand/icon.svg");
-    const invalid = yield* Effect.exit(decodeProjectFaviconPath(".env"));
-    assert.strictEqual(invalid._tag, "Failure");
   }),
 );
 
