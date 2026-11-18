@@ -350,6 +350,15 @@ export async function directoryIdentity(directory: string, helper?: string): Pro
       throw new Error("Workspace directory binding changed.");
     return { dev: identity.dev, ino: identity.ino };
   }
+  return hostDirectoryIdentity(directory);
+}
+/**
+ * A directory's identity as the operating system reports it to Node, on every host: enough to
+ * tell that a path still names the same directory a moment later. Plain reads and the workspace
+ * epoch use it, so they never depend on the native helper; retained records and native
+ * publication keep the helper's volume GUID and 128-bit file id.
+ */
+export async function hostDirectoryIdentity(directory: string): Promise<Identity> {
   const stat = await NodeFSP.lstat(directory, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new Error("Workspace directory binding changed.");

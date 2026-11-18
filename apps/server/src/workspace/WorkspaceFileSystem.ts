@@ -49,6 +49,7 @@ import {
   ensureNativePrivateRetentionDirectory,
   acceptedNativeFilePublicationHelper,
   nativeFilePublicationHelper,
+  nativeFilePublicationHelperRefusal,
 } from "../scient/workspace/NativeFilePublication.ts";
 import { RetainedMutationError } from "../scient/workspace/RetainedFileMutation.ts";
 import {
@@ -261,7 +262,16 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const helperPath = config.filePublicationHelperPath;
   // Checked before saves start, so they begin on the path they keep; a refusal is checked again.
-  yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
+  // SCIENT-FORK:START — say why it was refused: Windows reads it for file identity.
+  const startupHelper = yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
+  if (startupHelper === undefined)
+    yield* Effect.logWarning("native file publication helper unavailable").pipe(
+      Effect.annotateLogs({
+        reason: nativeFilePublicationHelperRefusal(helperPath) ?? "not checked",
+      }),
+      Effect.withSpan("WorkspaceFileSystem.nativePublicationHelper"),
+    );
+  // SCIENT-FORK:END
   const configuredRetentionStorageDirectory =
     config.filePublicationRetentionRoot ?? path.join(config.baseDir, "file-publications");
   // Resolve only ancestors: the final private directory must still reject a symlink.
