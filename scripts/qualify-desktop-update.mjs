@@ -734,7 +734,7 @@ async function qualify(options) {
       }));
       NodeFS.writeFileSync(NodePath.join(evidence, "update-ui.json"), JSON.stringify(ui, null, 2));
     };
-    // A fresh profile opens Scient's getting-started flow; skip it to reach the empty workspace.
+    // A fresh profile opens Scient's first-run welcome; skip it to reach the empty workspace.
     const addProject = page.getByRole("button", { name: "Add project", exact: true }).first();
     const skipOnboarding = page.getByRole("button", { name: "Skip", exact: true }).first();
     for (let step = 0; step < 4; step++) {
