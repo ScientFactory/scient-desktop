@@ -201,6 +201,8 @@ function supportingPath(path, name) {
   if (
     /(^|\/)(__tests__\/|[^/]+\.(test|spec)\.[cm]?[jt]sx?$)/u.test(path) ||
     path.endsWith(".md") ||
+    // A vendored API schema describes another service; its words are not Scient seams.
+    /(^|\/)schema\/[^/]+\.graphql$/u.test(path) ||
     /^scient-[a-z0-9-]+-seams\.json$/u.test(path) ||
     /^scripts\/verify-scient-[a-z0-9-]+-seams\.mjs$/u.test(path) ||
     path === "scripts/scient-seam-check.mjs"
