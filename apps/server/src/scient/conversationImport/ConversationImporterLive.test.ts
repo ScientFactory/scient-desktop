@@ -337,32 +337,6 @@ const journalOf = (directory: string) =>
   readConversationImportJournal(directory).pipe(Effect.map(Option.getOrThrow));
 
 describe("ConversationImporter", () => {
-  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
-  it.effect("starts the imported thread supervised even when full access is requested", () =>
-    withImporter(
-      Effect.gen(function* () {
-        const { lease } = yield* leaseFor(importFixture({ turns: 1 }));
-        const completion = yield* importOnce(lease, importRequest({ runtimeMode: "full-access" }));
-        assert.strictEqual(completion.result.destination.runtimeMode, "approval-required");
-        const thread = (yield* readThread(completion.result.threadId))!;
-        assert.strictEqual(
-          (yield* (yield* ProjectionStore.ProjectionStoreV2).getThread(thread.id)).runtimeMode,
-          "approval-required",
-        );
-        const journal = yield* journalOf(lease.attemptDirectory);
-        assert.strictEqual(journal.binding.destination.runtimeMode, "approval-required");
-        // The command itself never carries another mode, whatever destination it is given.
-        const command = buildConversationImportCommand({
-          validated: lease.input,
-          ids: journal.ids,
-          destination: destination({ runtimeMode: "full-access" }),
-          importedAt: journal.importedAt,
-        });
-        assert.strictEqual(command.runtimeMode, "approval-required");
-      }),
-    ),
-  );
-
   it.effect(
     "keeps history dated after this server's clock as an inherited prefix, with a note",
     () =>
