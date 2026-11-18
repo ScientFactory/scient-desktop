@@ -216,6 +216,8 @@ export const ComputeResultsPlaceLatexInput = Schema.Struct({
   cwd: Cwd,
   /** The root document, whose folder LaTeX resolves `\input` and `\includegraphics` from. */
   documentPath: ProjectPath,
+  /** The editor's preamble with its included files, so new macro names avoid every one in use. */
+  setup: Schema.optional(Schema.String.check(Schema.isMaxLength(512 * 1024))),
   revision: Text,
   output: ProjectPath,
   /** For a value: its JSON Pointer in `output`. */
@@ -251,6 +253,11 @@ export type ComputeResultFileState = typeof ComputeResultFileState.Type;
 export const ComputeResultPlacedFile = Schema.Struct({
   path: ProjectPath,
   state: ComputeResultFileState,
+  /**
+   * Whether the shown PDF read this file, from its build's dependency record; null when that
+   * record cannot say, as for figures or an incomplete record.
+   */
+  usedByBuild: Schema.NullOr(Schema.Boolean),
   /** The open PDF was built from a different version of this file: recompile to see it. */
   differsFromBuild: Schema.Boolean,
 });
@@ -268,6 +275,8 @@ export const ComputeResultPlacedScript = Schema.Struct({
   files: Schema.Array(ComputeResultPlacedFile),
   /** The last Update files can still be undone. */
   canUndo: Schema.Boolean,
+  /** An Update or Undo stopped part way; Undo update puts the earlier files back. */
+  interrupted: Schema.Boolean,
 });
 export type ComputeResultPlacedScript = typeof ComputeResultPlacedScript.Type;
 
@@ -294,12 +303,21 @@ export const ComputeResultsPlacementsResult = Schema.Struct({
 });
 export type ComputeResultsPlacementsResult = typeof ComputeResultsPlacementsResult.Type;
 
+/** A file as the user saw it when agreeing to replace it. */
+export const ComputeResultFileDigest = Schema.Struct({ path: ProjectPath, sha256: Text });
+export type ComputeResultFileDigest = typeof ComputeResultFileDigest.Type;
+
 export const ComputeResultsUpdateFilesInput = Schema.Struct({
   cwd: Cwd,
   documentPath: ProjectPath,
   scriptPath: ProjectPath,
-  /** Replace files changed since they were placed; their bytes are kept for Undo. */
-  replaceEdited: Schema.Boolean,
+  /**
+   * The run the card offered. A different newest run refuses, so nothing is placed that the user
+   * did not see. The files' own run restores missing files.
+   */
+  toRevision: Text,
+  /** Edited files the user agreed to replace, as they were then; their bytes are kept for Undo. */
+  replaceEdited: Schema.Array(ComputeResultFileDigest).check(Schema.isMaxLength(500)),
 });
 export type ComputeResultsUpdateFilesInput = typeof ComputeResultsUpdateFilesInput.Type;
 
@@ -313,7 +331,7 @@ export type ComputeResultsUndoUpdateInput = typeof ComputeResultsUndoUpdateInput
 export const ComputeResultsFilesChangeResult = Schema.Union([
   Schema.TaggedStruct("changed", { files: Schema.Array(ProjectPath) }),
   /** Nothing was written. `edited` lists files changed since placement, which a retry may replace. */
-  Schema.TaggedStruct("refused", { message: Text, edited: Schema.Array(ProjectPath) }),
+  Schema.TaggedStruct("refused", { message: Text, edited: Schema.Array(ComputeResultFileDigest) }),
 ]);
 export type ComputeResultsFilesChangeResult = typeof ComputeResultsFilesChangeResult.Type;
 

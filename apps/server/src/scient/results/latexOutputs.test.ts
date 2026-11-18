@@ -94,3 +94,9 @@ describe("CSV tables", () => {
     expect(outputSlug("é.csv")).toBe("e");
   });
 });
+
+describe("CSV edge cases", () => {
+  it("keeps a quoted empty field at the end of a file without a final newline", () => {
+    expect(parseCsv('a\n""')).toEqual([["a"], [""]]);
+  });
+});

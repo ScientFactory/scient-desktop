@@ -57,21 +57,47 @@ async function sameCopyInProject(root: string, relativePath: string, bytes: Uint
   }
 }
 
-/** Bytes of a regular file inside the project, links resolved, or null. */
-async function readProjectFile(root: string, relativePath: string): Promise<Uint8Array | null> {
+/**
+ * The path inside the project when it is reached without links: the file, or the nearest folder
+ * that exists on the way to it, is where its name says. Null for a link or a path that leaves.
+ */
+async function unaliasedPath(root: string, relativePath: string): Promise<string | null> {
   try {
-    const target = NodePath.join(root, ...relativePath.split("/"));
-    const [realRoot, realTarget] = await Promise.all([
-      NodeFSP.realpath(root),
-      NodeFSP.realpath(target),
-    ]);
-    if (!realTarget.startsWith(`${realRoot}${NodePath.sep}`)) return null;
-    if (!(await NodeFSP.stat(realTarget)).isFile()) return null;
-    return new Uint8Array(await NodeFSP.readFile(realTarget));
+    const realRoot = await NodeFSP.realpath(root);
+    const target = NodePath.join(realRoot, ...relativePath.split("/"));
+    if (!target.startsWith(`${realRoot}${NodePath.sep}`)) return null;
+    for (
+      let existing = target;
+      existing.startsWith(realRoot);
+      existing = NodePath.dirname(existing)
+    ) {
+      const status = await NodeFSP.lstat(existing).catch(() => null);
+      if (status === null) continue;
+      if (status.isSymbolicLink()) return null;
+      return (await NodeFSP.realpath(existing)) === existing ? target : null;
+    }
+    return null;
   } catch {
     return null;
   }
 }
+
+/** Bytes of a regular file inside the project, reached without links, or null. */
+async function readProjectFile(root: string, relativePath: string): Promise<Uint8Array | null> {
+  const target = await unaliasedPath(root, relativePath);
+  if (target === null) return null;
+  try {
+    if (!(await NodeFSP.stat(target)).isFile()) return null;
+    return new Uint8Array(await NodeFSP.readFile(target));
+  } catch {
+    return null;
+  }
+}
+
+const requireUnaliased = async (root: string, relativePath: string) => {
+  if ((await unaliasedPath(root, relativePath)) === null)
+    throw new Error(`${relativePath} is reached through a link, so Scient does not change it.`);
+};
 
 /**
  * The linked-results operations both doors use: the app's RPC and the agents' tools. Each takes the
@@ -86,7 +112,7 @@ export function makeResultOperations(input: {
   readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
   readonly workspace: Pick<
     WorkspaceFileSystem.WorkspaceFileSystem["Service"],
-    "readFile" | "createBinaryFile" | "writeBinaryFile"
+    "readFile" | "createBinaryFile" | "writeBinaryFile" | "deleteFile"
   >;
 }) {
   const project = (cwd: string) =>
@@ -266,8 +292,9 @@ export function makeResultOperations(input: {
    */
   const projectFiles = (root: string): ProjectFiles => ({
     read: (path) => readProjectFile(root, path),
-    write: (path, bytes, expectedSha256) =>
-      Effect.runPromise(
+    write: async (path, bytes, expectedSha256) => {
+      await requireUnaliased(root, path);
+      return Effect.runPromise(
         input.workspace
           .writeBinaryFile({
             cwd: root,
@@ -284,7 +311,23 @@ export function makeResultOperations(input: {
               WorkspaceFileRevisionConflictError: () => Effect.succeed(false),
             }),
           ),
-      ),
+      );
+    },
+    remove: async (path, expectedSha256) => {
+      await requireUnaliased(root, path);
+      return Effect.runPromise(
+        input.workspace
+          .deleteFile({
+            cwd: root,
+            relativePath: path,
+            expectedRevision: `sha256:${expectedSha256}`,
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.catchTags({ WorkspaceFileRevisionConflictError: () => Effect.succeed(false) }),
+          ),
+      );
+    },
   });
 
   const documentText = (root: string, documentPath: string) =>
@@ -299,6 +342,7 @@ export function makeResultOperations(input: {
   const placeLatex = Effect.fn("ResultOperations.placeLatex")(function* (request: {
     readonly cwd: string;
     readonly documentPath: string;
+    readonly setup?: string | undefined;
     readonly revision: string;
     readonly output: string;
     readonly pointer: string | null;
@@ -312,7 +356,8 @@ export function makeResultOperations(input: {
       (context) =>
         placeLatexResult(context, {
           documentPath: request.documentPath,
-          documentText: text,
+          // The editor's setup includes the preamble's included files, which the root alone lacks.
+          documentText: `${text}\n${request.setup ?? ""}`,
           revision: request.revision,
           output: request.output,
           pointer: request.pointer,
@@ -331,11 +376,16 @@ export function makeResultOperations(input: {
     } | null;
   }) {
     const resultsProject = yield* project(request.cwd);
+    const text = yield* documentText(resultsProject.root, request.documentPath);
     return yield* input.results.placements(
       resultsProject,
       projectFiles(resultsProject.root),
       (context) =>
-        placementStatus(context, { documentPath: request.documentPath, build: request.build }),
+        placementStatus(context, {
+          documentPath: request.documentPath,
+          documentText: text,
+          build: request.build,
+        }),
     );
   });
 
@@ -343,7 +393,8 @@ export function makeResultOperations(input: {
     readonly cwd: string;
     readonly documentPath: string;
     readonly scriptPath: string;
-    readonly replaceEdited: boolean;
+    readonly toRevision: string;
+    readonly replaceEdited: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
   }) {
     const resultsProject = yield* project(request.cwd);
     const text = yield* documentText(resultsProject.root, request.documentPath);
@@ -356,6 +407,7 @@ export function makeResultOperations(input: {
           documentPath: request.documentPath,
           documentText: text,
           script: request.scriptPath,
+          toRevision: request.toRevision,
           replaceEdited: request.replaceEdited,
           now: updatedAt,
         }),

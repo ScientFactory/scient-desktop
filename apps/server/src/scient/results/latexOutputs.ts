@@ -111,6 +111,8 @@ export function parseCsv(text: string): ReadonlyArray<ReadonlyArray<string>> | n
   let row: string[] = [];
   let cell = "";
   let quoted = false;
+  // A quoted empty field still is a field, even when it is all the last line holds.
+  let started = false;
   let index = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   for (; index < text.length; index += 1) {
     const character = text[index]!;
@@ -122,21 +124,28 @@ export function parseCsv(text: string): ReadonlyArray<ReadonlyArray<string>> | n
       } else quoted = false;
       continue;
     }
-    if (character === '"' && cell === "") quoted = true;
-    else if (character === ",") {
+    if (character === '"' && cell === "") {
+      quoted = true;
+      started = true;
+    } else if (character === ",") {
       row.push(cell);
       cell = "";
+      started = false;
     } else if (character === "\n" || character === "\r") {
       if (character === "\r" && text[index + 1] === "\n") index += 1;
       row.push(cell);
       rows.push(row);
       row = [];
       cell = "";
+      started = false;
       if (rows.length > MAXIMUM_TABLE_ROWS) return null;
-    } else cell += character;
+    } else {
+      cell += character;
+      started = true;
+    }
   }
   if (quoted) return null;
-  if (cell !== "" || row.length > 0) {
+  if (started || cell !== "" || row.length > 0) {
     row.push(cell);
     rows.push(row);
   }

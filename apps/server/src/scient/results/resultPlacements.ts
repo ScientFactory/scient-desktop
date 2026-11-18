@@ -4,7 +4,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type {
+  ComputeResultFileDigest,
   ComputeResultFileState,
+  ComputeResultPlacedFile,
   ComputeResultPlacedScript,
   ComputeResultRevision,
   ComputeResultsFilesChangeResult,
@@ -26,14 +28,14 @@ import {
 import type { ResultsLayout, ResultsReader } from "./resultRevisions.ts";
 
 /**
- * LaTeX papers take results as ordinary files at stable paths, `results/<script>/…` beside the
- * root document. Scient records what it placed, from which revision, with which bytes, so it can
- * say whether a file still matches its run and replace a script's files together on request.
+ * LaTeX papers take results as plain files under `results/<script>/` beside the root document,
+ * recorded with their run and bytes. Update and Undo are journaled before any file changes, so an
+ * interrupted one is finished, or offered for Undo, the next time the record is read.
  */
 
 /** Project files as the placement code sees them; the server passes its guarded workspace writer. */
 export interface ProjectFiles {
-  /** A regular file inside the project, or null. */
+  /** A regular file inside the project, reached without links, or null. */
   readonly read: (path: string) => Promise<Uint8Array | null>;
   /**
    * Writes when the file is still what the caller saw: absent for null, those bytes for a hash.
@@ -44,12 +46,18 @@ export interface ProjectFiles {
     bytes: Uint8Array,
     expectedSha256: string | null,
   ) => Promise<boolean>;
+  /** Removes the file when it still holds those bytes; false when it changed. */
+  readonly remove: (path: string, expectedSha256: string) => Promise<boolean>;
 }
 
 type PlacementSource =
   | { readonly kind: "values" }
   | { readonly kind: "table"; readonly output: string }
-  | { readonly kind: "copy"; readonly output: string };
+  /** `wholeFloat`: a `.tex` the script wrote that is already a `table` float. */
+  | { readonly kind: "copy"; readonly output: string; readonly wholeFloat?: boolean };
+
+const sourceKey = (source: PlacementSource) =>
+  source.kind === "values" ? "values" : `${source.kind}:${source.output}`;
 
 interface PlacedFileRecord {
   readonly path: string;
@@ -69,17 +77,26 @@ interface MacroRecord {
   readonly macro: string;
 }
 
-interface UpdateRecord {
+/** One Update files, from its start through a possible Undo. */
+interface ChangeRecord {
   readonly id: string;
   readonly script: string;
   readonly root: string;
+  /**
+   * `updating` and `undoing` are written before files change, so finding one means the change
+   * stopped part way; `updated` is a finished Update that Undo can reverse.
+   */
+  readonly state: "updating" | "updated" | "undoing";
   readonly files: ReadonlyArray<{
     readonly path: string;
     /** What the file held before, kept under the Undo folder; null when it was missing. */
     readonly before: { readonly sha256: string; readonly copy: string } | null;
     readonly after: string;
-    readonly previous: PlacedFileRecord;
   }>;
+  /** The script's placements for this root before and after the Update. */
+  readonly placementsBefore: ReadonlyArray<PlacedFileRecord>;
+  readonly placementsAfter: ReadonlyArray<PlacedFileRecord>;
+  readonly macrosAfter: ReadonlyArray<MacroRecord>;
 }
 
 interface PlacementRecord {
@@ -88,8 +105,7 @@ interface PlacementRecord {
   readonly folders: Readonly<Record<string, string>>;
   readonly macros: ReadonlyArray<MacroRecord>;
   readonly files: ReadonlyArray<PlacedFileRecord>;
-  /** The last Update files per script and root, which Undo update reverses. */
-  readonly updates: ReadonlyArray<UpdateRecord>;
+  readonly changes: ReadonlyArray<ChangeRecord>;
 }
 
 const EMPTY_RECORD: PlacementRecord = {
@@ -97,7 +113,7 @@ const EMPTY_RECORD: PlacementRecord = {
   folders: {},
   macros: [],
   files: [],
-  updates: [],
+  changes: [],
 };
 
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
@@ -108,14 +124,21 @@ const recordFolder = (layout: ResultsLayout, projectId: string) =>
   NodePath.join(layout.computeDir, "results", projectId);
 const recordPath = (layout: ResultsLayout, projectId: string) =>
   NodePath.join(recordFolder(layout, projectId), "placements.json");
-const undoFolder = (layout: ResultsLayout, projectId: string, updateId: string) =>
-  NodePath.join(recordFolder(layout, projectId), "placement-undo", updateId);
+const undoFolder = (layout: ResultsLayout, projectId: string, changeId: string) =>
+  NodePath.join(recordFolder(layout, projectId), "placement-undo", changeId);
 
 async function readRecord(layout: ResultsLayout, projectId: string): Promise<PlacementRecord> {
   const text = await NodeFSP.readFile(recordPath(layout, projectId), "utf8").catch(() => null);
   if (text === null) return EMPTY_RECORD;
-  const parsed = JSON.parse(text) as PlacementRecord;
-  return parsed.version === 1 ? parsed : EMPTY_RECORD;
+  const parsed = JSON.parse(text) as Partial<PlacementRecord>;
+  if (parsed.version !== 1) return EMPTY_RECORD;
+  return {
+    version: 1,
+    folders: parsed.folders ?? {},
+    macros: parsed.macros ?? [],
+    files: parsed.files ?? [],
+    changes: parsed.changes ?? [],
+  };
 }
 
 async function writeRecord(layout: ResultsLayout, projectId: string, record: PlacementRecord) {
@@ -126,7 +149,7 @@ async function writeRecord(layout: ResultsLayout, projectId: string, record: Pla
   await NodeFSP.rename(temporary, target);
 }
 
-/** One change at a time per project, so two placements never interleave their record writes. */
+/** One change at a time per project, so two requests never interleave their record writes. */
 const queues = new Map<string, Promise<unknown>>();
 function serialized<A>(projectId: string, task: () => Promise<A>): Promise<A> {
   const previous = queues.get(projectId) ?? Promise.resolve();
@@ -162,6 +185,26 @@ function definedMacros(text: string): ReadonlySet<string> {
   return names;
 }
 
+/**
+ * A file name TeX reads as it is: letters, digits, `.`, `-` and `_` only, since `%`, `#`, spaces
+ * and the like would end or change an `\input` or `\includegraphics` argument.
+ */
+function texSafeFileName(name: string): string {
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  const stem =
+    (dot > 0 ? name.slice(0, dot) : name)
+      .normalize("NFKD")
+      .replace(/[^A-Za-z0-9_-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "") || "result";
+  return /^[a-z0-9]+$/u.test(extension) ? `${stem}.${extension}` : stem;
+}
+
+const withSuffix = (name: string, index: number) => {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? `${name.slice(0, dot)}-${index}${name.slice(dot)}` : `${name}-${index}`;
+};
+
 export interface PlacementContext {
   readonly layout: ResultsLayout;
   readonly projectId: string;
@@ -177,7 +220,12 @@ async function latestFor(context: PlacementContext, script: string) {
   return (await context.reader.revisions()).find((candidate) => candidate.script.path === script);
 }
 
-/** Every value a revision's values files hold, keyed `output#pointer`. */
+async function diskSha(context: PlacementContext, path: string): Promise<string | null> {
+  const bytes = await context.files.read(path);
+  return bytes === null ? null : sha256(bytes);
+}
+
+/** Every value a revision's values files hold. */
 async function revisionValues(
   context: PlacementContext,
   revision: ComputeResultRevision,
@@ -217,6 +265,8 @@ function nameValues(
   return { macros, names };
 }
 
+const isWholeFloat = (bytes: Uint8Array) => /\\begin\s*\{table\*?\}/u.test(decode(bytes));
+
 /** The bytes a placed file should hold for a revision, or why that revision cannot make it. */
 async function placedBytes(
   context: PlacementContext,
@@ -245,7 +295,14 @@ async function placedBytes(
   if (stored === null)
     return { refused: `The run of ${script} has no ${source.output}, or no longer stores it.` };
   const bytes = new Uint8Array(await NodeFSP.readFile(stored.path));
-  if (source.kind === "copy") return { bytes, macros: record.macros };
+  if (source.kind === "copy") {
+    // A float must stay a float, and a bare tabular stay bare, or the paper's wrapper breaks.
+    if (source.wholeFloat !== undefined && isWholeFloat(bytes) !== source.wholeFloat)
+      return {
+        refused: `${source.output} changed between a whole table float and a bare tabular. Insert it again instead of updating.`,
+      };
+    return { bytes, macros: record.macros };
+  }
   const rows = parseCsv(decode(bytes));
   if (rows === null)
     return {
@@ -267,12 +324,114 @@ async function placedBytes(
 function scriptFolder(record: PlacementRecord, script: string): string {
   const known = record.folders[script];
   if (known !== undefined) return known;
-  const taken = new Set(Object.values(record.folders));
+  const taken = new Set(Object.values(record.folders).map((folder) => folder.toLowerCase()));
   const base = outputSlug(script);
   let name = base;
-  for (let index = 2; taken.has(name); index += 1) name = `${base}-${index}`;
+  for (let index = 2; taken.has(name.toLowerCase()); index += 1) name = `${base}-${index}`;
   return name;
 }
+
+const placementsOf = (record: PlacementRecord, script: string, root: string) =>
+  record.files.filter((file) => file.script === script && file.root === root);
+
+const changeOf = (record: PlacementRecord, script: string, root: string) =>
+  record.changes.find((change) => change.script === script && change.root === root);
+
+const samePlacements = (
+  left: ReadonlyArray<PlacedFileRecord>,
+  right: ReadonlyArray<PlacedFileRecord>,
+) => {
+  const key = (file: PlacedFileRecord) => `${file.path}\u0000${file.revision}\u0000${file.sha256}`;
+  const keys = new Set(left.map(key));
+  return left.length === right.length && right.every((file) => keys.has(key(file)));
+};
+
+/** The record with a script's placements for one root replaced. */
+const withPlacements = (
+  record: PlacementRecord,
+  script: string,
+  root: string,
+  placements: ReadonlyArray<PlacedFileRecord>,
+): PlacementRecord => ({
+  ...record,
+  files: [
+    ...record.files.filter((file) => file.script !== script || file.root !== root),
+    ...placements,
+  ],
+});
+
+const dropChange = (record: PlacementRecord, change: ChangeRecord): PlacementRecord => ({
+  ...record,
+  changes: record.changes.filter((candidate) => candidate.id !== change.id),
+});
+
+const removeCopies = (context: PlacementContext, change: ChangeRecord) =>
+  NodeFSP.rm(undoFolder(context.layout, context.projectId, change.id), {
+    recursive: true,
+    force: true,
+  }).catch(() => undefined);
+
+/** Where each file of a change stands on disk: before it, after it, or neither. */
+async function changePositions(context: PlacementContext, change: ChangeRecord) {
+  const positions: Array<"before" | "after" | "other"> = [];
+  for (const file of change.files) {
+    const current = await diskSha(context, file.path);
+    positions.push(
+      current === file.after
+        ? "after"
+        : (file.before === null ? current === null : current === file.before.sha256)
+          ? "before"
+          : "other",
+    );
+  }
+  return positions;
+}
+
+/**
+ * Finishes what an interrupted Update or Undo left: when every file reached one side, the record
+ * follows the files. A mix stays recorded, and Undo update puts the earlier files back.
+ */
+async function reconcile(context: PlacementContext, record: PlacementRecord) {
+  let next = record;
+  for (const change of record.changes) {
+    if (change.state === "updated") continue;
+    const positions = await changePositions(context, change);
+    const allAfter = positions.every((position) => position === "after");
+    const allBefore = positions.every((position) => position === "before");
+    if (change.state === "updating" && allAfter)
+      next = {
+        ...withPlacements(next, change.script, change.root, change.placementsAfter),
+        macros: change.macrosAfter,
+        changes: next.changes.map((candidate) =>
+          candidate.id === change.id ? { ...change, state: "updated" as const } : candidate,
+        ),
+      };
+    else if (change.state === "updating" && allBefore) {
+      next = dropChange(next, change);
+      await removeCopies(context, change);
+    } else if (change.state === "undoing" && allBefore) {
+      next = dropChange(
+        withPlacements(next, change.script, change.root, change.placementsBefore),
+        change,
+      );
+      await removeCopies(context, change);
+    } else if (change.state === "undoing" && allAfter)
+      next = {
+        ...next,
+        changes: next.changes.map((candidate) =>
+          candidate.id === change.id ? { ...change, state: "updated" as const } : candidate,
+        ),
+      };
+  }
+  if (next !== record) await writeRecord(context.layout, context.projectId, next);
+  return next;
+}
+
+const interrupted = (change: ChangeRecord | undefined) =>
+  change !== undefined && change.state !== "updated";
+
+const INTERRUPTED_MESSAGE =
+  "The last update of these files stopped part way. Undo update puts the earlier files back.";
 
 /**
  * Places one value, table or figure for a LaTeX paper and returns what to insert. All results from
@@ -299,83 +458,91 @@ export function placeLatexResult(
       throw new PlacementRefusal({ message: `The run has no ${request.output}.` });
     const script = revision.script.path;
     const root = documentRoot(request.documentPath);
-    let record = await readRecord(context.layout, context.projectId);
-    const placedForScript = record.files.filter(
-      (file) => file.script === script && file.root === root,
-    );
+    let record = await reconcile(context, await readRecord(context.layout, context.projectId));
+    if (interrupted(changeOf(record, script, root)))
+      throw new PlacementRefusal({ message: INTERRUPTED_MESSAGE });
+    const placedForScript = placementsOf(record, script, root);
     if (placedForScript.some((file) => file.revision !== revision.revision))
       throw new PlacementRefusal({
         message: `Results from ${script} in this paper come from another run. Update files first, so they all come from one run.`,
       });
-    const folder = scriptFolder(record, script);
-    const relativeFolder = `results/${folder}`;
-    const source: PlacementSource =
-      output.kind === "values"
-        ? { kind: "values" }
-        : output.kind === "table"
-          ? { kind: "table", output: output.name }
-          : output.kind === "figure" || output.kind === "latex"
-            ? { kind: "copy", output: output.name }
-            : (() => {
-                throw new PlacementRefusal({
-                  message: `${output.name} is not a value, table or figure.`,
-                });
-              })();
+    if (output.kind === "figure" && /\.svg$/iu.test(output.name))
+      throw new PlacementRefusal({
+        message: `LaTeX cannot include ${output.name} as it is. Have the script save the figure as PDF or PNG too.`,
+      });
+    let source: PlacementSource;
+    if (output.kind === "values") source = { kind: "values" };
+    else if (output.kind === "table") source = { kind: "table", output: output.name };
+    else if (output.kind === "figure" || output.kind === "latex")
+      source = { kind: "copy", output: output.name };
+    else throw new PlacementRefusal({ message: `${output.name} is not a value, table or figure.` });
     if (source.kind === "values" && request.pointer === null)
       throw new PlacementRefusal({ message: "Choose a value from the values file." });
-    const fileName =
-      source.kind === "values"
-        ? "values.tex"
-        : source.kind === "table"
-          ? `${outputSlug(output.name)}.tex`
-          : output.name.split("/").at(-1)!;
-    const relativePath = `${relativeFolder}/${fileName}`;
-    const path = inRoot(root, relativePath);
     const documentMacros = definedMacros(request.documentText);
     const made = await placedBytes(context, record, script, source, revision, documentMacros);
     if ("refused" in made) throw new PlacementRefusal({ message: made.refused });
+    if (source.kind === "copy" && output.kind === "latex")
+      source = { ...source, wholeFloat: isWholeFloat(made.bytes) };
 
-    const existing = record.files.find((file) => file.path === path);
-    const onDisk = await context.files.read(path);
-    if (existing === undefined) {
-      if (onDisk !== null && sha256(onDisk) !== sha256(made.bytes))
-        throw new PlacementRefusal({
-          message: `${path} already exists and was not placed by Scient. Move it, or rename the output.`,
-        });
-      if (onDisk === null && !(await context.files.write(path, made.bytes, null)))
-        throw new PlacementRefusal({
-          message: `${path} appeared while Scient was writing it. Try again.`,
-        });
-    } else if (onDisk === null) {
-      if (!(await context.files.write(path, made.bytes, null)))
-        throw new PlacementRefusal({
-          message: `${path} appeared while Scient was writing it. Try again.`,
-        });
+    const folder = scriptFolder(record, script);
+    const existing = placedForScript.find((file) => sourceKey(file.source) === sourceKey(source));
+    let path: string;
+    if (existing !== undefined) {
+      path = existing.path;
+      // Placed earlier from this run: a missing copy is restored, anything else stays as it is.
+      if ((await context.files.read(path)) === null) {
+        if (!(await context.files.write(path, made.bytes, null)))
+          throw new PlacementRefusal({
+            message: `${path} appeared while Scient was writing it. Try again.`,
+          });
+        record = withPlacements(record, script, root, [
+          ...placedForScript.filter((file) => file !== existing),
+          { ...existing, sha256: sha256(made.bytes), placedAt: request.now },
+        ]);
+      }
+    } else {
+      // Each output gets its own file: two outputs never share a destination, in any letter case.
+      const base = texSafeFileName(
+        source.kind === "values"
+          ? "values.tex"
+          : source.kind === "table"
+            ? `${outputSlug(output.name)}.tex`
+            : (output.name.split("/").at(-1) ?? output.name),
+      );
+      const taken = new Set(
+        record.files.filter((file) => file.root === root).map((file) => file.path.toLowerCase()),
+      );
+      let candidate = inRoot(root, `results/${folder}/${base}`);
+      for (let index = 2; ; index += 1) {
+        if (index > 100)
+          throw new PlacementRefusal({ message: "Too many files already use this result's name." });
+        if (!taken.has(candidate.toLowerCase())) {
+          const onDisk = await context.files.read(candidate);
+          // A file Scient did not place is never overwritten; an identical one is adopted.
+          if (onDisk === null) {
+            if (await context.files.write(candidate, made.bytes, null)) break;
+          } else if (sha256(onDisk) === sha256(made.bytes)) break;
+        }
+        candidate = inRoot(root, `results/${folder}/${withSuffix(base, index)}`);
+      }
+      path = candidate;
+      record = withPlacements(record, script, root, [
+        ...placedForScript,
+        {
+          path,
+          root,
+          script,
+          revision: revision.revision,
+          source,
+          sha256: sha256(made.bytes),
+          placedAt: request.now,
+        },
+      ]);
     }
-    // A file placed earlier from this run stays as it is, hand edits included; its state shows them.
-
-    record = {
-      ...record,
-      folders: { ...record.folders, [script]: folder },
-      macros: made.macros,
-      files:
-        existing === undefined || onDisk === null
-          ? [
-              ...record.files.filter((file) => file.path !== path),
-              {
-                path,
-                root,
-                script,
-                revision: revision.revision,
-                source,
-                sha256: sha256(made.bytes),
-                placedAt: request.now,
-              },
-            ]
-          : record.files,
-    };
+    record = { ...record, folders: { ...record.folders, [script]: folder }, macros: made.macros };
     await writeRecord(context.layout, context.projectId, record);
 
+    const relativePath = root === "" ? path : NodePath.posix.relative(root, path);
     if (source.kind === "values") {
       const macro = made.macros.find(
         (candidate) =>
@@ -400,7 +567,7 @@ export function placeLatexResult(
     }
     const label = outputSlug(output.name);
     const caption = escapeLatexText(resultCaption(output.name, script));
-    if (source.kind === "copy" && output.kind === "figure")
+    if (output.kind === "figure")
       return {
         insert: {
           kind: "block",
@@ -419,7 +586,7 @@ export function placeLatexResult(
         files: [path],
       };
     // A .tex the script wrote may already be a whole float; then it goes in as it is.
-    const whole = source.kind === "copy" && /\\begin\s*\{table\*?\}/u.test(decode(made.bytes));
+    const whole = source.kind === "copy" && source.wholeFloat === true;
     return {
       insert: {
         kind: "block",
@@ -448,11 +615,14 @@ async function fileState(
   file: PlacedFileRecord,
   outOfDate: boolean,
 ): Promise<ComputeResultFileState> {
-  const bytes = await context.files.read(file.path);
-  if (bytes === null) return "missing";
-  if (sha256(bytes) !== file.sha256) return "edited";
+  const current = await diskSha(context, file.path);
+  if (current === null) return "missing";
+  if (current !== file.sha256) return "edited";
   return outOfDate ? "out-of-date" : "current";
 }
+
+const macroUsed = (text: string, macro: string) =>
+  new RegExp(`\\\\${macro}(?![A-Za-z])`, "u").test(text);
 
 /** Why the newest run cannot replace a script's placed files, or null when it can. */
 async function updateRefusal(
@@ -461,38 +631,35 @@ async function updateRefusal(
   files: ReadonlyArray<PlacedFileRecord>,
   from: ComputeResultRevision,
   to: ComputeResultRevision,
+  documentText: string,
 ): Promise<string | null> {
   for (const file of files) {
     const source = file.source;
     if (source.kind === "values") {
-      const before = await revisionValues(context, from);
       const after = new Set(
         (await revisionValues(context, to)).map((value) => `${value.output}#${value.pointer}`),
       );
-      const gone = before.filter((value) => !after.has(`${value.output}#${value.pointer}`));
-      if (gone.length > 0) {
-        const names = gone.map((value) => {
-          const macro = record.macros.find(
-            (candidate) =>
-              candidate.script === file.script &&
-              candidate.output === value.output &&
-              candidate.pointer === value.pointer,
-          );
-          return `${value.pointer.slice(1) || value.output}${macro === undefined ? "" : ` (\\${macro.macro})`}`;
-        });
-        return `The newer run no longer produces ${names.join(", ")}.`;
-      }
+      // A value the newer run dropped matters only when the paper uses it.
+      const gone = (await revisionValues(context, from)).flatMap((value) => {
+        if (after.has(`${value.output}#${value.pointer}`)) return [];
+        const macro = record.macros.find(
+          (candidate) =>
+            candidate.script === file.script &&
+            candidate.output === value.output &&
+            candidate.pointer === value.pointer,
+        );
+        return macro === undefined || !macroUsed(documentText, macro.macro)
+          ? []
+          : [`${value.pointer.slice(1) || value.output} (\\${macro.macro})`];
+      });
+      if (gone.length > 0) return `The newer run no longer produces ${gone.join(", ")}.`;
       continue;
     }
     const output = to.outputs.find((candidate) => candidate.name === source.output);
     if (output === undefined || output.pruned === true)
       return `The newer run no longer writes ${source.output}.`;
-    if (source.kind === "table") {
-      const stored = await context.reader.outputFile(to, output.name);
-      const text = stored === null ? null : await NodeFSP.readFile(stored.path, "utf8");
-      if (text === null || parseCsv(text) === null)
-        return `The newer run's ${output.name} is not a table Scient can print.`;
-    }
+    const made = await placedBytes(context, record, file.script, source, to, new Set());
+    if ("refused" in made) return made.refused;
   }
   return null;
 }
@@ -557,76 +724,103 @@ async function updateChanges(
     : lines;
 }
 
+/** Whether a finished Update can still be reversed exactly. */
+async function undoable(
+  context: PlacementContext,
+  record: PlacementRecord,
+  change: ChangeRecord,
+): Promise<boolean> {
+  if (change.state !== "updated") return true;
+  // Results placed or changed after the update would be left on its run, so it no longer reverses.
+  if (!samePlacements(placementsOf(record, change.script, change.root), change.placementsAfter))
+    return false;
+  return (await changePositions(context, change)).every((position) => position === "after");
+}
+
 /** Placed files under a paper's root, grouped by script, with what Update files would do. */
-export async function placementStatus(
+export function placementStatus(
   context: PlacementContext,
   request: {
     readonly documentPath: string;
+    readonly documentText: string;
     readonly build: {
       readonly finishedAt: string;
       readonly digests: Readonly<Record<string, string>>;
     } | null;
   },
 ): Promise<ComputeResultsPlacementsResult> {
-  const root = documentRoot(request.documentPath);
-  const record = await readRecord(context.layout, context.projectId);
-  const scripts: ComputeResultPlacedScript[] = [];
-  const grouped = new Map<string, PlacedFileRecord[]>();
-  for (const file of record.files) {
-    if (file.root !== root) continue;
-    grouped.set(file.script, [...(grouped.get(file.script) ?? []), file]);
-  }
-  for (const [script, files] of grouped) {
-    const revision = await revisionById(context, files[0]!.revision);
-    if (revision === undefined) continue;
-    const summary = await context.reader.summary(revision);
-    const latest = await latestFor(context, script);
-    const newer = latest === undefined || latest.revision === revision.revision ? null : latest;
-    const placed = [];
-    for (const file of files) {
-      const state = await fileState(context, file, summary.causes.length > 0);
-      const built = request.build?.digests[file.path];
-      placed.push({
-        path: file.path,
-        state,
-        differsFromBuild:
-          request.build !== null &&
-          state !== "missing" &&
-          ((built !== undefined && built !== `sha256:${file.sha256}`) ||
-            file.placedAt > request.build.finishedAt),
+  return serialized(context.projectId, async () => {
+    const root = documentRoot(request.documentPath);
+    const record = await reconcile(context, await readRecord(context.layout, context.projectId));
+    // An empty dependency record says nothing about what the PDF read.
+    const build =
+      request.build !== null && Object.keys(request.build.digests).length > 0
+        ? request.build
+        : null;
+    const scripts: ComputeResultPlacedScript[] = [];
+    const grouped = new Map<string, PlacedFileRecord[]>();
+    for (const file of record.files) {
+      if (file.root !== root) continue;
+      grouped.set(file.script, [...(grouped.get(file.script) ?? []), file]);
+    }
+    for (const [script, files] of grouped) {
+      const revision = await revisionById(context, files[0]!.revision);
+      if (revision === undefined) continue;
+      const summary = await context.reader.summary(revision);
+      const latest = await latestFor(context, script);
+      const newer = latest === undefined || latest.revision === revision.revision ? null : latest;
+      const placed: ComputeResultPlacedFile[] = [];
+      for (const file of files) {
+        const state = await fileState(context, file, summary.causes.length > 0);
+        // The build's record covers .tex inputs, not figures.
+        const usedByBuild =
+          build === null || !/\.tex$/iu.test(file.path)
+            ? null
+            : build.digests[file.path] !== undefined;
+        const built = build?.digests[file.path];
+        placed.push({
+          path: file.path,
+          state,
+          usedByBuild,
+          differsFromBuild:
+            build !== null &&
+            usedByBuild !== false &&
+            state !== "missing" &&
+            ((built !== undefined && built !== `sha256:${file.sha256}`) ||
+              file.placedAt > build.finishedAt),
+        });
+      }
+      const change = changeOf(record, script, root);
+      const updateBlocked =
+        newer === null
+          ? null
+          : await updateRefusal(context, record, files, revision, newer, request.documentText);
+      scripts.push({
+        summary,
+        newer: newer === null ? null : await context.reader.summary(newer),
+        updateBlocked,
+        changes:
+          newer === null || updateBlocked !== null
+            ? []
+            : await updateChanges(context, record, files, revision, newer),
+        files: placed,
+        canUndo: change !== undefined && (await undoable(context, record, change)),
+        interrupted: interrupted(change),
       });
     }
-    const update = record.updates.find(
-      (candidate) => candidate.script === script && candidate.root === root,
-    );
-    let canUndo = false;
-    if (update !== undefined) {
-      canUndo = true;
-      for (const file of update.files) {
-        const bytes = await context.files.read(file.path);
-        if (bytes === null || sha256(bytes) !== file.after) canUndo = false;
-      }
-    }
-    const updateBlocked =
-      newer === null ? null : await updateRefusal(context, record, files, revision, newer);
-    scripts.push({
-      summary,
-      newer: newer === null ? null : await context.reader.summary(newer),
-      updateBlocked,
-      changes:
-        newer === null || updateBlocked !== null
-          ? []
-          : await updateChanges(context, record, files, revision, newer),
-      files: placed,
-      canUndo,
-    });
-  }
-  return { scripts, coverage: request.build === null ? "placed" : "build" };
+    return { scripts, coverage: build === null ? "placed" : "build" };
+  });
 }
 
+const refused = (
+  message: string,
+  edited: ReadonlyArray<ComputeResultFileDigest> = [],
+): ComputeResultsFilesChangeResult => ({ _tag: "refused", message, edited });
+
 /**
- * Replaces every file a script placed for a paper with the newest run's, as one change: all are
- * written, or none stay written. The previous bytes, hand edits included, are kept for Undo.
+ * Replaces every file a script placed for a paper with the run the user was shown, as one change:
+ * all are written, or none stay written. The previous bytes, hand edits included, are kept for
+ * Undo. Asked for the files' own run, it restores the missing ones.
  */
 export function updatePlacedFiles(
   context: PlacementContext,
@@ -634,43 +828,52 @@ export function updatePlacedFiles(
     readonly documentPath: string;
     readonly documentText: string;
     readonly script: string;
-    readonly replaceEdited: boolean;
+    readonly toRevision: string;
+    readonly replaceEdited: ReadonlyArray<ComputeResultFileDigest>;
     readonly now: string;
   },
 ): Promise<ComputeResultsFilesChangeResult> {
   return serialized(context.projectId, async () => {
     const root = documentRoot(request.documentPath);
-    const record = await readRecord(context.layout, context.projectId);
-    const files = record.files.filter(
-      (file) => file.script === request.script && file.root === root,
-    );
-    if (files.length === 0)
-      return {
-        _tag: "refused",
-        message: `No results from ${request.script} are in this paper.`,
-        edited: [],
-      };
+    let record = await reconcile(context, await readRecord(context.layout, context.projectId));
+    if (interrupted(changeOf(record, request.script, root))) return refused(INTERRUPTED_MESSAGE);
+    const files = placementsOf(record, request.script, root);
+    if (files.length === 0) return refused(`No results from ${request.script} are in this paper.`);
     const from = await revisionById(context, files[0]!.revision);
     const to = await latestFor(context, request.script);
     if (from === undefined || to === undefined)
-      return { _tag: "refused", message: "This run is not recorded on this computer.", edited: [] };
-    if (to.revision === from.revision)
-      return {
-        _tag: "refused",
-        message: "These files already come from the newest run.",
-        edited: [],
-      };
-    const refusal = await updateRefusal(context, record, files, from, to);
-    if (refusal !== null) return { _tag: "refused", message: refusal, edited: [] };
+      return refused("This run is not recorded on this computer.");
+
+    if (request.toRevision === from.revision) {
+      const restored: string[] = [];
+      for (const file of files) {
+        if ((await context.files.read(file.path)) !== null) continue;
+        const made = await placedBytes(
+          context,
+          record,
+          request.script,
+          file.source,
+          from,
+          new Set(),
+        );
+        if ("refused" in made) return refused(made.refused);
+        if (sha256(made.bytes) !== file.sha256)
+          return refused(`${file.path} cannot be made again exactly. Update to a newer run.`);
+        if (await context.files.write(file.path, made.bytes, null)) restored.push(file.path);
+      }
+      return restored.length === 0
+        ? refused("No placed file is missing.")
+        : { _tag: "changed", files: restored };
+    }
+    if (to.revision !== request.toRevision)
+      return refused(`A newer run of ${request.script} finished. Look at what it changes first.`);
+    const refusal = await updateRefusal(context, record, files, from, to, request.documentText);
+    if (refusal !== null) return refused(refusal);
 
     const documentMacros = definedMacros(request.documentText);
     let macros = record.macros;
-    const plan: {
-      file: PlacedFileRecord;
-      current: Uint8Array | null;
-      bytes: Uint8Array;
-    }[] = [];
-    const edited: string[] = [];
+    const plan: { file: PlacedFileRecord; current: Uint8Array | null; bytes: Uint8Array }[] = [];
+    const unconfirmed: ComputeResultFileDigest[] = [];
     for (const file of files) {
       const made = await placedBytes(
         context,
@@ -680,23 +883,31 @@ export function updatePlacedFiles(
         to,
         documentMacros,
       );
-      if ("refused" in made) return { _tag: "refused", message: made.refused, edited: [] };
+      if ("refused" in made) return refused(made.refused);
       macros = made.macros;
       const current = await context.files.read(file.path);
-      if (current !== null && sha256(current) !== file.sha256) edited.push(file.path);
+      const currentSha = current === null ? null : sha256(current);
+      // An edit is replaced only as the user saw it when agreeing; a later edit asks again.
+      if (
+        currentSha !== null &&
+        currentSha !== file.sha256 &&
+        !request.replaceEdited.some(
+          (confirmed) => confirmed.path === file.path && confirmed.sha256 === currentSha,
+        )
+      )
+        unconfirmed.push({ path: file.path, sha256: currentSha });
       plan.push({ file, current, bytes: made.bytes });
     }
-    if (edited.length > 0 && !request.replaceEdited)
-      return {
-        _tag: "refused",
-        message: `${edited.join(", ")} ${edited.length === 1 ? "was" : "were"} edited after Scient placed ${edited.length === 1 ? "it" : "them"}.`,
-        edited,
-      };
+    if (unconfirmed.length > 0)
+      return refused(
+        `${unconfirmed.map((file) => file.path).join(", ")} ${unconfirmed.length === 1 ? "was" : "were"} edited after Scient placed ${unconfirmed.length === 1 ? "it" : "them"}.`,
+        unconfirmed,
+      );
 
-    const updateId = `u${NodeCrypto.randomUUID().replaceAll("-", "")}`;
-    const copies = undoFolder(context.layout, context.projectId, updateId);
+    const changeId = `u${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+    const copies = undoFolder(context.layout, context.projectId, changeId);
     await NodeFSP.mkdir(copies, { recursive: true });
-    const undoFiles: UpdateRecord["files"][number][] = [];
+    const changeFiles: ChangeRecord["files"][number][] = [];
     for (const [index, step] of plan.entries()) {
       let before: { sha256: string; copy: string } | null = null;
       if (step.current !== null) {
@@ -704,13 +915,33 @@ export function updatePlacedFiles(
         await NodeFSP.writeFile(NodePath.join(copies, copy), step.current);
         before = { sha256: sha256(step.current), copy };
       }
-      undoFiles.push({
-        path: step.file.path,
-        before,
-        after: sha256(step.bytes),
-        previous: step.file,
-      });
+      changeFiles.push({ path: step.file.path, before, after: sha256(step.bytes) });
     }
+    const change: ChangeRecord = {
+      id: changeId,
+      script: request.script,
+      root,
+      state: "updating",
+      files: changeFiles,
+      placementsBefore: files,
+      placementsAfter: plan.map((step) => ({
+        ...step.file,
+        revision: to.revision,
+        sha256: sha256(step.bytes),
+        placedAt: request.now,
+      })),
+      macrosAfter: macros,
+    };
+    // Recorded before any file changes, so an interruption is found and finished or undone.
+    const finished = record.changes.filter(
+      (candidate) => candidate.script === request.script && candidate.root === root,
+    );
+    record = {
+      ...record,
+      changes: [...record.changes.filter((c) => !finished.includes(c)), change],
+    };
+    await writeRecord(context.layout, context.projectId, record);
+    for (const old of finished) await removeCopies(context, old);
 
     const written: number[] = [];
     let failure: unknown = null;
@@ -731,116 +962,106 @@ export function updatePlacedFiles(
     }
     if (failure !== null) {
       // Put back what was written, so the paper never mixes two runs.
+      const stuck: string[] = [];
       for (const index of written.toReversed()) {
         const step = plan[index]!;
-        if (step.current !== null)
-          await context.files
-            .write(step.file.path, step.current, sha256(step.bytes))
-            .catch(() => false);
+        const after = sha256(step.bytes);
+        const back = await (
+          step.current === null
+            ? context.files.remove(step.file.path, after)
+            : context.files.write(step.file.path, step.current, after)
+        ).catch(() => false);
+        if (!back) stuck.push(step.file.path);
       }
-      await NodeFSP.rm(copies, { recursive: true, force: true }).catch(() => undefined);
-      const message = isPlacementRefusal(failure)
+      const reason = isPlacementRefusal(failure)
         ? failure.message
-        : `Nothing was changed: a file could not be written${failure instanceof Error ? ` (${failure.message})` : ""}. Close any program that has it open, then try again.`;
-      return { _tag: "refused", message, edited: [] };
+        : `A file could not be written${failure instanceof Error ? ` (${failure.message})` : ""}. Close any program that has it open, then try again.`;
+      if (stuck.length > 0)
+        // The journal stays, so the status offers Undo update for what could not be put back.
+        return refused(
+          `${reason} ${stuck.join(", ")} could not be put back; Undo update restores ${stuck.length === 1 ? "it" : "them"}.`,
+        );
+      await writeRecord(context.layout, context.projectId, dropChange(record, change));
+      await removeCopies(context, change);
+      return refused(`Nothing was changed. ${reason}`);
     }
 
-    const replaced = new Map(
-      plan.map((step) => [
-        step.file.path,
-        { ...step.file, revision: to.revision, sha256: sha256(step.bytes), placedAt: request.now },
-      ]),
-    );
-    const stale = record.updates.filter(
-      (update) => update.script === request.script && update.root === root,
-    );
     await writeRecord(context.layout, context.projectId, {
-      ...record,
+      ...withPlacements(record, request.script, root, change.placementsAfter),
       macros,
-      files: record.files.map((file) => replaced.get(file.path) ?? file),
-      updates: [
-        ...record.updates.filter((update) => !stale.includes(update)),
-        { id: updateId, script: request.script, root, files: undoFiles },
-      ],
+      changes: record.changes.map((candidate) =>
+        candidate.id === change.id ? { ...change, state: "updated" as const } : candidate,
+      ),
     });
-    for (const update of stale)
-      await NodeFSP.rm(undoFolder(context.layout, context.projectId, update.id), {
-        recursive: true,
-        force: true,
-      }).catch(() => undefined);
     return { _tag: "changed", files: plan.map((step) => step.file.path) };
   });
 }
 
-/** Puts back what the last Update files replaced, if nothing changed those files since. */
+/**
+ * Puts back what the last Update files replaced, as long as nothing changed those files or the
+ * script's placements since; after an interrupted change, it restores whatever that change wrote.
+ */
 export function undoPlacedFilesUpdate(
   context: PlacementContext,
   request: { readonly documentPath: string; readonly script: string },
 ): Promise<ComputeResultsFilesChangeResult> {
   return serialized(context.projectId, async () => {
     const root = documentRoot(request.documentPath);
-    const record = await readRecord(context.layout, context.projectId);
-    const update = record.updates.find(
-      (candidate) => candidate.script === request.script && candidate.root === root,
-    );
-    if (update === undefined)
-      return { _tag: "refused", message: "There is no update to undo.", edited: [] };
-    const copies = undoFolder(context.layout, context.projectId, update.id);
-    const changed: string[] = [];
-    const current = new Map<string, Uint8Array>();
-    for (const file of update.files) {
-      const bytes = await context.files.read(file.path);
-      if (bytes === null || sha256(bytes) !== file.after) changed.push(file.path);
-      else current.set(file.path, bytes);
-    }
+    let record = await reconcile(context, await readRecord(context.layout, context.projectId));
+    const change = changeOf(record, request.script, root);
+    if (change === undefined) return refused("There is no update to undo.");
+    if (
+      change.state === "updated" &&
+      !samePlacements(placementsOf(record, request.script, root), change.placementsAfter)
+    )
+      return refused(
+        "Results were added or changed after the update, so undoing it would mix two runs.",
+      );
+    const positions = await changePositions(context, change);
+    const changed = change.files.filter((_, index) => positions[index] === "other");
     if (changed.length > 0)
-      return {
-        _tag: "refused",
-        message: `${changed.join(", ")} changed after the update, so it cannot be undone.`,
-        edited: changed,
-      };
-    const restored: (typeof update.files)[number][] = [];
-    let failure: unknown = null;
-    for (const file of update.files) {
-      // A file the update created from nothing stays; the previous run never had it on disk.
-      if (file.before === null) continue;
-      try {
-        const bytes = new Uint8Array(
-          await NodeFSP.readFile(NodePath.join(copies, file.before.copy)),
-        );
-        if (await context.files.write(file.path, bytes, file.after)) {
-          restored.push(file);
-          continue;
-        }
-        failure = new PlacementRefusal({
-          message: `${file.path} changed while Scient was undoing the update.`,
-        });
-      } catch (cause) {
-        failure = cause;
-      }
-      break;
-    }
-    if (failure !== null) {
-      // Put the newer bytes back on what was already restored, so the paper stays on one run.
-      for (const file of restored.toReversed())
-        await context.files
-          .write(file.path, current.get(file.path)!, file.before!.sha256)
-          .catch(() => false);
-      return {
-        _tag: "refused",
-        message: isPlacementRefusal(failure)
-          ? failure.message
-          : "Nothing was changed: a file could not be written. Close any program that has it open, then try again.",
-        edited: [],
-      };
-    }
-    const previous = new Map(update.files.map((file) => [file.path, file.previous]));
-    await writeRecord(context.layout, context.projectId, {
+      return refused(
+        `${changed.map((file) => file.path).join(", ")} changed after the update, so it cannot be undone.`,
+      );
+
+    const undoing: ChangeRecord = { ...change, state: "undoing" };
+    record = {
       ...record,
-      files: record.files.map((file) => previous.get(file.path) ?? file),
-      updates: record.updates.filter((candidate) => candidate !== update),
-    });
-    await NodeFSP.rm(copies, { recursive: true, force: true }).catch(() => undefined);
-    return { _tag: "changed", files: restored.map((file) => file.path) };
+      changes: record.changes.map((candidate) =>
+        candidate.id === change.id ? undoing : candidate,
+      ),
+    };
+    await writeRecord(context.layout, context.projectId, record);
+    const copies = undoFolder(context.layout, context.projectId, change.id);
+    const restored: string[] = [];
+    for (const [index, file] of change.files.entries()) {
+      if (positions[index] === "before") continue;
+      try {
+        const back =
+          file.before === null
+            ? await context.files.remove(file.path, file.after)
+            : await context.files.write(
+                file.path,
+                new Uint8Array(await NodeFSP.readFile(NodePath.join(copies, file.before.copy))),
+                file.after,
+              );
+        if (!back)
+          return refused(
+            `${file.path} changed while Scient was undoing the update. Undo update again to finish.`,
+          );
+      } catch {
+        return refused(
+          `${file.path} could not be restored. Close any program that has it open, then Undo update again.`,
+        );
+      }
+      restored.push(file.path);
+    }
+    await writeRecord(
+      context.layout,
+      context.projectId,
+      dropChange(withPlacements(record, request.script, root, change.placementsBefore), undoing),
+    );
+    await removeCopies(context, change);
+    return { _tag: "changed", files: restored };
   });
 }
