@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   ADVISORY_JOBS,
   CONSEQUENCES,
+  WITNESSES,
   RUN_DESPITE_FAILURE,
   evaluate,
   isOpen,
@@ -54,6 +55,9 @@ const step = (name, conclusion = "success", start = T0, end = T1) => ({
   completed_at: end,
 });
 const job = (id, name, steps, conclusion = "failure") => ({ id, name, conclusion, steps });
+// The voice row's waiver also needs a passing WSL payload exercise (WITNESSES); fixtures give it
+// one so that each case tests only its own rule.
+const wslWitness = () => job(8, WITNESSES[0].witness, [step(WITNESSES[0].step)], "success");
 
 // Web 1 of queue run 43985084936, trimmed: one failed browser test.
 const SOURCES_LOG = log(
@@ -263,7 +267,7 @@ test("a script step matches by its signature inside that step's own output", () 
     "##[error]Process completed with exit code 1.",
   );
   const inside = evaluate({
-    jobs: [installer(at(9), at(11))],
+    jobs: [installer(at(9), at(11)), wslWitness()],
     logs: { 3: voiceLog },
     register: register(ROWS.voice),
     now: NOW,
@@ -271,32 +275,29 @@ test("a script step matches by its signature inside that step's own output", () 
   assert.equal(inside.ok, true, inside.blocked.join("\n"));
   // The same text printed by an earlier step does not explain this step's failure.
   const earlier = evaluate({
-    jobs: [installer(at(20), at(30))],
+    jobs: [installer(at(20), at(30)), wslWitness()],
     logs: { 3: voiceLog },
     register: register(ROWS.voice),
     now: NOW,
   });
   assert.equal(earlier.ok, false);
+  assert.match(earlier.blocked.join("\n"), /no step times|no row's signature ends its output/);
 });
 
 test("vitest failures in a script row's step block", () => {
   const result = evaluate({
-    jobs: [job(3, ROWS.voice.job, [step(ROWS.voice.step, "failure")])],
+    jobs: [job(3, ROWS.voice.job, [step(ROWS.voice.step, "failure")]), wslWitness()],
     logs: { 3: `${SOURCES_LOG}\n${at(11)} Offline voice transcription timed out.` },
     register: register(ROWS.voice),
     now: NOW,
   });
   assert.equal(result.ok, false);
+  assert.doesNotMatch(result.blocked.join("\n"), /quarantined only beside/);
 });
 
-test("the receipt and the WSL wait pass only as consequences of quarantined jobs", () => {
-  const [receiptRule, wslRule] = CONSEQUENCES;
-  const consequence = (id, rule, steps = [step(rule.step, "failure")]) => job(id, rule.job, steps);
-  const receipt = consequence(9, receiptRule);
-  const wsl = consequence(8, wslRule, [
-    step("Exercise the exact Linux payload from the Windows package"),
-    step(wslRule.step, "failure"),
-  ]);
+test("the receipt passes only as a consequence of quarantined jobs", () => {
+  const [receiptRule] = CONSEQUENCES;
+  const receipt = job(9, receiptRule.job, [step(receiptRule.step, "failure")]);
   const installer = job(3, ROWS.voice.job, [step(ROWS.voice.step, "failure", at(9), at(11))]);
   const logs = {
     1: SOURCES_LOG,
@@ -304,14 +305,25 @@ test("the receipt and the WSL wait pass only as consequences of quarantined jobs
       "Offline voice transcription timed out.",
       "##[error]Process completed with exit code 1.",
     ),
-    8: log("Windows packaging / Installer and native runtime ended without success (failure)."),
     9: log("Error: CI qualification is missing: test_web: failure, windows_packaging: failure"),
   };
   const registered = register(ROWS.sources, ROWS.voice);
   const decide = (jobs, override = {}) =>
     evaluate({ jobs, logs: { ...logs, ...override }, register: registered, now: NOW });
-  const pass = decide([webJob(), installer, wsl, receipt]);
+  const [wslRule] = WITNESSES;
+  const wsl = (conclusion, exercised = conclusion) =>
+    job(8, wslRule.witness, [step(wslRule.step, exercised)], conclusion);
+  const pass = decide([webJob(), installer, wsl("success"), receipt]);
   assert.equal(pass.ok, true, pass.blocked.join("\n"));
+  // The waived installer failure needs its WSL payload exercised: a skipped, cancelled, failed
+  // or absent WSL job blocks.
+  for (const jobs of [
+    [webJob(), installer, wsl("skipped"), receipt],
+    [webJob(), installer, wsl("cancelled"), receipt],
+    [webJob(), installer, wsl("success", "skipped"), receipt],
+    [webJob(), installer, receipt],
+  ])
+    assert.equal(decide(jobs).ok, false);
   // Alone, the receipt's failure explains nothing.
   assert.equal(decide([receipt]).ok, false);
   // The receipt refusing anything but failed needs blocks.
@@ -324,17 +336,21 @@ test("the receipt and the WSL wait pass only as consequences of quarantined jobs
     decide([webJob(), receipt], { 9: log("Error: Invalid queue comparison") }).ok,
     false,
   );
-  // The WSL wait without a quarantined installer failure blocks.
-  assert.equal(decide([webJob(), wsl]).ok, false);
-  // So does a WSL job whose payload check never ran.
-  const unqualified = consequence(8, wslRule, [
-    step("Exercise the exact Linux payload from the Windows package", "skipped"),
-    step(wslRule.step, "failure"),
-  ]);
-  assert.equal(decide([installer, unqualified]).ok, false);
   // The receipt failing in another step blocks.
   const other = job(9, receipt.name, [step("Download evidence", "failure")]);
   assert.equal(decide([webJob(), other]).ok, false);
+  // A WSL qualification that failed, here because the installer reported no payload, is not a
+  // consequence: it blocks even when the installer's own failure is quarantined.
+  const noPayload = job(8, wslRule.witness, [
+    step("Require the installer's own WSL payload", "failure"),
+    step(wslRule.step, "skipped"),
+  ]);
+  assert.equal(
+    decide([webJob(), installer, noPayload, receipt], {
+      8: log("The installer job reported no WSL payload."),
+    }).ok,
+    false,
+  );
 });
 
 test("a quarantined failure that skipped a later check blocks", () => {
@@ -375,11 +391,14 @@ test("a script row's signature must be in the output that ended its step", () =>
     "Error: the server exited",
     "##[error]Process completed with exit code 1.",
   );
-  assert.equal(
-    evaluate({ jobs: [installer], logs: { 3: early }, register: register(ROWS.voice), now: NOW })
-      .ok,
-    false,
-  );
+  const result = evaluate({
+    jobs: [installer, wslWitness()],
+    logs: { 3: early },
+    register: register(ROWS.voice),
+    now: NOW,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blocked.join("\n"), /no row's signature ends its output/);
 });
 
 test("unhandled errors never quarantine, even beside a matching test", () => {
@@ -470,6 +489,18 @@ test("the advisory job names are the ones ci.yml gives ci-check's advisory jobs"
     (key) => new RegExp(`^  ${key}:\\n(?:    .*\\n)*?    name: (.+)$`, "m").exec(workflow)?.[1],
   );
   assert.deepEqual(names.toSorted(), [...ADVISORY_JOBS].toSorted());
+});
+
+test("the witness jobs and steps exist under these names", () => {
+  const workflow = fs.readFileSync(
+    path.join(ROOT, ".github/workflows/windows-packaging.yml"),
+    "utf8",
+  );
+  for (const { job: name, witness, step: s } of WITNESSES) {
+    for (const each of [name, witness])
+      assert.ok(workflow.includes(`name: ${each.split(" / ").slice(1).join(" / ")}`), each);
+    assert.ok(workflow.includes(`- name: ${s}`), s);
+  }
 });
 
 test("the consequence jobs and steps exist under these names", () => {

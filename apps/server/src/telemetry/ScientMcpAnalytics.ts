@@ -149,10 +149,19 @@ const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   stale_ref: "input",
   bad_locator: "input",
   bad_selector: "input",
-  // Scient installs this browser itself; a call that gives up while it installs is Scient's to wait out.
+  // Scient installs this browser itself; a call that gives up while it downloads or unpacks is
+  // Scient's to wait out.
   preview_browser_installing: "scient",
+  preview_browser_unpacking: "scient",
   // The caller's own script threw on the page (the browser reported its exception).
   script_exception: "code",
+  // Browser execution failures with a fixed reason. A frameless screenshot or recording stays
+  // unowned: a hidden window and a broken capture look the same.
+  snapshot_page_changed: "external",
+  navigation_network: "external",
+  navigation_download: "input",
+  upload_precondition: "input",
+  desktop_tab_on_server: "input",
   // A message to a thread that cannot take one: archived, or no run to steer.
   thread_archived: "input",
   no_steerable_run: "input",
@@ -161,6 +170,11 @@ const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   task_projection_missing: "scient",
   // "unavailable" can be the browser or the Accounts store; neither is proven here.
   accounts_unavailable: "unknown",
+  // A delegate naming a model its provider does not list, or a name matching several.
+  delegate_model_not_offered: "input",
+  delegate_model_ambiguous: "input",
+  // The model needs a newer provider CLI than the one installed on this computer.
+  delegate_model_needs_update: "environment",
 };
 
 const notedClasses = new WeakMap<object, string>();
@@ -174,20 +188,35 @@ export function withFailureClass<E extends object>(error: E, failureClass: strin
   return error;
 }
 
+/** The fixed reasons a browser host may give for a broad execution failure. */
+const REMOTE_EXECUTION_CLASSES: ReadonlySet<string> = new Set([
+  "script_exception",
+  "snapshot_page_changed",
+  "screenshot_no_frames",
+  "upload_precondition",
+  "navigation_network",
+  "navigation_download",
+  "recording_no_frames",
+  "desktop_tab_on_server",
+]);
+
 /**
- * A browser host's execution failure says it was the page script's own exception only through
- * this fixed detail; any other remote failure keeps its unowned class.
+ * A browser host's execution failure says why only through a fixed `detail.failureClass` from
+ * {@link REMOTE_EXECUTION_CLASSES}; any other remote failure keeps its unowned class.
  */
 export function withRemoteFailureClass<E extends object>(
   error: E,
   remote: { readonly _tag: string; readonly detail?: unknown },
 ): E {
   const detail = remote.detail;
+  const failureClass =
+    typeof detail === "object" && detail !== null
+      ? (detail as { readonly failureClass?: unknown }).failureClass
+      : undefined;
   return remote._tag === "PreviewAutomationExecutionError" &&
-    typeof detail === "object" &&
-    detail !== null &&
-    (detail as { readonly failureClass?: unknown }).failureClass === "script_exception"
-    ? withFailureClass(error, "script_exception")
+    typeof failureClass === "string" &&
+    REMOTE_EXECUTION_CLASSES.has(failureClass)
+    ? withFailureClass(error, failureClass)
     : error;
 }
 

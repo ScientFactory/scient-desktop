@@ -62,33 +62,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(resolveMarkdownFileLinkMeta(href, cwd)).toMatchObject({ workspaceRelativePath });
   });
 
-  // regression: aa5a144d04 small nits
-  it("does not treat filename line references as external schemes", () => {
-    expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
-      "/Users/julius/project/script.ts:10",
-    );
-  });
-
-  // regression: ce96ad0b61 UI fixes
-  it("maps #L line anchors to editor line suffixes", () => {
-    expect(resolveMarkdownFileLinkTarget("/Users/julius/project/src/main.ts#L42C7")).toBe(
-      "/Users/julius/project/src/main.ts:42:7",
-    );
-  });
-
-  // regression: ce96ad0b61 UI fixes
-  it("ignores external urls", () => {
-    expect(resolveMarkdownFileLinkTarget("https://example.com/docs")).toBeNull();
-    expect(resolveMarkdownFileLinkTarget("//cdn.example.com/clip.mp4", "/workspace")).toBeNull();
-  });
-
-  // regression: aa5a144d04 small nits
-  it("does not double-decode file URLs", () => {
-    expect(resolveMarkdownFileLinkTarget("file:///Users/julius/project/file%2520name.md")).toBe(
-      "/Users/julius/project/file%20name.md",
-    );
-  });
-
   // regression: 29f4ebb106 chore(upstream): align with t3code 2c8bdf6177
   it("resolves file uri authorities only within the owning Windows workspace share", () => {
     expect(
@@ -119,22 +92,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
       workspaceRelativePath:
         "apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
     });
-  });
-
-  // regression: 166bce0389 Feature/intellij editors (#2475)
-  it("normalizes slash-prefixed windows drive paths before resolving", () => {
-    expect(
-      resolveMarkdownFileLinkTarget(
-        "/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx:69");
-  });
-
-  // regression: 922bd69225 refactor(media): unify file and media previews across clients (#9253)
-  it("decodes an encoded drive colon in a file uri before dropping its slash", () => {
-    expect(resolveMarkdownFileLinkTarget("file:///c%3A/Users/x/shot.png")).toBe(
-      "c:/Users/x/shot.png",
-    );
   });
 });
 

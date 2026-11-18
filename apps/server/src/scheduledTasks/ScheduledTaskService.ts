@@ -922,6 +922,9 @@ export const layer = Layer.effect(
           DELETE FROM scheduled_tasks
           WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
             AND last_run_status = 'succeeded' AND next_run_at IS NULL
+            -- SCIENT-FORK: a paused task has no next run either. Only a run that started at or
+            -- after the task's time used it up, so Run now before then keeps the task.
+            AND julianday(json_extract(schedule_json, '$.runAt')) <= julianday(${startedAtIso})
             AND json_extract(schedule_json, '$.type') = 'once'
           RETURNING task_id
         `;

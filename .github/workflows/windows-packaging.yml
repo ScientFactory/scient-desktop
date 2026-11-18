@@ -49,7 +49,19 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # The exact WSL payload this execution uploaded, for qualify_wsl_runtime. The first step and
+    # the step after a successful upload both record the attempt, so a payload that an earlier
+    # attempt of this job reported, or an upload that failed, never matches.
+    outputs:
+      started_attempt: ${{ steps.execution.outputs.attempt }}
+      wsl_attempt: ${{ steps.wsl_uploaded.outputs.attempt }}
+      wsl_artifact_id: ${{ steps.wsl_uploaded.outputs.artifact_id }}
+      wsl_sha256: ${{ steps.wsl_uploaded.outputs.sha256 }}
     steps:
+      - name: Record this execution's attempt
+        id: execution
+        shell: bash
+        run: echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       # The runner's C: drive is slow for many small files; its D: drive, which holds the
       # workspace, is several times faster. Temporary files (build stages, Python
       # environments, extracted archives) go there.
@@ -249,9 +261,10 @@ jobs:
             --voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime" \
             --wsl-prebuild "$GITHUB_WORKSPACE/windows-prerequisites/wsl-prebuild/pty.node" \
             --wsl-synctex-runtime "$GITHUB_WORKSPACE/windows-prerequisites/synctex-wsl"
-      # The Linux runtime the installer carries, uploaded now so its WSL qualification runs
-      # while this job installs; the installed copy must match it byte for byte below.
+      # The Linux runtime the installer carries, for the WSL qualification after this job;
+      # the installed copy must match it byte for byte below.
       - name: Collect the packaged WSL runtime
+        id: wsl_collect
         shell: pwsh
         run: |
           $stage = Get-ChildItem $env:TEMP -Directory -Filter 't3code-desktop-win-stage-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -260,13 +273,26 @@ jobs:
           "SCIENT_PACKAGING_UNPACKED=$unpacked" >> $env:GITHUB_ENV
           New-Item -ItemType Directory -Path wsl-qualification | Out-Null
           Copy-Item (Join-Path $unpacked 'resources/wsl-runtime.tar.gz') wsl-qualification/
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+          $sha256 = (Get-FileHash wsl-qualification/wsl-runtime.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$sha256" >> $env:GITHUB_OUTPUT
+      - id: wsl_payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-packaging-wsl-runtime
           path: wsl-qualification/wsl-runtime.tar.gz
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      - name: Record the uploaded WSL payload
+        id: wsl_uploaded
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.wsl_payload.outputs.artifact-id }}
+          SHA256: ${{ steps.wsl_collect.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ && "$SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'attempt=%s\nartifact_id=%s\nsha256=%s\n' "$GITHUB_RUN_ATTEMPT" "$ARTIFACT_ID" "$SHA256" >> "$GITHUB_OUTPUT"
       - name: Exercise packaged terminal and Cursor helpers
         shell: pwsh
         run: node scripts/qualify-windows-packaged-runtime.mjs "$env:SCIENT_PACKAGING_UNPACKED"
@@ -348,35 +374,46 @@ jobs:
             ~\AppData\Local\electron-builder\Cache
           key: ${{ steps.electron_cache.outputs.cache-primary-key }}
 
-  # Sets up beside the installer job and qualifies its WSL payload as soon as it is uploaded,
-  # right after the build, then still requires that job to succeed: a rerun of a failed installer
-  # reruns this job too, so the payload it rebuilds is qualified again.
+  # Runs once the installer job has ended, so no runner waits for the build. It also runs after
+  # a failed installer job, so a payload uploaded before a late failure is still qualified. It
+  # takes only the artifact and SHA-256 that this installer execution reported, also on a rerun of
+  # this job alone; with none, it fails. The installer job's own failure still fails the run.
   qualify_wsl_runtime:
     name: Windows packaging / Packaged WSL Linux runtime
+    needs: package_windows
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
-    permissions:
-      contents: read
-      actions: read
+    timeout-minutes: 15
     steps:
+      - name: Require the installer's own WSL payload
+        env:
+          STARTED: ${{ needs.package_windows.outputs.started_attempt }}
+          UPLOADED: ${{ needs.package_windows.outputs.wsl_attempt }}
+          ARTIFACT_ID: ${{ needs.package_windows.outputs.wsl_artifact_id }}
+          SHA256: ${{ needs.package_windows.outputs.wsl_sha256 }}
+        run: |
+          if [[ ! "$ARTIFACT_ID" =~ ^[0-9]+$ || ! "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "The installer job reported no WSL payload." >&2
+            exit 1
+          fi
+          if [[ ! "$STARTED" =~ ^[0-9]+$ || "$UPLOADED" != "$STARTED" ]]; then
+            echo "The installer job's latest execution (attempt ${STARTED:-unknown}) uploaded no WSL payload; attempt ${UPLOADED:-unknown} did." >&2
+            exit 1
+          fi
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-      # Longer than the installer job's own 45-minute limit, so a slow build is never cut short.
-      - name: Wait for the packaged WSL runtime
-        timeout-minutes: 50
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Installer and native runtime" windows-packaging-wsl-runtime --uploaded
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: windows-packaging-wsl-runtime
+          artifact-ids: ${{ needs.package_windows.outputs.wsl_artifact_id }}
           path: wsl-qualification
       - name: Exercise the exact Linux payload from the Windows package
-        run: node scripts/qualify-wsl-runtime.mjs wsl-qualification/wsl-runtime.tar.gz
-      - name: Require the installer job to succeed
-        timeout-minutes: 50
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Installer and native runtime" windows-packaging-wsl-runtime
+          SHA256: ${{ needs.package_windows.outputs.wsl_sha256 }}
+        run: |
+          set -euo pipefail
+          payload="$(find wsl-qualification -name wsl-runtime.tar.gz -type f)"
+          test "$(printf '%s\n' "$payload" | wc -l)" -eq 1
+          echo "$SHA256  $payload" | sha256sum --check --strict
+          node scripts/qualify-wsl-runtime.mjs "$payload"

@@ -1674,6 +1674,8 @@ const make = Effect.gen(function* () {
       throw new ServerBrowserPage.ServerBrowserOperationError({
         tag: "PreviewAutomationExecutionError",
         message: `Upload paths must be absolute: ${relative}`,
+        // SCIENT-FORK: a fixed reason analytics keep.
+        detail: { failureClass: "upload_precondition" },
       });
     if (await ServerBrowserPage.setInputFiles(tab.page, input)) return undefined;
     const open = tab.fileChooser;
@@ -1682,11 +1684,15 @@ const make = Effect.gen(function* () {
         tag: "PreviewAutomationExecutionError",
         message:
           "No file picker is open. Click the page's upload control first, or pass the file input's locator.",
+        // SCIENT-FORK: a fixed reason analytics keep.
+        detail: { failureClass: "upload_precondition" },
       });
     if (input.paths.length > 1 && !open.chooser.isMultiple())
       throw new ServerBrowserPage.ServerBrowserOperationError({
         tag: "PreviewAutomationExecutionError",
         message: "This file picker accepts one file.",
+        // SCIENT-FORK: a fixed reason analytics keep.
+        detail: { failureClass: "upload_precondition" },
       });
     if (input.paths.length > 0)
       await open.chooser.setFiles([...input.paths], {
@@ -2164,7 +2170,8 @@ const make = Effect.gen(function* () {
       throw new ServerBrowserPage.ServerBrowserOperationError({
         tag: "PreviewAutomationExecutionError",
         message: `Navigation to ${url} failed: ${failure.description}`,
-        detail: { ...failure, url },
+        // SCIENT-FORK: a fixed reason analytics keep.
+        detail: { ...failure, url, failureClass: "navigation_network" },
       });
     }
   };
@@ -2295,12 +2302,16 @@ const make = Effect.gen(function* () {
         throw new ServerBrowserPage.ServerBrowserOperationError({
           tag: "PreviewAutomationExecutionError",
           message: `${url} is a file this browser cannot show, so it was downloaded instead. preview_status lists it under downloads.`,
+          // SCIENT-FORK: a fixed reason analytics keep.
+          detail: { failureClass: "navigation_download" },
         });
       }
       if (/ERR_[A-Z_]+/.test(message)) {
         throw new ServerBrowserPage.ServerBrowserOperationError({
           tag: "PreviewAutomationExecutionError",
           message: `Navigation to ${url} failed: ${ServerBrowserPage.parseNetError(message).description}`,
+          // SCIENT-FORK: a fixed reason analytics keep.
+          detail: { failureClass: "navigation_network" },
         });
       }
       throw ServerBrowserPage.toOperationError(cause, timeout);
@@ -2460,6 +2471,8 @@ const make = Effect.gen(function* () {
           throw new ServerBrowserPage.ServerBrowserOperationError({
             tag: "PreviewAutomationExecutionError",
             message: "The recording captured no frames.",
+            // SCIENT-FORK: a fixed reason analytics keep.
+            detail: { failureClass: "recording_no_frames" },
           });
         }
         const extension = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
@@ -2683,6 +2696,8 @@ const make = Effect.gen(function* () {
             message: desktop
               ? "This tab belongs to the desktop runtime. This environment's server browser cannot control desktop tabs. Omit tabId to open a server tab instead."
               : "The requested server preview tab does not exist.",
+            // SCIENT-FORK: a fixed reason analytics keep.
+            ...(desktop ? { detail: { failureClass: "desktop_tab_on_server" } } : {}),
           });
         }
         // Reusing another session's tab requires explicit tabId; reading it grants no implicit takeover.

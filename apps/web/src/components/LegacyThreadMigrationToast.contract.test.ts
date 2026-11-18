@@ -1,5 +1,3 @@
-import { act } from "../../test/render";
-
 import { expect, it, vi } from "vite-plus/test";
 import type { ServerLifecycleLegacyThreadMigrationPayload } from "@t3tools/contracts";
 
@@ -36,11 +34,9 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
 async function publish(_fixture: _Fixture, migration: ServerLifecycleLegacyThreadMigrationPayload) {
-  await act(() => {
-    state.migration = migration;
-    if (!_fixture.stop) _fixture.stop = startLegacyThreadMigrationToast();
-    else state.listener?.(migration);
-  });
+  state.migration = migration;
+  if (!_fixture.stop) _fixture.stop = startLegacyThreadMigrationToast();
+  else state.listener?.(migration);
 }
 
 it("replaces a running spinner with a persistent failure and clears it after successful retry", async () => {

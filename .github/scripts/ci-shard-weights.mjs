@@ -1,8 +1,9 @@
-// SCIENT-FORK:START — weigh this run's shards by the newest main timings.
-// Every shard of a run reads the one file this writes, so all of them derive the same split;
-// the checked-in weights stay the fallback when no recent report can be read.
+// SCIENT-FORK:START — refresh the checked-in shard weights from the newest main timings.
+// docs/operations/development.md has the command. Each suite takes a run only when that run has
+// a successful report from every one of its shards, so a partial run cannot skew the split.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
@@ -10,26 +11,37 @@ import * as NodeUtil from "node:util";
 import { weightsFromReports } from "./shard-weights.mjs";
 
 const SUITES = ["web", "server"];
+// The shard matrices of test_web and test_server in ci.yml; a test keeps them equal.
+export const SHARDS = { web: 12, server: 16 };
 // Medians over a few runs keep one slow run from moving the split.
 export const RUNS_PER_SUITE = 3;
-const REPORT = /^vitest-(web|server)-\d+-attempt-\d+$/;
+const REPORT = /^vitest-(web|server)-(\d+)-attempt-(\d+)$/;
 
-/** Groups successful reports by suite and run, newest run first, ignoring anything else. */
+/**
+ * Groups each suite's complete runs, newest first: one successful report per shard, from that
+ * shard's latest successful attempt. A run missing any shard is not used for that suite.
+ */
 export function collectReports(runs) {
   const bySuite = Object.fromEntries(SUITES.map((suite) => [suite, []]));
   for (const run of runs) {
     for (const suite of SUITES) {
-      const reports = run.reports.filter(
-        (entry) => entry.suite === suite && entry.report?.success === true,
+      const byShard = new Map();
+      for (const entry of run.reports) {
+        if (entry.suite !== suite || entry.report?.success !== true) continue;
+        const kept = byShard.get(entry.shard);
+        if (!kept || entry.attempt > kept.attempt) byShard.set(entry.shard, entry);
+      }
+      const complete = Array.from({ length: SHARDS[suite] }, (_, i) => i + 1).every((shard) =>
+        byShard.has(shard),
       );
-      if (reports.length && bySuite[suite].length < RUNS_PER_SUITE)
-        bySuite[suite].push(reports.map((entry) => entry.report));
+      if (complete && byShard.size === SHARDS[suite] && bySuite[suite].length < RUNS_PER_SUITE)
+        bySuite[suite].push([...byShard.values()].map((entry) => entry.report));
     }
   }
   return bySuite;
 }
 
-/** Weights per suite, or null when no run supplied a usable report for it. */
+/** Weights per suite, or null when no complete run supplied its reports. */
 export function recentWeights(runs) {
   const bySuite = collectReports(runs);
   return Object.fromEntries(
@@ -98,12 +110,14 @@ async function readRuns(repository, runIds, scratch) {
         "--name",
         name,
       ]);
-      const [suite] = REPORT.exec(name).slice(1);
+      const [suite, shard, attempt] = REPORT.exec(name).slice(1);
       return NodeFS.readdirSync(directory)
         .filter((file) => file.endsWith(".json"))
         .map((file) => ({
           runId,
           suite,
+          shard: Number(shard),
+          attempt: Number(attempt),
           report: JSON.parse(NodeFS.readFileSync(NodePath.join(directory, file), "utf8")),
         }));
     } catch (error) {
@@ -125,6 +139,9 @@ if (
 ) {
   const [output] = process.argv.slice(2);
   if (!output) throw new Error("Usage: node .github/scripts/ci-shard-weights.mjs <output-dir>");
+  // A fresh directory, so a suite with no complete run leaves no older file to copy.
+  if (NodeFS.existsSync(output) && NodeFS.readdirSync(output).length)
+    throw new Error(`${output} is not empty; give the refresh a new directory.`);
   const repository = process.env.GITHUB_REPOSITORY;
   const ids = JSON.parse(
     await gh([
@@ -147,7 +164,7 @@ if (
     ]),
   ).map((run) => run.databaseId);
   const scratch = NodeFS.mkdtempSync(
-    NodePath.join(process.env.RUNNER_TEMP ?? output, "shard-reports-"),
+    NodePath.join(process.env.RUNNER_TEMP ?? NodeOS.tmpdir(), "shard-reports-"),
   );
   // The newest runs usually suffice; older ones are read only to fill a suite that failed.
   const runs = await readRuns(repository, ids.slice(0, RUNS_PER_SUITE), scratch);
@@ -168,12 +185,7 @@ if (
   console.log(
     found.length
       ? `Recent weights: ${found.join(", ")}`
-      : "No recent weights; shards use the checked-in ones.",
+      : "No complete recent run; keep the checked-in weights.",
   );
-  if (process.env.GITHUB_OUTPUT)
-    NodeFS.appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      SUITES.map((suite) => `${suite}=${Boolean(weights[suite])}\n`).join(""),
-    );
 }
 // SCIENT-FORK:END

@@ -297,6 +297,27 @@ describe("Scient MCP analytics input", () => {
             ),
           ),
         ).toMatchObject({ failureOwner: "unknown" });
+        const execution = (detail: unknown) =>
+          recorded(
+            withRemoteFailureClass(
+              new PreviewAutomationExecutionError({
+                ...request,
+                ...answered,
+                operation: "navigate",
+              }),
+              { _tag: "PreviewAutomationExecutionError", detail },
+            ),
+          );
+        expect(yield* execution({ failureClass: "navigation_network", url: "x" })).toMatchObject({
+          failureClass: "navigation_network",
+          failureOwner: "external",
+        });
+        // A frameless screenshot keeps its reason but no owner; an unlisted reason is dropped.
+        expect(yield* execution({ failureClass: "screenshot_no_frames" })).toMatchObject({
+          failureClass: "screenshot_no_frames",
+          failureOwner: "unknown",
+        });
+        expect(yield* execution({ failureClass: "page text" })).not.toHaveProperty("failureClass");
       }),
   );
 
@@ -312,8 +333,9 @@ describe("Scient MCP analytics input", () => {
         yield* noteToolFailure(error).pipe(Effect.provideService(ToolFailureNote, facts));
         return scientToolOutcome(failed, facts);
       });
-      const orchestrator = (code: "thread_not_sendable" | "orchestration_error") =>
-        new OrchestratorMcpFailure({ code, message: "refused" });
+      const orchestrator = (
+        code: "thread_not_sendable" | "orchestration_error" | "model_unavailable",
+      ) => new OrchestratorMcpFailure({ code, message: "refused" });
       const owner = function* (error: unknown) {
         const outcome = yield* recorded(error);
         return [outcome.errorCode, outcome.failureClass, outcome.failureOwner];
@@ -334,6 +356,16 @@ describe("Scient MCP analytics input", () => {
           withFailureClass(orchestrator("orchestration_error"), "projection_load_failed"),
         ),
       ).toEqual(["orchestration_error", "projection_load_failed", "scient"]);
+      expect(
+        yield* owner(
+          withFailureClass(orchestrator("model_unavailable"), "delegate_model_not_offered"),
+        ),
+      ).toEqual(["model_unavailable", "delegate_model_not_offered", "input"]);
+      expect(
+        yield* owner(
+          withFailureClass(orchestrator("model_unavailable"), "delegate_model_needs_update"),
+        ),
+      ).toEqual(["model_unavailable", "delegate_model_needs_update", "environment"]);
       // Unmarked, the same broad failures stay unowned.
       expect(yield* owner(orchestrator("orchestration_error"))).toEqual([
         "orchestration_error",

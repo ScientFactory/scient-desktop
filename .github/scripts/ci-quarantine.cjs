@@ -10,24 +10,25 @@ const DAY = 24 * 60 * 60 * 1000;
 // Never quarantinable, by job or step name (AGENTS.md: build, typecheck, format/lint,
 // documentation and provenance failures always block).
 const NEVER = /\b(build|typecheck|type check|lint|format|provenance|documentation)\b/i;
-// These fail only because another failed job did. Each is accepted only when the job it waits
-// for failed and was itself fully quarantined, only in this one step, only with this output, and
+// These fail only because other failed jobs did. Each is accepted only when every other failed
+// job of the run was itself fully quarantined, only in this one step, only with this output, and
 // only when every one of its earlier steps passed.
 const CONSEQUENCES = [
   {
     job: "Qualification receipt",
     step: "Record complete qualification",
-    after: null, // every other failed job of the run
     // The strict receipt check refused only failed needs (ci-queue-reuse.cjs writeReceipt).
     evidence: /^Error: CI qualification is missing: ([a-z_]+: failure)(, [a-z_]+: failure)*$/m,
   },
+];
+// A quarantined failure in `job` is accepted only beside a successful `witness` job whose `step`
+// passed. The WSL payload job runs after the installer job, so a waived late installer failure
+// must not hide a payload that was never exercised.
+const WITNESSES = [
   {
-    job: "windows_packaging / Windows packaging / Packaged WSL Linux runtime",
-    // After it qualified the WSL payload, it waits for the installer job to finish.
-    step: "Require the installer job to succeed",
-    after: "windows_packaging / Windows packaging / Installer and native runtime",
-    evidence:
-      /^Windows packaging \/ Installer and native runtime ended without success \(failure\)\.$/m,
+    job: "windows_packaging / Windows packaging / Installer and native runtime",
+    witness: "windows_packaging / Windows packaging / Packaged WSL Linux runtime",
+    step: "Exercise the exact Linux payload from the Windows package",
   },
 ];
 // Steps that may be skipped after a quarantined failure: GitHub's post steps, cache saves and
@@ -42,7 +43,7 @@ const RUN_DESPITE_FAILURE = [
 ];
 const GATE = "Check";
 // ci-check.cjs ADVISORY jobs: evidence and upkeep beside the gate, which never block.
-const ADVISORY_JOBS = ["Overleaf macOS", "Shard weights", "Main dependency store"];
+const ADVISORY_JOBS = ["Overleaf macOS", "Main dependency store"];
 
 const ROW_KEYS = ["id", "job", "step", "test", "signature", "owner", "quarantined", "expires"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -342,7 +343,7 @@ function evaluate({ jobs, logs, register, now = new Date() }) {
   const explained = new Set(matched.map((m) => m.job));
   for (const { job, consequence } of consequences) {
     const steps = (job.steps ?? []).filter((step) => step.conclusion === "failure");
-    const waited = consequence.after ? [consequence.after] : [...explained];
+    const waited = [...explained];
     const text = steps.length === 1 ? stepLog(logs[job.id] ?? "", steps[0]) : null;
     const all = job.steps ?? [];
     const earlier = all.slice(
@@ -360,6 +361,13 @@ function evaluate({ jobs, logs, register, now = new Date() }) {
       !waited.every((name) => explained.has(name))
     )
       blocked.push(`${job.name}: not only a consequence of quarantined failures`);
+  }
+  for (const { job: name, witness, step: witnessStep } of WITNESSES) {
+    if (!explained.has(name)) continue;
+    const proof = jobs.find((job) => job.name === witness);
+    const ran = proof?.steps?.find((step) => step.name === witnessStep);
+    if (proof?.conclusion !== "success" || ran?.conclusion !== "success")
+      blocked.push(`${name}: quarantined only beside a passing ${witness} › ${witnessStep}`);
   }
   if (failed.length === 0) blocked.push("No failed job explains the gate's failure");
   return { ok: blocked.length === 0, blocked, matched };
@@ -434,6 +442,7 @@ async function run({ github, context, core, registerText }) {
 module.exports = {
   ADVISORY_JOBS,
   CONSEQUENCES,
+  WITNESSES,
   RUN_DESPITE_FAILURE,
   QUARANTINE_DAYS,
   REGISTER,
