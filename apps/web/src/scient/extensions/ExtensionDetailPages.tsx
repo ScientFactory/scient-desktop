@@ -101,7 +101,7 @@ import {
   connectorAudience,
 } from "./extensionsView";
 import { useInstalledEntries } from "./installedEntries";
-import { providerInventoryMessage } from "./providerInventory";
+import { providerInventoryMessage } from "./providerInventoryCopy";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 

@@ -43,7 +43,7 @@ import {
   worksWithOptions,
 } from "./extensionsView";
 import { useInstalledEntries } from "./installedEntries";
-import { providerInventoryMessage } from "./providerInventory";
+import { providerInventoryMessage } from "./providerInventoryCopy";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem } from "./AccountServicePages";
 import {
