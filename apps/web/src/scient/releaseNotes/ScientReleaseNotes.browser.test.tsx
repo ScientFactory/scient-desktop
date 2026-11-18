@@ -5,6 +5,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 import { SCIENT_RELEASE_NOTES } from "./catalog";
+import { requestReleaseHistory } from "./releaseHistoryRequests";
 import { ScientReleaseNotes } from "./ScientReleaseNotes";
 
 // Exercise the real dialog with synthetic upgrade state, without a live profile.
@@ -14,12 +15,22 @@ vi.mock("./useScientReleaseNotes", async () => {
   return {
     useScientReleaseNotes: () => {
       const [open, setOpen] = useState(false);
+      const [view, setView] = useState<"release" | "history">("release");
       return {
         current: notes[0],
+        installedVersion: notes[0].version,
         history: notes,
+        dialogView: view,
         isCardVisible: true,
         isDialogOpen: open,
-        openDialog: () => setOpen(true),
+        openDialog: () => {
+          setView("release");
+          setOpen(true);
+        },
+        openHistory: () => {
+          setView("history");
+          setOpen(true);
+        },
         dismissCard: () => {},
         setDialogOpen: setOpen,
       };
@@ -143,6 +154,30 @@ it("hides the release card in a collapsed sidebar and restores it when expanded"
   await expect.element(card).not.toBeVisible();
   delete _fixture.host.dataset.collapsible;
   await expect.element(card).toBeVisible();
+});
+
+it("opens the version list when another screen asks for it", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<ScientReleaseNotes />);
+
+  requestReleaseHistory();
+
+  const dialog = page.getByRole("dialog");
+  await expect.element(dialog).toBeVisible();
+  await expect.element(dialog.getByText("Release history", { exact: true })).toBeVisible();
+  await expect
+    .element(
+      dialog.getByRole("button", { name: "Read release notes for Scient 0.6.23", exact: true }),
+    )
+    .toBeVisible();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect.element(dialog).not.toBeInTheDocument();
 });
 
 function _createFixture() {

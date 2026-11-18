@@ -16,12 +16,19 @@ import {
   formatScientReleaseVersion,
   type ScientReleaseNote,
 } from "./model";
+import { useReleaseHistoryRequests } from "./releaseHistoryRequests";
 import { useScientReleaseNotes } from "./useScientReleaseNotes";
 
 type ReleaseView = "release" | "history";
 
 export function ScientReleaseNotes() {
   const controller = useScientReleaseNotes();
+  const requestId = useReleaseHistoryRequests((state) => state.requestId);
+  const [handledRequestId, setHandledRequestId] = useState(requestId);
+  if (requestId !== handledRequestId) {
+    setHandledRequestId(requestId);
+    controller.openHistory();
+  }
   if (!controller.current) return null;
 
   return (
@@ -35,7 +42,9 @@ export function ScientReleaseNotes() {
       ) : null}
       <ScientReleaseNotesDialog
         current={controller.current}
+        installedVersion={controller.installedVersion}
         history={controller.history}
+        initialView={controller.dialogView}
         open={controller.isDialogOpen}
         onOpenChange={controller.setDialogOpen}
       />
@@ -92,25 +101,37 @@ function ScientReleaseNotesCard({
 
 function ScientReleaseNotesDialog({
   current,
+  installedVersion,
   history,
+  initialView,
   open,
   onOpenChange,
 }: {
   readonly current: ScientReleaseNote;
+  readonly installedVersion: string;
   readonly history: readonly ScientReleaseNote[];
+  readonly initialView: ReleaseView;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
-  const [view, setView] = useState<ReleaseView>("release");
+  const [view, setView] = useState<ReleaseView>(initialView);
   const [selected, setSelected] = useState(current);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
-  const [previousPresentation, setPreviousPresentation] = useState({ current, open });
-  if (previousPresentation.current !== current || previousPresentation.open !== open) {
-    setPreviousPresentation({ current, open });
+  const [previousPresentation, setPreviousPresentation] = useState({
+    current,
+    open,
+    initialView,
+  });
+  if (
+    previousPresentation.current !== current ||
+    previousPresentation.open !== open ||
+    previousPresentation.initialView !== initialView
+  ) {
+    setPreviousPresentation({ current, open, initialView });
     if (open) {
       setSelected(current);
-      setView("release");
+      setView(initialView);
     }
   }
 
@@ -155,7 +176,7 @@ function ScientReleaseNotesDialog({
             <ScientReleaseDetail release={selected} />
           ) : (
             <ScientReleaseHistory
-              currentVersion={current.version}
+              currentVersion={installedVersion}
               releases={history}
               onSelect={(release) => {
                 setSelected(release);
@@ -325,8 +346,8 @@ function ScientReleaseHistory({
               aria-label={`Read release notes for Scient ${formatScientReleaseVersion(release.version)}`}
               className={
                 isCurrent
-                  ? "block w-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--scient-warm-white)_74%,white)_0%,transparent_100%)] px-5 py-4 text-left outline-none transition-colors hover:bg-[color-mix(in_srgb,var(--scient-warm-white)_55%,white)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)] dark:bg-[linear-gradient(90deg,color-mix(in_srgb,var(--scient-burgundy)_12%,transparent)_0%,transparent_100%)]"
-                  : "block w-full px-5 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)]"
+                  ? "block w-full cursor-pointer bg-[linear-gradient(90deg,color-mix(in_srgb,var(--scient-warm-white)_74%,white)_0%,transparent_100%)] px-5 py-4 text-left outline-none transition-colors hover:bg-[color-mix(in_srgb,var(--scient-warm-white)_55%,white)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)] dark:bg-[linear-gradient(90deg,color-mix(in_srgb,var(--scient-burgundy)_12%,transparent)_0%,transparent_100%)]"
+                  : "block w-full cursor-pointer px-5 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)]"
               }
               onClick={() => onSelect(release)}
               type="button"

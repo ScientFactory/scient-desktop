@@ -77,11 +77,22 @@ export function resolveScientReleaseNotesDecision({
   return {
     kind: "show",
     current,
-    history: sortScientReleaseNotes(
-      catalog.filter((note) => compareSemverVersions(note.version, currentVersion) <= 0),
-    ),
+    history: scientReleaseHistory({ catalog, currentVersion }),
     nextLastHandledVersion: currentVersion,
   };
+}
+
+/** Every note up to the installed version, newest first. Independent of the card decision. */
+function scientReleaseHistory({
+  catalog,
+  currentVersion,
+}: {
+  readonly catalog: readonly ScientReleaseNote[];
+  readonly currentVersion: string;
+}): readonly ScientReleaseNote[] {
+  return sortScientReleaseNotes(
+    catalog.filter((note) => compareSemverVersions(note.version, currentVersion) <= 0),
+  );
 }
 
 export function formatScientReleaseVersion(version: string): string {

@@ -87,6 +87,7 @@ import { AppBadgeSettings } from "../../scient/answerAttention/AppBadgeSettings"
 import { EmptySectionCleanupSettings } from "../../scient/sections/EmptySectionCleanupSettings";
 // SCIENT-FORK: Restart installs directly, sharing the sidebar's install path.
 import { installDesktopUpdateNow } from "../../scient/desktopUpdate/updateReadyNotice";
+import { requestReleaseHistory } from "../../scient/releaseNotes/releaseHistoryRequests";
 // SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -1720,6 +1721,15 @@ export function AboutSettingsPanel() {
             />
           </>
         )}
+        <SettingsRow
+          title="Release history"
+          description="Read what is new in each Scient version."
+          control={
+            <Button size="sm" variant="outline" onClick={requestReleaseHistory}>
+              Release history
+            </Button>
+          }
+        />
       </SettingsSection>
 
       {/* SCIENT-FORK: the external privacy-policy row is withheld. */}
