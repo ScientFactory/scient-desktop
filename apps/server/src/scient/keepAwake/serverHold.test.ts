@@ -116,7 +116,8 @@ describe("T3's keep-awake hold with Scient's work", () => {
       shell = shellWith("command");
       yield* Queue.offer(events, { sequence: 2, event: { type: "turn-item.updated" } });
       yield* settle;
-      expect(yield* Queue.take(spawned)).toBe("caffeinate");
+      // T3 starts caffeinate through sh, which reports once the hold is acquired.
+      expect(yield* Queue.take(spawned)).toBe("sh");
     }),
   );
 });
