@@ -19801,9 +19801,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         yield* Queue.shutdown(harness.sdkMessages);
         // SCIENT-FORK:START — exit cleanup holds the next start while it reads subagent
-        // transcripts from disk; the scheduler's yields let that I/O finish.
+        // transcripts from disk; the first query's worker ends only after that cleanup.
         yield* harness.until(() => sendItems().length >= 2);
-        yield* yieldTicks(2_000);
+        yield* Fiber.await(yield* Queue.take(harness.queryWorkers));
         // SCIENT-FORK:END
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({

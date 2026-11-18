@@ -17,26 +17,12 @@ the workflow still reports whitespace and checker-test results without inventing
 work. The full product suite also runs for documentation-only changes so every protected context
 is present and the repository cannot merge around its own branch policy.
 
+Release-note changes run the full lanes like any other change. The Web suite validates the
+shipped catalog (`releaseNotes/model.test.ts`) and renders it in Chromium
+(`ScientReleaseNotes.browser.test.tsx`).
+
 For every pull request, merge-queue candidate (`merge_group`), and push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality
 gates (a queue candidate or main push may reuse an exact earlier qualification, described below):
-
-Release-note-only changes use **Release notes qualification** instead of the full lanes below.
-The event's immutable base and tested commit must differ only in `releaseNotes/catalog.ts`
-and optionally its existing `model.test.ts` and `ScientReleaseNotes.browser.test.tsx` files
-under `apps/web/src/scient/`. The catalog must change, both versions must contain literal
-data only, and all changed files must remain regular files. Empty or unresolved diffs,
-additions, deletions, renames, mode changes, executable catalog code, and any other path
-run full CI. Workflow, component, dependency and test-configuration changes therefore
-qualify through full CI, including changes to this optimization itself.
-
-The focused lane runs catalog/model validation, release-note Chromium tests, web type checking,
-and release-note formatting and lint. Only after all pass does it suppress unrelated workspace,
-server, full web shards, Rust, mobile, Compute, packaging and release-smoke qualification.
-The existing required shard names explicitly report that focused qualification passed and
-their suites were not applicable. No transfer measurements or full-suite reuse receipt are
-fabricated: focused runs do not produce them and are independently qualified on each event.
-Failures or absent qualification output retain full CI. Beta and Stable release workflows
-still build, sign, package and check their actual release artifacts normally.
 
 - **Check**: `knip:check` rejects unused files/dependencies repository-wide and unused exports in the enabled application/runtime workspaces. `brand:check` verifies Scient product identity on shipped code and `docs/user`; its reviewed exemptions live in `scripts/scient-brand-allowlist.json`, each with a reason, and an entry that no longer exempts anything fails the check. `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
@@ -100,7 +86,13 @@ still build, sign, package and check their actual release artifacts normally.
   `.github/scripts/overleaf-platform-tests.cjs` must run without skips. Files run three at a time,
   each in its own process, rather than the server configuration's one at a time. Neither job
   restores a dependency store: on these hosted runners restoring the whole-workspace store took
-  longer than installing the server and desktop closures without one.
+  longer than installing the server and desktop closures without one. Overleaf macOS runs on every
+  nightly run and every main push that cannot reuse, but on a pull request only when its diff can
+  reach what only macOS can show (`.github/scripts/overleaf-macos-ci-gate.mjs`: the Overleaf,
+  workspace and file-publication sources, the native publication helper, the Electron sign-in
+  smoke and setup, and the toolchain). The same files run on Linux and Windows in required lanes,
+  so a change that breaks them everywhere still fails there. Its steps cannot fail Changes: unless
+  a passing gate says `false`, the job runs.
 
 Every change gate diffs the tested commit against one comparison base
 (`.github/scripts/ci-comparison-base.cjs`): the group's base for a queue run, `main` before the
@@ -141,8 +133,8 @@ releases still build their own artifacts.
 
 A source qualifies through its gates, not its overall result: the newest run of that head must
 be in progress or completed with success or failure, and its latest attempt must hold exactly one
-successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS,
-shard weights, main caches) may still be running or may have failed. A cancelled, timed-out or
+successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS and
+the main caches) may still be running or may have failed. A cancelled, timed-out or
 unstarted run never qualifies, and an older run is never used behind a newer one of the same head.
 
 Missing, expired, malformed or mismatched proof/reports, API failures, and restoration failures

@@ -15,6 +15,7 @@ import {
   isRecoveryStored,
   isRecoveryUnstored,
   journalAppliedRecovery,
+  parkUnappliedInput,
   parkUninstalledTypingDraft,
   parkUnpublishedSource,
   parkVisualFieldDrafts,
@@ -980,6 +981,52 @@ describe("comparison for display", () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.current).toHaveLength(900);
     expect(result[0]!.recovered).toHaveLength(900);
+  });
+});
+
+describe("unapplied raw source recovery", () => {
+  it("offers exact incomplete input for copying after reopening on a different source", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    localStorage.clear();
+
+    const raw = "\\unsupported{incomplete\n😀";
+    parkUnappliedInput("raw-test", raw, "view-one", null);
+    const recovery = readStartupRecovery("raw-test", { source: "outside source" }).recovery;
+    expect(recovery).toMatchObject({ source: null, text: raw, parked: true });
+  });
+  it("keeps the previous durable draft when the replacement cannot be stored", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    localStorage.clear();
+
+    const first = parkUnappliedInput("raw-test", "first", "view-one", null);
+    const fail = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    let next: ReturnType<typeof parkUnappliedInput>;
+    try {
+      next = parkUnappliedInput("raw-test", "latest", "view-one", first);
+    } finally {
+      fail.mockRestore();
+    }
+    expect(next).toMatchObject({ parked: false, source: null, text: "latest" });
+    expect(isRecoveryStored("raw-test", first)).toBe(true);
+    expect(readStartupRecovery("raw-test", { source: "outside" }).recovery?.text).toBe("first");
+  });
+  it("coalesces one interaction without deleting another view's input", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    localStorage.clear();
+
+    const first = parkUnappliedInput("raw-test", "draft", "view-one", null);
+    const independent = parkUnappliedInput("raw-test", "draft", "view-two", null);
+    const latest = parkUnappliedInput("raw-test", "new draft", "view-one", first);
+    expect(isRecoveryStored("raw-test", first)).toBe(false);
+    expect(isRecoveryStored("raw-test", independent)).toBe(true);
+    expect(isRecoveryStored("raw-test", latest)).toBe(true);
+    removeRecovery("raw-test", first);
+    expect(isRecoveryStored("raw-test", latest)).toBe(true);
   });
 });
 

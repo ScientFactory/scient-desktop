@@ -54,6 +54,7 @@ import {
   assertRootBinding,
   bytesRevision,
   directoryIdentity,
+  hostDirectoryIdentity,
   durableJson,
   fileIdentity,
   fileRevision,
@@ -3922,7 +3923,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     // `active` holds root keys; overlap is judged on the root part.
     const rootOf = (key: string) => key.slice(0, key.indexOf("\0"));
     const plainEpochOf = async (root: string) => {
-      const identity = await directoryIdentity(root, deps.nativePublicationHelper);
+      // The host's own identity: a workspace epoch must not need the native helper.
+      const identity = await hostDirectoryIdentity(root);
       return NodeCrypto.createHash("sha256")
         .update(`${identity.dev}:${identity.ino}\n${plainEpochComponent(true)}`)
         .digest("hex");
@@ -4031,7 +4033,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         normalized,
         async (signal) => {
           const root = await NodeFSP.realpath(normalized);
-          const identity = await directoryIdentity(root, deps.nativePublicationHelper);
+          // A plain read publishes nothing, so the host's own identity tells it the folder stayed
+          // the same; on Windows reads then work even when the native helper is unavailable.
+          const identity = await hostDirectoryIdentity(root);
           return owning(root, signal, async () => {
             const exit = await Effect.runPromiseExitWith(context)(
               read(null, { currentMissing: await missingOf(root) }),
@@ -4041,10 +4045,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             const stillRoot = await NodeFSP.realpath(normalized)
               .then(async (current) =>
                 current === root
-                  ? sameIdentity(
-                      await directoryIdentity(root, deps.nativePublicationHelper),
-                      identity,
-                    )
+                  ? sameIdentity(await hostDirectoryIdentity(root), identity)
                   : false,
               )
               .catch(() => false);

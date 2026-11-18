@@ -348,31 +348,33 @@ computer. It catches environment drift and anything an exact gate missed, up to 
 the merge. Start one by hand with `gh workflow run ci.yml --repo ScientFactory/scient-desktop
 --ref main`.
 
-Workspace package tests run on three runners. Part 1 keeps the `Test` name that
-`release/stable` requires and runs every package parts 2 and 3 don't name, so a new
+Workspace package tests run on six runners. Part 1 keeps the `Test` name that
+`release/stable` requires and runs every package the other parts don't name, so a new
 package always runs; it alone sets up Electron and the browser secret helper.
 
-Server tests use twelve sequential-file shards. Web uses six shards on standard
-GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
+Server tests use sixteen sequential-file shards with a 20-minute ceiling. Web uses twelve shards
+with a 15-minute ceiling. All run on standard GitHub-hosted 4-vCPU Ubuntu runners.
 Both use longest-file-first allocation with package-relative path tie breaking and
 the lowest shard index on equal load. New files receive the sequencer's fallback
 weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
 exclude them. The shard-one performance suites retain their own measurements.
 
-Weights come from main's own timings. The `Shard weights` job reads the reports of the
-newest main pushes (successful reports only, medians over up to three runs per suite)
-and publishes one artifact that every shard of the run copies over
-`apps/{server,web}/src/testUtils/shardWeights.json`, so all shards derive the same split.
-When no recent report is readable, or that job fails, every shard uses the checked-in
-weights instead. To refresh the checked-in fallback:
+Weights are the checked-in `apps/{server,web}/src/testUtils/shardWeights.json`, so every shard
+of a run derives the same split with no job before the shards. Refresh them from main's newest
+timings (successful reports only, medians over up to three runs per suite) after large test
+changes, or when one shard runs well behind the others:
 
 ```sh
-GITHUB_REPOSITORY=ScientFactory/scient-desktop RUNNER_TEMP=/tmp \
-  node .github/scripts/ci-shard-weights.mjs /tmp/scient-shard-weights
-cp /tmp/scient-shard-weights/web.json apps/web/src/testUtils/shardWeights.json
-cp /tmp/scient-shard-weights/server.json apps/server/src/testUtils/shardWeights.json
+out="$(mktemp -d)/weights"
+GITHUB_REPOSITORY=ScientFactory/scient-desktop node .github/scripts/ci-shard-weights.mjs "$out"
+cp "$out/web.json" apps/web/src/testUtils/shardWeights.json
+cp "$out/server.json" apps/server/src/testUtils/shardWeights.json
 node .github/scripts/verify-ci-shards.mjs
 ```
+
+A suite takes a main run only when that run has a successful report from every shard, using each
+shard's latest attempt. When no complete run is found for a suite, its file is not written and its
+`cp` fails, so the checked-in weights stay.
 
 The importer normalizes runner roots and takes per-file medians across multiple runs.
 It rejects failed reports, malformed paths, duplicates within a report, and invalid

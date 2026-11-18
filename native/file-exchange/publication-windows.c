@@ -423,7 +423,7 @@ static int cloud_bootstrap(HANDLE folder, CloudRegister registration, CloudUnreg
 }
 static int cloud_managed(HANDLE folder) {
   typedef HRESULT (WINAPI *CloudInfo)(HANDLE, int, PVOID, DWORD, PDWORD);
-  HMODULE library = LoadLibraryW(L"cldapi.dll");
+  HMODULE library = LoadLibraryExW(L"cldapi.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
   if (!library) return (int)GetLastError();
   FARPROC address = GetProcAddress(library, "CfGetSyncRootInfoByHandle"); CloudInfo query = NULL;
   memcpy(&query, &address, sizeof(query));
@@ -1090,7 +1090,7 @@ int platform_windows_main(int argc, char **argv) {
     if (!error && !LookupPrivilegeValueW(NULL, L"SeLoadDriverPrivilege", &privileges.Privileges[0].Luid)) error = GetLastError();
     privileges.PrivilegeCount = 1; privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
     if (!error) { SetLastError(0); if (!AdjustTokenPrivileges(token, FALSE, &privileges, 0, NULL, NULL) || GetLastError()) error = GetLastError(); }
-    HMODULE library = LoadLibraryW(L"fltlib.dll");
+    HMODULE library = LoadLibraryExW(L"fltlib.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
     typedef HRESULT (WINAPI *Detach)(LPCWSTR, LPCWSTR, LPCWSTR);
     Detach detach = NULL; FARPROC address = library ? GetProcAddress(library, "FilterDetach") : NULL; memcpy(&detach, &address, sizeof(detach));
     wchar_t *path = wide(argv[3]);
@@ -1180,7 +1180,7 @@ int platform_windows_main(int argc, char **argv) {
     printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
   }
   if (argc == 4 && (!strcmp(argv[2], "register-sync-root") || !strcmp(argv[2], "unregister-sync-root"))) {
-    HMODULE library = LoadLibraryW(L"cldapi.dll");
+    HMODULE library = LoadLibraryExW(L"cldapi.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
     typedef HRESULT (WINAPI *Register)(LPCWSTR, const CF_SYNC_REGISTRATION *, const CF_SYNC_POLICIES *, CF_REGISTER_FLAGS);
     typedef HRESULT (WINAPI *Unregister)(LPCWSTR);
     Register registration = NULL; Unregister unregistration = NULL;
