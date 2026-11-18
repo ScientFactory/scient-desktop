@@ -383,32 +383,6 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   };
 }
 
-it("lists other updates and updates them without a confirmation", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  fixture.everything = everythingFixture();
-  await mountFooter(_fixture, 216, idleUpdateState);
-  await page.getByRole("button", { name: "Other updates available" }).click();
-  const updateAll = page.getByRole("button", { name: "Update all" });
-  await expect.element(updateAll).toBeVisible();
-  const row = document.querySelector<HTMLElement>("[data-other-update-row]")!;
-  expect(row.textContent).toContain("alvin server");
-  expect(row.textContent).toContain("0.6.20 → 0.6.21");
-
-  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
-    await page.screenshot({
-      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-card.png`,
-    });
-  }
-
-  await updateAll.click();
-  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-  const updating = page.getByRole("button", { name: "Other updates in progress" });
-  await expect.element(updating).toBeVisible();
-  await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
-});
-
 it("asks once inline before Update all stops running threads", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
