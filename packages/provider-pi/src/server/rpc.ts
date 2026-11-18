@@ -121,6 +121,9 @@ export interface PiRpcConnection {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE = Duration.seconds(1);
+// SCIENT-FORK:START — process groups have no exit event, so the grace polls for one.
+const TERMINATION_EXIT_POLL = Duration.millis(20);
+// SCIENT-FORK:END
 
 interface PendingPiRequest {
   readonly deferred: Deferred.Deferred<unknown, PiRpcError>;
@@ -215,10 +218,18 @@ const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  yield* Effect.sleep(TERMINATION_GRACE);
+  // SCIENT-FORK:START — the grace is an upper bound: stop waiting once the process group is gone.
+  yield* Effect.sleep(TERMINATION_EXIT_POLL).pipe(
+    Effect.repeat({ until: () => hasExited() }),
+    Effect.timeoutOption(TERMINATION_GRACE),
+  );
+  // SCIENT-FORK:END
   if (hasExited()) return;
   kill("SIGKILL");
 });
+// SCIENT-FORK:START — exported for the grace and escalation tests in rpc.scient.test.ts.
+export { terminatePiProcess };
+// SCIENT-FORK:END
 
 export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSpawnOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
