@@ -5,19 +5,10 @@ import {
   type ScientSourcesOrganization,
 } from "@scientfactory/scient-sources";
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
-import { msg } from "gt-react";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
-export const SCIENT_SOURCE_SORT_OPTIONS = [
-  { value: "last-added", label: msg("Last added") },
-  { value: "publication-year", label: msg("Publication year") },
-  { value: "journal", label: msg("Journal", { $context: "sort order" }) },
-  { value: "title", label: msg("Title", { $context: "sort order" }) },
-  { value: "author", label: msg("Author", { $context: "sort order" }) },
-] as const;
-
-export type ScientSourceSort = (typeof SCIENT_SOURCE_SORT_OPTIONS)[number]["value"];
+export type ScientSourceSort = "last-added" | "publication-year" | "journal" | "title" | "author";
 
 export interface ScientSourceSearchEntry {
   readonly source: SourceSummary;

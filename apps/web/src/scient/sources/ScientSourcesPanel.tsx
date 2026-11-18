@@ -92,10 +92,10 @@ import { NOTICE_CHANGES_SHOWN } from "./sourceLifecycleLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
-  SCIENT_SOURCE_SORT_OPTIONS,
   sortScientSourceRecords,
   type ScientSourceSort,
 } from "./filterSources";
+import { SCIENT_SOURCE_SORT_OPTIONS } from "./filterSourcesCopy";
 import {
   importedSourceIdToReveal,
   importedSourceIds,
