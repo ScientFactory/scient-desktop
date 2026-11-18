@@ -167,7 +167,9 @@ function runnerCount(needs: Record<string, JobResult>) {
     return (
       total +
       Object.values(called.jobs).reduce((count, child) => {
-        const run = !child.if || NodeVM.runInNewContext(child.if.slice(3, -2), { inputs });
+        const run =
+          !child.if ||
+          NodeVM.runInNewContext(child.if.slice(3, -2), { inputs, cancelled: () => false });
         return count + (run ? matrixSize(child, inputs) : 0);
       }, 0)
     );
