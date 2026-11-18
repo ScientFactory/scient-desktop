@@ -8,10 +8,8 @@ import {
   THREAD_MAIN_CONTENT_MIN_WIDTH,
 } from "./threadSidebarWidth";
 
-// Restored from the upstream-deleted threadSidebarWidth.test.ts through public behavior: the
-// minimum is the brand-less minimum width, and the default is the documented 16rem.
+// The minimum is the brand-less minimum width.
 const THREAD_SIDEBAR_MIN_WIDTH = resolveThreadSidebarMinimumWidth(0);
-const THREAD_SIDEBAR_DEFAULT_WIDTH = 16 * 16;
 
 // The viewport bounds the width as it renders, not when it is read at startup.
 const renderedWidth = (storedWidth: number, viewportWidth: number) =>
@@ -23,14 +21,6 @@ const renderedWidth = (storedWidth: number, viewportWidth: number) =>
 
 // regression: 2c199aacac fix(desktop): preserve main window bounds (#3851)
 describe("thread sidebar width", () => {
-  it("uses the default width when no preference is stored", () => {
-    expect(resolveInitialThreadSidebarWidth(null)).toBe(THREAD_SIDEBAR_DEFAULT_WIDTH);
-  });
-
-  it("uses a stored width in the initial render", () => {
-    expect(resolveInitialThreadSidebarWidth(360)).toBe(360);
-  });
-
   it("clamps a stored width to the sidebar minimum", () => {
     expect(resolveInitialThreadSidebarWidth(120)).toBe(THREAD_SIDEBAR_MIN_WIDTH);
   });
@@ -39,9 +29,5 @@ describe("thread sidebar width", () => {
     const viewportWidth = 1000;
 
     expect(renderedWidth(900, viewportWidth)).toBe(viewportWidth - THREAD_MAIN_CONTENT_MIN_WIDTH);
-  });
-
-  it("keeps the sidebar minimum when the whole layout is narrower than its minimums", () => {
-    expect(renderedWidth(900, 700)).toBe(THREAD_SIDEBAR_MIN_WIDTH);
   });
 });

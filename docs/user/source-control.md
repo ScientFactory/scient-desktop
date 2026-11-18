@@ -32,10 +32,8 @@ follow the **Open pull requests in Scient** setting in **Settings → Diffs & pu
 
 ## Overleaf
 
-**Settings → Source Control & Issues → Overleaf** sits beside the hosting providers. It holds the Overleaf
-Git token (**Create a token on Overleaf ↗**, **Save**, **Remove**) and every folder on this
-computer linked to an Overleaf project, by project, each with its state, last sync, **Sync now**,
-**Open in Overleaf** and **Unlink**. See [Overleaf](overleaf.md) for linking a folder and what a
+The Overleaf Git token and the folders linked to Overleaf projects are in
+**Settings ▸ Synced folders ▸ Overleaf**. See [Overleaf](overleaf.md) for linking a folder and what a
 sync does.
 
 ## Supported providers
