@@ -15390,8 +15390,9 @@
     },
     "."
   ],
-  "8db8608bfb722d1a": [
-    "Sign in as ",
+  "fa541efcdf5e6dec": [
+    "Sign in as",
+    " ",
     {
       "t": "span",
       "i": 1,
@@ -15401,8 +15402,8 @@
         "v": "v"
       }
     },
-    " and turn on",
     " ",
+    "and turn on ",
     {
       "t": "span",
       "i": 3,
@@ -16371,7 +16372,9 @@
   "edbff58ee99ba8cd": "Insert a reference list",
   "3881a0fe76709fc3": "Part",
   "bc5e2fb1184f652e": "Insert a document part",
-  "0af866d93d3663f1": "Document ",
+  "30a57d5fb6191eb6": "Document title",
+  "ce389b6e7aeefd05": "Document author",
+  "75a85e60378b6522": "Document date",
   "abb17fbcefee18b7": "Edit document metadata",
   "04a8864770b2d31c": "Add a summary",
   "781cdec34c8f625b": "Table of contents",
