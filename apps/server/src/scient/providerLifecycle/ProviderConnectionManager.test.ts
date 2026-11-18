@@ -2413,6 +2413,148 @@ describe("ProviderConnectionManager failure stage", () => {
   );
 });
 
+describe("ProviderConnectionManager failure reasons", () => {
+  it.effect("publishes why each failed sign-in failed", () =>
+    Effect.gen(function* () {
+      let starts = 0;
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () => {
+          starts += 1;
+          return starts === 1
+            ? Effect.fail(
+                new ProviderConnectionActionError({
+                  message: "No page.",
+                  failureReason: "no_signin_page",
+                }),
+              )
+            : starts === 2
+              ? Effect.fail(
+                  new ProviderConnectionActionError({ message: "Setup.", afterSignIn: true }),
+                )
+              : starts === 3
+                ? Effect.fail(new ProviderConnectionActionError({ message: "Declined." }))
+                : Effect.succeed({
+                    initialStatus: "waiting_for_browser",
+                    waitForCompletion: Effect.void,
+                    cancel: Effect.void,
+                  });
+        },
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      const start = manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      yield* start.pipe(Effect.flip);
+      yield* start.pipe(Effect.flip);
+      yield* start.pipe(Effect.flip);
+      // Completes, but the account never shows as connected.
+      yield* start;
+      const transitions = yield* awaitState(
+        transitionsRef,
+        (items) => items.filter((item) => item?.status === "failed").length === 4,
+      );
+      assert.deepStrictEqual(
+        transitions.filter((item) => item?.status === "failed").map((item) => item?.failureReason),
+        ["no_signin_page", "post_signin_setup", "unknown", "verification"],
+      );
+      assert.isTrue(
+        transitions
+          .filter((item) => item?.status !== "failed")
+          .every((item) => item?.failureReason === undefined),
+      );
+    }),
+  );
+});
+
+describe("ProviderConnectionManager finishing from the account", () => {
+  const waitingForever = (finished: Ref.Ref<number>): ProviderConnectionActions => ({
+    methods: ["codex_browser"],
+    start: () =>
+      Effect.succeed({
+        initialStatus: "waiting_for_browser",
+        // The provider's own process never ends, as Claude's login did.
+        waitForCompletion: Effect.never,
+        cancel: Effect.void,
+        finishWhenAccountConnected: Ref.update(finished, (count) => count + 1),
+      }),
+    disconnect: Effect.void,
+  });
+
+  it.effect("finishes a waiting sign-in once a fresh check finds the account connected", () =>
+    Effect.gen(function* () {
+      const finished = yield* Ref.make(0);
+      const { manager, transitionsRef, accountChangeRefreshCountRef } = yield* makeHarness({
+        actions: waitingForever(finished),
+        // 1: the check before starting; 2: the first wait check; 3: connected.
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 3 ? authenticatedProvider(provider) : provider,
+      });
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      yield* TestClock.adjust("15 seconds");
+      assert.strictEqual(yield* Ref.get(finished), 0);
+      yield* TestClock.adjust("15 seconds");
+      const transitions = yield* awaitState(transitionsRef, (items) =>
+        items.some((item) => item?.status === "connected"),
+      );
+      assert.deepStrictEqual(
+        transitions.map((item) => item?.status ?? null),
+        ["starting", "waiting_for_browser", "verifying", "connected"],
+      );
+      assert.strictEqual(yield* Ref.get(finished), 1);
+      // The usual final verification still decides.
+      assert.strictEqual(yield* Ref.get(accountChangeRefreshCountRef), 1);
+    }),
+  );
+
+  it.effect("does not finish an account switch from the account it started with", () =>
+    Effect.gen(function* () {
+      const finished = yield* Ref.make(0);
+      const { manager, transitionsRef, refreshCountRef } = yield* makeHarness({
+        actions: waitingForever(finished),
+        provider: authenticatedProvider(disconnectedProvider),
+      });
+      yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        mode: "reauthenticate",
+      });
+      yield* TestClock.adjust("2 minutes");
+      const transitions = yield* SubscriptionRef.get(transitionsRef);
+      assert.strictEqual(transitions.at(-1)?.status, "waiting_for_browser");
+      assert.strictEqual(yield* Ref.get(finished), 0);
+      // Only the check before starting ran.
+      assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
+    }),
+  );
+
+  it.effect("waits only for the provider when it does not offer to finish from the account", () =>
+    Effect.gen(function* () {
+      const { manager, transitionsRef, refreshCountRef } = yield* makeHarness({
+        actions: {
+          methods: ["codex_browser"],
+          start: () =>
+            Effect.succeed({
+              initialStatus: "waiting_for_browser",
+              waitForCompletion: Effect.never,
+              cancel: Effect.void,
+            }),
+          disconnect: Effect.void,
+        },
+        // Connected after the check before starting, as an outside sign-in would be.
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 2 ? authenticatedProvider(provider) : provider,
+      });
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      yield* TestClock.adjust("2 minutes");
+      assert.strictEqual(
+        (yield* SubscriptionRef.get(transitionsRef)).at(-1)?.status,
+        "waiting_for_browser",
+      );
+      assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
+    }),
+  );
+});
+
 describe("ProviderConnectionManager sign-in request ids", () => {
   it.effect("keeps the starting client's request id on every state of its operation", () =>
     Effect.gen(function* () {

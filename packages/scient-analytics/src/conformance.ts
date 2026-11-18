@@ -77,6 +77,8 @@ const representativeProperties = {
   networkKind: "stalled",
   compressedFailure: "checksum",
   failedCheck: "rpc_start",
+  failureReason: "no_signin_page",
+  signInPage: "manual_fallback",
   progressPercent: 37,
   bytesPerSecond: 410_000,
   resumedBytes: 41_000_000,

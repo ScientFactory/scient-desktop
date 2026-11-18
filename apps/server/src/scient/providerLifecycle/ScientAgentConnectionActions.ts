@@ -2,7 +2,11 @@
  * The agent owns sign-in credentials and storage. Forward pasted answers directly to the isolated
  * attempt process and never retain them in Scient state; its scope owns process lifetime.
  */
-import type { ProviderConnectionAccount, ProviderConnectionMethod } from "@t3tools/contracts";
+import type {
+  ProviderConnectionAccount,
+  ProviderConnectionFailureReason,
+  ProviderConnectionMethod,
+} from "@t3tools/contracts";
 import type { OmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type * as Duration from "effect/Duration";
@@ -45,8 +49,16 @@ export interface ScientAgentSignInClient {
 
 const isCommandError = Schema.is(OmpRpcCommandError);
 
-const connectionError = (message: string, cause?: unknown) =>
-  new ProviderConnectionActionError({ message, ...(cause === undefined ? {} : { cause }) });
+const connectionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+) =>
+  new ProviderConnectionActionError({
+    message,
+    ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
+  });
 
 const SignInList = Schema.Struct({
   providers: Schema.Array(
@@ -179,7 +191,11 @@ export function makeScientAgentConnectionActions(input: {
     account?: string,
   ): Effect.fn.Return<ProviderConnectionAttempt, ProviderConnectionActionFailure, Scope.Scope> {
     if (method !== SCIENT_AGENT_ACCOUNT_METHOD || account === undefined) {
-      return yield* connectionError("Choose an account from Scient Agent's sign-in list.");
+      return yield* connectionError(
+        "Choose an account from Scient Agent's sign-in list.",
+        undefined,
+        "start_failed",
+      );
     }
     const scope = yield* Scope.Scope;
     const client = yield* input.open;
@@ -230,6 +246,8 @@ export function makeScientAgentConnectionActions(input: {
               connectionError(
                 instructionsText(client.redact(message)) ??
                   "Scient Agent could not complete the sign in.",
+                undefined,
+                "provider_failed",
               ),
             ),
           ),
@@ -246,7 +264,13 @@ export function makeScientAgentConnectionActions(input: {
       Effect.timeoutOrElse({
         duration: input.firstPromptTimeout ?? FIRST_PROMPT_TIMEOUT,
         orElse: () =>
-          Effect.fail(connectionError("Scient Agent did not begin the sign in. Try again.")),
+          Effect.fail(
+            connectionError(
+              "Scient Agent did not begin the sign in. Try again.",
+              undefined,
+              "no_signin_page",
+            ),
+          ),
       }),
     );
     const cancel = Fiber.interrupt(login).pipe(Effect.asVoid);

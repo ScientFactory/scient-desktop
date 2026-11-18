@@ -283,6 +283,19 @@ const LIFECYCLE_FAILED_CHECKS = new Set([
   "rollback",
   "refresh",
 ]);
+const SIGN_IN_FAILURE_REASONS = new Set([
+  "start_failed",
+  "no_signin_page",
+  "invalid_response",
+  "timeout",
+  "provider_failed",
+  "provider_exited",
+  "verification",
+  "post_signin_setup",
+  "flow_stopped",
+  "unknown",
+]);
+const SIGN_IN_PAGES = new Set(["primary", "manual_fallback", "none"]);
 const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
@@ -1214,8 +1227,13 @@ function normalizeEvent(
     case "provider.lifecycle.failed":
     case "provider.lifecycle.cancelled": {
       const failed = name === "provider.lifecycle.failed";
-      // Read on every lifecycle event so a stray class never passes through on the others.
+      // Read on every lifecycle event so a stray value never passes through on the others.
       const failureClass = normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES);
+      const failureDetails = optionalProperties(input, {
+        failedCheck: LIFECYCLE_FAILED_CHECKS,
+        failureReason: SIGN_IN_FAILURE_REASONS,
+      });
+      const signInPage = optionalProperties(input, { signInPage: SIGN_IN_PAGES });
       return {
         name,
         privacyLevel: failed ? "essential" : "product",
@@ -1237,7 +1255,9 @@ function normalizeEvent(
             networkKind: DOWNLOAD_NETWORK_KINDS,
             compressedFailure: FAILURE_CLASSES,
           }),
-          ...(failed ? optionalProperties(input, { failedCheck: LIFECYCLE_FAILED_CHECKS }) : {}),
+          ...(failed ? failureDetails : {}),
+          // Every sign-in end says which page it waited on, so outcomes compare by page.
+          ...(name === "provider.lifecycle.started" ? {} : signInPage),
           ...(property(input, "resumedBytes") === undefined
             ? {}
             : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),

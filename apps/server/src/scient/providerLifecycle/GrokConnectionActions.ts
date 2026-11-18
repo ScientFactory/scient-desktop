@@ -1,8 +1,10 @@
 import {
+  type ProviderConnectionFailureReason,
   type ProviderConnectionMethod,
   type ProviderAuthorizationUrlKind,
 } from "@t3tools/contracts";
 import type { GrokSettings } from "@t3tools/provider-grok/settings";
+import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -75,14 +77,28 @@ export interface GrokConnectionRuntime {
   ) => Effect.Effect<GrokAcpConnection, ProviderConnectionActionFailure, Scope.Scope>;
 }
 
-const actionError = (message: string, cause?: unknown): ProviderConnectionActionError =>
-  new ProviderConnectionActionError({ message, cause });
+const actionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+): ProviderConnectionActionError =>
+  new ProviderConnectionActionError({
+    message,
+    cause,
+    ...(reason ? { failureReason: reason } : {}),
+  });
 
+/** A deadline Scient set that expired is `timeout`; anything else is `reason`. */
 function mapFailure<A, E, R>(
   effect: Effect.Effect<A, E, R>,
   message: string,
+  reason?: ProviderConnectionFailureReason,
 ): Effect.Effect<A, ProviderConnectionActionFailure, R> {
-  return effect.pipe(Effect.mapError((cause) => actionError(message, cause)));
+  return effect.pipe(
+    Effect.mapError((cause) =>
+      actionError(message, cause, Cause.isTimeoutError(cause) ? "timeout" : reason),
+    ),
+  );
 }
 
 function authMethodIds(initialized: EffectAcpSchema.InitializeResponse): ReadonlySet<string> {
@@ -123,7 +139,7 @@ const connectionHasAccount = Effect.fn("GrokConnectionActions.hasAccount")(funct
     return authMethodIds(initialized).has(GROK_AUTH_METHOD_CACHED_TOKEN);
   }).pipe(
     Effect.timeout(ACCOUNT_VERIFY_TIMEOUT),
-    Effect.mapError((cause) => actionError(failureMessage, cause)),
+    Effect.mapError((cause) => actionError(failureMessage, cause, "verification")),
   );
 });
 
@@ -146,10 +162,12 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
       const acp = yield* mapFailure(
         runtime.open(deviceFlow).pipe(Effect.timeout(SESSION_START_TIMEOUT)),
         "Grok could not start its secure sign-in flow.",
+        "start_failed",
       );
       const initialized = yield* mapFailure(
         acp.initialize().pipe(Effect.timeout(SESSION_START_TIMEOUT)),
         "Grok did not start its secure sign-in flow.",
+        "start_failed",
       );
       const authMethodId = chooseInteractiveAuthMethod(initialized, method);
       if (!authMethodId) {
@@ -157,6 +175,8 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
           deviceFlow
             ? "This Grok installation does not offer device-code sign in."
             : "This Grok installation does not offer account sign in.",
+          undefined,
+          "start_failed",
         );
       }
       const requestSeq = yield* Ref.updateAndGet(requestSequence, (value) => value + 1);
@@ -197,7 +217,7 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
       ).pipe(
         Effect.timeout(URL_DISCOVERY_TIMEOUT),
         Effect.mapError((cause) =>
-          actionError("Grok did not provide a secure sign-in page.", cause),
+          actionError("Grok did not provide a secure sign-in page.", cause, "no_signin_page"),
         ),
         Effect.onError(() => cancelAuthentication),
       );
@@ -207,7 +227,11 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
           "Grok finished sign in, but Scient could not verify the connected account.",
         );
         if (!connected) {
-          return yield* actionError("Grok finished sign in without reporting a connected account.");
+          return yield* actionError(
+            "Grok finished sign in without reporting a connected account.",
+            undefined,
+            "verification",
+          );
         }
         return {
           initialStatus: "verifying",
@@ -220,7 +244,11 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
       const authorizationUrl = safeAuthorizationUrl(authorization.auth_url);
       if (!authorizationUrl) {
         yield* cancelAuthentication;
-        return yield* actionError("Grok returned an invalid or insecure sign-in page.");
+        return yield* actionError(
+          "Grok returned an invalid or insecure sign-in page.",
+          undefined,
+          "invalid_response",
+        );
       }
 
       // Grok's official loopback and device-code implementations launch the
@@ -255,6 +283,7 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
             Effect.onError(() => cancelAuthentication),
           ),
           "Grok sign in did not finish successfully.",
+          "provider_failed",
         ).pipe(
           Effect.flatMap(() =>
             connectionHasAccount(
@@ -265,7 +294,13 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
           Effect.flatMap((connected) =>
             connected
               ? Effect.void
-              : Effect.fail(actionError("Grok did not report a connected account after sign in.")),
+              : Effect.fail(
+                  actionError(
+                    "Grok did not report a connected account after sign in.",
+                    undefined,
+                    "verification",
+                  ),
+                ),
           ),
         ),
         cancel: cancelAuthentication,

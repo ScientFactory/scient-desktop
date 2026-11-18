@@ -1,4 +1,8 @@
-import type { ProviderAuthState, ProviderSetupError } from "@t3tools/contracts";
+import type {
+  ProviderAuthState,
+  ProviderConnectionFailureReason,
+  ProviderSetupError,
+} from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,9 +12,17 @@ import type { ProviderAuthController } from "@t3tools/provider-core/server/auth"
 import type { ProviderConnectionActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 
-const failure = (message: string) => new ProviderConnectionActionError({ message });
-const mapSetupError = (cause: ProviderSetupError) =>
-  new ProviderConnectionActionError({ message: cause.detail, cause });
+const failure = (message: string, reason?: ProviderConnectionFailureReason) =>
+  new ProviderConnectionActionError({
+    message,
+    ...(reason === undefined ? {} : { failureReason: reason }),
+  });
+const mapSetupError = (cause: ProviderSetupError, reason?: ProviderConnectionFailureReason) =>
+  new ProviderConnectionActionError({
+    message: cause.detail,
+    cause,
+    ...(reason === undefined ? {} : { failureReason: reason }),
+  });
 const terminal = (state: ProviderAuthState) =>
   state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled";
 
@@ -22,28 +34,33 @@ export const makeCursorSdkConnectionActions = Effect.fn("makeCursorSdkConnection
       methods: ["cursor_browser"],
       start: Effect.fnUntraced(function* (method) {
         if (method !== "cursor_browser")
-          return yield* failure("Cursor does not support this sign-in method.");
+          return yield* failure("Cursor does not support this sign-in method.", "start_failed");
         const owner = `scient-cursor-${yield* random.uuidV4()}`;
         const started = yield* Effect.acquireRelease(
-          controller.start(owner).pipe(Effect.mapError(mapSetupError)),
+          controller
+            .start(owner)
+            .pipe(Effect.mapError((cause) => mapSetupError(cause, "start_failed"))),
           (state) =>
             state.flowId ? controller.cancel(owner, state.flowId).pipe(Effect.ignore) : Effect.void,
         );
         const flowId = started.flowId;
-        if (!flowId) return yield* failure("Cursor did not start a sign-in flow.");
+        if (!flowId) return yield* failure("Cursor did not start a sign-in flow.", "start_failed");
 
         const readState = (ready: (state: ProviderAuthState) => boolean) =>
           controller.subscribe(owner).pipe(
             Stream.mapEffect((state) =>
               state.flowId === flowId
                 ? Effect.succeed(state)
-                : Effect.fail(failure("This Cursor sign-in flow is no longer active.")),
+                : Effect.fail(
+                    failure("This Cursor sign-in flow is no longer active.", "flow_stopped"),
+                  ),
             ),
             Stream.filter(ready),
             Stream.runHead,
             Effect.flatMap(
               Option.match({
-                onNone: () => Effect.fail(failure("The Cursor sign-in flow stopped.")),
+                onNone: () =>
+                  Effect.fail(failure("The Cursor sign-in flow stopped.", "flow_stopped")),
                 onSome: Effect.succeed,
               }),
             ),
@@ -51,7 +68,14 @@ export const makeCursorSdkConnectionActions = Effect.fn("makeCursorSdkConnection
         const ensureSuccess = (state: ProviderAuthState) =>
           state.phase === "succeeded"
             ? Effect.void
-            : Effect.fail(failure(state.message ?? "Cursor sign-in did not finish."));
+            : Effect.fail(
+                failure(
+                  state.message ?? "Cursor sign-in did not finish.",
+                  state.phase === "failed"
+                    ? (state.failureReason ?? "provider_failed")
+                    : "flow_stopped",
+                ),
+              );
         const first = yield* readState(
           (state) =>
             (state.phase === "waiting" && state.authorizationUrl !== null) ||
@@ -60,7 +84,10 @@ export const makeCursorSdkConnectionActions = Effect.fn("makeCursorSdkConnection
         ).pipe(
           Effect.timeoutOrElse({
             duration: "30 seconds",
-            orElse: () => Effect.fail(failure("Cursor did not provide a sign-in page. Try again.")),
+            orElse: () =>
+              Effect.fail(
+                failure("Cursor did not provide a sign-in page. Try again.", "no_signin_page"),
+              ),
           }),
         );
         if (terminal(first)) yield* ensureSuccess(first);

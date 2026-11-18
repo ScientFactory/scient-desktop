@@ -328,6 +328,16 @@ When the step is known, it also carries `failedCheck`: `smoke` (the new runtime'
 check, `qualification` when the step inside it is unknown), `activation` (moving or recording
 files), `rollback` (the previous runtime could not be restored) or `refresh` (the new runtime was
 already active and only restarting its sessions failed).
+A failed sign-in (`action: sign-in`) carries `failureReason`, set where the failure is known:
+`start_failed`, `no_signin_page`, `invalid_response`, `timeout` (a deadline Scient set),
+`provider_failed` (the provider reported failure), `provider_exited` (its process ended first),
+`verification` (an account the provider accepted that Scient could not confirm),
+`post_signin_setup` (a failure after the provider accepted the sign-in), `flow_stopped` or
+`unknown`. Every sign-in end also carries `signInPage`: `primary` (Scient opened the page),
+`manual_fallback` (the provider opened its own page; Scient kept a link) or `none`. A sign-in whose
+provider's own account check is authoritative (Claude) finishes as soon as a fresh check, every
+15 seconds while it waits, finds the account connected, even when the provider's process has not
+ended; builds up to 0.6.30 reported such a sign-in as failed after 10 minutes.
 No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
 `downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
 `provider.runtime.first_pick` is sent once per installation when the user first

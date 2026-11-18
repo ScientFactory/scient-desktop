@@ -186,6 +186,57 @@ describe("Scient analytics contract", () => {
     });
   });
 
+  it("says why a sign-in failed and which page it waited on, from closed values only", () => {
+    const failed = normalizeInheritedEvent(
+      "provider.lifecycle.failed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "waiting_for_browser",
+        failureClass: "unknown",
+        failureReason: "timeout",
+        signInPage: "manual_fallback",
+      },
+      context,
+    );
+    expect(failed?.properties).toMatchObject({
+      failureReason: "timeout",
+      signInPage: "manual_fallback",
+    });
+    const completed = normalizeInheritedEvent(
+      "provider.lifecycle.completed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "verifying",
+        signInPage: "primary",
+        failureReason: "timeout",
+      },
+      context,
+    );
+    expect(completed?.properties).toMatchObject({ signInPage: "primary" });
+    expect(completed?.properties).not.toHaveProperty("failureReason");
+    const started = normalizeInheritedEvent(
+      "provider.lifecycle.started",
+      { provider: "claudeAgent", action: "sign-in", stage: "starting", signInPage: "primary" },
+      context,
+    );
+    expect(started?.properties).not.toHaveProperty("signInPage");
+    const stray = normalizeInheritedEvent(
+      "provider.lifecycle.failed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "waiting_for_browser",
+        failureReason: "the user's browser at /private/path",
+        signInPage: "https://example.invalid",
+      },
+      context,
+    );
+    expect(stray?.properties).not.toHaveProperty("signInPage");
+    expect(JSON.stringify(stray)).not.toContain("private");
+  });
+
   it("uses bounded duration and failure values", () => {
     expect(durationBucket(450)).toBe("under-1s");
     expect(durationBucket(75_000)).toBe("1-3m");
