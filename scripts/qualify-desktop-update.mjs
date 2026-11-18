@@ -682,7 +682,12 @@ async function qualify(options) {
     "Install the isolated loopback managed policy before launching; the native relaunch must keep it",
   );
   const root = NodeFS.mkdtempSync(NodePath.join(process.env.RUNNER_TEMP, "scient-native-upgrade-"));
-  const install = NodePath.join(root, "installed");
+  // Windows: directly under the system drive, whose new folders other users may change, so the
+  // installer must protect the install folder; the drive root itself is one they cannot replace.
+  const install =
+    platform === "win32"
+      ? NodeFS.mkdtempSync(NodePath.join(`${process.env.SystemDrive}\\`, "scient-native-upgrade-"))
+      : NodePath.join(root, "installed");
   const project = NodePath.join(root, "restart-qualification-project");
   NodeFS.mkdirSync(project);
   const sentinel = "Synthetic restart qualification. No live user data.\n";
@@ -769,8 +774,20 @@ async function qualify(options) {
     }
     await addProject.click();
     await page.getByText("Local folder", { exact: true }).click();
-    await page.getByRole("combobox").fill(project);
-    await page.getByRole("combobox").press("Enter");
+    // The picker fills in its starting folder once it has read it; a path typed before that is
+    // merged into it (seen once on Windows), so wait for it, then require the typed path.
+    const pathInput = page.getByRole("combobox");
+    await pathInput.waitFor({ state: "visible", timeout: TIMEOUT });
+    for (let wait = 0; wait < 60 && (await pathInput.inputValue()) === ""; wait++)
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    for (let attempt = 1; ; attempt++) {
+      await pathInput.fill(project);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const typed = await pathInput.inputValue();
+      if (typed === project) break;
+      NodeAssert.ok(attempt < 5, `The folder picker kept rewriting the typed path: ${typed}`);
+    }
+    await pathInput.press("Enter");
     // Opening a plain folder asks whether to add Scient's project files; the synthetic project
     // stays an ordinary folder.
     const composer = page.locator('[contenteditable="true"]').first();
@@ -933,59 +950,52 @@ async function qualify(options) {
         observation.signal,
       );
       void completion.catch(() => {});
-      // Windows runners cannot read project files: the native publication helper's permission
-      // probes time out there (docs/operations/ci-flakes.md). The save barrier is the same renderer
-      // code on every platform and is checked on macOS and Linux; Windows still qualifies consent,
-      // handoff, relaunch and the restored workspace, and its receipt says the edit was not checked.
-      const checksUnsavedEdit = platform !== "win32";
       const editedSentinel = `${sentinel}Unsaved edit must survive native restart.\n`;
       try {
-        if (checksUnsavedEdit) {
-          await page.keyboard.press("ControlOrMeta+p");
-          await page.getByPlaceholder("Search files…", { exact: true }).fill("sentinel.txt");
-          await page.getByText("sentinel.txt", { exact: true }).first().click();
-          // The file editor, found by the file's own text: the chat composer is a textbox too.
-          const editor = page
-            .locator("[data-content]")
-            .filter({ hasText: "Synthetic restart qualification" })
-            .first();
-          await editor.waitFor({ state: "visible", timeout: TIMEOUT });
-          // Autosave (a 500 ms debounce) would save the edit by itself and hide a broken save
-          // barrier, so its timer is dropped while the edit is typed; every other timer and RPC
-          // runs normally. The barrier is then the only thing that can save this edit.
-          await page.evaluate(() => {
-            const schedule = window.setTimeout;
-            window.__qualificationRestoreTimers = () => {
-              window.setTimeout = schedule;
-            };
-            window.setTimeout = (handler, delay, ...args) =>
-              delay === 500 ? 0 : schedule(handler, delay, ...args);
-          });
-          await editor.locator("[data-line]").first().click();
-          await page.keyboard.press("ControlOrMeta+a");
-          await page.keyboard.insertText(editedSentinel);
-          await page.evaluate(() => window.__qualificationRestoreTimers());
-          await page
-            .locator("[data-content] > [data-line]")
-            .filter({
-              hasText: "Unsaved edit must survive native restart.",
-            })
-            .first()
-            .waitFor({ state: "visible", timeout: TIMEOUT });
-          // Long enough for any autosave that escaped to have written the file.
-          await new Promise((resolve) => setTimeout(resolve, 2_000));
-          NodeAssert.equal(
-            NodeFS.readFileSync(NodePath.join(project, "sentinel.txt"), "utf8"),
-            sentinel,
-            "The qualification must begin with an actual unsaved edit, not an already saved file",
-          );
-        }
+        await page.keyboard.press("ControlOrMeta+p");
+        await page.getByPlaceholder("Search files…", { exact: true }).fill("sentinel.txt");
+        await page.getByText("sentinel.txt", { exact: true }).first().click();
+        // The file editor, found by the file's own text: the chat composer is a textbox too.
+        const editor = page
+          .locator("[data-content]")
+          .filter({ hasText: "Synthetic restart qualification" })
+          .first();
+        await editor.waitFor({ state: "visible", timeout: TIMEOUT });
+        // Autosave (a 500 ms debounce) would save the edit by itself and hide a broken save
+        // barrier, so its timer is dropped while the edit is typed; every other timer and RPC
+        // runs normally. The barrier is then the only thing that can save this edit.
+        await page.evaluate(() => {
+          const schedule = window.setTimeout;
+          window.__qualificationRestoreTimers = () => {
+            window.setTimeout = schedule;
+          };
+          window.setTimeout = (handler, delay, ...args) =>
+            delay === 500 ? 0 : schedule(handler, delay, ...args);
+        });
+        await editor.locator("[data-line]").first().click();
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.insertText(editedSentinel);
+        await page.evaluate(() => window.__qualificationRestoreTimers());
+        await page
+          .locator("[data-content] > [data-line]")
+          .filter({
+            hasText: "Unsaved edit must survive native restart.",
+          })
+          .first()
+          .waitFor({ state: "visible", timeout: TIMEOUT });
+        // Long enough for any autosave that escaped to have written the file.
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        NodeAssert.equal(
+          NodeFS.readFileSync(NodePath.join(project, "sentinel.txt"), "utf8"),
+          sentinel,
+          "The qualification must begin with an actual unsaved edit, not an already saved file",
+        );
         await page.getByRole("button", { name: /^Update:/ }).click();
         await page.getByRole("button", { name: "Restart now", exact: true }).click();
         // The restart saves twice: at consent, and again just before shutdown for edits made while
         // macOS prepares. On macOS (preparation takes seconds) the first save must land while the
         // app is still preparing; a second edit typed then must be saved by the final save alone.
-        const checksFinalSave = checksUnsavedEdit && platform === "darwin";
+        const checksFinalSave = platform === "darwin";
         const duringPreparation = "Edited while the update prepared.\n";
         if (checksFinalSave) {
           const sentinelPath = NodePath.join(project, "sentinel.txt");
@@ -1034,20 +1044,14 @@ async function qualify(options) {
           verifySignature(NodePath.resolve(executable, "../../.."), platform);
         NodeAssert.equal(
           NodeFS.readFileSync(NodePath.join(project, "sentinel.txt"), "utf8"),
-          checksFinalSave
-            ? `${editedSentinel}${duringPreparation}`
-            : checksUnsavedEdit
-              ? editedSentinel
-              : sentinel,
+          checksFinalSave ? `${editedSentinel}${duringPreparation}` : editedSentinel,
         );
-        if (checksUnsavedEdit) {
-          const confirmedAt = successfulEvents.find((event) => event.event === "confirmed")?.atMs;
-          NodeAssert.ok(confirmedAt !== undefined, "The consent receipt must carry its time");
-          NodeAssert.ok(
-            NodeFS.statSync(NodePath.join(project, "sentinel.txt")).mtimeMs >= confirmedAt - 5,
-            "The edit must be saved by the consented restart, not before it",
-          );
-        }
+        const confirmedAt = successfulEvents.find((event) => event.event === "confirmed")?.atMs;
+        NodeAssert.ok(confirmedAt !== undefined, "The consent receipt must carry its time");
+        NodeAssert.ok(
+          NodeFS.statSync(NodePath.join(project, "sentinel.txt")).mtimeMs >= confirmedAt - 5,
+          "The edit must be saved by the consented restart, not before it",
+        );
         for (let wait = 0; processAlive(sourceMainPid) && wait < 60; wait++)
           await new Promise((resolve) => setTimeout(resolve, 500));
         NodeAssert.equal(processAlive(sourceMainPid), false, "The old app must exit after handoff");
@@ -1072,7 +1076,7 @@ async function qualify(options) {
                 ? windowsInstallerSignature
                 : "native-verified",
           preparationFailureRecovered: recoveredPreparationAttempt !== undefined,
-          unsavedEditPreserved: checksUnsavedEdit ? true : "not-checked-windows-file-access",
+          unsavedEditPreserved: true,
           finalSaveChecked: checksFinalSave,
           ...restoredControls,
           ...timings,
