@@ -406,16 +406,6 @@ async function storedTexts(
   return { texts, status };
 }
 
-export async function getSourceFullTextStatus(
-  root: ScientSourceStoreLocation,
-): Promise<SourceFullTextStatus> {
-  const resolvedRoot = await canonicalScientSourceLocation(root);
-  const materials = libraryMaterials(await listScientSourceRecords(resolvedRoot));
-  const { status } = await storedTexts(resolvedRoot, materials);
-  if (status.pending > 0) void scheduleSourceFullTextIndexing(resolvedRoot);
-  return status;
-}
-
 export interface SourceFullTextSearchHit {
   readonly sourceId: string;
   readonly attachmentId: string;

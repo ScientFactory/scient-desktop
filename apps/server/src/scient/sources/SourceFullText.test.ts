@@ -17,7 +17,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   checkSourceQuotes,
   extractSourcePdfFullText,
-  getSourceFullTextStatus,
   indexSourceFullText,
   readSourceText,
   searchSourceFullText,
@@ -182,9 +181,12 @@ describe("source full text", () => {
     const trial = await addPdfSource(fixture.root, "trial", "Early antibiotics trial", trialPages);
     await addPdfSource(fixture.root, "cohort", "Cohort", [["A cohort study of yeast."]]);
 
-    await expect(getSourceFullTextStatus(fixture.root)).resolves.toMatchObject({
-      pdfs: 2,
-      pending: 2,
+    // A read-only search (the library HTTP route) reports unread PDFs without indexing them.
+    await expect(
+      searchSourceFullText({ root: fixture.root, query: "antibiotics", limit: 10, persist: false }),
+    ).resolves.toEqual({
+      hits: [],
+      status: { pdfs: 2, searchable: 0, pending: 2, withoutText: 0, unreadable: 0 },
     });
     await indexSourceFullText(fixture.root);
     const sha256 = trial.attachments[0]!.sha256;
