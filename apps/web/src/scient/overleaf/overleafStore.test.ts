@@ -35,14 +35,11 @@ const {
   pendingOverleafDecisions,
   setOverleafFileDecision,
   setOverleafConflictChoices,
-  setOverleafTokenSaved,
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
   loadOverleafWorkspace,
-  loadOverleafTokenStatus,
   noteOverleafAgentRuns,
-  readOverleafTokenState,
   readOverleafWorkspace,
   refreshOverleafStatus,
   reloadOverleafWorkspaces,
@@ -412,16 +409,6 @@ describe("overleafStore", () => {
       error: null,
       connections: [],
     });
-  });
-
-  it('a token status that can\'t be read stays as last known, never "no token saved"', async () => {
-    resetOverleafStoreForTests();
-    client.readOverleafToken.mockReset().mockRejectedValue(new Error("offline"));
-    await loadOverleafTokenStatus(environmentId);
-    expect(readOverleafTokenState(environmentId)).toEqual({ loaded: false, saved: false });
-    setOverleafTokenSaved(environmentId, true);
-    await loadOverleafTokenStatus(environmentId);
-    expect(readOverleafTokenState(environmentId)).toEqual({ loaded: true, saved: true });
   });
 
   it("reads the links again once each time the settled agent runs change", async () => {

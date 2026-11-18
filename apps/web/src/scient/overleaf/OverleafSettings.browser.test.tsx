@@ -1,4 +1,4 @@
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import "../../index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
@@ -117,6 +117,55 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     await page.getByRole("button", { name: "Remove" }).click();
     await expect.element(page.getByText("No token saved")).toBeVisible();
     expect(client.removeOverleafToken).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a token save or removal over a status read that answers after it", async () => {
+    reset(false);
+    client.listOverleafConnections.mockResolvedValue({ connections: [] });
+    client.saveOverleafToken.mockResolvedValue({ saved: true });
+    client.removeOverleafToken.mockResolvedValue({ saved: false });
+    const reads: Array<PromiseWithResolvers<{ saved: boolean }>> = [];
+    client.readOverleafToken.mockImplementation(() => {
+      const read = Promise.withResolvers<{ saved: boolean }>();
+      reads.push(read);
+      return read.promise;
+    });
+    // Answers every read still out, then lets the row show what it decided.
+    const answerReads = (answer: { saved: boolean } | Error) =>
+      act(async () => {
+        const pending = reads.splice(0);
+        expect(pending.length).toBeGreaterThan(0);
+        for (const read of pending) {
+          if (answer instanceof Error) read.reject(answer);
+          else read.resolve(answer);
+        }
+        await Promise.allSettled(pending.map((read) => read.promise));
+      });
+    const status = page.getByRole("status");
+    await using screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
+    // A read that fails says nothing about the token.
+    await answerReads(new Error("offline"));
+    await expect.element(status).toHaveTextContent("Checking…");
+
+    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
+    await page.getByLabelText("Git token").fill("olp_secret");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.element(status).toHaveTextContent("Token saved");
+    // Asked before the save; its "no token" answer is dropped.
+    await answerReads({ saved: false });
+    await expect.element(status).toHaveTextContent("Token saved");
+
+    // Shown again, the row asks again; the removal decides over that answer too.
+    await screen.rerender(<OverleafSyncedFolderRow key="again" environmentId={environmentId} />);
+    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
+    await page.getByRole("button", { name: "Remove" }).click();
+    await expect.element(status).toHaveTextContent("No token saved");
+    await answerReads({ saved: true });
+    await expect.element(status).toHaveTextContent("No token saved");
+    // A later read that fails leaves the last known answer.
+    await screen.rerender(<OverleafSyncedFolderRow key="third" environmentId={environmentId} />);
+    await answerReads(new Error("offline"));
+    await expect.element(status).toHaveTextContent("No token saved");
   });
 
   it("says no folder is linked once every project has been read", async () => {
