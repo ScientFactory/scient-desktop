@@ -247,8 +247,8 @@
     },
     {
       "path": "packages/client-runtime/src/work-log/presentation.ts",
-      "anchor": "scientMcpToolTarget(definition, input)",
-      "purpose": "Name the skill a Scient skill tool loads or reads from the call's input (scientMcpToolPresentation.test.ts)."
+      "anchor": "scientSkillActivityLabel(definition, input, statusKey, resolve)",
+      "purpose": "Name the skill a Scient skill tool loads or reads from the call's input, as a translated sentence (scientMcpToolPresentation.test.ts)."
     },
     {
       "path": "packages/client-runtime/src/t3ToolSummary.ts",

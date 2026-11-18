@@ -17,11 +17,11 @@ export function relayFailureReason(cause: unknown): string | null {
       if (current.relayError) {
         return current.relayError._tag === "RelayInternalError"
           ? m(msg("Scient Connect is unavailable. Try again."))
-          : relayRequestFailureDetail(current);
+          : relayRequestFailureDetail(current, m);
       }
       if (current.status === 504) return m(msg("Scient Connect timed out. Try again."));
       if ((current.status ?? 0) >= 500) return m(msg("Scient Connect is unavailable. Try again."));
-      return relayRequestFailureDetail(current);
+      return relayRequestFailureDetail(current, m);
     }
     current = current.cause;
   }

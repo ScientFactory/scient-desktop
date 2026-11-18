@@ -223,18 +223,3 @@ export function scientSkillDisplayName(input: Record<string, unknown> | null): s
     .join(" ");
   return displayName || null;
 }
-
-/** The named skill a skill tool acts on, when its input names one. */
-export function scientMcpToolTarget(
-  definition: T3McpToolDefinition,
-  input: Record<string, unknown> | null,
-): string | undefined {
-  const namesSkill =
-    definition === SCIENT_MCP_TOOLS.t3_skill_load ||
-    definition === SCIENT_MCP_TOOLS.t3_skill_save ||
-    definition === SCIENT_MCP_TOOLS.t3_skill_read;
-  if (!namesSkill && definition !== SCIENT_MCP_TOOLS.t3_skill_read_resource) return undefined;
-  const skill = scientSkillDisplayName(input);
-  if (!skill) return undefined;
-  return namesSkill ? skill : `a file of ${skill}`;
-}

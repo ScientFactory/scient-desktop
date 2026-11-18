@@ -23,10 +23,13 @@ of the selected theme.
 
 ## Language
 
-Choose the app language under **Settings → General → Display → Language**: English, Chinese,
-French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or Swedish. **System
-default** follows your computer's language. The desktop menus and dialogs, the web app and the
-phone app all follow the choice.
+On web and desktop, choose the app language under **Settings → General → Display → Language**:
+English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or
+Swedish. **System default** follows your computer's language. The desktop menus and dialogs
+follow the same choice.
+
+On mobile, choose it under **Settings → General → Language**. The phone saves its own choice,
+separately from your computer.
 
 Scient's own panels, such as the Library, Compute, documents, Overleaf and Accounts, are still in
 English. Your messages, agent replies, code and file names are never translated.

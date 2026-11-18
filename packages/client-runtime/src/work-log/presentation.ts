@@ -19,7 +19,6 @@ import {
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { scientMcpToolTarget } from "@t3tools/shared/scientMcpToolPresentation";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
@@ -32,6 +31,8 @@ import {
 } from "@t3tools/client-runtime/t3ToolSummary";
 import { mFallback, msg } from "gt-i18n";
 import { t3ToolSentence } from "./t3ToolSentences.ts";
+// SCIENT-FORK: Scient skill rows name the skill.
+import { scientSkillActivityLabel } from "./scientSkillActivity.ts";
 import type { MFunctionType } from "gt-i18n/types";
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped" | "idle";
@@ -207,9 +208,6 @@ function resolveT3McpToolPresentation(
   const number = urlTarget?.link.number ?? input?.number;
   const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
     .changeRequest;
-  // SCIENT-FORK:START — a Scient skill tool's row names the skill.
-  const scientTarget = scientMcpToolTarget(definition, input);
-  // SCIENT-FORK:END
   const pullRequestNumber =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&
@@ -246,7 +244,7 @@ function resolveT3McpToolPresentation(
         : resolve(sentence.detail, { status: statusKey });
   return {
     // SCIENT-FORK: a Scient skill tool's row names the skill.
-    displayName: scientTarget === undefined ? displayName : `${fallbackVerb} ${scientTarget}`,
+    displayName: scientSkillActivityLabel(definition, input, statusKey, resolve) ?? displayName,
     icon: definition.icon,
     ...(actionKind === undefined ? {} : { action: actionKind }),
   };
