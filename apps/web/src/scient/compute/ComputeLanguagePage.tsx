@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { computeRuntimeText } from "./computeContractCopy";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
 import {
   AddLocationForm,
@@ -202,7 +203,9 @@ function FoundPrograms({
     [
       tool.name,
       tool.version,
-      tool.origin ?? gt("System", { $context: "where a runtime comes from" }),
+      tool.origin === null
+        ? gt("System", { $context: "where a runtime comes from" })
+        : computeRuntimeText(tool.origin, messages),
     ]
       .filter(Boolean)
       .join(" · ");

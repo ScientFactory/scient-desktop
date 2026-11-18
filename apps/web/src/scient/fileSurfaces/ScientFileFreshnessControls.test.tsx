@@ -17,7 +17,7 @@ describe("ScientFileReloadButton", () => {
       <ScientFileReloadButton
         automaticRefreshUnavailable
         isPending={false}
-        label="Reload file"
+        labels={{ reload: "Reload file", paused: "Automatic updates paused: reload file" }}
         onReload={vi.fn()}
         size="icon-xs"
       />,

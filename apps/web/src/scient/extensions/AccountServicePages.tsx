@@ -3,7 +3,12 @@ import { ExternalLinkIcon, PlusIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import { m, type MessageResolver } from "../../i18n/messages";
-import { ACCOUNT_SERVICES, type AccountService, accountServicesFrom } from "./accountServices";
+import {
+  ACCOUNT_SERVICES,
+  type AccountService,
+  accountServicesFrom,
+  accountServiceTagline,
+} from "./accountServices";
 import { AboutCard, DetailLayout, DetailHeader, DetailSection } from "./ExtensionDetailPages";
 import { ExtensionRow } from "./ExtensionRow";
 import { ExtensionsPage, MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
@@ -11,13 +16,14 @@ import { ServiceAgents, useAccountService } from "./ServiceAgents";
 
 export function AccountServiceItem({ service }: { readonly service: AccountService }) {
   const gt = useGT();
+  const messages = useMessages();
   const { audience, connect } = useAccountService(service);
   return (
     <ExtensionRow
       target={{ kind: "account", serviceId: service.id }}
       name={service.name}
       audience={audience}
-      tagline={service.tagline || undefined}
+      tagline={accountServiceTagline(service, messages) || undefined}
       trailing={
         connect ? (
           <Button
@@ -45,8 +51,8 @@ export function accountServicesFor(
     (service) =>
       (category === undefined || service.categories.some((entry) => entry === category)) &&
       (needle === "" ||
-        [service.name, service.tagline, resolve(service.description)].some((text) =>
-          text.toLowerCase().includes(needle),
+        [service.name, accountServiceTagline(service, resolve), resolve(service.description)].some(
+          (text) => text.toLowerCase().includes(needle),
         )),
   );
 }
@@ -61,7 +67,11 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
     <DetailLayout
       back="installed"
       header={
-        <DetailHeader name={service.name} tagline={service.tagline || undefined} actions={null} />
+        <DetailHeader
+          name={service.name}
+          tagline={accountServiceTagline(service, messages) || undefined}
+          actions={null}
+        />
       }
       description={messages(service.description)}
     >

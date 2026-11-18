@@ -290,11 +290,7 @@ export function ScientOfficeReader(props: {
         ready={office.pages.length > 0}
         page={page + 1}
         pageCount={office.pages.length}
-        sidebarContents={
-          presentation
-            ? gt("slides", { $context: "inside a sentence: Show slides" })
-            : gt("pages", { $context: "inside a sentence: Show pages" })
-        }
+        sidebarContents={presentation ? "slides" : "pages"}
         scale={scale}
         sidebarOpen={sidebarOpen}
         searchOpen={query !== ""}

@@ -36,6 +36,7 @@ import {
   ManagedRuntimeNotice,
   type ComputeManagedRuntimeController,
 } from "./ComputeManagedRuntimeControls";
+import { computeRuntimeText } from "./computeContractCopy";
 import { ComputeInstallationRow } from "./ComputeInstallationRow";
 import { ComputeRuntimeTest } from "./ComputeRuntimeTest";
 import {
@@ -184,7 +185,9 @@ export function ComputeLanguagePanel({
     !toolkitOwnsNotice &&
     (Boolean(runtime.failure) || (runtime.status?.operation != null && !inlineProgress));
   const needs =
-    loading || summary.kind === "ready" || summary.kind === "update-managed" ? null : summary.title;
+    loading || summary.kind === "ready" || summary.kind === "update-managed"
+      ? null
+      : computeRuntimeText(summary.title, messages);
 
   return (
     <>
@@ -277,6 +280,7 @@ function RuntimePicker({
   runtime: ComputeManagedRuntimeController;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const selected = defaultComputeInstallation(language, preference, runtime.status);
@@ -285,14 +289,20 @@ function RuntimePicker({
     (languageId === "python" && runtime.status?.selection === "managed");
   const value = explicit ? (selected?.executable ?? null) : AUTOMATIC_RUNTIME_OPTION;
   const current = !explicit
-    ? automaticComputeRuntimeLabel(selected)
+    ? computeRuntimeText(automaticComputeRuntimeLabel(selected), messages)
     : selected
-      ? computeRuntimePickerLabel(selected, name, language.installations)
+      ? computeRuntimeText(
+          computeRuntimePickerLabel(selected, name, language.installations),
+          messages,
+        )
       : gt("Choose a runtime");
   if (language.installations.length < 2 && !preference.executable.trim()) {
     return selected ? (
       <span className="text-xs text-muted-foreground">
-        {computeRuntimePickerLabel(selected, name, language.installations)}
+        {computeRuntimeText(
+          computeRuntimePickerLabel(selected, name, language.installations),
+          messages,
+        )}
       </span>
     ) : null;
   }
@@ -335,7 +345,10 @@ function RuntimePicker({
             data-compute-runtime={installation.executable}
           >
             <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
-              {computeRuntimePickerLabel(installation, name, language.installations)}
+              {computeRuntimeText(
+                computeRuntimePickerLabel(installation, name, language.installations),
+                messages,
+              )}
             </span>
           </SelectItem>
         ))}
@@ -400,7 +413,10 @@ function FoundInstallations({
                 <ComputeInstallationRow
                   key={`${installation.executable}:${fingerprint}`}
                   id={`${languageId}-installation-${index}`}
-                  title={computeRuntimePickerLabel(installation, name, language.installations)}
+                  title={computeRuntimeText(
+                    computeRuntimePickerLabel(installation, name, language.installations),
+                    messages,
+                  )}
                   installation={installation}
                   environmentId={environmentId}
                   languageId={languageId}
@@ -556,6 +572,7 @@ export function FoundToolRow({
   control?: ReactNode;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   return (
     <SettingsRow
       id={`${languageId}-found-${tool.executable}`}
@@ -564,7 +581,12 @@ export function FoundToolRow({
       control={
         control ?? (
           <span className="text-xs text-muted-foreground">
-            {[tool.version, tool.origin ?? gt("System", { $context: "where a runtime comes from" })]
+            {[
+              tool.version,
+              tool.origin === null
+                ? gt("System", { $context: "where a runtime comes from" })
+                : computeRuntimeText(tool.origin, messages),
+            ]
               .filter(Boolean)
               .join(" · ")}
           </span>

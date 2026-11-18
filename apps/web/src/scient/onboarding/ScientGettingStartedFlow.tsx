@@ -114,7 +114,10 @@ export function ScientGettingStartedFlow(props: {
       icon: definition.icon,
       label: definition.label,
       detail:
-        [definition.vendorLabel, definition.accountLabel]
+        [
+          definition.vendorLabel,
+          definition.accountLabel === undefined ? undefined : messages(definition.accountLabel),
+        ]
           .filter((part) => part !== undefined)
           .join(" · ") || null,
       status: providerOnboardingStatusLabel(entry ?? undefined, messages),

@@ -15,6 +15,8 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
+import { computeLanguageGroupTitle } from "./computeContractCopy";
+
 export {
   automaticComputeRuntimeLabel,
   computeCurrentRuntimeSummary,
@@ -56,7 +58,7 @@ export function computeLanguageGroups(
     languages.map((language) => [language.descriptor.languageId, language]),
   );
   const groups = COMPUTE_LANGUAGE_CATALOG.map(({ title, languages: named }) => ({
-    title,
+    title: computeLanguageGroupTitle(title, resolve),
     entries: named
       .map((language) => ({ ...language, runtime: reported.get(language.languageId) }))
       .toSorted((a, b) => Number(onThisComputer(b.runtime)) - Number(onThisComputer(a.runtime))),

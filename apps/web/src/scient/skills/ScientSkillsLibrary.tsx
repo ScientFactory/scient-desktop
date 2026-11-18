@@ -4,7 +4,7 @@ import type {
   ScientSkillInvocationPolicy,
   ServerProvider,
 } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -16,6 +16,7 @@ import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSki
 import { matchesQuery } from "../extensions/extensionsView";
 import { ManagedSkillCard } from "./ManagedSkillCard";
 import { SkillSettingsRow } from "./SkillSettingsRow";
+import { skillCategoryCopy, skillCountLabel } from "./skillCategoryCopy";
 
 function groupSkillsByCategory(skills: ReadonlyArray<ScientSkillCatalogItem>) {
   const groups = new Map<
@@ -43,6 +44,7 @@ function SkillCategoryDisclosure(props: {
   readonly defaultOpen?: boolean;
   readonly children: ReactNode;
 }) {
+  const messages = useMessages();
   const [open, setOpen] = useState(props.defaultOpen ?? false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -56,7 +58,7 @@ function SkillCategoryDisclosure(props: {
           </span>
         </span>
         <span className="text-xs text-muted-foreground">
-          {props.skillCount} {props.skillCount === 1 ? "skill" : "skills"}
+          {skillCountLabel(props.skillCount, messages)}
         </span>
         <ChevronDownIcon
           aria-hidden
@@ -103,6 +105,7 @@ export function ScientSkillsLibrary({
   readonly query?: string;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const inventory = useEnvironmentQuery(scientSkillsInventory({ environmentId, input: {} }));
   const setActivation = useAtomCommand(setScientSkillUserActivation, {
     reportFailure: true,
@@ -139,7 +142,12 @@ export function ScientSkillsLibrary({
       // The user's own skills have their own section.
       skill.origin !== "personal" &&
       (!onlyActive || skill.active) &&
-      matchesQuery(query, [skill.name, skill.description, skill.category]),
+      matchesQuery(query, [
+        skill.name,
+        skill.description,
+        skill.category,
+        skillCategoryCopy(skill.category, skill.categoryDescription, messages).title,
+      ]),
   );
 
   return (
@@ -166,8 +174,10 @@ export function ScientSkillsLibrary({
             <SkillCategoryDisclosure
               key={`${group.category}:${query === "" ? "browse" : "search"}`}
               defaultOpen={query !== ""}
-              title={group.category}
-              description={group.description}
+              title={skillCategoryCopy(group.category, group.description, messages).title}
+              description={
+                skillCategoryCopy(group.category, group.description, messages).description
+              }
               skillCount={group.skills.length}
             >
               {group.skills.map((skill) => {

@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
 import { isAccountServiceStoreEntry } from "./accountServices";
+import { extensionCategoryDescription, extensionCategoryTitle } from "./extensionCategoryCopy";
 import { Link, Navigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -231,6 +232,7 @@ function DiscoverPager({
 
 function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const gt = useGT();
+  const messages = useMessages();
   const { environmentId, catalog, catalogError, inventory, providers } = useExtensionsEnvironment();
   const prefetchCategory = usePrefetchCategory();
   const builtIns = inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? [];
@@ -264,12 +266,12 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                     onPointerEnter={() => prefetchCategory(section.category)}
                     onFocus={() => prefetchCategory(section.category)}
                   >
-                    {section.title}
+                    {extensionCategoryTitle(section, messages)}
                     <SectionTitleChevron />
                   </Link>
                 }
               >
-                <ExtensionGrid label={section.title}>
+                <ExtensionGrid label={extensionCategoryTitle(section, messages)}>
                   {accountServicesFor(section.category).map((service) => (
                     <AccountServiceItem key={`account:${service.id}`} service={service} />
                   ))}
@@ -295,7 +297,7 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                   onPointerEnter={() => prefetchCategory(section.category)}
                   onFocus={() => prefetchCategory(section.category)}
                 >
-                  {section.title}{" "}
+                  {extensionCategoryTitle(section, messages)}{" "}
                   <span className="text-xs text-muted-foreground">{section.total}</span>
                   <SectionTitleChevron />
                 </Link>
@@ -832,11 +834,15 @@ function CategoryContents({
 
 function Category({ category }: { readonly category: string }) {
   const gt = useGT();
+  const messages = useMessages();
   const { catalog } = useExtensionsEnvironment();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
   const section = catalog?.sections.find((candidate) => candidate.category === category);
-  const title = section?.title ?? category.charAt(0).toUpperCase() + category.slice(1);
+  const title = section
+    ? extensionCategoryTitle(section, messages)
+    : category.charAt(0).toUpperCase() + category.slice(1);
+  const description = section ? extensionCategoryDescription(section, messages) : undefined;
   useRememberListPage(title);
   if (!isExtensionCategory(category))
     return (
@@ -856,7 +862,7 @@ function Category({ category }: { readonly category: string }) {
           <SearchField label={gt("Search this category")} value={search} onChange={setSearch} />
         }
       >
-        {section?.description ? <MutedLine>{section.description}</MutedLine> : null}
+        {description ? <MutedLine>{description}</MutedLine> : null}
       </ExtensionsSection>
       <CategoryContents key={`${category}:${query}`} category={category} query={query} />
     </>

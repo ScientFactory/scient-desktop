@@ -97,18 +97,19 @@ const MAX_STALE_COPY_CHOICES = 2;
 export function ScientFileReloadButton(props: {
   readonly automaticRefreshUnavailable?: boolean;
   readonly isPending: boolean;
-  readonly label?: string;
+  /** The button's name, and its name while automatic updates are paused. */
+  readonly labels?: { readonly reload: string; readonly paused: string };
   readonly onReload: () => void;
   readonly size?: "icon-sm" | "icon-xs";
 }) {
-  const label = props.label ?? "Reload file from disk";
+  const gt = useGT();
   // A reload usually takes a few milliseconds; one short turn shows it happened.
   const [turns, setTurns] = useState(0);
   const actionLabel = props.isPending
-    ? "Reloading file…"
+    ? gt("Reloading file…")
     : props.automaticRefreshUnavailable
-      ? `Automatic updates paused: ${label.toLowerCase()}`
-      : label;
+      ? (props.labels?.paused ?? gt("Automatic updates paused: reload file from disk"))
+      : (props.labels?.reload ?? gt("Reload file from disk"));
   return (
     <Tooltip>
       <TooltipTrigger

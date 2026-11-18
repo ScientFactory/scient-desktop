@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { memo, type ComponentType, type ReactElement, type ReactNode } from "react";
 import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
 import {
@@ -139,6 +139,7 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
   } & AgentSpawnRowRenderers,
 ) {
   const gt = useGT();
+  const messages = useMessages();
   const { entryId, spawn, LiveActivityRow, WorkingTimer } = props;
   const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow, onOpenAgents } = props.context;
   const expanded = expandedSpawnEntryIds.has(entryId);
@@ -173,11 +174,14 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
     agents.length,
     Math.max(memberIds.size - (spawn.workflowId ? 1 : 0), 0),
   );
-  const summary = deriveAgentSpawnSummary({
-    agents,
-    agentCount,
-    coordinatorStatus: workflowGroup?.workflow.status,
-  });
+  const summary = deriveAgentSpawnSummary(
+    {
+      agents,
+      agentCount,
+      coordinatorStatus: workflowGroup?.workflow.status,
+    },
+    messages,
+  );
   const { live } = summary;
   const failed = summary.tone === "failed";
   const workflowName =

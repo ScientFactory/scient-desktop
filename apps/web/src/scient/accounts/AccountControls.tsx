@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import type { AccountAccess, AccountTarget, GrantScope, EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, MoreHorizontalIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -20,11 +20,11 @@ import { accountsState } from "./accountsState";
 import { toggleScope } from "./accountsView";
 import { useAccountCommand } from "./useAccounts";
 
-const ACCESS_LABELS: Readonly<Record<AccountAccess, string>> = {
-  allowed: "Allowed",
-  ask: "Ask me",
-  off: "Off",
-};
+const ACCESS_LABELS = {
+  allowed: msg("Allowed", { $context: "whether agents may use this account or profile" }),
+  ask: msg("Ask me", { $context: "agents ask before using this account or profile" }),
+  off: msg("Off", { $context: "agents may not use this account or profile" }),
+} satisfies Readonly<Record<AccountAccess, string>>;
 
 export function AccessChip({
   environmentId,
@@ -38,6 +38,7 @@ export function AccessChip({
   disabled: boolean;
 }) {
   const update = useAccountCommand(accountsState.setControls, environmentId);
+  const messages = useMessages();
   return (
     <Menu>
       <MenuTrigger
@@ -50,7 +51,7 @@ export function AccessChip({
           />
         }
       >
-        {ACCESS_LABELS[access]}
+        {messages(ACCESS_LABELS[access])}
         <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="end">
@@ -64,7 +65,7 @@ export function AccessChip({
           {(["allowed", "ask", "off"] as const).map((value) => (
             <MenuRadioItem key={value} value={value} closeOnClick>
               <span className="flex min-w-0 items-center justify-between gap-3">
-                {ACCESS_LABELS[value]}
+                {messages(ACCESS_LABELS[value])}
                 <MenuRadioItemIndicator />
               </span>
             </MenuRadioItem>

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ListFilterIcon } from "lucide-react";
 
 import { SidebarMenuButton } from "../../components/ui/sidebar";
@@ -12,8 +13,9 @@ export function SidebarSectionsToggle(props: {
   readonly active: boolean;
   readonly onActiveChange: (active: boolean) => void;
 }) {
+  const gt = useGT();
   // One fixed label; aria-pressed carries the state.
-  const label = "Group by section";
+  const label = gt("Group by section");
   return (
     <Tooltip>
       <TooltipTrigger

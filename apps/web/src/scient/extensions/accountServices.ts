@@ -19,6 +19,10 @@ import { providerLabel } from "./extensionsView";
 export interface AccountService {
   readonly id: string;
   readonly name: string;
+  /**
+   * A `msg()` string for Scient's own services, the app's own text otherwise: show it through
+   * `accountServiceTagline`.
+   */
   readonly tagline: string;
   /** A `msg()` string: resolve it where it is shown. */
   readonly description: string;
@@ -76,7 +80,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
   {
     id: "gmail",
     name: "Gmail",
-    tagline: "Search, read and draft email",
+    tagline: msg("Search, read and draft email"),
     description: msg(
       "Each agent reaches Gmail through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
     ),
@@ -88,7 +92,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
   {
     id: "google-calendar",
     name: "Google Calendar",
-    tagline: "Check availability and manage events",
+    tagline: msg("Check availability and manage events"),
     description: msg(
       "Each agent reaches Google Calendar through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
     ),
@@ -100,7 +104,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
   {
     id: "google-drive",
     name: "Google Drive",
-    tagline: "Find and read Docs, Sheets and files",
+    tagline: msg("Find and read Docs, Sheets and files"),
     description: msg(
       "Each agent reaches Google Drive through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
     ),
@@ -110,6 +114,11 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     claude: claudeConnectorFor("Google Drive"),
   },
 ];
+
+/** A service's one-line tagline in the app's language; an app's own text stays as it came. */
+export function accountServiceTagline(service: AccountService, resolve: MessageResolver = m) {
+  return ACCOUNT_SERVICES.includes(service) ? resolve(service.tagline) : service.tagline;
+}
 
 /**
  * ChatGPT's page for the service's app, where the browser's ChatGPT account connects it. Built

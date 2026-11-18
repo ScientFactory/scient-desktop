@@ -705,21 +705,23 @@ export function MainSiteChoice({
 function ListRow({
   icon,
   title,
+  openLabel,
   detail,
   description,
   onOpen,
 }: {
   icon: ReactNode;
   title: string;
+  /** The row's accessible name, for example "Show saved passwords". */
+  openLabel: string;
   detail: string;
   description?: string;
   onOpen: () => void;
 }) {
-  const gt = useGT();
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
-      aria-label={gt("Show {list}", { list: title.toLowerCase() })}
+      aria-label={openLabel}
       description={description}
       descriptionSize="compact"
       title={
@@ -1186,6 +1188,7 @@ function AccountsContent({
           <ListRow
             icon={<KeyRoundIcon />}
             title={gt("Saved passwords")}
+            openLabel={gt("Show saved passwords")}
             detail={
               importingPasswords
                 ? gt("Importing… {count, plural, one {{count} site} other {{count} sites}}", {
@@ -1202,6 +1205,7 @@ function AccountsContent({
           <ListRow
             icon={<KeyRoundIcon />}
             title={gt("API keys")}
+            openLabel={gt("Show api keys")}
             detail={[
               gt("{count, plural, one {{count} key} other {{count} keys}}", { count: keys.length }),
               keysToKeep ? gt("{count} not in Accounts", { count: keysToKeep }) : undefined,
@@ -1215,6 +1219,7 @@ function AccountsContent({
           <ListRow
             icon={<MessageSquareIcon />}
             title={gt("Sign-in codes")}
+            openLabel={gt("Show sign-in codes")}
             detail={
               snapshot.codeSources?.messages
                 ? gt("Messages", { $context: "the macOS Messages app" })
@@ -1227,6 +1232,7 @@ function AccountsContent({
           <ListRow
             icon={<LinkIcon />}
             title={gt("Apps and connectors")}
+            openLabel={gt("Show apps and connectors")}
             detail={[
               ...githubRows.map((row) => row.login),
               ...managedRows.map((row) => row.name),

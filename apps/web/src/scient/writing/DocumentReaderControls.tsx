@@ -210,7 +210,7 @@ export function DocumentReaderControls(props: {
   /** False when the document has no known pages (Visual before a PDF build). */
   pages?: boolean;
   /** What the sidebar holds, for the overflow menu. */
-  sidebarContents?: string;
+  sidebarContents?: "outline" | "pages" | "slides";
   scale: number;
   sidebarOpen: boolean;
   searchOpen: boolean;
@@ -465,9 +465,13 @@ export function DocumentReaderControls(props: {
                 <ListTree />{" "}
                 {props.sidebarOpen
                   ? gt("Hide sidebar")
-                  : props.sidebarContents
-                    ? gt("Show {contents}", { contents: props.sidebarContents })
-                    : gt("Show pages and outline")}
+                  : props.sidebarContents === "outline"
+                    ? gt("Show outline")
+                    : props.sidebarContents === "pages"
+                      ? gt("Show pages")
+                      : props.sidebarContents === "slides"
+                        ? gt("Show slides")
+                        : gt("Show pages and outline")}
               </DropdownMenuItem>
             </IfRowHidden>
             <IfRowHidden selector=".scient-reader-search, .scient-pdf-action-search">

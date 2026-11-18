@@ -706,7 +706,10 @@ export default function EnvironmentFilePreview(props: {
         <ScientFileReloadButton
           automaticRefreshUnavailable={freshness.automaticRefreshUnavailable}
           isPending={freshness.isPending}
-          label={gt("Reload file")}
+          labels={{
+            reload: gt("Reload file"),
+            paused: gt("Automatic updates paused: reload file"),
+          }}
           onReload={freshness.refresh}
           size="icon-xs"
         />

@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { resolveAssetUrl, useAssetUrls } from "~/assets/assetUrls";
 import { m } from "~/i18n/messages";
@@ -88,11 +88,11 @@ interface ArtifactChoiceMenu {
 const ARTIFACT_DRAG_THRESHOLD = 7;
 
 const STATUS_LABELS: Readonly<Record<ArtifactDisplayStatus, string>> = {
-  current: "Current",
-  updating: "Updating…",
-  stale: "Source changed",
-  partial: "Partial run",
-  "failed-latest": "Last good · latest failed",
+  current: msg("Current", { $context: "an analysis result is up to date" }),
+  updating: msg("Updating…", { $context: "an analysis result is being rebuilt" }),
+  stale: msg("Source changed"),
+  partial: msg("Partial run"),
+  "failed-latest": msg("Last good · latest failed"),
 };
 
 function actionFailureMessage(result: AtomCommandFailure): string {
@@ -134,6 +134,7 @@ export function AnalysisArtifactStrip(props: {
   readonly status: ArtifactDisplayStatus;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -482,7 +483,7 @@ export function AnalysisArtifactStrip(props: {
           </span>
         </button>
         <span className="text-muted-foreground" role="status">
-          {STATUS_LABELS[props.status]}
+          {messages(STATUS_LABELS[props.status])}
         </span>
       </div>
       {expanded ? (

@@ -7,6 +7,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { SettingsPageContainer } from "~/components/settings/settingsLayout";
 import { Button } from "~/components/ui/button";
 import { ExtensionsSection } from "~/scient/extensions/ExtensionsPage";
+import { computeRuntimeText } from "./computeContractCopy";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
 import {
   ComputeInventoryFailure,
@@ -76,6 +77,7 @@ function LanguageEntry({
   environmentId: EnvironmentId;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const row = { languageId, name, environmentId };
   if (inventory.pending) return <LanguageRow {...row} detail={gt("Checking…")} />;
   if (runtime === undefined) return <LanguageRow {...row} comingSoon detail="" />;
@@ -88,7 +90,7 @@ function LanguageEntry({
     <LanguageRow
       {...row}
       comingSoon={status.comingSoon}
-      detail={status.detail}
+      detail={computeRuntimeText(status.detail, messages)}
       {...(status.getUrl === undefined
         ? {}
         : {

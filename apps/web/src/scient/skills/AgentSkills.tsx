@@ -15,6 +15,7 @@ import {
   externalSkillStatus,
 } from "./externalSkills";
 import { SkillCard } from "./SkillCard";
+import { skillCountLabel } from "./skillCategoryCopy";
 import { OPENABLE_ROW_CLASS, openFromRow } from "./skillRowOpen";
 import { matchesQuery } from "../extensions/extensionsView";
 import { useEnvironmentQuery } from "../../state/query";
@@ -253,7 +254,7 @@ export function AgentSkills({
                   <SettingsSourceStripItem
                     key={provider.instanceId}
                     controls={panelId}
-                    detail={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
+                    detail={skillCountLabel(skills.length, messages)}
                     expanded={isOpen}
                     separated={index > 0}
                     label={label}
