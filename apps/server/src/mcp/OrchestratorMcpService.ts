@@ -460,17 +460,29 @@ const resolveRequestedModel = (provider: ServerProvider, model: string) => {
   if (provider.models.length === 0 || advertisedModel(provider, model) !== undefined)
     return Effect.succeed(model);
   // A model the detected CLI is too old for keeps upstream's update message.
-  if (provider.updateRequiredModels?.some((candidate) => candidate.slug === model))
-    return requireAdvertisedModel(provider, model).pipe(Effect.as(model));
+  if (provider.updateRequiredModels?.some((candidate) => candidate.slug === model)) {
+    const updateRequired: Effect.Effect<void, OrchestratorMcpFailure> = requireAdvertisedModel(
+      provider,
+      model,
+    );
+    return updateRequired.pipe(
+      Effect.mapError((error) => withFailureClass(error, "delegate_model_needs_update")),
+      Effect.as(model),
+    );
+  }
   const match = matchDelegateModel(provider.models, model);
+  // The caller named a model this provider does not list; the message lists the ones it does.
   return match.kind === "found"
     ? Effect.succeed(match.model.slug)
     : Effect.fail(
-        failure(
-          "model_unavailable",
-          match.kind === "ambiguous"
-            ? ambiguousModelMessage(provider, model, match.candidates)
-            : modelUnavailableMessage(provider, model),
+        withFailureClass(
+          failure(
+            "model_unavailable",
+            match.kind === "ambiguous"
+              ? ambiguousModelMessage(provider, model, match.candidates)
+              : modelUnavailableMessage(provider, model),
+          ),
+          match.kind === "ambiguous" ? "delegate_model_ambiguous" : "delegate_model_not_offered",
         ),
       );
 };

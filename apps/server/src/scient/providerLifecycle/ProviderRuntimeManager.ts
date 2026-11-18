@@ -13,9 +13,11 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
+  managedRuntimeFailedCheck,
   managedRuntimeFailureClass,
   managedRuntimeFailureRetryable,
   managedRuntimeRetryAfterMs,
+  markManagedRuntimeCheck,
 } from "@scientfactory/provider-runtime";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -175,6 +177,7 @@ function operation(input: {
   readonly waitingForIdle?: boolean;
   readonly retrying?: boolean;
   readonly failureClass?: ProviderRuntimeOperation["failureClass"];
+  readonly failedCheck?: ProviderRuntimeOperation["failedCheck"];
   readonly background?: { readonly attempt: number } | undefined;
   readonly download?: ProviderRuntimeOperation["download"];
 }): ProviderRuntimeOperation {
@@ -194,6 +197,7 @@ function operation(input: {
     ...(input.waitingForIdle ? { waitingForIdle: true } : {}),
     ...(input.retrying ? { retrying: true } : {}),
     ...(input.failureClass === undefined ? {} : { failureClass: input.failureClass }),
+    ...(input.failedCheck === undefined ? {} : { failedCheck: input.failedCheck }),
     ...(input.background ? { background: true, attempt: input.background.attempt } : {}),
     ...(input.download === undefined ? {} : { download: input.download }),
   };
@@ -807,12 +811,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       }),
     ).pipe(
       Effect.andThen(closeRuntimeInstances(target.provider, input.instanceId)),
-      Effect.mapError(
-        (cause) =>
+      Effect.mapError((cause) =>
+        markManagedRuntimeCheck(
+          "stop_sessions",
           new ProviderConnectionActionError({
             message: `Scient could not stop idle ${displayName} sessions before changing its runtime.`,
             cause,
           }),
+        ),
       ),
     );
 
@@ -888,7 +894,8 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
               input.instanceId,
             ).pipe(Effect.result);
             if (reconciliation._tag === "Failure") {
-              completion = Result.fail(reconciliation.failure);
+              // The new runtime is already active; only restarting its sessions failed.
+              completion = Result.fail(markManagedRuntimeCheck("refresh", reconciliation.failure));
             }
           }
           const finishedAt = yield* nowIso;
@@ -925,6 +932,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                       ? {}
                       : {
                           failureClass: managedRuntimeFailureClass(completion.failure, lastStage),
+                          failedCheck: managedRuntimeFailedCheck(completion.failure),
                         }),
                     background,
                     download,

@@ -1049,6 +1049,7 @@
         "downloadAttempts": 5,
         "networkKind": "stalled",
         "compressedFailure": "checksum",
+        "failedCheck": "rpc_start",
         "resumedBucket": "10-50mb",
         "progressBucket": "25-49",
         "throughputBucket": "1-5mbps",

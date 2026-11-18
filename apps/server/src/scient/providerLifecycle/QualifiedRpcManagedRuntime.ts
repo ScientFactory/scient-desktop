@@ -8,6 +8,7 @@ import {
   ManagedProviderRuntime,
   ManagedProviderRuntimeError,
   type ManagedProviderRuntimeIdentity,
+  markManagedRuntimeCheck,
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -74,7 +75,10 @@ export class QualifiedRpcManagedRuntime extends ManagedProviderRuntime {
       return { activations, release };
     } catch (cause) {
       await release();
-      throw runtimeError(`Scient could not reserve the ${this.target.name} runtime.`, cause);
+      throw markManagedRuntimeCheck(
+        "reserve",
+        runtimeError(`Scient could not reserve the ${this.target.name} runtime.`, cause),
+      );
     }
   }
 
