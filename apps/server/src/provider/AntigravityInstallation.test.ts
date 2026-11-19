@@ -1995,6 +1995,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  // SCIENT-FORK: real time, because Scient's installer retry checks the filesystem between waits.
   it.effect("publishes a Windows release once a transient EPERM on the release rename clears", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2039,14 +2040,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* installation.start;
       const terminal = yield* terminalState(installation).pipe(Effect.forkChild);
       yield* Deferred.await(releaseRenameDenied);
-      // SCIENT-FORK: Scient's installer retry has a 15 s wall-clock budget, so time passes in steps.
-      for (let second = 0; second < 30; second++) yield* TestClock.adjust("1 second");
       expect(yield* Fiber.join(terminal)).toMatchObject({
         phase: "succeeded",
         installedVersion: "fixture-new",
       });
       expect((yield* installation.resolve()).version).toBe("fixture-new");
-    }),
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("reports unsupported hosts without downloading or changing state", () =>
