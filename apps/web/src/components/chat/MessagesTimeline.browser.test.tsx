@@ -808,7 +808,16 @@ describe("MessagesTimeline messages", () => {
       features: [{ name: "prefers-reduced-motion", value: "reduce" }],
     });
     try {
-      await using screen = await renderTimeline(entries, props);
+      // SCIENT-FORK:START — the opening restore owns the viewport until the thread is positioned.
+      const positioned = Promise.withResolvers<void>();
+      await using screen = await renderTimeline(entries, {
+        ...props,
+        onPositionedThreadKeyChange: (key) => {
+          if (key === props.routeThreadKey) positioned.resolve();
+        },
+      });
+      await positioned.promise;
+      // SCIENT-FORK:END
       const viewport = props.listRef.current!.getScrollableNode()!;
       const strips = () => [...screen.container.querySelectorAll("[data-minimap-strip]")];
       const turnAtTop = () =>
