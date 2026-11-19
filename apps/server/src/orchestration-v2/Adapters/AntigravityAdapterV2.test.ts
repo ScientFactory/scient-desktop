@@ -1329,8 +1329,18 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const { command, usage, offers, send, startTurn, throughTerminal, requestPermission } =
         yield* openSessionWithRunningCommand({ IsDaemon: true, WaitMsBeforeAsync: 500 });
       yield* startTurn(1, false);
-      const promptTerminal = (yield* throughTerminal).at(-1);
+      const promptEvents = yield* throughTerminal;
+      const promptTerminal = promptEvents.at(-1);
       assert.equal(promptTerminal?.type === "turn.terminal" && promptTerminal.status, "completed");
+      // SCIENT-FORK: the daemon stays a running row after the prompt ends, so Stop can reach it.
+      const daemonRow = promptEvents
+        .flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [event.turnItem.status]
+            : [],
+        )
+        .at(-1);
+      assert.equal(daemonRow, "running");
 
       yield* send({
         sessionUpdate: "tool_call_update",

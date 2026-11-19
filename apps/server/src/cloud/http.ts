@@ -154,6 +154,7 @@ export const layer = HttpApiBuilder.group(
         .handle("checkReachability", () => cloudIntegrationDisabled())
         .handle("unlink", () => cloudIntegrationDisabled())
         .handle("preferences", () => cloudIntegrationDisabled())
+        .handle("liveActivityPreference", () => cloudIntegrationDisabled())
         .handle("health", () => cloudIntegrationDisabled())
         .handle("t3MintCredential", () => cloudIntegrationDisabled());
     }
@@ -194,7 +195,9 @@ export const layer = HttpApiBuilder.group(
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
           yield* requireEnvironmentScope(AuthRelayConfigureScope);
-          const proof = yield* toHttpError(cloudLink.linkProof(payload));
+          // SCIENT-FORK:START — an Off computer signs no proof, so the relay never provisions for it.
+          const proof = yield* applyWhileOn(toHttpError(cloudLink.linkProof(payload)));
+          // SCIENT-FORK:END
           yield* appendCloudCredentialResponseHeaders;
           return proof;
         }),
@@ -212,7 +215,13 @@ export const layer = HttpApiBuilder.group(
           const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
           const state = yield* toHttpError(cloudLink.linkState());
           // Linking also writes relay preferences, so configure alone cannot finish it.
+          // SCIENT-FORK:START — a computer turned off in Scient Connect is turned on only here.
+          const onHere =
+            connectHost._tag === "None" ||
+            Option.isSome(yield* connectHost.value.whileOn(Effect.void));
+          // SCIENT-FORK:END
           const linkableHere =
+            onHere &&
             principal.scopes.has(AuthRelayConfigureScope) &&
             principal.scopes.has(AuthRelayWriteScope);
           return { ...state, linkableHere };

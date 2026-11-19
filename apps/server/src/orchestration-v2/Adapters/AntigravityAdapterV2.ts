@@ -280,6 +280,18 @@ export function makeAntigravityAcpAdapterFlavor(
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
     toolOutlivesPrompt: antigravityCommandOutlivesPrompt,
+    // SCIENT-FORK:START — a daemon (a dev server) never reports its end, so it does not hold the
+    // turn; tracking it as background work keeps its row running and gives Stop its process.
+    extractBackgroundTaskId: (toolCall) =>
+      toolCall.kind === "execute" &&
+      !antigravityCommandOutlivesPrompt(toolCall) &&
+      toolCall.status !== undefined &&
+      toolCall.status !== "pending"
+        ? toolCall.toolCallId
+        : undefined,
+    isPersistentBackgroundTool: (toolCall) =>
+      toolCall.kind === "execute" && !antigravityCommandOutlivesPrompt(toolCall),
+    // SCIENT-FORK:END
     // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
     // has ended. A message sent while a command runs leaves the command alone.
     preserveRuntimeOnSettledInterrupt: true,

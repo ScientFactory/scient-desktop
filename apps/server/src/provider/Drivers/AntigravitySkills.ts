@@ -315,25 +315,32 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   // SCIENT-FORK:START — the instance profile is where agy loads plugins; Scient keeps each
   // plugin's manifest namespace there too and skips plugins its config turns off.
   const profilePlugins = path.join(input.profileDirectory, "config", "plugins");
-  const configPath = path.join(input.profileDirectory, "config", "config.json");
-  const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath);
-  if (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES)) {
-    return yield* new AntigravitySkillsProbeError({
-      reason: "scan-budget-exhausted",
-      path: configPath,
-    });
-  }
-  const config =
-    configInfo?.type === "File"
-      ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath)
-      : undefined;
-  const preferences = config === undefined ? undefined : decodePluginPreferences(config);
-  const disabledPlugins = new Set(
-    Object.entries(
-      (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
-    ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
+  const profilePluginEntries = yield* readIfPresent(
+    fileSystem.readDirectory(profilePlugins),
+    profilePlugins,
   );
-  yield* scanPluginDirectory(profilePlugins, disabledPlugins);
+  // Only plugins to inspect need their preferences; an unreadable config must not hide other skills.
+  if (profilePluginEntries !== undefined && profilePluginEntries.length > 0) {
+    const configPath = path.join(input.profileDirectory, "config", "config.json");
+    const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath);
+    if (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES)) {
+      return yield* new AntigravitySkillsProbeError({
+        reason: "scan-budget-exhausted",
+        path: configPath,
+      });
+    }
+    const config =
+      configInfo?.type === "File"
+        ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath)
+        : undefined;
+    const preferences = config === undefined ? undefined : decodePluginPreferences(config);
+    const disabledPlugins = new Set(
+      Object.entries(
+        (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
+      ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
+    );
+    yield* scanPluginDirectory(profilePlugins, disabledPlugins);
+  }
   // SCIENT-FORK:END
   yield* scanPluginDirectory(globalPlugins);
   if (input.cwd) {

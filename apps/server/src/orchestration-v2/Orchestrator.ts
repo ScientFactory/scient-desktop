@@ -3906,6 +3906,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: message.scheduledTaskId }),
         ...(message.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
         ...(message.linkedSender === undefined ? {} : { linkedSender: message.linkedSender }),
+        // SCIENT-FORK: the requeued steer keeps the Scient skills the person selected.
+        ...(message.selectedScientSkillNames === undefined
+          ? {}
+          : { selectedScientSkillNames: message.selectedScientSkillNames }),
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Failed to requeue an unread steer", {
@@ -8748,6 +8752,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // A restart cancels its run; nobody knows whether the provider read the steer, so a person decides.
         ...(worktreeMissingRun !== undefined ||
         steerFollowUpSource?.status === "cancelled" ||
+        // SCIENT-FORK:START terminal-queue-hold
+        // A failure holds the queue before its unread steers are requeued, so their runs start held.
+        steerFollowUpSource?.status === "failed" ||
+        // SCIENT-FORK:END terminal-queue-hold
         (queueIsHeld && !wakeSkipsHold && queuedRunStop?.skipsHeldQueue !== true)
           ? { queueHeld: true }
           : {}),

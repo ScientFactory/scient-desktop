@@ -1,3 +1,4 @@
+import { isElectron } from "~/env";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 // SCIENT-FORK:START — the phone-app switch.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
@@ -599,11 +600,13 @@ function ConfiguredCloudLinkRow({
     messages,
   );
   const turnOn = useT3ConnectTurnOn(environmentId);
-  // Turning on needs relay configuration permission; turning off works from anywhere.
-  const showSwitch = turnOn.kind !== "on-host" || managedTunnelActive;
   // SCIENT-FORK:START — scient/connect: on the desktop's own computer, signing in turns Scient
   // Connect on; the switch shows the person's choice and the line below what setup is doing.
   const connectHost = useScientConnectHost(environmentId);
+  // Turning on needs relay configuration permission; turning off works from anywhere. The
+  // desktop app always shows its computer's switch: only it can turn Scient Connect back on.
+  const showSwitch =
+    (isElectron && connectHost !== null) || turnOn.kind !== "on-host" || managedTunnelActive;
   const hostSwitchOn =
     connectHost !== null && !connectHost.off && connectHost.block?.reason !== "revoked";
   const hostDescription =
