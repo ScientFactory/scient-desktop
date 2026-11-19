@@ -385,6 +385,16 @@
       "path": "packages/contracts/src/settings.ts",
       "anchor": "SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.",
       "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers, and name the settings error when a removed agent's keys can't be kept in Accounts."
+    },
+    {
+      "path": "packages/client-runtime/src/contractLabels.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: cookies read but none could be stored in the profile.",
+      "purpose": "Translated labels for the browser-import failure reasons Scient Accounts adds to the shared contract."
+    },
+    {
+      "path": "packages/client-runtime/src/t3ToolSummary.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: summarize grouped account calls.",
+      "purpose": "Summarize collapsed groups of Scient's account tool calls in the work log."
     }
   ],
   "scientMounts": [

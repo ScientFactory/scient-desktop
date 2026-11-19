@@ -51,7 +51,8 @@ vi.mock("~/hooks/useLocalStorage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/hooks/useLocalStorage")>()),
   useLocalStorage: () => [[], mocks.setRecentWikiLinks],
 }));
-vi.mock("~/hooks/useCopyToClipboard", () => ({
+vi.mock("~/hooks/useCopyToClipboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useCopyToClipboard")>()),
   writeTextToClipboard: mocks.copyText,
 }));
 vi.mock("~/localApi", { spy: true });
@@ -814,7 +815,10 @@ describe("ScientMarkdownFileSurface", () => {
 
     copyLink({ format: "link", value: "Methods/Protocol#setup" }, anchor);
     await vi.waitFor(() =>
-      expect(mocks.copyText).toHaveBeenCalledExactlyOnceWith("Methods/Protocol#setup", "link"),
+      expect(mocks.copyText).toHaveBeenCalledExactlyOnceWith(
+        "Methods/Protocol#setup",
+        expect.objectContaining({ target: "link" }),
+      ),
     );
     expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -833,7 +837,7 @@ describe("ScientMarkdownFileSurface", () => {
     await vi.waitFor(() => expect(mocks.copyText).toHaveBeenCalledTimes(2));
     expect(mocks.copyText).toHaveBeenLastCalledWith(
       "/workspace/notes/Methods/Protocol.md",
-      "full path",
+      expect.objectContaining({ target: "full path" }),
     );
     expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Full path copied." }),

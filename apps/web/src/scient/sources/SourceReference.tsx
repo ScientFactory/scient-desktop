@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { CitationStylePicker } from "./CitationStylePicker";
 import {
@@ -84,7 +84,9 @@ export function SourceReference(props: {
   const [picking, setPicking] = useState(false);
   const [citations, setCitations] = useState(citationModule);
   const [loadFailed, setLoadFailed] = useState(false);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "reference" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("reference"),
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the citation module once; formatting then runs in render
   useEffect(() => {

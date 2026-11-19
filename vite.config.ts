@@ -95,6 +95,65 @@ const SCIENT_LEGACY_WEB_LINT_FILES = [
 ] as const;
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — Scient's own screens stay English until they are translated.
+/**
+ * T3 translates its screens, and `t3code/no-untranslated-copy` keeps them translated. Scient's own
+ * modules were written in English only; Scient copy inside T3 files is translated like T3's.
+ */
+const SCIENT_ENGLISH_ONLY_FILES = [
+  "**/scient/**",
+  "**/*.scient.*",
+  "apps/mobile/src/features/cloud/DeleteAccountSection.tsx",
+  "apps/mobile/src/features/threads/ThreadAccountRequests.tsx",
+  "apps/mobile/src/features/threads/ThreadRoomBar.tsx",
+  "apps/mobile/src/features/threads/ThreadRoomComposer.tsx",
+  "apps/mobile/src/features/threads/ThreadRoomMessage.tsx",
+  "apps/mobile/src/features/threads/room-command-result.ts",
+  "apps/mobile/src/features/threads/thread-room.logic.ts",
+  "apps/web/src/components/AgentsPanel.tsx",
+  "apps/web/src/components/ChatLoadingState.tsx",
+  "apps/web/src/components/ProjectFolderDropTarget.tsx",
+  "apps/web/src/components/ScientProjectInitializationDialog.tsx",
+  "apps/web/src/components/chat/ComposerModeChips.tsx",
+  "apps/web/src/components/chat/ModelPickerNewChatFooter.tsx",
+  "apps/web/src/components/chat/scient-fork/ScientForkMessageButton.tsx",
+  "apps/web/src/components/chat/scient-fork/ScientForkWorkspaceModeDialog.tsx",
+  "apps/web/src/components/chat/scient-import/ConversationImportBanner.tsx",
+  "apps/web/src/components/chat/useComposerCitations.ts",
+  "apps/web/src/components/desktop/useDesktopUpdateSaveHandling.ts",
+  "apps/web/src/components/files/FileBreadcrumbNavigator.tsx",
+  "apps/web/src/components/files/FileRenameButton.tsx",
+  "apps/web/src/components/files/fileBreadcrumbPicker.ts",
+  "apps/web/src/components/files/filePathClipboard.ts",
+  "apps/web/src/components/files/workspaceFileSessionRegistry.ts",
+  "apps/web/src/components/onboarding/ProjectImportStep.tsx",
+  "apps/web/src/components/onboarding/StepShell.tsx",
+  "apps/web/src/components/preview/PreviewImageSurface.tsx",
+  "apps/web/src/components/preview/StaticAssetImageSurface.tsx",
+  "apps/web/src/components/preview/StaticImageActionButtons.tsx",
+  "apps/web/src/components/preview/useProjectScriptAutoPreview.ts",
+  "apps/web/src/components/scient-fork/useScientThreadFork.ts",
+  "apps/web/src/components/settings/AddUsageAccountingSourceDialog.tsx",
+  "apps/web/src/components/settings/CustomModelConnectionDialog.tsx",
+  "apps/web/src/components/settings/CustomModelRowActions.tsx",
+  "apps/web/src/components/settings/CustomModelsPanel.tsx",
+  "apps/web/src/components/settings/ModelConnectionEditor.tsx",
+  "apps/web/src/components/settings/ShortcutRow.tsx",
+  "apps/web/src/components/settings/customModels.ts",
+  "apps/web/src/components/ui/contextual-confirmation.tsx",
+  "apps/web/src/components/usage/UsageAccountingTrendChart.tsx",
+  "apps/web/src/components/usage/UsageAccountingView.tsx",
+  "apps/web/src/components/usage/usageAccountingPresentation.ts",
+  "apps/web/src/hooks/useProjectFolderDrop.ts",
+  "apps/web/src/hooks/useScientProjectInitialization.ts",
+  "apps/web/src/lib/desktopReload.ts",
+  "apps/web/src/lib/projectEntry.ts",
+  "packages/client-runtime/src/antigravityModelPresentation.ts",
+  "packages/client-runtime/src/scientProviderClients.ts",
+  "packages/client-runtime/src/work-log/issuePresentation.ts",
+] as const;
+// SCIENT-FORK:END
+
 const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
   name: "lucide-react",
   importNames: [
@@ -625,6 +684,26 @@ export default defineConfig({
           "shadcn/no-arbitrary-values": "off",
           "shadcn/require-static-classes": "off",
         },
+      },
+      // SCIENT-FORK:END
+      // Registered always so a disable comment for intentional English counts as used.
+      // `vp run i18n:untranslated` counts what it flags.
+      {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/client-runtime/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec,bench}.{ts,tsx}",
+          "**/{test,testkit,testing,fixtures}/**",
+          "**/*.test-fixtures.ts",
+          "**/{test-fixtures,*TestFixtures}.ts",
+          "apps/mobile/src/features/development/**",
+          "packages/client-runtime/src/rpc/**",
+        ],
+        rules: { "t3code/no-untranslated-copy": "error" },
+      },
+      // SCIENT-FORK:START — Scient's own screens stay English until they are translated.
+      {
+        files: [...SCIENT_ENGLISH_ONLY_FILES],
+        rules: { "t3code/no-untranslated-copy": "off" },
       },
       // SCIENT-FORK:END
       {

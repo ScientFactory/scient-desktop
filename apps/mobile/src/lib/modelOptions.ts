@@ -3,6 +3,8 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 
 import type {
   ModelCapabilities,
@@ -12,7 +14,6 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
-  disallowedProviderMessage,
   isManagedDriverAllowed,
   isProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
@@ -30,6 +31,17 @@ import {
 } from "@t3tools/client-runtime/scient-provider-clients";
 // SCIENT-FORK:END
 
+/** The contracts `disallowedProviderMessage` English, as translatable sentences. */
+function disallowedProviderText(organization: string | undefined, label: string): string {
+  return organization === undefined
+    ? m(msg("Your organization policy does not allow the {label} provider.", { label }))
+    : m(
+        msg("{organization}''s policy does not allow the {label} provider.", {
+          organization,
+          label,
+        }),
+      );
+}
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
@@ -53,6 +65,7 @@ export type ModelOption = {
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
   readonly providerUpdateRequired?: ProviderUpdateRequired;
+  readonly providerSubProviders?: T3ServerConfig["providers"][number]["subProviders"];
 };
 
 type ProviderUpdateRequired = Pick<
@@ -65,6 +78,7 @@ export type ProviderGroup = {
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
   readonly updateRequired?: ProviderUpdateRequired;
+  readonly subProviders?: ModelOption["providerSubProviders"];
 };
 
 function providerDisplayLabel(provider: {
@@ -229,18 +243,26 @@ export function describeUnavailableModelSelection(
       instanceId: selection.instanceId,
     });
     return {
-      title: "Provider not allowed",
-      detail: `${disallowedProviderMessage(config?.managedPolicy?.organization, label)} Choose another model.`,
+      title: m(msg("Provider not allowed")),
+      detail: m(
+        msg("{message} Choose another model.", {
+          message: disallowedProviderText(config?.managedPolicy?.organization, label),
+        }),
+      ),
     };
   }
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
-        title: "Model turned off for this project",
-        detail: "Turn it back on from web or desktop, or choose another model.",
+        title: m(msg("Model turned off for this project")),
+        detail: m(msg("Turn it back on from web or desktop, or choose another model.")),
       }
     : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
+        title: m(msg("{provider} model unavailable", { provider: "Antigravity" })),
+        detail: m(
+          msg("Set up {provider} on web or desktop, or choose another model.", {
+            provider: "Antigravity",
+          }),
+        ),
       };
 }
 
@@ -422,6 +444,7 @@ export function buildModelOptions(
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
+        ...(provider.subProviders?.length ? { providerSubProviders: provider.subProviders } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -505,6 +528,7 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
       providerLabel: string;
       models: ModelOption[];
       updateRequired: ProviderUpdateRequired | undefined;
+      subProviders: ModelOption["providerSubProviders"];
     }
   >();
   for (const option of options) {
@@ -512,11 +536,13 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     if (existing) {
       existing.models.push(option);
       existing.updateRequired ??= option.providerUpdateRequired;
+      existing.subProviders ??= option.providerSubProviders;
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
         models: [option],
         updateRequired: option.providerUpdateRequired,
+        subProviders: option.providerSubProviders,
       });
     }
   }
@@ -526,5 +552,6 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
     ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
+    ...(group.subProviders ? { subProviders: group.subProviders } : {}),
   }));
 }

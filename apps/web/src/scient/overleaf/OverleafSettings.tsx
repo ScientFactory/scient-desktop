@@ -12,7 +12,7 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import type { SettingsSearchItemId } from "~/components/settings/settingsSearch";
 import { Button, InlineButton } from "~/components/ui/button";
 import { Collapsible, CollapsibleContent } from "~/components/ui/collapsible";
 import { Label } from "~/components/ui/label";
@@ -378,7 +378,7 @@ export function OverleafSyncedFolderRow(props: { readonly environmentId: Environ
   const { environmentId } = props;
   const token = useOverleafTokenSaved(environmentId);
   const [expanded, setExpanded] = useState(false);
-  const target = searchableSetting("synced-folders-overleaf").id;
+  const target = "synced-folders-overleaf" satisfies SettingsSearchItemId;
   // A search jump to Overleaf opens its details.
   const searchTargetId = useSettingsSearchTargetId();
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 
 /** A block can override wrapping locally; a new global preference resets it. */
 export function useCodeBlockWordWrap() {
@@ -62,7 +62,7 @@ export function CodeBlockActions({
       const code = readCode();
       const didCopy = await writeTextToClipboard(
         code.endsWith("\n") ? code.slice(0, -1) : code,
-        "code",
+        namedClipboardTarget("code"),
       );
       if (!didCopy || !mounted.current) return;
       if (timer.current !== null) clearTimeout(timer.current);

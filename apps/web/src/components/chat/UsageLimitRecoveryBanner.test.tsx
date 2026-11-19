@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { usageLimitRecoveryBannerItem } from "./UsageLimitRecoveryBanner";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const stoppedAt = new Date(2026, 9, 20, 12, 0);
 
 function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {

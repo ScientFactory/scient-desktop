@@ -42,7 +42,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -132,7 +132,9 @@ function ShareDialog({
     serverEnvironment.inviteToThreadRoom.permissionAtom(threadRef.environmentId),
   );
   const invite = useAtomCommand(serverEnvironment.inviteToThreadRoom, { reportFailure: false });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "invite link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("invite link"),
+  });
   const [role, setRole] = useState<RoomRole>("discuss");
   const [duration, setDuration] = useState<RoomAccessDuration>("week");
   const [creating, setCreating] = useState(false);

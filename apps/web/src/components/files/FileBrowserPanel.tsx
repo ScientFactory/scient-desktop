@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 // SCIENT-FORK:START — refresh moved into the Files menu; its icon import went with it
 // SCIENT-FORK:END
 import type {
@@ -10,6 +12,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
+import { useGT, useMessages } from "gt-react";
 // SCIENT-FORK:START — expand and collapse all moved into the Files menu
 // SCIENT-FORK:END
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -125,6 +128,8 @@ export default function FileBrowserPanel({
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
+  const gt = useGT();
+  const messages = useMessages();
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   // SCIENT-FORK:START — file visibility view and the lazily loaded tree
@@ -145,6 +150,8 @@ export default function FileBrowserPanel({
   const pathSearch = useProjectPathSearch(
     { environmentId, cwd: hostFolder ? null : cwd, query: searchQuery },
     FILE_SEARCH_LIMIT,
+    undefined,
+    messages,
   );
   const hasCurrentSearch = pathSearch.searchedQuery === normalizedSearchValue;
   const fileContextMenu = useFileContextMenu(environmentId);
@@ -211,11 +218,13 @@ export default function FileBrowserPanel({
             // SCIENT-FORK:START — files that open rendered by default can open as source;
             // then Add to chat, new items (start a document in, or connect, this folder), and edit
             ...(shouldOpenInBrowserByDefault(relativePath)
-              ? ([{ id: "open-source", label: "Open source" }] as const)
+              ? ([{ id: "open-source", label: gt("Open source") }] as const)
               : []),
-            { id: "add-to-chat", label: "Add to chat", separatorBefore: true },
+            { id: "add-to-chat", label: gt("Add to chat"), separatorBefore: true },
             // Copy mention sits under Copy when Files manages entries.
-            ...(manageItems.copiesMention ? [] : [{ id: "copy-mention", label: "Copy mention" }]),
+            ...(manageItems.copiesMention
+              ? []
+              : [{ id: "copy-mention", label: gt("Copy mention") }]),
             ...manageItems.create,
             ...folderActions.menuItems(item.path),
             ...manageItems.edit,
@@ -250,8 +259,8 @@ export default function FileBrowserPanel({
           } catch (error) {
             toastManager.add({
               type: "error",
-              title: "Failed to copy mention",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: gt("Failed to copy mention"),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             });
           }
           return;
@@ -261,8 +270,8 @@ export default function FileBrowserPanel({
           if (!composer) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "Open a chat for this project and try again.",
+              title: gt("Unable to add to chat"),
+              description: gt("Open a chat for this project and try again."),
             });
             return;
           }
@@ -270,8 +279,8 @@ export default function FileBrowserPanel({
           if (!inserted) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "The chat isn't ready to accept input right now.",
+              title: gt("Unable to add to chat"),
+              description: gt("The chat isn't ready to accept input right now."),
             });
           }
         }
@@ -607,7 +616,7 @@ export default function FileBrowserPanel({
         <FileSearchField
           ref={searchInputRef}
           name="project-files-search"
-          ariaLabel={`Search ${projectName} files`}
+          ariaLabel={gt("Search {projectName} files", { projectName })}
           value={searchValue}
           onValueChange={handleSearchValueChange}
           onClose={handleSearchClose}
@@ -646,7 +655,7 @@ export default function FileBrowserPanel({
         {/* SCIENT-FORK:END */}
         <FileTree
           model={model}
-          aria-label={`${projectName} files`}
+          aria-label={gt("{projectName} files", { projectName })}
           className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
           style={pierreTreeStyle(resolvedTheme)}
         />

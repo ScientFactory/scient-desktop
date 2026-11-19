@@ -319,7 +319,7 @@ it("keeps a newer jump over one still waiting for its pages", async () => {
   const view = (count: number) => (
     <OfficePages
       pages={pages(count)}
-      label="Page"
+      kind="page"
       paint={async () => undefined}
       scrollRef={scrollRef}
       onError={(error) => {
@@ -357,7 +357,7 @@ it("reaches a page among the last mounted once the rest mount", async () => {
   const view = (count: number) => (
     <OfficePages
       pages={Array.from({ length: count }, () => ({ width: 400, height: 520 }))}
-      label="Page"
+      kind="page"
       paint={async () => undefined}
       scrollRef={scrollRef}
       onError={(error) => {

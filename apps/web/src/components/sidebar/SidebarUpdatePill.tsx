@@ -1,13 +1,13 @@
-import {
-  type DesktopBridge,
-  type DesktopUpdateState,
-  managedUpdatesDenial,
-} from "@t3tools/contracts";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
+import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { DownloadIcon, LoaderCircleIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
+import { m } from "../../i18n/messages";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -157,15 +157,19 @@ export function SidebarUpdateArchitectureWarning() {
 
 function SidebarUpdateArchitectureWarningContent() {
   const state = useDesktopUpdateState();
+  const messages = useMessages();
   const visible = shouldShowArm64IntelBuildWarning(state);
-  const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
+  const description =
+    state && visible ? getArm64IntelBuildWarningDescription(state, messages) : null;
 
   if (!visible || !description) return null;
 
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>
+        <T>Intel build on Apple Silicon</T>
+      </AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -193,12 +197,12 @@ export async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError) reportError(m(msg("Could not download update")), actionError);
     return result.completed;
   } catch (error) {
     reportError(
-      "Could not start update download",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      m(msg("Could not start update download")),
+      thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
     );
     return false;
   }
@@ -210,8 +214,10 @@ export function SidebarUpdatePill() {
 
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
+  const gt = useGT();
+  const messages = useMessages();
   // The desktop updates this machine, whose policy the primary environment reports.
-  const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
+  const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy(), messages);
   const [isActionPending, setIsActionPending] = useState(false);
   // SCIENT-FORK:START — replaces upstream's dialog open state: the pass waiting on its
   // question, with what it stops and what it admits.
@@ -345,21 +351,21 @@ function SidebarUpdateControl() {
     !showUpdateDetails && !showCheckIcon
       ? // SCIENT-FORK: an idle control still says when an update is downloading behind it.
         backgroundUpdate && state && updatesDenial === undefined
-        ? { title: getDesktopUpdateBackgroundTooltip(state), detail: null }
-        : getDesktopUpdateIdleTooltip(state, updatesDenial)
+        ? { title: getDesktopUpdateBackgroundTooltip(state, messages), detail: null }
+        : getDesktopUpdateIdleTooltip(state, updatesDenial, messages)
       : null;
   const tooltip =
     isPreparing && state
-      ? getDesktopUpdateButtonTooltip(state)
+      ? getDesktopUpdateButtonTooltip(state, messages)
       : runsEverything
         ? everything.summary
         : showUpdateDetails
           ? state
-            ? getDesktopUpdateButtonTooltip(state)
-            : "Update available"
+            ? getDesktopUpdateButtonTooltip(state, messages)
+            : gt("Update available")
           : showCheckIcon
-            ? "Checking for updates…"
-            : (idleTooltip?.title ?? "Check for updates");
+            ? gt("Checking for updates…")
+            : (idleTooltip?.title ?? gt("Check for updates"));
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -490,11 +496,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
+            title: gt("Could not check for updates"),
             description:
               updatesDenial ??
               result.state.message ??
-              "Automatic updates are not available in this build.",
+              gt("Automatic updates are not available in this build."),
           }),
         );
       })
@@ -502,8 +508,8 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: gt("Could not check for updates"),
+            description: thrownErrorMessage(error, m) ?? gt("Update check failed."),
           }),
         );
       });
@@ -540,8 +546,8 @@ function SidebarUpdateControl() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: gt("Could not update everything"),
+          description: thrownErrorMessage(error, m) ?? gt("An unexpected error occurred."),
         }),
       );
     }
@@ -561,7 +567,10 @@ function SidebarUpdateControl() {
   // have their own circle, which is all a browser shows.
   const updateLabel =
     !isPreparing && showUpdateIconState && state
-      ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
+      ? getScientDesktopUpdateLabel(
+          { ...state, downloadPercent: displayedDownloadPercent },
+          messages,
+        )
       : null;
   const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
     everything.run({ admitServer });
@@ -587,9 +596,9 @@ function SidebarUpdateControl() {
       type="button"
       aria-label={
         isDownloading && updateLabel
-          ? `Downloading update (${updateLabel})`
+          ? gt("Downloading update ({progress})", { progress: updateLabel })
           : updateLabel
-            ? `${updateLabel}: ${tooltip}`
+            ? gt("{label}: {tooltip}", { label: updateLabel, tooltip })
             : tooltip
       }
       aria-disabled={isInteractionDisabled || undefined}
@@ -769,7 +778,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Update release notes"
+            aria-label={gt("Update release notes")}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

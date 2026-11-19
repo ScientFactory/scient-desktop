@@ -138,6 +138,8 @@ export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
 export const PREVIEW_FIND_RESULT_CHANNEL = "desktop:preview-find-result";
 // SCIENT-FORK: Scient Browser — Google sign-in is stopped and explained.
 export const PREVIEW_SIGN_IN_BLOCKED_CHANNEL = "desktop:preview-sign-in-blocked";
+export const PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL = "desktop:preview-tunnel-access-request";
+export const PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL = "desktop:preview-tunnel-access-resolve";
 
 // Scient local voice transcription (desktop-only).
 export const VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL = "desktop:voice-request-microphone-access";

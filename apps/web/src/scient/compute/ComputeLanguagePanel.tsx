@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { ExtensionsSection } from "~/scient/extensions/ExtensionsPage";
 import {
@@ -654,7 +654,9 @@ export function ComputeScientPartSection({
   const part = computeScientPart(languageId);
   const status = runtime.status;
   const ownKernel = part === "kernel" && status?.selection === "existing";
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "runtime path" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("runtime path"),
+  });
   if (part === null || (!status?.installed && !ownKernel)) return null;
   const selected = defaultComputeInstallation(language, preference, status);
   const summary = computeCurrentRuntimeSummary({ language, preference, managed: status });

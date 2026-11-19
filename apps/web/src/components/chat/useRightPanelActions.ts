@@ -5,6 +5,9 @@ import {
   type FilePathCopyFormat,
   type FileSurfacePath,
 } from "../files/filePathClipboard";
+import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -120,8 +123,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to open browser",
-              description: error.message,
+              title: m(msg("Unable to open browser")),
+              description: errorDisplayMessage(error, m) ?? error.message,
             }),
           );
         }
@@ -279,8 +282,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy full path",
-          description: "This thread has no active workspace path.",
+          title: m(msg("Failed to copy full path")),
+          description: m(msg("This thread has no active workspace path.")),
         }),
       );
       return;

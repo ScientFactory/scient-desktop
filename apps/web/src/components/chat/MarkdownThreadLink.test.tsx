@@ -5,6 +5,10 @@ import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const { reads, shells } = vi.hoisted(() => ({
   reads: vi.fn(),
   shells: new Map<string, { environmentId: string; id: string; title: string }>(),

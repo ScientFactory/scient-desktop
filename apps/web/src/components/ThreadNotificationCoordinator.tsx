@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 // SCIENT-FORK:START — Account approvals and sign-in hand-offs use thread notifications.
 import { watchAccountNotifications } from "../scient/accounts/accountNotifications";
 // SCIENT-FORK:END
@@ -161,17 +163,17 @@ export function startThreadNotifications(
     const title =
       accountTitle ??
       (kind === "completion"
-        ? "Thread completed"
+        ? m(msg("Thread completed"))
         : status === "approval"
-          ? "Approval needed"
+          ? m(msg("Approval needed"))
           : status === "limited"
-            ? "Usage limit reached"
+            ? m(msg("Usage limit reached"))
             : status === "failed"
-              ? "Thread failed"
+              ? m(msg("Thread failed"))
               : status === "request"
                 ? // Scient: a room's guests write to the owner as well as asking.
-                  "Guest message"
-                : "Input needed");
+                  m(msg("Guest message"))
+                : m(msg("Input needed")));
     // SCIENT-FORK:END
     // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
     if (hasNotificationSound(mode) && presenter.isPresenter()) {
@@ -210,7 +212,7 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: "Open thread",
+          children: m(msg("Open thread")),
           onClick: () => {
             toastManager.close(toastId);
             void router.navigate({

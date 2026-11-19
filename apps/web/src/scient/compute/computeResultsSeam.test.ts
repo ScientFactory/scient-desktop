@@ -71,9 +71,9 @@ describe("compute result surface seam", () => {
       rightPanelTabsSource.indexOf("const addSurfaceActions"),
       rightPanelTabsSource.indexOf("const extraSessionAction"),
     );
-    expect(primaryActions).not.toContain('label: "Compute"');
-    expect(primaryActions).not.toContain('label: "Scientific computing"');
-    expect(rightPanelTabsSource).toContain('label: "Scientific computing"');
+    expect(primaryActions).not.toContain('label: msg("Compute")');
+    expect(primaryActions).not.toContain('label: msg("Scientific computing")');
+    expect(rightPanelTabsSource).toContain('label: msg("Scientific computing")');
   });
 
   // regression: 13a5e053d2 chore(compute): checkpoint before main alignment

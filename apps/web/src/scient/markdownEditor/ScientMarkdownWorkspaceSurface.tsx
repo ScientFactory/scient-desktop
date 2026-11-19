@@ -13,7 +13,7 @@ import { readLocalApi } from "~/localApi";
 import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { editorCompositions } from "../editorFlush/editorComposition";
 import { Button } from "~/components/ui/button";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
@@ -572,7 +572,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
               onClick={() =>
                 void writeTextToClipboard(
                   JSON.stringify(pendingWriteback.document.toJSON(), null, 2),
-                  "pending document input",
+                  namedClipboardTarget("pending document input"),
                 )
               }
             >

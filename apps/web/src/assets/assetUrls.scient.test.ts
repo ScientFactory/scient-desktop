@@ -10,6 +10,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const state = vi.hoisted(() => ({
   session: null as Pick<AuthSessionState, "authenticated" | "scopes"> | null,
   phase: "connected" as "connected" | "offline",

@@ -2,7 +2,7 @@
 // sync with, for the one computer the settings scope picks: Overleaf, and the
 // services the Files bar's Connect menu lists as on the way.
 import { SettingsPageContainer, SettingsSection } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import type { SettingsSearchItemId } from "~/components/settings/settingsSearch";
 import { useSettingsScope } from "~/components/settings/SettingsScopeContext";
 import { Badge } from "~/components/ui/badge";
 import { CONNECT_SERVICES } from "~/scient/files/FileBrowserToolbarActions";
@@ -14,7 +14,11 @@ export function SyncedFoldersSettings() {
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   return (
     <SettingsPageContainer>
-      <SettingsSection id={searchableSetting("synced-folders").id} title="Synced folders" hideTitle>
+      <SettingsSection
+        id={"synced-folders" satisfies SettingsSearchItemId}
+        title="Synced folders"
+        hideTitle
+      >
         {environmentId === null ? (
           <p className="px-4 py-3 text-sm text-muted-foreground">
             Connect an environment to manage its synced folders.

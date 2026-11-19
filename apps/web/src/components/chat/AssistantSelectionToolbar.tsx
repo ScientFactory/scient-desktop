@@ -4,6 +4,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import {
   use,
   useEffect,
@@ -58,6 +59,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
   const sideChatOffered = use(SideChatCitationContext) !== null;
+  const gt = useGT();
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
@@ -231,8 +233,8 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       ownerId={selectionOwnerId}
       {...(tooLong
         ? {
-            label: "Shorten selection",
-            accessibleLabel: "Selection is too long to cite",
+            label: gt("Shorten selection"),
+            accessibleLabel: gt("Selection is too long to cite"),
             disabled: true,
           }
         : {})}

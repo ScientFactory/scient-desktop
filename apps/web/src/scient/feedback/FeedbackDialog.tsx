@@ -29,7 +29,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Textarea } from "../../components/ui/textarea";
 import { toastManager } from "../../components/ui/toast";
-import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useThreadRouteRef } from "../../hooks/useThreadRouteTarget";
 import { exportConversation } from "../conversationExport/client";
 import { copyMarkdownRequest } from "../conversationExport/exportDialog.logic";
@@ -78,7 +78,7 @@ function screenFor(pathname: string, hasThread: boolean): FeedbackScreen {
 function resultToast(result: Exclude<FeedbackSubmitResult, { _tag: "failed" }>) {
   const copyId = {
     children: "Copy ID",
-    onClick: () => void writeTextToClipboard(result.id, "feedback report ID"),
+    onClick: () => void writeTextToClipboard(result.id, namedClipboardTarget("feedback report ID")),
   };
   if (result._tag === "sent") {
     toastManager.add({

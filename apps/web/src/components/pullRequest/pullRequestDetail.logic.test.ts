@@ -21,6 +21,7 @@ import {
   reviewCommentContextLabel,
   reviewCommentContextRecord,
 } from "~/lib/composerContextRecords";
+import { m } from "~/i18n/messages";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -257,13 +258,14 @@ describe("pull request warning checks", () => {
       completed: [success, neutral, skipped],
     });
     expect(pullRequestCheckStatusLabel(warning)).toBe("Warning");
-    expect(pullRequestCheckStatusPresentation(warning)).toMatchObject({
-      label: "Warning",
-      toneClassName: "text-amber-600 dark:text-amber-400/90",
-    });
-    expect(pullRequestCheckStatusPresentation(neutral).label).toBe("Neutral");
+    // Presentation labels are msg() keys; consumers resolve them.
+    expect(m(pullRequestCheckStatusPresentation(warning).label)).toBe("Warning");
+    expect(pullRequestCheckStatusPresentation(warning).toneClassName).toBe(
+      "text-amber-600 dark:text-amber-400/90",
+    );
+    expect(m(pullRequestCheckStatusPresentation(neutral).label)).toBe("Neutral");
     expect(pullRequestChecksState([warning, success])).toBe("warning");
-    expect(pullRequestChecksStatePresentation("warning").label).toBe(
+    expect(m(pullRequestChecksStatePresentation("warning").label)).toBe(
       "Some checks finished with warnings",
     );
     expect(summarizePullRequestChecks([warning, success])).toBe("1 warning");

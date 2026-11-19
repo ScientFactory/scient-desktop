@@ -6,7 +6,7 @@ import type { MarkdownCiteHandler } from "./markdownCitation";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEffect, useRef, useState } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -426,7 +426,10 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const handleCopyLink = (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) => {
     const requestId = beginLinkOpen();
     const fullPath = request.format === "full-path";
-    void writeTextToClipboard(request.value, fullPath ? "full path" : "link").then(
+    void writeTextToClipboard(
+      request.value,
+      namedClipboardTarget(fullPath ? "full path" : "link"),
+    ).then(
       (copied) => {
         if (requestId !== linkOpenRequestRef.current) return;
         if (copied) showLinkFeedback(anchor, fullPath ? "Full path copied." : "Link copied.");
@@ -448,7 +451,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         threadRef: props.threadRef,
       });
       const copyText = async (value: string) => {
-        if (!(await writeTextToClipboard(value, "image source"))) {
+        if (!(await writeTextToClipboard(value, namedClipboardTarget("image source")))) {
           throw new Error("The image source could not be copied.");
         }
       };

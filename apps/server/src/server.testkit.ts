@@ -176,6 +176,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PreviewTunnel from "./preview/PreviewTunnel.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
@@ -1232,6 +1233,9 @@ export const buildAppUnderTest = (options?: {
               subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
                 PubSub.subscribe(pubsub),
               ),
+            }),
+            Layer.mock(PreviewTunnel.PreviewTunnel)({
+              connect: () => Effect.die("PreviewTunnel not stubbed in this test"),
             }),
             Layer.mock(PortScanner.PortDiscovery)({
               scan: () => Effect.succeed([]),

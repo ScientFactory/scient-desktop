@@ -24,6 +24,7 @@ import {
 } from "~/scient/office/slideText";
 import type { WordSpan } from "./word-protocol";
 // SCIENT-FORK:END
+import { PreviewError } from "../previewFailure";
 
 // One worker holds one open PowerPoint deck: its engine, fonts, laid-out slides, decoded pictures and painting. The
 // window terminates the worker when the deck closes, which is the only way the engine's memory is given back.
@@ -125,7 +126,7 @@ function required() {
 
 /** The worker's own font set, which its canvases draw text with. */
 function workerFonts() {
-  if (!("fonts" in self)) throw new Error("This browser has no fonts in workers");
+  if (!("fonts" in self)) throw new PreviewError({ code: "presentation-no-worker-fonts" });
 
   // SAFETY: a worker's global scope is a FontFaceSource, whose `fonts` is a FontFaceSet (CSS Font Loading, exposed to
   // workers). The window's types declare it on documents only, and workers expose no FontFaceSet to check against.

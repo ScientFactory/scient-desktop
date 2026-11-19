@@ -51,6 +51,7 @@ import {
 } from "../../attachmentStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
@@ -762,7 +763,8 @@ const runConjunction = (refusal = false) =>
           (item) => item.type === "error" && item.runId === held.id,
         );
         assert.ok(failure?.type === "error");
-        assert.include(failure.failure.message, "complete current request");
+        // The quote this message carries already takes it past the limit, which T3 checks first.
+        assert.include(failure.failure.message, "after expanding quotes");
         assert.deepEqual(
           refused.messages.find((item) => item.id === messageId),
           acceptedMessage,
@@ -896,6 +898,7 @@ const runConjunction = (refusal = false) =>
           ),
           idAllocatorLayer,
           McpProviderSessions.layer,
+          McpAppModelContext.layerEmpty,
         ),
       ),
     ),

@@ -6,7 +6,7 @@ import {
 import { useState } from "react";
 
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import { useSearchableSetting } from "../../components/settings/settingsSearch";
 import {
   useScopedSettings,
   useUpdateScopedSettings,
@@ -23,6 +23,7 @@ const SETTING_KEYS = ["threadSectionsDeleteEmptyAfterDays"] as const;
  * follows the environment the settings page has selected.
  */
 export function EmptySectionCleanupSettings() {
+  const setting = useSearchableSetting();
   const afterDays = useScopedSettings((settings) => settings.threadSectionsDeleteEmptyAfterDays);
   const updateScopedSettings = useUpdateScopedSettings();
   const update = (days: number | null) => {
@@ -33,12 +34,12 @@ export function EmptySectionCleanupSettings() {
       <SettingsRow
         serverScoped
         settingKeys={SETTING_KEYS}
-        {...searchableSetting("delete-empty-sections")}
+        {...setting("delete-empty-sections")}
         description="Remove sidebar sections that have held no threads for this long. General is never removed."
         resetAction={
           afterDays !== DEFAULT_UNIFIED_SETTINGS.threadSectionsDeleteEmptyAfterDays ? (
             <SettingResetButton
-              label="empty-section cleanup"
+              ariaLabel="Reset empty-section cleanup to default"
               onClick={() => update(DEFAULT_UNIFIED_SETTINGS.threadSectionsDeleteEmptyAfterDays)}
             />
           ) : null
@@ -55,7 +56,7 @@ export function EmptySectionCleanupSettings() {
         <SettingsRow
           serverScoped
           settingKeys={SETTING_KEYS}
-          title={searchableSetting("days-before-deleting-empty-sections").title}
+          title={setting("days-before-deleting-empty-sections").title}
           description="Adding a thread to a section restarts its count."
           control={<DaysInput value={afterDays} onCommit={update} />}
         />

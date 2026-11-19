@@ -477,27 +477,43 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   providerSessionId,
 });
-let onManagerEventHandled: (event: PreviewEvent) => Effect.Effect<void> = () => Effect.void;
+const noManagerEventHook = (_event: PreviewEvent): Effect.Effect<void> => Effect.void;
+let onManagerEventHandled: (event: PreviewEvent) => Effect.Effect<void> = noManagerEventHook;
 const observedManager = Layer.effect(
   Manager.PreviewManager,
   Effect.gen(function* () {
     const manager = yield* Manager.PreviewManager;
+    // The browser subscribes while it starts. An event counts as handled once the browser's
+    // subscription is drained and waiting again, so its runForEach handler has returned.
+    const handlerWatch = yield* manager.subscribeEvents;
+    let browserSubscription: PubSub.Subscription<PreviewEvent> | undefined;
+    const browserIdle = Effect.promise(() =>
+      expect
+        .poll(
+          () =>
+            browserSubscription !== undefined &&
+            Option.getOrElse(PubSub.remainingUnsafe(browserSubscription), () => 0) === 0 &&
+            browserSubscription.pollers.length > 0,
+          { interval: 5 },
+        )
+        .toBe(true),
+    );
+    yield* Stream.fromSubscription(handlerWatch).pipe(
+      Stream.runForEach((event) => {
+        const handled = onManagerEventHandled;
+        return handled === noManagerEventHook
+          ? Effect.void
+          : browserIdle.pipe(Effect.andThen(Effect.suspend(() => handled(event))));
+      }),
+      Effect.forkScoped,
+    );
     return {
       ...manager,
-      // The next pull follows runForEach's awaited handler, not just publication.
-      events: Stream.unwrap(
-        Effect.map(manager.subscribeEvents, (subscription) => {
-          managerEventsSubscribed.resolve();
-          return Stream.fromSubscription(subscription);
-        }),
-      ).pipe(
-        Stream.flatMap((event) =>
-          Stream.concat(
-            Stream.succeed(event),
-            Stream.fromEffectDrain(Effect.suspend(() => onManagerEventHandled(event))),
-          ),
-        ),
-      ),
+      subscribeEvents: Effect.map(manager.subscribeEvents, (subscription) => {
+        browserSubscription = subscription;
+        managerEventsSubscribed.resolve();
+        return subscription;
+      }),
     };
   }),
 ).pipe(Layer.provide(Manager.layer));
@@ -687,7 +703,7 @@ beforeEach(() => {
   contextGate = null;
   contextEntered = null;
   heldStill = null;
-  onManagerEventHandled = () => Effect.void;
+  onManagerEventHandled = noManagerEventHook;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -2712,6 +2728,40 @@ it.live("closing a tab while a viewer is still opening it does not leave its pag
       expect((yield* Fiber.join(attaching))._tag).toBe("ServerBrowserTabNotFoundError");
       expect(contexts).toHaveLength(1);
       expect(contexts[0]!.page.close).toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const frameless = {
+        url: () => "https://example.com/early",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => {
+          throw new Error("Frame for this navigation request is not available");
+        },
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      expect(() => page.emit("request", frameless)).not.toThrow();
+      const statusAfterRequest = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(statusAfterRequest.loading).toBe(false);
+      expect(() => page.emit("requestfailed", frameless)).not.toThrow();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

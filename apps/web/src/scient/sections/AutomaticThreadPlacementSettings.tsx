@@ -1,17 +1,21 @@
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import { useSearchableSetting } from "../../components/settings/settingsSearch";
 import { Switch } from "../../components/ui/switch";
 import { useAutomaticPlacementPreference } from "./automaticPlacementPreference";
 
 export function AutomaticThreadPlacementSettings() {
+  const setting = useSearchableSetting();
   const { enabled, setEnabled } = useAutomaticPlacementPreference();
   return (
     <SettingsRow
-      {...searchableSetting("automatic-thread-placement")}
+      {...setting("automatic-thread-placement")}
       description="Move working, monitoring, unread, and attention-needed threads near the top of the sidebar and each section. Your manual moves are respected. The Working section (beta) keeps its own order."
       resetAction={
         !enabled ? (
-          <SettingResetButton label="automatic thread placement" onClick={() => setEnabled(true)} />
+          <SettingResetButton
+            ariaLabel="Reset automatic thread placement to default"
+            onClick={() => setEnabled(true)}
+          />
         ) : null
       }
       control={

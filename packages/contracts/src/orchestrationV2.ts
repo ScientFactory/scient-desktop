@@ -591,6 +591,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
     ),
   ),
   lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
+  /** Set by a rename until a generated title replaces it; absent reads as false. */
+  titleRenamed: Schema.optional(Schema.Boolean),
   /** Latest accepted rollback; terminal receipts apply only to this request. */
   rollbackRequestId: Schema.optional(CommandId),
   /** Durable success receipt, including a file restore that removes no runs. */
@@ -4421,6 +4423,8 @@ export const OrchestrationV2ThreadHistoryPage = withRecordIdTable(
     ),
     nextCursor: Schema.NullOr(TrimmedNonEmptyString),
     hasMoreHistory: Schema.Boolean,
+    /** Records of the page's subagent items, which a bounded snapshot can omit. */
+    subagents: Schema.optionalKey(Schema.Array(OrchestrationV2Subagent)),
     idTable: IdTableMarker,
   }),
   () => null,

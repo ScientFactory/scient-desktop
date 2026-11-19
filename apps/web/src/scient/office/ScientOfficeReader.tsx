@@ -338,7 +338,7 @@ export function ScientOfficeReader(props: {
           <OfficePages
             pages={office.pages}
             paint={office.paint}
-            label={pageLabel}
+            kind={office.kind === "presentation" ? "slide" : "page"}
             scrollRef={scrollRef}
             zoom={chosen}
             onWidth={setWidth}

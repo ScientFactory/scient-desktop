@@ -5,11 +5,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
+import { msg } from "gt-i18n";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { applyLanguage, m, onLocaleChange } from "../i18n/messages.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
@@ -72,9 +76,6 @@ const openNewWindow = Effect.gen(function* () {
 }).pipe(Effect.withSpan("desktop.menu.openNewWindow"));
 // SCIENT-FORK:END
 
-const describeUpdate = (version: string | null) =>
-  version === null ? "A new version of Scient" : `Scient ${version}`;
-
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -84,17 +85,27 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   if (updateState.status === "up-to-date") {
     yield* electronDialog.showMessageBox({
       type: "info",
-      title: "You're up to date!",
-      message: `Scient ${updateState.currentVersion} is currently the newest version available.`,
-      buttons: ["OK"],
+      title: m(msg("You're up to date!")),
+      message: m(msg("Scient {version} is currently the newest version available."), {
+        version: updateState.currentVersion,
+      }),
+      buttons: [m(msg("OK"))],
     });
   } else if (updateState.status === "available") {
     const { response } = yield* electronDialog.showMessageBox({
       type: "info",
-      title: "Update available",
-      message: `${describeUpdate(updateState.availableVersion)} is available.`,
-      detail: `You're running Scient ${updateState.currentVersion}.`,
-      buttons: ["Download", "Later"],
+      title: m(msg("Update available")),
+      message:
+        updateState.availableVersion === null
+          ? m(msg("A new version of Scient is available."))
+          : m(msg("Scient {version} is available."), { version: updateState.availableVersion }),
+      detail: m(msg("You're running Scient {version}."), {
+        version: updateState.currentVersion,
+      }),
+      buttons: [
+        m(msg("Download", { $context: "button, downloads an app update" })),
+        m(msg("Later")),
+      ],
       defaultId: 0,
       cancelId: 1,
     });
@@ -102,17 +113,26 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   } else if (updateState.status === "downloading") {
     yield* electronDialog.showMessageBox({
       type: "info",
-      title: "Update downloading",
-      message: `${describeUpdate(updateState.availableVersion)} is already downloading.`,
-      buttons: ["OK"],
+      title: m(msg("Update downloading")),
+      message:
+        updateState.availableVersion === null
+          ? m(msg("A new version of Scient is already downloading."))
+          : m(msg("Scient {version} is already downloading."), {
+              version: updateState.availableVersion,
+            }),
+      buttons: [m(msg("OK"))],
     });
   } else if (updateState.status === "downloaded") {
+    const version = updateState.downloadedVersion ?? updateState.availableVersion;
     const { response } = yield* electronDialog.showMessageBox({
       type: "info",
-      title: "Update ready",
-      message: `${describeUpdate(updateState.downloadedVersion ?? updateState.availableVersion)} is ready to install.`,
-      detail: "Scient will restart to install it. Any running tasks will be interrupted.",
-      buttons: ["Restart", "Later"],
+      title: m(msg("Update ready")),
+      message:
+        version === null
+          ? m(msg("A new version of Scient is ready to install."))
+          : m(msg("Scient {version} is ready to install."), { version }),
+      detail: m(msg("Scient will restart to install it. Any running tasks will be interrupted.")),
+      buttons: [m(msg("Restart", { $context: "button, restarts the app" })), m(msg("Later"))],
       defaultId: 0,
       cancelId: 1,
     });
@@ -124,10 +144,10 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   } else if (updateState.status === "error") {
     yield* electronDialog.showMessageBox({
       type: "warning",
-      title: "Update check failed",
-      message: "Could not check for updates.",
-      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
-      buttons: ["OK"],
+      title: m(msg("Update check failed")),
+      message: m(msg("Could not check for updates.")),
+      detail: updateState.message ?? m(msg("An unknown error occurred. Please try again later.")),
+      buttons: [m(msg("OK"))],
     });
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
@@ -142,10 +162,10 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
     });
     yield* electronDialog.showMessageBox({
       type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
+      title: m(msg("Updates unavailable")),
+      message: m(msg("Automatic updates are not available right now.")),
       detail: disabledReason.value,
-      buttons: ["OK"],
+      buttons: [m(msg("OK"))],
     });
     return;
   }
@@ -160,8 +180,11 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
 export const make = Effect.gen(function* () {
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const electronApp = yield* ElectronApp.ElectronApp;
+  const clientSettings = yield* Effect.serviceOption(DesktopClientSettings.DesktopClientSettings);
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
+  const runFork = Effect.runForkWith(context);
 
   const runMenuEffect = <E>(
     action: string,
@@ -222,53 +245,57 @@ export const make = Effect.gen(function* () {
       template.push({
         label: environment.displayName,
         submenu: [
-          { role: "about", label: `About ${environment.displayName}` },
+          { role: "about", label: m(msg("About {appName}"), { appName: environment.displayName }) },
           {
-            label: "Check for Updates...",
+            label: m(msg("Check for Updates...")),
             click: checkForUpdatesClick,
           },
           { type: "separator" },
           {
-            label: "Settings...",
+            label: m(msg("Settings...")),
             accelerator: "CmdOrCtrl+,",
             click: settingsClick,
           },
           { type: "separator" },
           { role: "services" },
           { type: "separator" },
-          { role: "hide", label: `Hide ${environment.displayName}` },
+          { role: "hide", label: m(msg("Hide {appName}"), { appName: environment.displayName }) },
           { role: "hideOthers" },
           { role: "unhide" },
           { type: "separator" },
-          { role: "quit", label: `Quit ${environment.displayName}` },
+          { role: "quit", label: m(msg("Quit {appName}"), { appName: environment.displayName }) },
         ],
       });
     }
 
     template.push(
       {
-        label: "File",
+        label: m(msg("File", { $context: "menu bar title" })),
         submenu: [
           // SCIENT-FORK:START — several app windows share one desktop process.
-          { label: "New Window", accelerator: "CmdOrCtrl+Alt+Shift+N", click: newWindowClick },
+          {
+            label: m(msg("New Window")),
+            accelerator: "CmdOrCtrl+Alt+Shift+N",
+            click: newWindowClick,
+          },
           { type: "separator" as const },
           // SCIENT-FORK:END
           // SCIENT-FORK:START
-          { label: "Import Conversation...", click: importConversationClick },
+          { label: m(msg("Import Conversation...")), click: importConversationClick },
           { type: "separator" as const },
           // SCIENT-FORK:END
           ...(environment.platform === "darwin"
             ? []
             : [
                 {
-                  label: "Settings...",
+                  label: m(msg("Settings...")),
                   accelerator: "CmdOrCtrl+,",
                   click: settingsClick,
                 },
                 { type: "separator" as const },
               ]),
           {
-            label: "Close Developer Tools",
+            label: m(msg("Close Developer Tools")),
             accelerator: "CmdOrCtrl+W",
             visible: false,
             click: () => {
@@ -280,12 +307,12 @@ export const make = Effect.gen(function* () {
           },
           // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
           environment.platform === "darwin"
-            ? { label: "Close Window", click: (_item, window) => window?.close() }
+            ? { label: m(msg("Close Window")), click: (_item, window) => window?.close() }
             : { role: "quit" },
         ],
       },
       {
-        label: "Edit",
+        label: m(msg("Edit", { $context: "menu bar title" })),
         submenu: [
           { role: "undo" },
           { role: "redo" },
@@ -294,7 +321,7 @@ export const make = Effect.gen(function* () {
           { role: "copy" },
           { role: "paste" },
           {
-            label: "Paste as Text",
+            label: m(msg("Paste as Text")),
             accelerator: "CmdOrCtrl+Shift+V",
             click: pasteAsTextClick,
           },
@@ -305,7 +332,7 @@ export const make = Effect.gen(function* () {
             ? [
                 { type: "separator" as const },
                 {
-                  label: "Speech",
+                  label: m(msg("Speech", { $context: "menu, text-to-speech" })),
                   submenu: [{ role: "startSpeaking" as const }, { role: "stopSpeaking" as const }],
                 },
               ]
@@ -313,25 +340,29 @@ export const make = Effect.gen(function* () {
         ],
       },
       {
-        label: "View",
+        label: m(msg("View", { $context: "menu bar title" })),
         submenu: [
           /* Native reload/DevTools/zoom roles target focused guests; these commands must target the app. */
-          { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
           {
-            label: "Force Reload",
+            label: m(msg("Reload")),
+            accelerator: "CmdOrCtrl+R",
+            click: mainContentsClick("reload"),
+          },
+          {
+            label: m(msg("Force Reload")),
             accelerator: "Shift+CmdOrCtrl+R",
             click: mainContentsClick("forceReload"),
           },
           {
-            label: "Toggle Developer Tools",
+            label: m(msg("Toggle Developer Tools")),
             accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
             click: mainContentsClick("toggleDevTools"),
           },
           { type: "separator" },
-          { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
-          { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
+          { label: m(msg("Actual Size")), accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
+          { label: m(msg("Zoom In")), accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
           {
-            label: "Zoom In",
+            label: m(msg("Zoom In")),
             accelerator: "CmdOrCtrl+Plus",
             visible: false,
             click: zoomClick("in"),
@@ -339,29 +370,29 @@ export const make = Effect.gen(function* () {
           ...(environment.platform === "darwin"
             ? [
                 {
-                  label: "Zoom In",
+                  label: m(msg("Zoom In")),
                   accelerator: "CmdOrCtrl+Shift+=",
                   visible: false,
                   click: zoomClick("in"),
                 },
               ]
             : []),
-          { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
+          { label: m(msg("Zoom Out")), accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
           // Keypad codes do not match number-row accelerators.
           {
-            label: "Actual Size",
+            label: m(msg("Actual Size")),
             accelerator: "CmdOrCtrl+num0",
             visible: false,
             click: zoomClick("reset"),
           },
           {
-            label: "Zoom In",
+            label: m(msg("Zoom In")),
             accelerator: "CmdOrCtrl+numadd",
             visible: false,
             click: zoomClick("in"),
           },
           {
-            label: "Zoom Out",
+            label: m(msg("Zoom Out")),
             accelerator: "CmdOrCtrl+numsub",
             visible: false,
             click: zoomClick("out"),
@@ -385,11 +416,11 @@ export const make = Effect.gen(function* () {
         role: "help",
         submenu: [
           // SCIENT-FORK:START — feedback reports to the Scient team.
-          { label: "Send Feedback...", click: sendFeedbackClick },
+          { label: m(msg("Send Feedback...")), click: sendFeedbackClick },
           { type: "separator" },
           // SCIENT-FORK:END
           {
-            label: "Check for Updates...",
+            label: m(msg("Check for Updates...")),
             click: checkForUpdatesClick,
           },
         ],
@@ -398,12 +429,33 @@ export const make = Effect.gen(function* () {
 
     yield* electronMenu.setApplicationMenu(template);
     // SCIENT-FORK:START — several app windows share one desktop process.
-    yield* electronMenu.setDockMenu([{ label: "New Window", click: newWindowClick }]);
+    yield* electronMenu.setDockMenu([{ label: m(msg("New Window")), click: newWindowClick }]);
     // SCIENT-FORK:END
   }).pipe(Effect.withSpan("desktop.menu.configure"));
 
+  // Load the saved language before the first build so the menu never starts in English.
+  const applySavedLanguage = Effect.gen(function* () {
+    if (Option.isNone(clientSettings)) return;
+    const saved = yield* clientSettings.value.get.pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(saved)) {
+      yield* applyLanguage(saved.value.language).pipe(
+        Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      );
+    }
+  });
+
+  let rebuildsOnLocaleChange = false;
   return DesktopApplicationMenu.of({
-    configure,
+    configure: applySavedLanguage.pipe(
+      Effect.andThen(configure),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          if (rebuildsOnLocaleChange) return;
+          rebuildsOnLocaleChange = true;
+          onLocaleChange(() => runFork(configure));
+        }),
+      ),
+    ),
   });
 });
 

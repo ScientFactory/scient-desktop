@@ -3974,6 +3974,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return Option.some(yield* commit);
         }, generationAdmissionFence.withPermits(1)),
         events: Stream.fromQueue(events),
+        backgroundTasksEndWithProcess: true,
         hasPendingBackgroundWork: Effect.sync(() => bufferedWork !== null),
         hasPendingBackgroundWorkForThread: (thread) =>
           Effect.sync(() => bufferedWork?.providerThread.id === thread.id),

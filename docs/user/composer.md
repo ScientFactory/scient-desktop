@@ -302,8 +302,12 @@ highlight pulses, holds for a moment, then fades on its own; press `Escape` to s
 or clear it early. If the source is unavailable or its text has changed, the saved quote stays
 readable and Scient shows a warning.
 
-Mobile shows the full saved quote and its comment in sent messages. It does not offer
-**Ask in chat** or navigation to a quote's source.
+On mobile, long-press an assistant response, adjust the text selection, and choose
+**Cite** to insert a quote at the composer cursor. If the passage appears more than
+once in that section, choose its source occurrence. Select more surrounding text
+if a short passage appears too often. Tap a quote in a draft to add
+or edit its comment, or to remove it. To open the source message, tap a quote in
+a draft or sent message, then choose **Go to message**.
 
 ## Recall a sent prompt
 

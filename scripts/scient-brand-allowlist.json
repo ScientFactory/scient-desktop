@@ -87,13 +87,6 @@
     "reason": "Service launcher error for adopted legacy service state, reachable only from an installed background service, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
-    "path": "apps/web/src/components/chat/MessagesTimeline.logic.ts",
-    "line": "const THREAD_READ_OBJECTS = [\" a Scient thread\", \" a T3 thread\"] as const;",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "compat",
-    "reason": "Recognizes thread-read tool titles written by older servers; the Scient variant is listed first."
-  },
-  {
     "path": "apps/web/src/scient/releaseNotes/catalog.ts",
     "line": "\"Scient connects to Factory Droid in early access, ships built-in SyncTeX navigation with every install, queues messages while your agent works, and continues to absorb workspace improvements from the maintained T3 foundation.\",",
     "rules": ["bare-t3"],
@@ -152,13 +145,6 @@
   {
     "path": "packages/provider-core/src/server/runtimeInstructions.ts",
     "line": "const productName = toSingleLine(runtime.productName ?? \"T3 Code\");",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
-    "path": "packages/shared/src/promptLinks.ts",
-    "line": "appName = \"T3 Code\",",
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "overridden-default",
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
@@ -306,78 +292,8 @@
     "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
   },
   {
-    "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
-    "line": "{t3Chat.pending === \"link\" ? \"Opening…\" : \"Link T3 Chat\"}",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
-    "line": "Upgrade on T3 Chat",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
     "path": "apps/web/src/components/clerk/useT3ChatLink.ts",
     "rules": ["bare-t3", "inherited-brand", "t3-command", "t3-connect"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "return `Link T3 Chat Pro for up to ${pro} tunnels, or Premier for up to ${premier}.`;",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "return `Upgrade to T3 Chat Pro for up to ${pro} tunnels, or Premier for up to ${premier}.`;",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "return `Upgrade to T3 Chat Premier for up to ${premier} tunnels.`;",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "Link T3 Chat",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "Upgrade on T3 Chat",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "? \"Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)\"",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
-    "line": "? \"Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)\"",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "packages/client-runtime/src/relay/errorPresentation.ts",
-    "line": "? `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your T3 Connect account settings on web or desktop. Pro raises the default limit to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} and Premier to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier}.`",
-    "rules": ["bare-t3", "t3-connect"],
     "kind": "relay-gated",
     "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
   },
@@ -466,20 +382,6 @@
     "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
   },
   {
-    "path": "packages/client-runtime/src/relay/managedRelayState.ts",
-    "line": "const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, \"linking T3 Chat\");",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
-    "path": "packages/client-runtime/src/relay/managedRelayState.ts",
-    "line": "\"unlinking T3 Chat\",",
-    "rules": ["bare-t3"],
-    "kind": "relay-gated",
-    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
-  },
-  {
     "path": "packages/contracts/src/relay.ts",
     "line": "}).annotate(OpenApi.Summary, \"Get the linked T3 Chat account\"),",
     "rules": ["bare-t3"],
@@ -506,5 +408,173 @@
     "rules": ["bare-t3"],
     "kind": "file-format",
     "reason": "RIS tag T3 (a work's series title) in the reference-file format, not the product name."
+  },
+  {
+    "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
+    "line": "{t3Chat.pending === \"link\" ? gt(\"Opening…\") : gt(\"Link T3 Chat\")}",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
+    "line": "<T>Upgrade on T3 Chat</T>",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "msg(\"Link T3 Chat Pro for up to {pro} tunnels, or Premier for up to {premier}.\", {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "msg(\"Upgrade to T3 Chat Pro for up to {pro} tunnels, or Premier for up to {premier}.\", {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "return resolve(msg(\"Upgrade to T3 Chat Premier for up to {premier} tunnels.\", { premier }));",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "<T>Link T3 Chat</T>",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "<T>Upgrade on T3 Chat</T>",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "? gt(\"Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)\")",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "? gt(\"Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)\")",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/errorPresentation.ts",
+    "line": "\"Relay refused the link: this account already has its maximum of {maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your T3 Connect account settings on web or desktop. Pro raises the default limit to {pro} and Premier to {premier}.\",",
+    "rules": ["bare-t3", "t3-connect"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat link lookup\": msg(\"Relay T3 Chat link lookup timed out.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat link request\": msg(\"Relay T3 Chat link request timed out.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat unlinking\": msg(\"Relay T3 Chat unlinking timed out.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"read linked T3 Chat account\": {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failed: msg(\"Could not read linked T3 Chat account.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failedWithDetail: msg(\"Could not read linked T3 Chat account:\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"start T3 Chat linking\": {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failed: msg(\"Could not start T3 Chat linking.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failedWithDetail: msg(\"Could not start T3 Chat linking:\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"unlink T3 Chat account\": {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failed: msg(\"Could not unlink T3 Chat account.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failedWithDetail: msg(\"Could not unlink T3 Chat account:\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelayState.ts",
+    "line": "\"link-t3chat\": msg(\"Sign in to Scient Connect before linking T3 Chat.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelayState.ts",
+    "line": "\"unlink-t3chat\": msg(\"Sign in to Scient Connect before unlinking T3 Chat.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
   }
 ]

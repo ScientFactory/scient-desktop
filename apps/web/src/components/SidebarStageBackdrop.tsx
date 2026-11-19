@@ -29,8 +29,11 @@ export function resolveEnvironmentIdentificationPillLabel(
   stageLabel: string,
 ): EnvironmentIdentificationPillLabel | null {
   const normalized = stageLabel.trim().toLowerCase();
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel names
   if (normalized === "dev") return "Dev";
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel names
   if (normalized === "beta") return "Beta";
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel names
   if (normalized === "nightly") return "Nightly";
   return null;
 }

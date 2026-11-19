@@ -61,7 +61,7 @@ import {
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -188,7 +188,9 @@ function openExternal(url: string): void {
 
 function DoiRow(props: { readonly value: string }) {
   const url = doiUrl(props.value);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "DOI link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("DOI link"),
+  });
   const showActions = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -256,7 +258,9 @@ function DoiRow(props: { readonly value: string }) {
 }
 
 function SourceUrlRow(props: { readonly url: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "source link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("source link"),
+  });
   const showActions = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();

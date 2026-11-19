@@ -89,6 +89,7 @@ const helperFields = {
   tags: "inherited",
   lastVisitedAt: "reset",
   opens: "reset",
+  titleRenamed: "reset",
   titleRegeneration: "reset",
   lastTitleRegeneration: "inherited",
   rollbackRequestId: "reset",

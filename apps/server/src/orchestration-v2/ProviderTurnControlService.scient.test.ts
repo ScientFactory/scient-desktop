@@ -31,6 +31,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type { McpScientSkillScope } from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -166,6 +167,7 @@ const makeSteerFixture = Effect.fnUntraced(function* (input: { readonly delegate
 
   const dependencies = Layer.mergeAll(
     Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
+    McpAppModelContext.layerEmpty,
     Layer.mock(EventSink.EventSinkV2)({}),
     ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
       Layer.provideMerge(NodeServices.layer),

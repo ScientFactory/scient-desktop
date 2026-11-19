@@ -2,7 +2,7 @@ import type { ProviderRuntimeDiagnostics, ServerProvider } from "@t3tools/contra
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 function runtimeSourceTitle(source: ServerProvider["connection"]): string {
@@ -36,7 +36,9 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
 }) {
   const diagnostics = resolveProviderRuntimeDiagnostics(props.provider);
   const installation = props.provider.connection?.runtime?.installation;
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "server executable path" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("server executable path"),
+  });
   if (!diagnostics) return null;
 
   return (

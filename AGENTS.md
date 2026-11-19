@@ -64,6 +64,8 @@ Raw RPC clients stay in `rpc/`.
 
 The server owns execution/workspace access, including for remote clients. Client
 paths and credentials are not server paths and credentials.
+Before a security audit or triaging a vulnerability report, read [SECURITY.md](SECURITY.md)
+for the trust model and what is intended.
 Orchestration V2 owns live execution. `Orchestrator` serializes commands per thread
 and owns queue admission, order, holds and advancement. `EventSink` commits facts,
 projections, receipts and outbox effects transactionally; workers execute after
