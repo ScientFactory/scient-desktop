@@ -64,7 +64,7 @@ export const SCIENT_RELEASE_NOTES = [
       },
     ],
     alsoIncluded:
-      "The Fork this chat card returns with an editable title and worktree switch, also from /fork-worktree. Paired devices stay signed in while you keep using them. Choose an fx backend per thread, use Full access on fx 0.0.14+, and update supported fx installs in Settings. Save Pull request views, unassign shortcuts, set a terminal shell, usage retention or sparse worktrees, plus faster Find in thread.",
+      "The Fork this chat card returns with an editable title and worktree switch, also from /fork-worktree. New direct pairings can renew with use. Choose an fx backend per thread, use Full access on fx 0.0.14+, and update supported fx installs in Settings. Save Pull request views, unassign default shortcuts, set a terminal shell, usage retention or sparse worktrees, plus faster Find in thread.",
   },
   {
     version: "0.6.30",
