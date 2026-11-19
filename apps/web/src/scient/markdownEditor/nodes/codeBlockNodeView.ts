@@ -5,6 +5,7 @@ import type { EditorView, NodeView } from "prosemirror-view";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { msg } from "gt-react";
+import { I18nProvider } from "~/i18n/I18nProvider";
 import { m } from "~/i18n/messages";
 
 import type {
@@ -407,22 +408,26 @@ class ScientCodeBlockNodeView implements NodeView {
       }
       this.reactRoot ??= createRoot(this.rendered);
       this.reactRoot.render(
-        createElement(ScientEditableRichFence, {
-          authoringActions: this.view.editable ? this.authoringActions : undefined,
-          sourceEditor:
-            richKind === "mermaid"
-              ? {
-                  open: this.richSourceOpen,
-                  mount: this.mountSourceEditor,
-                }
-              : undefined,
-          kind: richKind,
-          language,
-          source: code,
-          theme,
-          title: null,
-          ...(metadata ? { fenceMeta: metadata } : {}),
-        }),
+        createElement(
+          I18nProvider,
+          null,
+          createElement(ScientEditableRichFence, {
+            authoringActions: this.view.editable ? this.authoringActions : undefined,
+            sourceEditor:
+              richKind === "mermaid"
+                ? {
+                    open: this.richSourceOpen,
+                    mount: this.mountSourceEditor,
+                  }
+                : undefined,
+            kind: richKind,
+            language,
+            source: code,
+            theme,
+            title: null,
+            ...(metadata ? { fenceMeta: metadata } : {}),
+          }),
+        ),
       );
       return;
     }

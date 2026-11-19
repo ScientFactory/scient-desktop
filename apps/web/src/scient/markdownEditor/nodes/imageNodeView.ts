@@ -2,10 +2,11 @@ import { closeHistory } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
-import { createElement, Fragment } from "react";
+import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { msg } from "gt-react";
 
+import { I18nProvider } from "~/i18n/I18nProvider";
 import { m } from "~/i18n/messages";
 import { subscribeI18n } from "~/i18n/runtime";
 
@@ -724,7 +725,7 @@ class ScientImageNodeView implements NodeView {
     }
     this.root.render(
       createElement(
-        Fragment,
+        I18nProvider,
         null,
         createElement(ScientImageControls, {
           imageURL: this.resolvedSource,

@@ -4,6 +4,7 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import { closeHistory, undo, redo } from "prosemirror-history";
+import { I18nProvider } from "~/i18n/I18nProvider";
 import { m } from "~/i18n/messages";
 import { MathInputController } from "~/scient/math/input/controller";
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
@@ -293,7 +294,11 @@ class ScientMathNodeView implements NodeView {
   private showSourceEditor(): void {
     if (!this.toolsRoot) {
       this.toolsRoot = createRoot(this.toolsHost);
-      this.toolsRoot.render(<MathInputTools controller={this.mathInput} />);
+      this.toolsRoot.render(
+        <I18nProvider>
+          <MathInputTools controller={this.mathInput} />
+        </I18nProvider>,
+      );
     }
     this.sourceEditor.hidden = false;
     this.toolsHost.hidden = false;
@@ -314,7 +319,13 @@ class ScientMathNodeView implements NodeView {
       retained ? "retained" : "current",
     );
     this.reactRoot.render(
-      this.isDisplay(this.node) ? <ScientDisplayMath tex={tex} /> : <ScientInlineMath tex={tex} />,
+      <I18nProvider>
+        {this.isDisplay(this.node) ? (
+          <ScientDisplayMath tex={tex} />
+        ) : (
+          <ScientInlineMath tex={tex} />
+        )}
+      </I18nProvider>,
     );
   }
 

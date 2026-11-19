@@ -4,6 +4,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { setI18nLanguage, startI18n } from "~/i18n/runtime";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 
 const preference = vi.hoisted(() => ({ wrapped: true, listeners: new Set<() => void>() }));
@@ -29,6 +30,31 @@ describe("editor code actions", () => {
     preference.wrapped = true;
     vi.unstubAllGlobals();
   }
+
+  it("switches the language of code actions without remounting the editor", async () => {
+    await using fixture = _createFixture();
+    fixture.cleanup.defer(() => act(() => setI18nLanguage("en")));
+    fixture.cleanup.defer(() => _cleanupFixture0(fixture));
+    using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
+    startI18n();
+    await setI18nLanguage("en");
+
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(fixture, host));
+    fixture.controller = new ScientMarkdownEditorView({
+      source: "```text\nexample\n```\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Code actions",
+      onUserSourceChange: vi.fn(),
+    });
+    await act(() => fixture.controller!.mount(host));
+    const copyButton = host.querySelector("[aria-label='Copy code']");
+    expect(copyButton).not.toBeNull();
+
+    await act(() => setI18nLanguage());
+    expect(host.querySelector("[aria-label='Code kopieren']")).toBe(copyButton);
+  });
 
   it.each([
     // The editor text ends in a newline; the fence's closing newline is not copied.
