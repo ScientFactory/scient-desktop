@@ -325,6 +325,7 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                     ...(failure?.toolServerOwner === undefined
                       ? {}
                       : { toolServerOwner: failure.toolServerOwner }),
+                    ...(failure?.customEndpoint === undefined ? {} : { customEndpoint: true }),
                     retryAttempts,
                   },
                 },

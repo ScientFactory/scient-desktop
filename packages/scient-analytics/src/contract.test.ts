@@ -274,6 +274,16 @@ describe("Scient analytics contract", () => {
     });
     expect(run("private-run-id", "custom build")).not.toHaveProperty("runRef");
     expect(run("private-run-id", "custom build")).not.toHaveProperty("providerVersion");
+
+    // A turn that went to a user's own endpoint says so; only a boolean passes.
+    const endpoint = (customEndpoint: unknown) =>
+      normalizeInheritedEvent(
+        "provider.turn.failed",
+        { provider: "claudeAgent", customEndpoint },
+        context,
+      )?.properties;
+    expect(endpoint(true)).toMatchObject({ customEndpoint: true });
+    expect(endpoint("proxy.example")).not.toHaveProperty("customEndpoint");
   });
 
   it("keeps an extension's public identity: hosts, registry and plugin names", () => {

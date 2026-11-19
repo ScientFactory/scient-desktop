@@ -9,6 +9,28 @@ export interface ProviderAccountEvent {
     readonly email?: string;
     readonly plan?: string;
     readonly accountType?: string;
+    readonly endpointHost?: string;
+    readonly endpointPort?: number;
+    readonly endpointScheme?: string;
+    readonly endpointSource?: string;
+  };
+}
+
+type EndpointProperties = Pick<
+  ProviderAccountEvent["properties"],
+  "endpointHost" | "endpointPort" | "endpointScheme" | "endpointSource"
+>;
+
+/** A custom endpoint split into host, port and scheme: the analytics guard drops links. */
+function endpointProperties(auth: ServerProvider["auth"]): EndpointProperties {
+  if (auth.type !== "customEndpoint" || auth.endpoint === undefined) return {};
+  const url = URL.parse(auth.endpoint);
+  if (url === null || url.hostname === "") return {};
+  return {
+    endpointHost: url.hostname,
+    ...(url.port === "" ? {} : { endpointPort: Number(url.port) }),
+    endpointScheme: url.protocol.replace(/:$/, ""),
+    ...(auth.endpointSource === undefined ? {} : { endpointSource: auth.endpointSource }),
   };
 }
 
@@ -29,9 +51,19 @@ export function createProviderAccountAnalyticsMapper() {
         email: string | undefined,
         plan: string | undefined,
         accountType: string | undefined,
+        endpoint: EndpointProperties = {},
       ) => {
         if (!email && !plan && !accountType) return;
-        const key = [provider, email ?? "", plan ?? "", accountType ?? ""].join("\u0000");
+        const key = [
+          provider,
+          email ?? "",
+          plan ?? "",
+          accountType ?? "",
+          endpoint.endpointScheme ?? "",
+          endpoint.endpointHost ?? "",
+          endpoint.endpointPort ?? "",
+          endpoint.endpointSource ?? "",
+        ].join("\u0000");
         if (seen.has(key) || seen.size >= MAX_OBSERVED_ACCOUNTS) return;
         seen.add(key);
         events.push({
@@ -41,6 +73,7 @@ export function createProviderAccountAnalyticsMapper() {
             ...(email ? { email } : {}),
             ...(plan ? { plan } : {}),
             ...(accountType ? { accountType } : {}),
+            ...endpoint,
           },
         });
       };
@@ -57,6 +90,7 @@ export function createProviderAccountAnalyticsMapper() {
               ? auth.label?.trim()
               : undefined,
             auth.type,
+            endpointProperties(auth),
           );
         }
         // An agent that signs in to several model accounts lists each subscription.

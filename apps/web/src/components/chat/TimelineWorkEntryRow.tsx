@@ -80,6 +80,9 @@ import {
 } from "./TimelineWorkEntryRow.logic";
 // SCIENT-FORK:START — computer control permission notice.
 import { ComputerControlPermissionNotice } from "~/scient/computerControl/ComputerControlPermissions";
+// SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+import { customEndpointFailureNote } from "../../scient/providerConnection/customEndpointFailureNote";
+// SCIENT-FORK:END
 // SCIENT-FORK:END
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
@@ -344,6 +347,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? gt("Usage limit reached. Retry after {resetTime}.", { resetTime })
         : gt("Usage limit reached.")
       : workEntry.label;
+    // SCIENT-FORK: a request sent to a custom endpoint says where it went.
+    const customEndpointNote = customEndpointFailureNote(failureItem.failure, m);
     const retryRunId =
       failureItem.runId !== null &&
       retryableWorkspacePreparationRunIds.has(failureItem.runId) &&
@@ -380,6 +385,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             {failureItem.failure.message}
           </p>
         ) : null}
+        {/* SCIENT-FORK:START — a request sent to a custom endpoint says where it went. */}
+        {customEndpointNote !== null ? (
+          <p className="ms-7 whitespace-pre-wrap break-words pb-1 text-sm leading-relaxed text-muted-foreground">
+            {customEndpointNote}
+          </p>
+        ) : null}
+        {/* SCIENT-FORK:END */}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">
             <Button

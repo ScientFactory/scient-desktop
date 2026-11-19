@@ -209,6 +209,12 @@ import {
   discoverClaudeSkills,
   readClaudeSettingsEnv,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+// SCIENT-FORK:START — a failed turn names the custom endpoint it went to.
+import {
+  resolveClaudeApiEndpoint,
+  withClaudeApiEndpoint,
+} from "../../scient/providerLifecycle/ClaudeApiEndpoint.ts";
+// SCIENT-FORK:END
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -12773,14 +12779,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
                 : null;
-            // SCIENT-FORK: a failure with no API status is named by the SDK's closed assistant error.
-            const terminalFailure = withClaudeAssistantErrorCode(
-              resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt }
-                : resultFailure,
-              message,
-              context.latestAssistantError,
+            // SCIENT-FORK:START — a failure with no API status is named by the SDK's closed
+            // assistant error, and one sent to a custom endpoint names that endpoint.
+            const failedEndpoint =
+              resultFailure === null
+                ? undefined
+                : resolveClaudeApiEndpoint(
+                    yield* readClaudeSettingsEnv(
+                      adapterOptions.settings,
+                      context.input.runtimePolicy.cwd ?? undefined,
+                      adapterOptions.environment,
+                    ).pipe(
+                      Effect.provideService(FileSystem.FileSystem, fileSystem),
+                      Effect.provideService(Path.Path, path),
+                    ),
+                    adapterOptions.environment,
+                  );
+            const terminalFailure = withClaudeApiEndpoint(
+              withClaudeAssistantErrorCode(
+                resultFailure?.class === "usage_limit"
+                  ? { ...resultFailure, resetAt }
+                  : resultFailure,
+                message,
+                context.latestAssistantError,
+              ),
+              failedEndpoint,
             );
+            // SCIENT-FORK:END
             const status = interrupted
               ? "interrupted"
               : limitedCompaction !== null

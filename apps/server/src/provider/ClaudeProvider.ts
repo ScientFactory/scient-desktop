@@ -58,6 +58,9 @@ import {
   discoverClaudeSkills,
   readClaudeSettingsEnv,
 } from "./Drivers/ClaudeSkills.ts";
+// SCIENT-FORK:START — where a custom Claude endpoint was set.
+import { resolveClaudeApiEndpoint } from "../scient/providerLifecycle/ClaudeApiEndpoint.ts";
+// SCIENT-FORK:END
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -941,6 +944,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     resolvedEnvironment.ANTHROPIC_BASE_URL;
   const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
   const endpoint = customApiEndpoint ? URL.parse(baseUrl?.trim() ?? "")?.origin : undefined;
+  // SCIENT-FORK:START — name where the custom endpoint was set, so Providers can point to it.
+  const endpointSource = customApiEndpoint
+    ? resolveClaudeApiEndpoint(
+        yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment),
+        resolvedEnvironment,
+      )?.source
+    : undefined;
+  // SCIENT-FORK:END
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     const path = yield* Path.Path;
     const configDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
@@ -1013,6 +1024,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
         ...(authMetadata ? authMetadata : {}),
+        // SCIENT-FORK:START — where the custom endpoint was set.
+        ...(authMetadata?.type === "customEndpoint" && endpointSource ? { endpointSource } : {}),
+        // SCIENT-FORK:END
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
       usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,

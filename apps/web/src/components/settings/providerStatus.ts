@@ -30,12 +30,35 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
 /** The server names a custom endpoint in English; other auth labels are product or plan names. */
 export function providerAuthLabel(
-  auth: Pick<ServerProvider["auth"], "label" | "type">,
+  auth: Pick<ServerProvider["auth"], "label" | "type" | "endpoint">,
   resolve: MessageResolver = m,
 ): string | undefined {
-  if (auth.type === "customEndpoint") return resolve(msg("Custom API endpoint"));
+  // SCIENT-FORK:START — name the endpoint so a redirected provider is visible at a glance.
+  if (auth.type === "customEndpoint")
+    return auth.endpoint
+      ? resolve(msg("Custom API endpoint · {endpoint}", { endpoint: auth.endpoint }))
+      : resolve(msg("Custom API endpoint"));
+  // SCIENT-FORK:END
   return auth.label ?? auth.type;
 }
+
+// SCIENT-FORK:START — where a custom endpoint was set, so the user knows what to change.
+function providerEndpointSourceText(
+  auth: Pick<ServerProvider["auth"], "type" | "endpointSource">,
+  resolve: MessageResolver = m,
+): string | null {
+  if (auth.type !== "customEndpoint") return null;
+  if (auth.endpointSource === "claude-settings")
+    return resolve(msg("Set by ANTHROPIC_BASE_URL in Claude's settings.json."));
+  if (auth.endpointSource === "environment")
+    return resolve(
+      msg(
+        "Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
+      ),
+    );
+  return null;
+}
+// SCIENT-FORK:END
 
 // Antigravity's local health check verifies installation, not Google sign-in.
 // API-key and Agent Platform warnings still need attention.
@@ -120,7 +143,8 @@ export function getProviderSummary(
       headline: authLabel
         ? resolve(msg("Authenticated · {method}", { method: authLabel }))
         : resolve(msg("Authenticated")),
-      detail: provider.message ?? null,
+      // SCIENT-FORK: a custom endpoint says where it was set.
+      detail: provider.message ?? providerEndpointSourceText(provider.auth, resolve),
     };
   }
   return {
