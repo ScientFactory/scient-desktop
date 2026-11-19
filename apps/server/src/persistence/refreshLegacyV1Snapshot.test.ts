@@ -302,3 +302,63 @@ it.effect(
     );
   },
 );
+
+it.effect("treats an empty original V1 database like a missing one", () => {
+  const f = fixture();
+  f.source.exec(`ALTER TABLE projection_threads ADD COLUMN updated_at TEXT;
+    CREATE TABLE orchestration_events(sequence INTEGER PRIMARY KEY, event_id TEXT);
+    INSERT INTO orchestration_events VALUES (5, 'v1-baseline');
+    INSERT INTO projection_projects VALUES ('project', 'Project');
+    INSERT INTO projection_threads VALUES ('old', 'project', 'Original', NULL, '2026-01-01');`);
+  f.destination.exec(`ALTER TABLE projection_threads ADD COLUMN updated_at TEXT;
+    CREATE TABLE orchestration_events(sequence INTEGER PRIMARY KEY, event_id TEXT, aggregate_kind TEXT, application_event_version INTEGER);
+    INSERT INTO orchestration_events VALUES (5, 'v1-baseline', 'thread', 1);
+    INSERT INTO projection_projects VALUES ('project', 'Project');
+    INSERT INTO projection_threads VALUES ('old', 'project', 'Original', NULL, '2026-01-01');
+    INSERT INTO orchestration_v2_projection_threads(thread_id, title, deleted_at) VALUES ('old', 'Original', NULL);`);
+  const lastError = () =>
+    f.destination.prepare("SELECT last_error FROM scient_legacy_reconciliation_state").get()
+      ?.last_error;
+  return Effect.gen(function* () {
+    yield* f.initialize;
+    assert.equal(yield* refreshLegacyV1Snapshot(f.destinationPath), 0);
+
+    // A tool that opens the deleted path leaves an empty 0-byte database behind.
+    f.source.close();
+    NodeFS.rmSync(f.sourcePath);
+    NodeFS.writeFileSync(f.sourcePath, "");
+    assert.equal(yield* refreshLegacyV1Snapshot(f.destinationPath), 0);
+    assert.equal(lastError(), null);
+    assert.equal(NodeFS.statSync(f.sourcePath).size, 0);
+    assert.equal(
+      f.destination.prepare("SELECT title FROM projection_threads WHERE thread_id = 'old'").get()
+        ?.title,
+      "Original",
+    );
+
+    // A failure recorded while the original still had conversations is kept.
+    f.destination.exec(
+      "UPDATE scient_legacy_reconciliation_state SET last_error = 'earlier failure' WHERE id = 1",
+    );
+    assert.equal(yield* refreshLegacyV1Snapshot(f.destinationPath), 0);
+    assert.equal(lastError(), "earlier failure");
+
+    // A source that lost its conversation tables but kept others still fails.
+    const damaged = new NodeSqlite.DatabaseSync(f.sourcePath);
+    damaged.exec("CREATE TABLE orchestration_events(sequence INTEGER PRIMARY KEY, event_id TEXT)");
+    damaged.close();
+    assert.equal(
+      (yield* Effect.result(refreshLegacyV1Snapshot(f.destinationPath)))._tag,
+      "Failure",
+    );
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (f.source.isOpen) f.source.close();
+        f.destination.close();
+        NodeFS.rmSync(f.directory, { recursive: true, force: true });
+      }),
+    ),
+  );
+});
