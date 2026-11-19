@@ -2691,9 +2691,14 @@ describe("SSH launch during desktop update", () => {
         const script = yield* archive
           ? captureLauncherFor({ archiveVersion: "1.2.3" })
           : captureLauncher;
-        const result = runLauncher(script, { archive, serviceServing: true, readyAt: 5_000 });
+        // SCIENT-FORK: the archive launcher starts the real SSH helper on every poll, and
+        // Scient's contracts make each start load about 640 modules. Five polls took 18-22 s
+        // of the harness's 30 s on CI and sometimes all of it, so the archive case waits one
+        // poll; the cheap host-Node case still waits across several.
+        const readyAt = archive ? 1_000 : 5_000;
+        const result = runLauncher(script, { archive, serviceServing: true, readyAt });
         assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
-        assert.equal(result.now, 5_000);
+        assert.equal(result.now, readyAt);
         assert.isFalse(result.events.some((event) => event.startsWith("start ")));
       }),
   );
