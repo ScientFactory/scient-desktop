@@ -9,6 +9,7 @@ export function LatexObjectToolbar(props: {
   root: RefObject<HTMLElement | null>;
   selected: boolean;
   label: string;
+  name: string;
   position?: string;
   inline?: boolean;
   children: ReactNode;
@@ -27,6 +28,7 @@ export function LatexObjectToolbar(props: {
       ref={bar}
       role="toolbar"
       aria-label={props.label}
+      data-context-name={props.name}
       data-context-position={props.position}
       data-context-presentation={props.inline ? "inline" : undefined}
       className="scient-latex-context-toolbar"

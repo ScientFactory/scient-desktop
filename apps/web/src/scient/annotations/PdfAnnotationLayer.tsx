@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { PdfSourceDescriptor, PdfTarget } from "@scientfactory/document-artifacts";
 import {
   scientAnnotationQuote,
@@ -198,6 +199,7 @@ function AnnotationNotePopover(props: {
   readonly onQuote: (annotation: ScientPdfAnnotation, citationKey: string | null) => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const { annotation, citation, chosenCitation, draft, pdf, onClose } = props;
   const [note, setNote] = useState(annotation?.note ?? "");
   const [choosing, setChoosing] = useState(false);
@@ -242,8 +244,8 @@ function AnnotationNotePopover(props: {
       >
         <div className="flex flex-col gap-2">
           <Textarea
-            aria-label="Note"
-            placeholder="Add a note"
+            aria-label={gt("Note", { $context: "noun, a note on a source" })}
+            placeholder={gt("Add a note")}
             rows={2}
             size="sm"
             readOnly={props.readOnly}
@@ -262,9 +264,11 @@ function AnnotationNotePopover(props: {
                   key={`${version.revision}:${version.note}:${version.highlighted}`}
                   className="flex flex-col gap-1 border-t border-border pt-2 text-xs"
                 >
-                  <span className="text-muted-foreground">Another computer's version</span>
+                  <span className="text-muted-foreground">
+                    <T>Another computer's version</T>
+                  </span>
                   <p className="whitespace-pre-wrap break-words">
-                    {version.note || (version.highlighted ? "Highlight only" : "")}
+                    {version.note || (version.highlighted ? gt("Highlight only") : "")}
                   </p>
                   <Button
                     type="button"
@@ -276,7 +280,7 @@ function AnnotationNotePopover(props: {
                       void applyAnnotationVersion(pdf, annotation, version);
                     }}
                   >
-                    Use this version
+                    <T>Use this version</T>
                   </Button>
                 </div>
               ))
@@ -284,11 +288,11 @@ function AnnotationNotePopover(props: {
           {annotation && citation.kind === "choose" && choosing ? (
             <div
               role="group"
-              aria-label="Source to cite"
+              aria-label={gt("Source to cite")}
               className="flex flex-col gap-1 border-t border-border pt-2 text-xs"
             >
               <span className="text-muted-foreground">
-                Several Library sources have this PDF. Which one should the quote cite?
+                <T>Several Library sources have this PDF. Which one should the quote cite?</T>
               </span>
               {citation.choices.map((choice) => (
                 <Button
@@ -317,7 +321,7 @@ function AnnotationNotePopover(props: {
                   size="compact"
                   onClick={() => setChoosing(false)}
                 >
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
               </div>
             </div>
@@ -326,7 +330,9 @@ function AnnotationNotePopover(props: {
               {annotation && chosenCitation ? (
                 <div className="flex items-center justify-between gap-1 text-xs">
                   <span className="min-w-0 truncate text-muted-foreground">
-                    Quotes cite {chosenCitation.title ?? `@${chosenCitation.citationKey}`}
+                    {gt("Quotes cite {work}", {
+                      work: chosenCitation.title ?? `@${chosenCitation.citationKey}`,
+                    })}
                   </span>
                   <Button
                     type="button"
@@ -334,7 +340,7 @@ function AnnotationNotePopover(props: {
                     size="compact"
                     onClick={() => setChoosing(true)}
                   >
-                    Change
+                    <T context="verb, button">Change</T>
                   </Button>
                 </div>
               ) : null}
@@ -350,7 +356,7 @@ function AnnotationNotePopover(props: {
                       void removeAnnotation(pdf, annotation);
                     }}
                   >
-                    Remove
+                    <T context="verb, button">Remove</T>
                   </Button>
                 ) : (
                   <span />
@@ -358,11 +364,11 @@ function AnnotationNotePopover(props: {
                 <div className="flex items-center gap-1">
                   {annotation ? (
                     <Button type="button" variant="ghost" size="compact" onClick={quoteNow}>
-                      Quote in my document
+                      <T>Quote in my document</T>
                     </Button>
                   ) : null}
                   <Button type="button" variant="ghost" size="compact" onClick={() => finish(true)}>
-                    Done
+                    <T>Done</T>
                   </Button>
                 </div>
               </div>

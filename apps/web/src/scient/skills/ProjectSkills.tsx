@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -13,6 +14,7 @@ import {
 
 /** Skills that belong to one project, for each project on this environment. */
 export function ProjectSkills({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const gt = useGT();
   const projects = useProjects().filter(
     (project) => project.environmentId === environmentId && project.isScratch !== true,
   );
@@ -21,14 +23,16 @@ export function ProjectSkills({ environmentId }: { readonly environmentId: Envir
 
   if (projects.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">Add a project to give it its own skills.</p>
+      <p className="text-sm text-muted-foreground">
+        <T>Add a project to give it its own skills.</T>
+      </p>
     );
   }
   return (
     <SettingsSourceGroup
       activePanelId={expandedProject ? `project-skills-${expandedProject.id}` : null}
     >
-      <SettingsSourceStrip label="Projects">
+      <SettingsSourceStrip label={gt("Projects")}>
         {projects.map((project, index) => {
           const expanded = expandedProjectId === project.id;
           return (

@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import {
   Dialog,
@@ -32,6 +33,8 @@ export function WritingShortcutsDialog({
   initialScope?: KeyboardScope | "writing";
   environmentId?: EnvironmentId | undefined;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const primaryId = usePrimaryEnvironmentId();
   const environment = useEnvironment(environmentId ?? primaryId);
   const appBindings = mergeWithDefaultKeybindings(environment?.serverConfig?.keybindings ?? []);
@@ -41,7 +44,9 @@ export function WritingShortcutsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-4xl" data-keybinding-capture="">
         <DialogHeader>
-          <DialogTitle>Writing shortcuts</DialogTitle>
+          <DialogTitle>
+            <T>Writing shortcuts</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="flex items-center gap-3 py-3">
@@ -51,29 +56,29 @@ export function WritingShortcutsDialog({
                 if (value) setScope(value as KeyboardScope | "writing");
               }}
             >
-              <SelectTrigger aria-label="Shortcut section">
+              <SelectTrigger aria-label={gt("Shortcut section")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {(
                   [
-                    ["writing", "All writing shortcuts"],
-                    ["latex", "Write"],
-                    ["math", "Math"],
-                    ["table", "Tables"],
+                    ["writing", msg("All writing shortcuts")],
+                    ["latex", msg("Write", { $context: "shortcut section for writing documents" })],
+                    ["math", msg("Math")],
+                    ["table", msg("Tables")],
                     ["markdown", "Markdown"],
                     ["pdf", "PDF"],
                   ] as const
                 ).map(([value, label]) => (
                   <SelectItem key={value} value={value}>
-                    {label}
+                    {m(label)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Input
-              aria-label="Search shortcuts"
-              placeholder="Search actions, LaTeX commands or keys"
+              aria-label={gt("Search shortcuts")}
+              placeholder={gt("Search actions, LaTeX commands or keys")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />

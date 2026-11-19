@@ -23,6 +23,9 @@ vi.mock("~/hooks/useSettings", () => ({
   },
 }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { updateSettings: mocks.updateAtom } }));
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 vi.mock("~/state/compute", () => ({
   computeEnvironment: {
     runtimeInventory: (target: unknown) => {

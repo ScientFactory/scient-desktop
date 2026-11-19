@@ -1,3 +1,4 @@
+import { T, useGT, useLocale } from "gt-react";
 import { MoveIcon, RotateCcwIcon } from "lucide-react";
 import {
   createContext,
@@ -54,11 +55,11 @@ export function VisualCardToolbarMenuItems() {
       <MenuSeparator />
       <MenuItem onClick={position.beginMove}>
         <MoveIcon />
-        Move controls
+        <T>Move controls</T>
       </MenuItem>
       <MenuItem onClick={position.reset}>
         <RotateCcwIcon />
-        Reset controls position
+        <T>Reset controls position</T>
       </MenuItem>
     </>
   );
@@ -74,6 +75,8 @@ export function VisualCardToolbar(props: {
   readonly movement?: "menu" | "direct";
   readonly variant?: "utilities" | "exploration";
 }) {
+  const gt = useGT();
+  const locale = useLocale();
   const movementDescriptionId = useId();
   const toolbarRef = useRef<HTMLSpanElement>(null);
   const handleRef = useRef<HTMLButtonElement>(null);
@@ -160,7 +163,10 @@ export function VisualCardToolbar(props: {
                 ref={handleRef}
                 data-scient-toolbar-move
                 hidden={!directMovement && !moving}
-                aria-label={`Move ${props.label.toLowerCase()}`}
+                // English lowercases the toolbar's name inside the sentence; other languages keep it.
+                aria-label={gt("Move {toolbar}", {
+                  toolbar: locale.startsWith("en") ? props.label.toLowerCase() : props.label,
+                })}
                 aria-describedby={movementDescriptionId}
                 className={cn(
                   "absolute top-1/2 left-0 z-10 flex h-5 w-2.5 -translate-y-1/2 touch-none cursor-grab select-none items-center justify-center rounded-sm text-muted-foreground/50 outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground active:cursor-grabbing [&[hidden]]:hidden",
@@ -177,11 +183,13 @@ export function VisualCardToolbar(props: {
               <span className="size-0.5 rounded-full bg-current" />
             </span>
           </TooltipTrigger>
-          <TooltipPopup className={dragging ? "hidden" : undefined}>Drag to move</TooltipPopup>
+          <TooltipPopup className={dragging ? "hidden" : undefined}>
+            <T>Drag to move</T>
+          </TooltipPopup>
         </Tooltip>
         <span id={movementDescriptionId} className="sr-only">
-          Use arrow keys to move. Hold Shift for precise movement. Press Home to reset.
-          {!directMovement && " Press Enter or Escape to finish."}
+          <T>Use arrow keys to move. Hold Shift for precise movement. Press Home to reset.</T>
+          {!directMovement && ` ${gt("Press Enter or Escape to finish.")}`}
         </span>
         {props.children}
       </ToolbarRoot>

@@ -48,7 +48,12 @@ export async function renderDocumentPagePdf(input: {
   }
   const inputUrl = resolveAssetUrl(input.httpBaseUrl, input.request.inputRelativeUrl);
   if (inputUrl === null) {
-    return { _tag: "rejected", reason: "failed", detail: "The captured document URL is invalid." };
+    return {
+      _tag: "rejected",
+      reason: "failed",
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- outcome sent to the server
+      detail: "The captured document URL is invalid.",
+    };
   }
   const outcome = await availability.bridge.renderDocumentPagePdf!({
     inputUrl,

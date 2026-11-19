@@ -1,3 +1,5 @@
+import { useGT } from "gt-react";
+
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "~/pierre-icons";
@@ -16,6 +18,7 @@ export function CodeBlockTitle({
   language: string;
   theme: "light" | "dark";
 }) {
+  const gt = useGT();
   if (fenceTitle) {
     return (
       <>
@@ -33,7 +36,10 @@ export function CodeBlockTitle({
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
+          <span
+            className="inline-flex shrink-0 rounded-sm"
+            aria-label={gt("Language: {language}", { language })}
+          />
         }
       >
         <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />

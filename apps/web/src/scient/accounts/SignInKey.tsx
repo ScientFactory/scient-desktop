@@ -1,8 +1,10 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { EyeIcon, EyeOffIcon, KeyRoundIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface SignInKeyRow {
   readonly accountId: string;
@@ -11,8 +13,10 @@ export interface SignInKeyRow {
   readonly profile?: string | undefined;
 }
 
-const rowLabel = (row: SignInKeyRow) =>
-  row.profile ? `${row.username || "No username"} · ${row.profile}` : row.username || "No username";
+const rowLabel = (row: SignInKeyRow, resolve: MessageResolver = m) => {
+  const username = row.username || resolve(msg("No username"));
+  return row.profile ? `${username} · ${row.profile}` : username;
+};
 
 /**
  * The address bar's key, as in Chrome: the saved sign-in Scient filled, its password on request,
@@ -35,6 +39,8 @@ export function SignInKey({
   onReveal: (accountId: string) => Promise<string | undefined>;
   onEdit: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [revealed, setRevealed] = useState<{ accountId: string; password: string } | null>(null);
   // Opening, closing or hiding starts a new generation; a reveal answers only its own.
   const generation = useRef(0);
@@ -53,7 +59,11 @@ export function SignInKey({
             type="button"
             size="icon-xs"
             variant={filled ? "secondary" : "ghost"}
-            aria-label={filled ? `Filled with ${rowLabel(filled)}` : `Saved sign-ins for ${site}`}
+            aria-label={
+              filled
+                ? gt("Filled with {account}", { account: rowLabel(filled, messages) })
+                : gt("Saved sign-ins for {site}", { site })
+            }
           />
         }
       >
@@ -63,8 +73,10 @@ export function SignInKey({
         <div className="flex w-72 flex-col gap-3">
           {filled ? (
             <section className="flex flex-col gap-1">
-              <PopoverTitle size="compact">Filled with</PopoverTitle>
-              <div className="truncate text-sm">{rowLabel(filled)}</div>
+              <PopoverTitle size="compact">
+                <T>Filled with</T>
+              </PopoverTitle>
+              <div className="truncate text-sm">{rowLabel(filled, messages)}</div>
               <div className="flex items-center gap-1">
                 <span className="min-w-0 flex-1 truncate font-mono text-xs">
                   {shown ?? "••••••••"}
@@ -73,7 +85,7 @@ export function SignInKey({
                   type="button"
                   size="icon-xs"
                   variant="ghost"
-                  aria-label={shown === null ? "Show password" : "Hide password"}
+                  aria-label={shown === null ? gt("Show password") : gt("Hide password")}
                   onClick={async () => {
                     if (shown !== null) return hide();
                     const asked = generation.current;
@@ -91,20 +103,20 @@ export function SignInKey({
           {others.length > 0 ? (
             <section className="flex flex-col gap-1">
               <PopoverTitle size="compact">
-                {filled ? "Other saved sign-ins" : `Saved sign-ins for ${site}`}
+                {filled ? gt("Other saved sign-ins") : gt("Saved sign-ins for {site}", { site })}
               </PopoverTitle>
               {others.map((row) => (
                 <div key={row.accountId} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm">{rowLabel(row)}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{rowLabel(row, messages)}</span>
                   <Button
                     type="button"
                     size="xs"
                     variant="outline"
                     disabled={busy}
-                    aria-label={`Fill ${rowLabel(row)}`}
+                    aria-label={gt("Fill {account}", { account: rowLabel(row, messages) })}
                     onClick={() => onFill(row.accountId)}
                   >
-                    Fill
+                    <T>Fill</T>
                   </Button>
                 </div>
               ))}
@@ -112,7 +124,7 @@ export function SignInKey({
           ) : null}
           <div>
             <Button type="button" size="xs" variant="link" onClick={onEdit}>
-              Edit in Accounts
+              <T>Edit in Accounts</T>
             </Button>
           </div>
         </div>

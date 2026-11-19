@@ -1,4 +1,5 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
@@ -10,6 +11,7 @@ import type {
   ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
 
 import { randomUUID } from "../../lib/utils";
@@ -843,14 +845,21 @@ export function useScientSources(input: {
         type: "errorArrived",
         error:
           invalidFiles.length === 1
-            ? `${invalidFiles.at(0)?.name ?? "The selected file"} is not a PDF.`
-            : "Choose at least one PDF file.",
+            ? invalidFiles.at(0)?.name !== undefined
+              ? m(msg("{name} is not a PDF.", { name: invalidFiles.at(0)!.name }))
+              : m(msg("The selected file is not a PDF."))
+            : m(msg("Choose at least one PDF file.")),
       });
       return null;
     }
     const invalidFilesMessage =
       invalidFiles.length > 0
-        ? `Skipped ${invalidFiles.length} non-PDF file${invalidFiles.length === 1 ? "" : "s"}.`
+        ? m(
+            msg(
+              "{count, plural, one {Skipped {count} non-PDF file.} other {Skipped {count} non-PDF files.}}",
+              { count: invalidFiles.length },
+            ),
+          )
         : null;
     dispatch({ type: "operationCleared" });
     const request = nextRequestToken();

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { FolderPlusIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
@@ -9,9 +10,10 @@ export function ProjectFolderDropTarget(props: {
   readonly isPicking: boolean;
   readonly onBrowse: () => void;
 }) {
+  const gt = useGT();
   return (
     <div className="px-3 pt-2">
-      <ScientTooltip content={`Open in ${props.fileManagerName}`}>
+      <ScientTooltip content={gt("Open in {app}", { app: props.fileManagerName })}>
         <button
           type="button"
           aria-live="polite"
@@ -33,11 +35,15 @@ export function ProjectFolderDropTarget(props: {
             <FolderPlusIcon aria-hidden className="size-4" />
           </span>
           {props.isActive ? (
-            <span className="font-medium text-foreground">Release to add this folder</span>
+            <span className="font-medium text-foreground">
+              <T>Release to add this folder</T>
+            </span>
           ) : (
             <span className="text-foreground">
-              Drop your folder here
-              <span className="text-muted-foreground"> or browse below</span>
+              <T>
+                Drop your folder here
+                <span className="text-muted-foreground"> or browse below</span>
+              </T>
             </span>
           )}
         </button>

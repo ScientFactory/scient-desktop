@@ -12,6 +12,7 @@ import {
   resultHasNewer,
   resultReferenceState as resultMarkState,
 } from "@t3tools/shared/computeResults";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -211,23 +212,45 @@ export function MarkdownResults(props: {
 }
 
 function SummaryLines({ summary }: { readonly summary: ComputeResultSummary }) {
+  const gt = useGT();
+  const inputs = summary.inputs.join(", ");
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
       <span>
-        From <span className="font-medium text-foreground">{summary.scriptPath}</span>, run{" "}
-        {relativeTime(summary.finishedAt)}
-        {summary.threadId === undefined ? "" : " by an agent"}
+        {summary.threadId === undefined ? (
+          <T>
+            From{" "}
+            <span className="font-medium text-foreground">
+              <Var>{summary.scriptPath}</Var>
+            </span>
+            , run <Var>{relativeTime(summary.finishedAt)}</Var>
+          </T>
+        ) : (
+          <T>
+            From{" "}
+            <span className="font-medium text-foreground">
+              <Var>{summary.scriptPath}</Var>
+            </span>
+            , run <Var>{relativeTime(summary.finishedAt)}</Var> by an agent
+          </T>
+        )}
       </span>
       <span>
         {summary.inputTracking === "not-tracked"
-          ? "Inputs are not tracked for this language."
+          ? gt("Inputs are not tracked for this language.")
           : summary.inputs.length === 0
-            ? "Scient saw it read no project files."
-            : `Inputs Scient saw it read: ${summary.inputs.join(", ")}${summary.inputsTruncated ? ", and more" : ""}.`}
+            ? gt("Scient saw it read no project files.")
+            : summary.inputsTruncated
+              ? gt("Inputs Scient saw it read: {inputs}, and more.", { inputs })
+              : gt("Inputs Scient saw it read: {inputs}.", { inputs })}
       </span>
       <span>
-        {summary.runtime.version === null ? "" : `${summary.language} ${summary.runtime.version}. `}
-        Package changes are not checked.
+        {summary.runtime.version === null
+          ? gt("Package changes are not checked.")
+          : gt("{language} {version}. Package changes are not checked.", {
+              language: summary.language,
+              version: summary.runtime.version,
+            })}
       </span>
     </div>
   );
@@ -244,6 +267,8 @@ function ResultCard(props: {
   readonly onChanged: () => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { reference } = props;
   const resolution = props.resolutions.get(reference.href);
   const state = resultMarkState(reference, resolution);
@@ -263,15 +288,15 @@ function ResultCard(props: {
     reference.kind === "value"
       ? reference.text
       : reference.kind === "table"
-        ? reference.caption || "Table"
-        : reference.alt || "Figure";
+        ? reference.caption || gt("Table")
+        : reference.alt || gt("Figure");
 
   if (resolution === undefined || resolution._tag === "unrecorded")
     return (
       <div className="flex flex-col gap-1 p-1 text-xs">
         <span className="font-medium text-foreground">{shown}</span>
         <span className="text-muted-foreground">
-          {RESULT_STATE_LABEL.unrecorded}. The document keeps the value it shows.
+          <T>No run record on this computer. The document keeps the value it shows.</T>
         </span>
       </div>
     );
@@ -305,7 +330,10 @@ function ResultCard(props: {
         ...new Set(dropped.map((item) => (item.pointer ?? item.output).replace(/^\//u, ""))),
       ];
       setMessage(
-        `The newest run of ${scriptPath} has no ${names.join(", ")}. Remove ${names.length === 1 ? "it" : "them"} from the document or have the script write ${names.length === 1 ? "it" : "them"} again, then update.`,
+        gt(
+          "{count, plural, =1 {The newest run of {scriptPath} has no {names}. Remove it from the document or have the script write it again, then update.} other {The newest run of {scriptPath} has no {names}. Remove them from the document or have the script write them again, then update.}}",
+          { count: names.length, scriptPath, names: names.join(", ") },
+        ),
       );
       return;
     }
@@ -322,7 +350,7 @@ function ResultCard(props: {
         },
       });
       if (result._tag !== "Success") {
-        setMessage(resultErrorMessage(result, "The new figure could not be copied."));
+        setMessage(resultErrorMessage(result, gt("The new figure could not be copied.")));
         return;
       }
       placed.set(candidate.href, result.value.src);
@@ -333,7 +361,7 @@ function ResultCard(props: {
       live.map((reference) => reference.href).join("\n") !==
       props.references.map((reference) => reference.href).join("\n")
     ) {
-      setMessage("The document's results changed while updating. Update again.");
+      setMessage(gt("The document's results changed while updating. Update again."));
       return;
     }
     // Positions are read after the copies, so edits made meanwhile are kept.
@@ -371,7 +399,7 @@ function ResultCard(props: {
         });
     }
     if (!props.controller.updateResults(updates)) {
-      setMessage("Nothing to update.");
+      setMessage(gt("Nothing to update."));
       return;
     }
     props.onChanged();
@@ -390,7 +418,7 @@ function ResultCard(props: {
       input: { cwd: props.cwd, scriptPath },
     });
     if (result._tag !== "Success") {
-      setMessage(resultErrorMessage(result, "The script could not run."));
+      setMessage(resultErrorMessage(result, gt("The script could not run.")));
       return;
     }
     if (result.value._tag === "failed") setMessage(result.value.message);
@@ -417,42 +445,73 @@ function ResultCard(props: {
       <div className="flex items-baseline justify-between gap-2">
         <span className="min-w-0 truncate font-medium text-foreground">{shown}</span>
         <span className="shrink-0 text-muted-foreground" data-result-card-state={state}>
-          {RESULT_STATE_LABEL[state]}
+          {messages(RESULT_STATE_LABEL[state])}
         </span>
       </div>
       {reference.kind === "value" && state === "edited" ? (
-        <span>The run gave {resolution.value}.</span>
+        <span>
+          <T>
+            The run gave <Var>{resolution.value}</Var>.
+          </T>
+        </span>
       ) : null}
       {reference.kind === "table" && state === "edited" ? (
-        <span>Cells differ from what the run wrote.</span>
+        <span>
+          <T>Cells differ from what the run wrote.</T>
+        </span>
       ) : null}
       {resolution.summary.causes.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
           {resolution.summary.causes.map((cause) => (
-            <li key={`${cause.kind}:${cause.path}`}>{resultCauseText(cause)}</li>
+            <li key={`${cause.kind}:${cause.path}`}>{resultCauseText(cause, messages)}</li>
           ))}
         </ul>
       ) : (
         <span className="text-muted-foreground">
-          No changes in the script or the files Scient saw it read.
+          <T>No changes in the script or the files Scient saw it read.</T>
         </span>
       )}
       <SummaryLines summary={resolution.summary} />
       {newer !== null && resultHasNewer(reference, resolution) ? (
         <div className="flex flex-col gap-1 border-t border-border pt-2">
           <span>
-            A newer run ({relativeTime(newer.summary.finishedAt)})
             {reference.kind === "value" ? (
-              <>
-                {" "}
-                gives <span className="font-medium text-foreground">{newer.value}</span>
-              </>
+              newer.summary.causes.length > 0 ? (
+                <T>
+                  A newer run (<Var>{relativeTime(newer.summary.finishedAt)}</Var>) gives{" "}
+                  <span className="font-medium text-foreground">
+                    <Var>{newer.value}</Var>
+                  </span>
+                  , but it is out of date too.
+                </T>
+              ) : (
+                <T>
+                  A newer run (<Var>{relativeTime(newer.summary.finishedAt)}</Var>) gives{" "}
+                  <span className="font-medium text-foreground">
+                    <Var>{newer.value}</Var>
+                  </span>
+                  .
+                </T>
+              )
             ) : reference.kind === "table" ? (
-              " has a new table"
+              newer.summary.causes.length > 0 ? (
+                gt("A newer run ({time}) has a new table, but it is out of date too.", {
+                  time: relativeTime(newer.summary.finishedAt),
+                })
+              ) : (
+                gt("A newer run ({time}) has a new table.", {
+                  time: relativeTime(newer.summary.finishedAt),
+                })
+              )
+            ) : newer.summary.causes.length > 0 ? (
+              gt("A newer run ({time}) has a new figure, but it is out of date too.", {
+                time: relativeTime(newer.summary.finishedAt),
+              })
             ) : (
-              " has a new figure"
+              gt("A newer run ({time}) has a new figure.", {
+                time: relativeTime(newer.summary.finishedAt),
+              })
             )}
-            {newer.summary.causes.length > 0 ? ", but it is out of date too." : "."}
           </span>
         </div>
       ) : null}
@@ -475,7 +534,9 @@ function ResultCard(props: {
               props.onClose();
             }}
           >
-            Use {resolution.value}
+            <T>
+              Use <Var>{resolution.value}</Var>
+            </T>
           </Button>
         ) : null}
         {editable &&
@@ -502,16 +563,16 @@ function ResultCard(props: {
               props.onClose();
             }}
           >
-            Use the run's table
+            <T>Use the run's table</T>
           </Button>
         ) : null}
         {editable && canPlace && updateCount > 0 ? (
           <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
             {busy === "update"
-              ? "Updating…"
-              : updateCount === 1
-                ? "Update"
-                : `Update ${updateCount} results`}
+              ? gt("Updating…")
+              : gt("{count, plural, =1 {Update} other {Update {count} results}}", {
+                  count: updateCount,
+                })}
           </Button>
         ) : null}
         {canRerun ? (
@@ -521,7 +582,9 @@ function ResultCard(props: {
             disabled={busy !== null}
             onClick={() => void rerunScript()}
           >
-            {busy === "rerun" ? "Running…" : `Re-run ${scriptPath.split("/").at(-1)}`}
+            {busy === "rerun"
+              ? gt("Running…")
+              : gt("Re-run {name}", { name: scriptPath.split("/").at(-1) ?? "" })}
           </Button>
         ) : null}
       </div>
@@ -546,6 +609,7 @@ function MarkdownResultPicker(props: {
     reportFailure: false,
   });
   const resolve = useAtomCommand(computeEnvironment.resultsResolve, { reportFailure: false });
+  const gt = useGT();
 
   const pick = async (choice: ResultChoice): Promise<string | null> => {
     const revision = choice.script.latest.revision;
@@ -570,7 +634,8 @@ function MarkdownResultPicker(props: {
       });
       const resolution = result._tag === "Success" ? result.value.resolutions[0] : undefined;
       const rows = resolution?._tag === "resolved" ? resolution.table : null;
-      if (rows == null) return `${choice.output} is not a table Scient can show.`;
+      if (rows == null)
+        return gt("{output} is not a table Scient can show.", { output: choice.output });
       props.onClose();
       props.controller.insertResult(
         {
@@ -589,7 +654,7 @@ function MarkdownResultPicker(props: {
       input: { cwd: props.cwd, documentPath: props.documentPath, revision, output: choice.output },
     });
     if (result._tag !== "Success")
-      return resultErrorMessage(result, "The figure could not be copied.");
+      return resultErrorMessage(result, gt("The figure could not be copied."));
     props.onClose();
     props.controller.insertResult(
       {

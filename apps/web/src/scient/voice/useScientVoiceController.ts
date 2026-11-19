@@ -1,4 +1,5 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type {
   EnvironmentId,
@@ -9,6 +10,7 @@ import type {
   VoiceLanguagePreference,
 } from "@t3tools/contracts";
 
+import { m } from "../../i18n/messages.ts";
 import { randomUUID } from "../../lib/utils.ts";
 
 import { type VoiceRecorderErrorKind, useVoiceRecorder } from "./useVoiceRecorder.ts";
@@ -44,7 +46,7 @@ export type VoicePhase =
   | "transcribing"
   | "correcting";
 
-const MODEL_SETUP_FAILED_MESSAGE = "Voice setup didn't finish. Try again.";
+const modelSetupFailedMessage = () => m(msg("Voice setup didn't finish. Try again."));
 const ARM_DELAY_MS = 250;
 
 interface VoiceControllerOptions {
@@ -132,15 +134,15 @@ export function formatVoiceTimer(ms: number): string {
 export function describeVoiceRecorderError(kind: VoiceRecorderErrorKind): string {
   switch (kind) {
     case "permission-denied":
-      return "Allow microphone access in your system privacy settings, then try again.";
+      return m(msg("Allow microphone access in your system privacy settings, then try again."));
     case "no-microphone":
-      return "No microphone found. Connect one and try again.";
+      return m(msg("No microphone found. Connect one and try again."));
     case "device-in-use":
-      return "Your microphone is busy in another app. Close it and try again.";
+      return m(msg("Your microphone is busy in another app. Close it and try again."));
     case "unsupported":
-      return "Voice recording isn't available in this environment.";
+      return m(msg("Voice recording isn't available in this environment."));
     case "unknown":
-      return "Couldn't start recording. Try again.";
+      return m(msg("Couldn't start recording. Try again."));
   }
 }
 
@@ -149,11 +151,19 @@ export function describeMicrophoneAccessRefusal(
   platform: string | undefined,
 ): string {
   if (platform === "win32") {
-    return "Microphone access is off. In Windows Settings > Privacy & security > Microphone, turn on microphone access and access for desktop apps, then try again.";
+    return m(
+      msg(
+        "Microphone access is off. In Windows Settings > Privacy & security > Microphone, turn on microphone access and access for desktop apps, then try again.",
+      ),
+    );
   }
   return access === "restricted"
-    ? "Microphone access is restricted by this Mac. Check parental controls or contact your administrator."
-    : "Microphone access is off. Enable Scient in System Settings, then restart Scient.";
+    ? m(
+        msg(
+          "Microphone access is restricted by this Mac. Check parental controls or contact your administrator.",
+        ),
+      )
+    : m(msg("Microphone access is off. Enable Scient in System Settings, then restart Scient."));
 }
 
 function percent(progress: VoiceModelDownloadProgress | null): number {
@@ -421,7 +431,7 @@ export function useScientVoiceController({
     if (offerChatGpt) setPhase("setup-prompt");
     else if (selectedModel?.state.state === "ready") await beginRecording("local");
     else if (state && !state.runtimeAvailable) {
-      setErrorMessage(state.runtimeMessage ?? "Offline voice is unavailable.");
+      setErrorMessage(state.runtimeMessage ?? m(msg("Offline voice is unavailable.")));
     } else {
       setPhase("setup-prompt");
     }
@@ -482,7 +492,7 @@ export function useScientVoiceController({
             requestedModelId ?? snapshot.recommendation?.modelId ?? snapshot.models[0]?.id ?? null;
           if (!modelId) {
             setPhase("idle");
-            setErrorMessage(MODEL_SETUP_FAILED_MESSAGE);
+            setErrorMessage(modelSetupFailedMessage());
             break completeOperation;
           }
           downloadModelIdRef.current = modelId;
@@ -499,7 +509,7 @@ export function useScientVoiceController({
             setErrorMessage(
               state?.state === "error" || state?.state === "unavailable"
                 ? state.message
-                : MODEL_SETUP_FAILED_MESSAGE,
+                : modelSetupFailedMessage(),
             );
           }
         } catch (error) {

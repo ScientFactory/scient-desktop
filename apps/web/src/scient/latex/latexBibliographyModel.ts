@@ -6,6 +6,7 @@ import {
   groupEnd,
   type BibliographyEntry,
 } from "@scientfactory/scient-sources/bibtex";
+import { msg } from "gt-react";
 
 export {
   bibtexEntries,
@@ -20,6 +21,7 @@ export interface BibliographyContainer {
 }
 
 /** Keep TeX offsets, labels and formatted entry bodies instead of reconstructing a list. */
+/** `error` is a `msg()` string: resolve it with `useMessages()` (or `m` in events) where it is shown. */
 export function manualBibliography(source: string) {
   const clean = latexWithoutComments(source);
   const entries: BibliographyEntry[] = [];
@@ -35,7 +37,7 @@ export function manualBibliography(source: string) {
       return {
         entries,
         containers,
-        error: "A manual bibliography is not closed. Repair it in Source first.",
+        error: msg("A manual bibliography is not closed. Repair it in Source first."),
       };
     const itemPattern = /\\bibitem\b\s*/gu;
     itemPattern.lastIndex = widthEnd + 1;
@@ -57,17 +59,18 @@ export function manualBibliography(source: string) {
             break;
           }
         }
-        if (labelEnd < 0) return { entries, containers, error: "An entry label is not closed." };
+        if (labelEnd < 0)
+          return { entries, containers, error: msg("An entry label is not closed.") };
         label = source.slice(cursor + 1, labelEnd);
         cursor = labelEnd + 1;
       }
       cursor += /^\s*/u.exec(clean.slice(cursor))![0].length;
       const end = clean[cursor] === "{" ? groupEnd(clean, cursor) : -1;
       if (end < 0 || end >= close.index)
-        return { entries, containers, error: "An entry has no valid citation key." };
+        return { entries, containers, error: msg("An entry has no valid citation key.") };
       const key = source.slice(cursor + 1, end);
       if (!validBibliographyKey(key))
-        return { entries, containers, error: "An entry has an unsupported citation key." };
+        return { entries, containers, error: msg("An entry has an unsupported citation key.") };
       items.push({ from: item.index, commandEnd: end + 1, key, label });
       itemPattern.lastIndex = end + 1;
     }

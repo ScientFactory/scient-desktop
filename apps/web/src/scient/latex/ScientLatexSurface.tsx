@@ -1,3 +1,5 @@
+import { m } from "~/i18n/messages";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { LatexSelect } from "./LatexSelect";
 import { LatexResultsStatus } from "../results/LatexResultsStatus";
 import { useScientAnalyticsView } from "~/scient/analytics/client";
@@ -237,31 +239,35 @@ interface LatexSyncNotice {
   readonly message: string;
 }
 
-const UNSAVED_SYNC_NOTICE: LatexSyncNotice = {
-  label: "Unsaved changes",
-  message: "Navigation between source and PDF is available once changes are saved and built.",
-};
+function unsavedSyncNotice(): LatexSyncNotice {
+  return {
+    label: m(msg("Unsaved changes")),
+    message: m(
+      msg("Navigation between source and PDF is available once changes are saved and built."),
+    ),
+  };
+}
 
 function syncUnavailableLabel(reason: ScientLatexSyncUnavailableReason): string {
   switch (reason) {
     case "revision-unavailable":
-      return "PDF revision unavailable";
+      return m(msg("PDF revision unavailable"));
     case "index-missing":
-      return "Navigation index missing";
+      return m(msg("Navigation index missing"));
     case "index-invalid":
-      return "Navigation index damaged";
+      return m(msg("Navigation index damaged"));
     case "source-stale":
-      return "Build required";
+      return m(msg("Build required"));
     case "navigator-unavailable":
-      return "Navigation needs repair";
+      return m(msg("Navigation needs repair"));
     case "navigator-failed":
-      return "Navigation failed";
+      return m(msg("Navigation failed"));
     case "query-timed-out":
-      return "Navigation timed out";
+      return m(msg("Navigation timed out"));
     case "position-unmapped":
-      return "No source mapping";
+      return m(msg("No source mapping"));
     case "invalid-source":
-      return "Source mismatch";
+      return m(msg("Source mismatch"));
   }
 }
 /**
@@ -523,10 +529,11 @@ const LatexViewerPane = memo(function LatexViewerPane({
   syncNavigation,
   citeThread,
 }: LatexViewerPaneProps) {
+  const gt = useGT();
   return (
     <div className="scient-latex-pane">
       {descriptor !== null && readerKey !== null ? (
-        <Suspense fallback={<LatexPendingViewer label="Opening PDF…" />}>
+        <Suspense fallback={<LatexPendingViewer label={gt("Opening PDF…")} />}>
           <ScientPdfReader
             showStaleNotice={false}
             key={readerKey}
@@ -538,19 +545,27 @@ const LatexViewerPane = memo(function LatexViewerPane({
         </Suspense>
       ) : toolchainMissing ? (
         <div className="scient-latex-placeholder">
-          <p>Install LaTeX tools using the document notice above to create its PDF.</p>
+          <p>
+            <T>Install LaTeX tools using the document notice above to create its PDF.</T>
+          </p>
         </div>
       ) : viewer === "diagnostics" ? (
         <div className="scient-latex-placeholder">
           <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
-          <h2>This document did not build</h2>
-          <p>{failureLine ?? "Check the build messages above."}</p>
+          <h2>
+            <T>This document did not build</T>
+          </h2>
+          <p>{failureLine ?? gt("Check the build messages above.")}</p>
         </div>
       ) : viewer === "building" ? (
-        <LatexPendingViewer label="Building…" />
+        <LatexPendingViewer label={gt("Building…")} />
       ) : (
         <div className="scient-latex-placeholder">
-          <p>Choose Rebuild PDF to create the typeset document with your local TeX installation.</p>
+          <p>
+            <T>
+              Choose Rebuild PDF to create the typeset document with your local TeX installation.
+            </T>
+          </p>
         </div>
       )}
     </div>
@@ -591,6 +606,8 @@ function bindLatexSource(
 }
 
 export const ScientLatexSurface = memo(function ScientLatexSurface(props: ScientLatexSurfaceProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const savePdfCopy = usePdfSaveCopy(props.environmentId);
   const [exportingPdf, setExportingPdf] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
@@ -646,7 +663,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         };
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
-  const status = latexStatusStripModel(build, props.cwd);
+  const status = latexStatusStripModel(build, props.cwd, messages);
   const [preferredMode, setPreferredMode] = useState(
     () => props.latexPresentationRequest?.mode ?? initialPreviewMode(),
   );
@@ -879,19 +896,19 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // any other text is refused.
   const handleVisualEdit = (request: LatexVisualEditRequest): LatexVisualEditOutcome => {
     const refuse = (reason: string): LatexVisualEditOutcome => ({ accepted: false, reason });
-    if (persistence === null) return refuse("The source session is unavailable.");
+    if (persistence === null) return refuse(gt("The source session is unavailable."));
     const bound = sourceBinding.current;
     const current = persistence.getSnapshot();
-    if (bound === null) return refuse("The source snapshot is unavailable.");
+    if (bound === null) return refuse(gt("The source snapshot is unavailable."));
     if (current.editingBlocked || current.conflict !== null || sourceRecovery.blocked)
-      return refuse("The source session is waiting for recovery or another operation.");
+      return refuse(gt("The source session is waiting for recovery or another operation."));
     if (
       request.snapshot.id !== bound.snapshot.id ||
       bound.documentId !== persistence.documentId ||
       bound.editVersion !== current.editVersion ||
       bound.snapshot.source !== current.draftSource
     )
-      return refuse("The source changed while this edit was being prepared.");
+      return refuse(gt("The source changed while this edit was being prepared."));
     const path = persistence.target.relativePath;
     const file = {
       contents: current.draftSource,
@@ -1147,14 +1164,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       descriptor.bindingStatus !== "current"
     ) {
       setSyncNotice({
-        label: "Build required",
-        message: "Source-to-PDF navigation is available after the current build succeeds.",
+        label: gt("Build required"),
+        message: gt("Source-to-PDF navigation is available after the current build succeeds."),
       });
       return;
     }
     const current = persistence?.getSnapshot();
     if (current?.pending) {
-      setSyncNotice(UNSAVED_SYNC_NOTICE);
+      setSyncNotice(unsavedSyncNotice());
       return;
     }
     if (
@@ -1172,8 +1189,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           current.editingBlocked))
     ) {
       setSyncNotice({
-        label: "Build required",
-        message: "This source revision has not been compiled into the displayed PDF.",
+        label: gt("Build required"),
+        message: gt("This source revision has not been compiled into the displayed PDF."),
       });
       return;
     }
@@ -1207,8 +1224,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       .catch((error: unknown) => {
         if (syncRequestRef.current !== issued) return;
         setSyncNotice({
-          label: "Navigation failed",
-          message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
+          label: gt("Navigation failed"),
+          message: error instanceof Error ? error.message : gt("SyncTeX navigation failed."),
         });
       });
   };
@@ -1232,8 +1249,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       snapshot.pendingRerun
     ) {
       setSyncNotice({
-        label: "Build required",
-        message: "PDF-to-source navigation is available after the current build succeeds.",
+        label: gt("Build required"),
+        message: gt("PDF-to-source navigation is available after the current build succeeds."),
       });
       return;
     }
@@ -1296,8 +1313,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               target.draftSource !== target.baselineSource))
         ) {
           setSyncNotice({
-            label: "Build required",
-            message: "The matching source has changed since this PDF was compiled.",
+            label: gt("Build required"),
+            message: gt("The matching source has changed since this PDF was compiled."),
           });
           return;
         }
@@ -1316,8 +1333,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       .catch((error: unknown) => {
         if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
         setSyncNotice({
-          label: "Navigation failed",
-          message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
+          label: gt("Navigation failed"),
+          message: error instanceof Error ? error.message : gt("SyncTeX navigation failed."),
         });
       });
   };
@@ -1396,7 +1413,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       preparing.current -= 1;
     });
     if (!result.ok) {
-      setSyncNotice({ label: "Document not ready", message: result.message });
+      setSyncNotice({ label: gt("Document not ready"), message: result.message });
       return null;
     }
     setSyncNotice(null);
@@ -1505,9 +1522,12 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     ) {
       installBuildIntent.current = null;
       setSyncNotice({
-        label: "Rebuild required",
-        message:
-          "The document changed or needs attention. Review it, then choose Rebuild PDF after installation.",
+        label: m(msg("Rebuild required")),
+        message: m(
+          msg(
+            "The document changed or needs attention. Review it, then choose Rebuild PDF after installation.",
+          ),
+        ),
       });
       return;
     }
@@ -1559,12 +1579,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             compilerOwner.current.target === target &&
             compilerOwner.current.persistence === persistence,
         });
-        if (!result.ok) setSyncNotice({ label: "Compiler not changed", message: result.message });
+        if (!result.ok)
+          setSyncNotice({ label: gt("Compiler not changed"), message: result.message });
         else requestLatexRebuild(target, { reprobeToolchain: true });
       } catch (error) {
         setSyncNotice({
-          label: "Compiler not changed",
-          message: error instanceof Error ? error.message : "Could not save the compiler change.",
+          label: gt("Compiler not changed"),
+          message:
+            error instanceof Error ? error.message : gt("Could not save the compiler change."),
         });
       }
     };
@@ -1583,13 +1605,13 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     rootPath: target?.relativePath ?? null,
     blockedReason:
       target === null
-        ? "Resolve the document root before choosing its compiler."
+        ? gt("Resolve the document root before choosing its compiler.")
         : target.relativePath !== props.relativePath
-          ? "The compiler belongs to the root document. Open it to change the compiler."
+          ? gt("The compiler belongs to the root document. Open it to change the compiler.")
           : props.truncated || persistence === null
-            ? "This source is read-only; its compiler cannot be changed here."
+            ? gt("This source is read-only; its compiler cannot be changed here.")
             : compilerEditBlocked
-              ? "Resolve recovery or the document's save notice before changing its compiler."
+              ? gt("Resolve recovery or the document's save notice before changing its compiler.")
               : compilerState.sourceError,
     onChange: (compiler: LatexCompilerChoice) => {
       void changeCompiler(compiler);
@@ -1662,7 +1684,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       <div
         className="scient-latex-modes scient-latex-split-modes"
         role="group"
-        aria-label="Split right pane view"
+        aria-label={gt("Split right pane view")}
       >
         {LATEX_SPLIT_PREVIEWS.map((candidate) => (
           <button
@@ -1677,7 +1699,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               selectSplitPreview(candidate);
             }}
           >
-            {LATEX_PREVIEW_MODE_LABELS[candidate]}
+            {messages(LATEX_PREVIEW_MODE_LABELS[candidate])}
           </button>
         ))}
       </div>
@@ -1710,18 +1732,18 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     <ScientTooltip
       content={
         status.canCancel
-          ? "Cancel PDF build"
+          ? gt("Cancel PDF build")
           : status.busy
             ? status.label
             : status.state === "failed"
-              ? "Build failed. Rebuild PDF or open the log."
-              : "Save and rebuild the PDF"
+              ? gt("Build failed. Rebuild PDF or open the log.")
+              : gt("Save and rebuild the PDF")
       }
     >
       <button
         type="button"
         className="scient-latex-action scient-latex-build-action"
-        aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
+        aria-label={status.canCancel ? gt("Cancel PDF build") : gt("Rebuild PDF")}
         disabled={
           target === null ||
           (!status.canCancel && (!status.canRebuild || buildBlocked || compilerUnavailable))
@@ -1740,7 +1762,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         ) : (
           <RotateCw className="size-3.5" aria-hidden="true" />
         )}
-        <span>{status.canCancel ? "Cancel" : status.busy ? "Building…" : "Rebuild"}</span>
+        <span>
+          {status.canCancel ? gt("Cancel") : status.busy ? gt("Building…") : gt("Rebuild")}
+        </span>
       </button>
     </ScientTooltip>
   );
@@ -1784,8 +1808,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         )
       ) {
         setSyncNotice({
-          label: "Rebuild needed",
-          message: "Rebuild the PDF before exporting the current document.",
+          label: gt("Rebuild needed"),
+          message: gt("Rebuild the PDF before exporting the current document."),
         });
         return;
       }
@@ -1793,8 +1817,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     })()
       .catch((error: unknown) =>
         setSyncNotice({
-          label: "Export failed",
-          message: error instanceof Error ? error.message : "Could not save the PDF copy.",
+          label: gt("Export failed"),
+          message: error instanceof Error ? error.message : gt("Could not save the PDF copy."),
         }),
       )
       .finally(() => setExportingPdf(false));
@@ -1807,16 +1831,17 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     downloadActions.current = { pdf: exportPdf, word: exportWord };
   });
   const onDownloadActions = props.onDownloadActions;
+  const pdfUnavailableReason = gt("Rebuild PDF to export the current document.");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes download actions to the parent through its imperative callback
   useEffect(() => {
     onDownloadActions({
       pdf: () => downloadActions.current.pdf(),
       pdfDisabled: pdfExportDisabled,
-      pdfUnavailableReason: "Rebuild PDF to export the current document.",
+      pdfUnavailableReason,
       word: () => downloadActions.current.word(),
       wordDisabled: wordExportDisabled,
     });
-  }, [onDownloadActions, pdfExportDisabled, wordExportDisabled]);
+  }, [onDownloadActions, pdfExportDisabled, wordExportDisabled, pdfUnavailableReason]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the parent download actions on unmount
   useEffect(() => () => onDownloadActions(null), [onDownloadActions]);
   const onRenameContext = props.onRenameContext;
@@ -1891,9 +1916,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       plain={plain}
       onWordExport={exportWord}
       wordDisabled={wordExportDisabled}
-      pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
+      pdfLabel={exportingPdf ? gt("Exporting\u2026") : "PDF"}
       pdfDisabled={pdfExportDisabled}
-      pdfUnavailableReason="Rebuild PDF to export the current document."
+      pdfUnavailableReason={gt("Rebuild PDF to export the current document.")}
       onPdfExport={exportPdf}
     />
   );
@@ -1906,7 +1931,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         <IfRowHidden selector=".scient-latex-split-modes">
           {LATEX_SPLIT_PREVIEWS.map((candidate) => (
             <DockCommandItem key={candidate} onClick={() => selectSplitPreview(candidate)}>
-              Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
+              {gt("Split preview: {mode}", {
+                mode: messages(LATEX_PREVIEW_MODE_LABELS[candidate]),
+              })}
             </DockCommandItem>
           ))}
         </IfRowHidden>
@@ -1915,14 +1942,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         // The counts in the row open the same card.
         <IfRowHidden selector="[data-diagnostics-toggle]">
           <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
-            <CircleAlert /> Build messages
+            <CircleAlert /> <T>Build messages</T>
           </DockCommandItem>
         </IfRowHidden>
       ) : null}
       {withDocumentCommands ? exportItems : null}
       {withDocumentCommands ? (
         <DockCommandItem onClick={() => setReferenceCheckOpen(true)}>
-          Check references
+          <T>Check references</T>
         </DockCommandItem>
       ) : null}
       {withDocumentCommands ? props.templateActions : null}
@@ -1932,7 +1959,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // The view switch and the build status. With reader controls in the row they
   // follow the zoom, so the sidebar, page and zoom controls start the row.
   const viewSwitch = (
-    <div className="scient-latex-modes" role="group" aria-label="Document view">
+    <div className="scient-latex-modes" role="group" aria-label={gt("Document view")}>
       {LATEX_PREVIEW_MODES.map((candidate) => (
         <button
           key={candidate}
@@ -1946,7 +1973,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             selectMode(candidate);
           }}
         >
-          {LATEX_PREVIEW_MODE_LABELS[candidate]}
+          {messages(LATEX_PREVIEW_MODE_LABELS[candidate])}
         </button>
       ))}
     </div>
@@ -1956,15 +1983,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       {target === null ? (
         <span className="scient-latex-status-label">
           {resolution.pending
-            ? "Finding document"
+            ? gt("Finding document")
             : resolution.result?._tag === "ambiguous" ||
                 (resolution.result?._tag === "unresolved" &&
                   resolution.result.candidates.length > 0)
-              ? "Choose the document to compile"
-              : (resolution.error ?? "No compiling document found")}
+              ? gt("Choose the document to compile")
+              : (resolution.error ?? gt("No compiling document found"))}
         </span>
       ) : status.toolchainMissing ? (
-        <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
+        <ScientTooltip content={messages(LATEX_TOOLCHAIN_MISSING_HINT)}>
           <span
             className={cn(
               "scient-latex-status-label",
@@ -1975,11 +2002,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           </span>
         </ScientTooltip>
       ) : status.offline ? (
-        <span className="scient-latex-status-label">Build status unavailable</span>
+        <span className="scient-latex-status-label">
+          <T>Build status unavailable</T>
+        </span>
       ) : status.busy ? (
         <span className="scient-latex-status-label" role="status">
-          {status.label}
-          {descriptor !== null ? " · Previous PDF" : null}
+          {descriptor !== null
+            ? gt("{status} · Previous PDF", { status: status.label })
+            : status.label}
         </span>
       ) : overleafConflicts > 0 ? (
         <span
@@ -1987,25 +2017,28 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           role="status"
           data-overleaf-conflicts={overleafConflicts}
         >
-          {overleafConflicts === 1
-            ? "This file has 1 Overleaf conflict to settle"
-            : `This file has ${overleafConflicts} Overleaf conflicts to settle`}
+          {gt(
+            "{count, plural, =1 {This file has 1 Overleaf conflict to settle} other {This file has {count} Overleaf conflicts to settle}}",
+            { count: overleafConflicts },
+          )}
         </span>
       ) : status.state === "failed" ? (
         <ScientTooltip
           content={
-            status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? "Open the build log"
+            status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? gt("Open the build log")
           }
         >
           <button
             type="button"
             className="scient-latex-action"
             data-diagnostics-toggle=""
-            aria-label="Build failed · View details"
+            aria-label={gt("Build failed · View details")}
             onClick={() => setDiagnosticsOpen((open) => !open)}
           >
             <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
-            <span className="scient-latex-chip-text">Build failed · View details</span>
+            <span className="scient-latex-chip-text">
+              <T>Build failed · View details</T>
+            </span>
           </button>
         </ScientTooltip>
       ) : descriptor?._tag === "generated-pdf" &&
@@ -2017,23 +2050,23 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           (sourceIdentity !== null && sourceIdentity.revision !== compiledRevision)) ? (
         <ScientTooltip
           content={
-            status.staleReason ?? "Save and rebuild to update the PDF from the current source."
+            status.staleReason ?? gt("Save and rebuild to update the PDF from the current source.")
           }
         >
           <span className="scient-latex-status-label" role="status">
-            Rebuild required
+            <T>Rebuild required</T>
           </span>
         </ScientTooltip>
       ) : descriptor?._tag === "generated-pdf" && sourceIdentity === null ? (
         <span className="scient-latex-status-label" role="status">
-          Checking PDF source
+          <T>Checking PDF source</T>
         </span>
       ) : null}
       {target === null &&
       (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
       resolution.result.candidates.length > 0 ? (
         <LatexSelect
-          aria-label="Choose LaTeX document to compile"
+          aria-label={gt("Choose LaTeX document to compile")}
           value=""
           onValueChange={(value) => {
             if (value !== "") {
@@ -2048,7 +2081,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           }}
           size="compact"
           options={[
-            { value: "", label: "Choose document\u2026", disabled: true },
+            { value: "", label: gt("Choose document\u2026"), disabled: true },
             ...resolution.result.candidates.map((candidate) => ({
               value: candidate.rootRelativePath,
               label: candidate.rootRelativePath,
@@ -2058,9 +2091,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       ) : null}
       {compiledFrom === null ? null : (
         <ScientTooltip
-          content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
+          content={gt("This file is part of {root}, which is what Scient compiles.", {
+            root: compiledFrom,
+          })}
         >
-          <span className="scient-latex-chip">Compiled from {compiledFrom}</span>
+          <span className="scient-latex-chip">
+            <T>
+              Compiled from <Var>{compiledFrom}</Var>
+            </T>
+          </span>
         </ScientTooltip>
       )}
       {target === null ? null : (
@@ -2082,14 +2121,18 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         <button
           type="button"
           className="scient-latex-chip scient-latex-chip-error"
-          aria-label={`${status.errorCount} ${status.errorCount === 1 ? "error" : "errors"}`}
+          aria-label={gt("{count, plural, one {{count} error} other {{count} errors}}", {
+            count: status.errorCount,
+          })}
           aria-expanded={diagnosticsOpen}
           data-diagnostics-toggle=""
           onClick={() => setDiagnosticsOpen((open) => !open)}
         >
           <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
           <span className="scient-latex-chip-text">
-            {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
+            {gt("{count, plural, one {{count} error} other {{count} errors}}", {
+              count: status.errorCount,
+            })}
           </span>
         </button>
       ) : null}
@@ -2097,20 +2140,26 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         <button
           type="button"
           className="scient-latex-chip scient-latex-chip-warning"
-          aria-label={`${status.warningCount} ${status.warningCount === 1 ? "warning" : "warnings"}`}
+          aria-label={gt("{count, plural, one {{count} warning} other {{count} warnings}}", {
+            count: status.warningCount,
+          })}
           aria-expanded={diagnosticsOpen}
           data-diagnostics-toggle=""
           onClick={() => setDiagnosticsOpen((open) => !open)}
         >
           <TriangleAlert className="scient-latex-chip-icon" aria-hidden="true" />
           <span className="scient-latex-chip-text">
-            {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
+            {gt("{count, plural, one {{count} warning} other {{count} warnings}}", {
+              count: status.warningCount,
+            })}
           </span>
         </button>
       ) : null}
       {visualProjectState.error === null ? null : (
         <ScientTooltip content={visualProjectState.error}>
-          <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
+          <span className="scient-latex-chip scient-latex-chip-error">
+            <T>Save failed</T>
+          </span>
         </ScientTooltip>
       )}
       {syncNotice === null ? null : (
@@ -2119,7 +2168,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             className="scient-latex-chip scient-latex-chip-error"
             role="status"
             aria-live="polite"
-            aria-label={`${syncNotice.label}: ${syncNotice.message}`}
+            aria-label={gt("{label}: {message}", {
+              label: syncNotice.label,
+              message: syncNotice.message,
+            })}
           >
             {syncNotice.label}
           </span>
@@ -2189,7 +2241,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             // The same button and menu the reader controls use, so Rebuild and
             // More do not shift when the mode changes.
             <DropdownMenu>
-              <DropdownMenuTrigger render={<ReaderButton label="More actions" />}>
+              <DropdownMenuTrigger render={<ReaderButton label={gt("More actions")} />}>
                 <Ellipsis />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -2227,7 +2279,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             ref={diagnosticsCard}
             className="scient-latex-diagnostics"
             role="region"
-            aria-label="Build messages"
+            aria-label={gt("Build messages")}
             onKeyDown={(event) => {
               if (event.key !== "Escape" || event.defaultPrevented) return;
               event.preventDefault();
@@ -2239,7 +2291,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               diagnostics.length === 0 ? (
                 <p className="scient-latex-diagnostic-message">
                   {build.snapshot?.failureSummary ??
-                    "The build failed without compiler diagnostics. Check the LaTeX toolchain and rebuild."}
+                    gt(
+                      "The build failed without compiler diagnostics. Check the LaTeX toolchain and rebuild.",
+                    )}
                 </p>
               ) : (
                 <ul className="scient-latex-diagnostics-list">
@@ -2279,8 +2333,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       ) : null}
       {sourceRecovery.storageFailed ? (
         <p role="status">
-          The local recovery copy could not be stored. Keep this document open until its workspace
-          save succeeds.
+          <T>
+            The local recovery copy could not be stored. Keep this document open until its workspace
+            save succeeds.
+          </T>
         </p>
       ) : null}
       {props.startBar}
@@ -2389,7 +2445,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               <ResizeSeparator
                 className="absolute inset-y-0 -start-1"
                 tabIndex={0}
-                aria-label="Resize LaTeX preview"
+                aria-label={gt("Resize LaTeX preview")}
                 aria-valuemin={Math.round(MIN_LATEX_SPLIT_FRACTION * 100)}
                 aria-valuemax={Math.round((1 - MIN_LATEX_SPLIT_FRACTION) * 100)}
                 aria-valuenow={Math.round(splitFraction * 100)}
@@ -2442,8 +2498,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       rootRelativePath={resolvedRootRelativePath}
                       rootResolutionMessage={
                         resolution.pending
-                          ? "Finding the document…"
-                          : (resolution.error ?? "Choose the document to compile in the toolbar.")
+                          ? gt("Finding the document…")
+                          : (resolution.error ??
+                            gt("Choose the document to compile in the toolbar."))
                       }
                       onRetryRootResolution={resolution.error ? resolution.retry : undefined}
                       rootResolutionPending={resolution.pending}

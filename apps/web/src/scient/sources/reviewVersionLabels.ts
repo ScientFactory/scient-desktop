@@ -1,5 +1,8 @@
 import type { ScientReviewDecision } from "@scientfactory/scient-sources";
 import type { ScientSystematicReviewConflictsResult } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export type ReviewVersionDifferences = NonNullable<
   ScientSystematicReviewConflictsResult["differences"]
@@ -9,22 +12,22 @@ type DecisionSide = Extract<Row, { kind: "decision" }>["here"];
 type SearchSide = Extract<Row, { kind: "search" }>["here"];
 
 export const REVIEW_VERSION_LABELS = {
-  here: "This version",
-  other: "The other version",
-  more: "Show more",
-  unreadable: "The differences between these two versions could not be read.",
-  untitled: "Untitled source",
+  here: msg("This version"),
+  other: msg("The other version"),
+  more: msg("Show more"),
+  unreadable: msg("The differences between these two versions could not be read."),
+  untitled: msg("Untitled source"),
 } as const;
 
 export const DECISION_LABELS: Readonly<Record<ScientReviewDecision, string>> = {
-  include: "Included",
-  exclude: "Excluded",
-  maybe: "Maybe",
+  include: msg("Included", { $context: "screening decision" }),
+  exclude: msg("Excluded", { $context: "screening decision" }),
+  maybe: msg("Maybe", { $context: "screening decision" }),
 };
 
 export const STAGE_WORDS = {
-  "title-abstract": "title and abstract",
-  "full-text": "full text",
+  "title-abstract": msg("title and abstract", { $context: "screening stage" }),
+  "full-text": msg("full text", { $context: "screening stage" }),
 } as const;
 
 export const reviewDate = (value: string) => {
@@ -33,47 +36,90 @@ export const reviewDate = (value: string) => {
     ? value
     : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(parsed);
 };
-export const plural = (value: number, one: string, many: string) =>
-  `${value.toLocaleString()} ${value === 1 ? one : many}`;
 
 const ALSO_WORDS: Readonly<Record<ReviewVersionDifferences["alsoDiffering"][number], string>> = {
-  deleted: "whether the review is deleted",
-  title: "the title",
-  question: "the question",
-  "exclusion-reasons": "the exclusion reasons",
-  duplicates: "the records marked as duplicates",
-  retrieval: "the full-text retrieval records",
+  deleted: msg("whether the review is deleted"),
+  title: msg("the title", { $context: "what differs between two versions of a review" }),
+  question: msg("the question"),
+  "exclusion-reasons": msg("the exclusion reasons"),
+  duplicates: msg("the records marked as duplicates"),
+  retrieval: msg("the full-text retrieval records"),
 };
 
+const count = (value: number) => value.toLocaleString();
+
 /** All that differs, as counts, before any row; also said when nothing in the rows differs. */
-export function differenceCounts(differences: ReviewVersionDifferences): string {
+export function differenceCounts(
+  differences: ReviewVersionDifferences,
+  resolve: MessageResolver = m,
+): string {
   const { decisions, searches, records } = differences;
   const counts = [
-    [decisions.differing, "decision that differs", "decisions that differ"],
-    [decisions.onlyHere, "decision only in this version", "decisions only in this version"],
+    [
+      decisions.differing,
+      msg(
+        "{count, plural, one {{shown} decision that differs} other {{shown} decisions that differ}}",
+      ),
+    ],
+    [
+      decisions.onlyHere,
+      msg(
+        "{count, plural, one {{shown} decision only in this version} other {{shown} decisions only in this version}}",
+      ),
+    ],
     [
       decisions.onlyOther,
-      "decision only in the other version",
-      "decisions only in the other version",
+      msg(
+        "{count, plural, one {{shown} decision only in the other version} other {{shown} decisions only in the other version}}",
+      ),
     ],
-    [searches.differing, "search that differs", "searches that differ"],
-    [searches.onlyHere, "search only in this version", "searches only in this version"],
-    [searches.onlyOther, "search only in the other version", "searches only in the other version"],
-    [records.onlyHere, "record only in this version", "records only in this version"],
-    [records.onlyOther, "record only in the other version", "records only in the other version"],
+    [
+      searches.differing,
+      msg(
+        "{count, plural, one {{shown} search that differs} other {{shown} searches that differ}}",
+      ),
+    ],
+    [
+      searches.onlyHere,
+      msg(
+        "{count, plural, one {{shown} search only in this version} other {{shown} searches only in this version}}",
+      ),
+    ],
+    [
+      searches.onlyOther,
+      msg(
+        "{count, plural, one {{shown} search only in the other version} other {{shown} searches only in the other version}}",
+      ),
+    ],
+    [
+      records.onlyHere,
+      msg(
+        "{count, plural, one {{shown} record only in this version} other {{shown} records only in this version}}",
+      ),
+    ],
+    [
+      records.onlyOther,
+      msg(
+        "{count, plural, one {{shown} record only in the other version} other {{shown} records only in the other version}}",
+      ),
+    ],
   ] as const;
-  const parts = counts.flatMap(([value, one, many]) =>
-    value > 0 ? [plural(value, one, many)] : [],
+  const parts = counts.flatMap(([value, words]) =>
+    value > 0 ? [resolve(words, { count: value, shown: count(value) })] : [],
   );
-  const also = differences.alsoDiffering.map((part) => ALSO_WORDS[part]);
+  const also = differences.alsoDiffering.map((part) => resolve(ALSO_WORDS[part]));
   return [
     parts.length > 0
-      ? `What differs: ${parts.join(", ")}.`
-      : "The two versions have the same decisions, searches and records.",
+      ? resolve(msg("What differs: {parts}.", { parts: parts.join(", ") }))
+      : resolve(msg("The two versions have the same decisions, searches and records.")),
     also.length > 0
-      ? `Also different: ${also.join(", ")}.`
+      ? resolve(msg("Also different: {parts}.", { parts: also.join(", ") }))
       : parts.length === 0
-        ? "They differ only in their history, or in the details of the sources saved with each."
+        ? resolve(
+            msg(
+              "They differ only in their history, or in the details of the sources saved with each.",
+            ),
+          )
         : "",
   ]
     .filter(Boolean)
@@ -81,15 +127,14 @@ export function differenceCounts(differences: ReviewVersionDifferences): string 
 }
 
 /** Which version alone has it; null when both do. */
-const onlyIn = (here: unknown, other: unknown) =>
-  here !== null && other !== null
-    ? null
-    : here !== null
-      ? "in this version only"
-      : "in the other version only";
+const onlyIn = (here: unknown, other: unknown): "here" | "other" | null =>
+  here !== null && other !== null ? null : here !== null ? "here" : "other";
 
 /** What a row is about, and how the two versions stand on it. */
-export function rowHeading(row: Row): {
+export function rowHeading(
+  row: Row,
+  resolve: MessageResolver = m,
+): {
   readonly key: string;
   readonly title: string;
   readonly standing: string;
@@ -97,11 +142,16 @@ export function rowHeading(row: Row): {
   switch (row.kind) {
     case "decision": {
       const only = onlyIn(row.here, row.other);
-      const stage = STAGE_WORDS[row.stage];
+      const stage = resolve(STAGE_WORDS[row.stage]);
       return {
         key: `decision:${row.stage}:${row.sourceId}`,
-        title: row.title?.trim() || REVIEW_VERSION_LABELS.untitled,
-        standing: only ? `Decided at ${stage} ${only}` : `Decided differently at ${stage}`,
+        title: row.title?.trim() || resolve(REVIEW_VERSION_LABELS.untitled),
+        standing:
+          only === "here"
+            ? resolve(msg("Decided at {stage} in this version only", { stage }))
+            : only === "other"
+              ? resolve(msg("Decided at {stage} in the other version only", { stage }))
+              : resolve(msg("Decided differently at {stage}", { stage })),
       };
     }
     case "search": {
@@ -110,27 +160,35 @@ export function rowHeading(row: Row): {
       return {
         key: `search:${search.searchId}`,
         title: search.database,
-        standing: only ? `A search ${only}` : "A search with different details or records",
+        standing:
+          only === "here"
+            ? resolve(msg("A search in this version only"))
+            : only === "other"
+              ? resolve(msg("A search in the other version only"))
+              : resolve(msg("A search with different details or records")),
       };
     }
     case "record":
       return {
         key: `record:${row.sourceId}`,
-        title: row.title?.trim() || REVIEW_VERSION_LABELS.untitled,
-        standing: `A record in ${row.in === "here" ? "this version" : "the other version"} only`,
+        title: row.title?.trim() || resolve(REVIEW_VERSION_LABELS.untitled),
+        standing:
+          row.in === "here"
+            ? resolve(msg("A record in this version only"))
+            : resolve(msg("A record in the other version only")),
       };
   }
 }
 
 /** One version's decision on a record: the decision and reason, when, an agent's marked, the note. */
-export function decisionText(side: DecisionSide): string {
+export function decisionText(side: DecisionSide, resolve: MessageResolver = m): string {
   if (!side) return "";
   return [
     [
-      DECISION_LABELS[side.decision],
+      resolve(DECISION_LABELS[side.decision]),
       side.reason,
       reviewDate(side.decidedAt),
-      side.decidedBy === "agent" ? "by agent" : "",
+      side.decidedBy === "agent" ? resolve(msg("by agent")) : "",
     ]
       .filter(Boolean)
       .join(" · "),
@@ -141,22 +199,41 @@ export function decisionText(side: DecisionSide): string {
 }
 
 /**
- * One version's entry of a search, as the review's own list words it. `only` words the records
- * the other version's entry lacks, and is null when the other version has no such entry.
+ * One version's entry of a search, as the review's own list words it. `only` says which version
+ * alone has the records the other version's entry lacks, and is null when the other version has
+ * no such entry.
  */
-export function searchText(side: SearchSide, only: string | null): string {
+export function searchText(
+  side: SearchSide,
+  only: "here" | "other" | null,
+  resolve: MessageResolver = m,
+): string {
   if (!side) return "";
+  const records = { count: side.records, shown: count(side.records) };
+  const onlyShown = count(side.recordsOnlyThisSide);
   return [
     [
       side.database,
       side.searchedOn,
-      side.resultCount === undefined ? "" : `${side.resultCount.toLocaleString()} results`,
-      `${plural(side.records, "record", "records")}${
-        only && side.recordsOnlyThisSide > 0
-          ? ` (${side.recordsOnlyThisSide.toLocaleString()} ${only})`
-          : ""
-      }`,
-      side.loggedBy === "agent" ? "by agent" : "",
+      side.resultCount === undefined
+        ? ""
+        : resolve(msg("{count} results", { count: count(side.resultCount) })),
+      only === "here" && side.recordsOnlyThisSide > 0
+        ? resolve(
+            msg(
+              "{count, plural, one {{shown} record} other {{shown} records}} ({onlyShown} only in this version)",
+              { ...records, onlyShown },
+            ),
+          )
+        : only === "other" && side.recordsOnlyThisSide > 0
+          ? resolve(
+              msg(
+                "{count, plural, one {{shown} record} other {{shown} records}} ({onlyShown} only in the other version)",
+                { ...records, onlyShown },
+              ),
+            )
+          : resolve(msg("{count, plural, one {{shown} record} other {{shown} records}}", records)),
+      side.loggedBy === "agent" ? resolve(msg("by agent")) : "",
     ]
       .filter(Boolean)
       .join(" · "),

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { Check, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -17,6 +18,7 @@ export function ComputeOutputBlock(props: {
   readonly tail?: boolean;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
@@ -36,7 +38,7 @@ export function ComputeOutputBlock(props: {
       aria-expanded={expanded}
       onClick={() => setExpanded((current) => !current)}
     >
-      {expanded ? "Show less" : "Show all"}
+      {expanded ? gt("Show less") : gt("Show all")}
     </Button>
   ) : null;
   return (
@@ -63,7 +65,7 @@ export function ComputeOutputBlock(props: {
           <Button
             size="icon-xs"
             variant="ghost-muted"
-            aria-label={isCopied ? "Copied" : "Copy output"}
+            aria-label={isCopied ? gt("Copied") : gt("Copy output")}
             onClick={() => {
               const copy = props.copy?.();
               if (copy === undefined) return;

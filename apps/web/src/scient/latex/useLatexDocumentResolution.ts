@@ -2,6 +2,8 @@ import type { EnvironmentId, ScientLatexResolveResult } from "@t3tools/contracts
 import { useEffect, useRef, useState } from "react";
 
 import { requestLatexResolution } from "./client";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 interface StoredLatexDocumentResolution {
   readonly requestKey: string;
@@ -79,7 +81,8 @@ export function useLatexDocumentResolution(input: {
           requestKey: request.key,
           documentKey: request.documentKey,
           result: null,
-          error: error instanceof Error ? error.message : "LaTeX document resolution failed.",
+          error:
+            error instanceof Error ? error.message : m(msg("LaTeX document resolution failed.")),
         });
       });
     return () => {

@@ -6,6 +6,7 @@ import type {
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
+import { providerStatusMessageText } from "../../scient/providerConnection/providerStatusMessageCopy";
 
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
@@ -102,9 +103,9 @@ export function getProviderSummary(
   if (provider.status === "warning") {
     return {
       headline: resolve(msg("Needs attention")),
-      detail:
-        provider.message ??
-        resolve(msg("The provider is installed, but the server could not fully verify it.")),
+      detail: provider.message
+        ? providerStatusMessageText(provider.message, resolve)
+        : resolve(msg("The provider is installed, but the server could not fully verify it.")),
     };
   }
   if (provider.status === "error") {

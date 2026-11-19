@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -74,7 +75,7 @@ export function SourcesNameDialog(props: {
             disabled={pending}
             onClick={props.onClose}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             type="button"

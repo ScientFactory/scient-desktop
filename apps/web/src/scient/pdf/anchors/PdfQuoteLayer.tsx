@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { PdfSourceDescriptor, PdfTarget } from "@scientfactory/document-artifacts";
 import type { PdfCitation, ScopedThreadRef } from "@t3tools/contracts";
 import { pdfCitationFits } from "@t3tools/shared/pdfCitations";
@@ -13,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { PdfAnnotationActionsContext } from "~/scient/annotations/PdfAnnotationLayer";
 import { CitationActionBar } from "~/scient/chat/CitationActionBar";
@@ -80,23 +82,29 @@ function outcomeNotice(outcome: PdfRevealOutcome): { title: string; description:
       return null;
     case "Relocated":
       return {
-        title: "Quote found by its text",
-        description: "Its saved place did not match this PDF, so Scient searched for the words.",
+        title: m(msg("Quote found by its text")),
+        description: m(
+          msg("Its saved place did not match this PDF, so Scient searched for the words."),
+        ),
       };
     case "Ambiguous":
       return {
-        title: "The quoted text appears more than once",
-        description: `Showing page ${outcome.page}, where it was quoted.`,
+        title: m(msg("The quoted text appears more than once")),
+        description: m(msg("Showing page {page}, where it was quoted.", { page: outcome.page })),
       };
     case "NotFound":
       return {
-        title: "Couldn't find the quoted text",
-        description: `This PDF may have changed. Showing page ${outcome.page}, where it was quoted.`,
+        title: m(msg("Couldn't find the quoted text")),
+        description: m(
+          msg("This PDF may have changed. Showing page {page}, where it was quoted.", {
+            page: outcome.page,
+          }),
+        ),
       };
     case "Incomplete":
       return {
-        title: "Couldn't search the whole PDF in time",
-        description: `Showing page ${outcome.page}, where it was quoted.`,
+        title: m(msg("Couldn't search the whole PDF in time")),
+        description: m(msg("Showing page {page}, where it was quoted.", { page: outcome.page })),
       };
   }
 }
@@ -110,11 +118,11 @@ function pageNotice(
       return null;
     case "Repeated":
       return {
-        title: `More than one page is numbered ${label}`,
-        description: `Showing the first, page ${match.page} of the PDF.`,
+        title: m(msg("More than one page is numbered {label}", { label })),
+        description: m(msg("Showing the first, page {page} of the PDF.", { page: match.page })),
       };
     case "Missing":
-      return { title: `This PDF has no page ${label}` };
+      return { title: m(msg("This PDF has no page {label}", { label })) };
   }
 }
 
@@ -149,7 +157,10 @@ function PdfQuoteReveal(props: {
         },
         () => {
           if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
-          toastManager.add({ type: "error", title: `Couldn't go to page ${pageLabel}` });
+          toastManager.add({
+            type: "error",
+            title: m(msg("Couldn't go to page {pageLabel}", { pageLabel })),
+          });
         },
       );
       return () => controller.abort();
@@ -167,7 +178,7 @@ function PdfQuoteReveal(props: {
       },
       () => {
         if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
-        toastManager.add({ type: "error", title: "Couldn't show the quote in this PDF" });
+        toastManager.add({ type: "error", title: m(msg("Couldn't show the quote in this PDF")) });
       },
     );
     return () => controller.abort();

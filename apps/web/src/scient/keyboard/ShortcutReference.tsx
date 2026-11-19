@@ -4,6 +4,7 @@ import {
   shortcutToKeybindingInput,
   whenAstToExpression,
 } from "~/components/settings/KeybindingsSettings.logic";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useRef, useState, useSyncExternalStore } from "react";
 import katex from "katex";
 import katexCss from "katex/dist/katex.min.css?inline";
@@ -25,11 +26,11 @@ const escape = (value: string) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
   );
 const sections = {
-  latex: "Write",
-  math: "Mathematics",
-  table: "Tables in Write",
+  latex: msg("Write", { $context: "shortcut section for writing documents" }),
+  math: msg("Mathematics"),
+  table: msg("Tables in Write"),
   markdown: "Markdown",
-  pdf: "PDF reader",
+  pdf: msg("PDF reader"),
 } as const;
 
 /** A snapshot of effective bindings, never a separately maintained shortcut list. */
@@ -39,6 +40,8 @@ export function ShortcutReference({
 }: {
   appBindings?: ResolvedKeybindingsConfig;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const snapshot = useSyncExternalStore(
     subscribeKeyboardPreferences,
     getKeyboardPreferences,
@@ -83,21 +86,21 @@ export function ShortcutReference({
               }
             }
             return [
-              `<tr><td>${escape(command.label)}${preview ? `<div class="formula">${preview}</div>` : ""}</td><td>${keys.length ? keys.map((key) => `<div class="keys">${escape(key)}</div>`).join("") : "<span class=muted>Unassigned</span>"}</td></tr>`,
+              `<tr><td>${escape(m(command.label))}${preview ? `<div class="formula">${preview}</div>` : ""}</td><td>${keys.length ? keys.map((key) => `<div class="keys">${escape(key)}</div>`).join("") : `<span class=muted>${escape(gt("Unassigned", { $context: "no shortcut is assigned" }))}</span>`}</td></tr>`,
             ];
           })
           .join("");
         return rows
-          ? `<section><h2>${label}</h2><table><thead><tr><th>Action</th><th>Shortcut</th></tr></thead><tbody>${rows}</tbody></table></section>`
+          ? `<section><h2>${escape(m(label))}</h2><table><thead><tr><th>${escape(gt("Action", { $context: "table column of editor commands" }))}</th><th>${escape(gt("Shortcut"))}</th></tr></thead><tbody>${rows}</tbody></table></section>`
           : "";
       })
       .join("");
     const general = appBindings.length
-      ? `<section><h2>Application shortcuts</h2><table><thead><tr><th>Action and context</th><th>Shortcut</th></tr></thead><tbody>${appBindings.map((binding) => `<tr><td>${escape(commandLabel(binding.command))}<div class="muted">${escape(whenAstToExpression(binding.whenAst))}</div></td><td class="keys">${escape(labelKeys(shortcutToKeybindingInput(binding.shortcut), mac))}</td></tr>`).join("")}</tbody></table></section>`
+      ? `<section><h2>${escape(gt("Application shortcuts"))}</h2><table><thead><tr><th>${escape(gt("Action and context"))}</th><th>${escape(gt("Shortcut"))}</th></tr></thead><tbody>${appBindings.map((binding) => `<tr><td>${escape(commandLabel(binding.command, m))}<div class="muted">${escape(whenAstToExpression(binding.whenAst))}</div></td><td class="keys">${escape(labelKeys(shortcutToKeybindingInput(binding.shortcut), mac))}</td></tr>`).join("")}</tbody></table></section>`
       : "";
-    return `<!doctype html><html><head><meta charset="utf-8"><base href="${escape(document.baseURI)}"><title>Scient shortcut reference</title><style>${katexCss}</style><style>
+    return `<!doctype html><html><head><meta charset="utf-8"><base href="${escape(document.baseURI)}"><title>${escape(gt("Scient shortcut reference"))}</title><style>${katexCss}</style><style>
       @page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:12px/1.5 system-ui,sans-serif;color:#171717;background:white;max-width:850px;margin:24px auto;padding:0 24px}h1{font-size:25px;margin-bottom:4px}h2{font-size:17px;margin:24px 0 8px;break-after:avoid}p{color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{text-align:left;vertical-align:top;padding:7px 9px;border-bottom:1px solid #ddd}th{background:#f2f3f5}thead{display:table-header-group}tr{break-inside:avoid}td:first-child{width:56%}.keys{font-family:ui-monospace,monospace;white-space:normal}.formula{margin-top:5px;font-size:13px}.muted{color:#777}@media print{body{max-width:none;margin:0;padding:0}h2{break-after:avoid}}
-      </style></head><body><h1>Scient shortcut reference</h1><p>${escape(new Date(now + "Z").toLocaleDateString())} · ${mac ? "Mac" : "Windows / Linux"} · ${snapshot.preferences.mathPreset === "lyx" ? "LyX-style math" : "Minimal math"}</p><p>Successive keys are shown with arrows. Release the prefix keys before the next key. Escape cancels a sequence. Commands apply to the focused editor; table commands apply in table cells. Custom bindings replace defaults.</p>${groups}${general}<h2>Native editing</h2><p>Arrow keys move the caret; Shift extends a selection. Tab moves through math placeholders. Undo, redo, clipboard, and text selection remain owned by the editor. Operating-system shortcuts can take precedence.</p></body></html>`;
+      </style></head><body><h1>${escape(gt("Scient shortcut reference"))}</h1><p>${escape(new Date(now + "Z").toLocaleDateString())} · ${mac ? "Mac" : "Windows / Linux"} · ${escape(snapshot.preferences.mathPreset === "lyx" ? gt("LyX-style math") : gt("Minimal math"))}</p><p>${escape(gt("Successive keys are shown with arrows. Release the prefix keys before the next key. Escape cancels a sequence. Commands apply to the focused editor; table commands apply in table cells. Custom bindings replace defaults."))}</p>${groups}${general}<h2>${escape(gt("Native editing"))}</h2><p>${escape(gt("Arrow keys move the caret; Shift extends a selection. Tab moves through math placeholders. Undo, redo, clipboard, and text selection remain owned by the editor. Operating-system shortcuts can take precedence."))}</p></body></html>`;
   })();
   return (
     <>
@@ -109,11 +112,13 @@ export function ShortcutReference({
           setOpen(true);
         }}
       >
-        PDF reference
+        <T>PDF reference</T>
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogPopup className="max-w-4xl" data-keybinding-capture="">
-          <DialogTitle>My shortcut reference</DialogTitle>
+          <DialogTitle>
+            <T>My shortcut reference</T>
+          </DialogTitle>
           <div className="flex items-center justify-between gap-3 py-3">
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -124,7 +129,7 @@ export function ShortcutReference({
                   setAll(event.target.checked);
                 }}
               />{" "}
-              Include unassigned actions
+              <T>Include unassigned actions</T>
             </label>
             <Button
               size="sm"
@@ -134,21 +139,23 @@ export function ShortcutReference({
                   frame.current?.contentWindow?.focus();
                   frame.current?.contentWindow?.print();
                 } catch {
-                  setError("The print dialog could not open. Try again from the desktop app.");
+                  setError(gt("The print dialog could not open. Try again from the desktop app."));
                 }
               }}
             >
-              Print / save as PDF
+              <T>Print / save as PDF</T>
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Choose Save as PDF or Microsoft Print to PDF in the print dialog. Generated locally from
-            your current shortcuts.
+            <T>
+              Choose Save as PDF or Microsoft Print to PDF in the print dialog. Generated locally
+              from your current shortcuts.
+            </T>
           </p>
           {error ? <p role="alert">{error}</p> : null}
           <iframe
             ref={frame}
-            title="Shortcut reference preview"
+            title={gt("Shortcut reference preview")}
             sandbox="allow-same-origin allow-modals"
             srcDoc={html}
             className="h-[65vh] w-full rounded border bg-white"

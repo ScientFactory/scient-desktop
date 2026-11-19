@@ -1,6 +1,9 @@
 import type { ScientSourceImportOperation } from "@t3tools/contracts";
 import { LoaderCircle, X } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { Button } from "../../components/ui/button";
 import { describeImport, type ImportReceiptInput } from "./importOutcome";
@@ -11,15 +14,14 @@ import {
   notBroughtLines,
   notBroughtName,
 } from "./notBroughtLabels";
-import { countOf } from "./referenceFileSummary";
 import { importProgressLabel, type SourcesResultContent } from "./sourcesFeedback";
 
 /** How many kinds of things not brought are listed before "Show all". */
 const NOT_BROUGHT_FIRST = 5;
 
 const IMPORT_SUMMARY_LABELS = {
-  checkDetails: "Check details",
-  detailsToCheck: "Sources whose details to check",
+  checkDetails: msg("Check details"),
+  detailsToCheck: msg("Sources whose details to check"),
 } as const;
 
 export interface ImportReceiptActions {
@@ -41,16 +43,24 @@ export interface ImportReceiptActions {
  */
 export function importResultContent(
   input: ImportReceiptInput & ImportReceiptActions,
+  resolve: MessageResolver = m,
 ): SourcesResultContent {
-  const receipt = describeImport(input);
+  const receipt = describeImport(input, resolve);
   const notBrought =
     input.operation && input.operation.state !== "running" ? notBroughtLines(input.operation) : [];
   const notes = [
     ...receipt.notes,
-    ...(notBrought.length > 0 ? ["Zotero holds more for some references than was brought"] : []),
+    ...(notBrought.length > 0
+      ? [resolve(msg("Zotero holds more for some references than was brought"))]
+      : []),
     ...(input.rest && !input.referenceFile
       ? [
-          `${input.rest.count.toLocaleString()} more ${input.rest.count === 1 ? "is" : "are"} not imported yet`,
+          resolve(
+            msg(
+              "{count, plural, one {{shown} more is not imported yet} other {{shown} more are not imported yet}}",
+              { count: input.rest.count, shown: input.rest.count.toLocaleString() },
+            ),
+          ),
         ]
       : []),
   ];
@@ -60,17 +70,19 @@ export function importResultContent(
   const actions = [
     rest ? (
       <Button key="rest" size="xs" variant="outline" onClick={rest.onImport}>
-        Import the rest ({rest.count.toLocaleString()})
+        <T>
+          Import the rest (<Var>{rest.count.toLocaleString()}</Var>)
+        </T>
       </Button>
     ) : null,
     onAddToProject && libraryOnly.length > 0 ? (
       <Button key="add" size="xs" variant="outline" onClick={() => onAddToProject(libraryOnly)}>
-        {LIBRARY_LABELS.addToProject}
+        {resolve(LIBRARY_LABELS.addToProject)}
       </Button>
     ) : null,
     onRetryFailed && receipt.failed > 0 && input.operation?.state !== "cancelled" ? (
       <Button key="retry" size="xs" variant="outline" onClick={onRetryFailed}>
-        Try again
+        <T>Try again</T>
       </Button>
     ) : null,
     onShowSources && toCheck.length > 0 ? (
@@ -78,9 +90,9 @@ export function importResultContent(
         key="check"
         size="xs"
         variant="outline"
-        onClick={() => onShowSources(toCheck, IMPORT_SUMMARY_LABELS.detailsToCheck)}
+        onClick={() => onShowSources(toCheck, resolve(IMPORT_SUMMARY_LABELS.detailsToCheck))}
       >
-        {IMPORT_SUMMARY_LABELS.checkDetails}
+        {resolve(IMPORT_SUMMARY_LABELS.checkDetails)}
       </Button>
     ) : null,
     onViewSource && receipt.existingSourceId ? (
@@ -90,7 +102,7 @@ export function importResultContent(
         variant="ghost"
         onClick={() => onViewSource(receipt.existingSourceId!)}
       >
-        View
+        <T context="verb, opens the source">View</T>
       </Button>
     ) : null,
   ].filter((action) => action !== null);
@@ -101,7 +113,12 @@ export function importResultContent(
     notBrought.length > 0;
   const exceptions = hasDetails
     ? notes.length > 0
-      ? ` ${countOf(notes.length, "exception", "exceptions")}.`
+      ? ` ${resolve(
+          msg("{count, plural, one {{shown} exception.} other {{shown} exceptions.}}", {
+            count: notes.length,
+            shown: notes.length.toLocaleString(),
+          }),
+        )}`
       : ""
     : notes[0]
       ? ` ${notes[0]}.`
@@ -133,6 +150,8 @@ function ImportReceiptDetails(props: {
   readonly operation: ScientSourceImportOperation | null;
   readonly onShowSources: ImportReceiptActions["onShowSources"];
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [allNotBrought, setAllNotBrought] = useState(false);
   const notBrought = props.operation ? notBroughtLines(props.operation) : [];
   return (
@@ -158,8 +177,8 @@ function ImportReceiptDetails(props: {
       ) : null}
       {notBrought.length > 0 ? (
         <div>
-          <div className="font-medium">{NOT_BROUGHT_LABELS.heading}</div>
-          <div className="text-muted-foreground">{NOT_BROUGHT_LABELS.about}</div>
+          <div className="font-medium">{m(NOT_BROUGHT_LABELS.heading)}</div>
+          <div className="text-muted-foreground">{m(NOT_BROUGHT_LABELS.about)}</div>
           <ul className="mt-1 space-y-0.5">
             {(allNotBrought ? notBrought : notBrought.slice(0, NOT_BROUGHT_FIRST)).map((line) => {
               const name = notBroughtName(line);
@@ -176,15 +195,15 @@ function ImportReceiptDetails(props: {
                       className="shrink-0"
                       size="xs"
                       variant="ghost"
-                      aria-label={`${NOT_BROUGHT_LABELS.show}: ${name}`}
+                      aria-label={gt("Show: {name}", { name })}
                       onClick={() =>
                         props.onShowSources?.(
                           line.sourceIds,
-                          `${NOT_BROUGHT_LABELS.shownSources}: ${name}`,
+                          gt("References this was not brought for: {name}", { name }),
                         )
                       }
                     >
-                      {NOT_BROUGHT_LABELS.show}
+                      {m(NOT_BROUGHT_LABELS.show)}
                     </Button>
                   ) : null}
                 </li>
@@ -199,8 +218,8 @@ function ImportReceiptDetails(props: {
               onClick={() => setAllNotBrought((value) => !value)}
             >
               {allNotBrought
-                ? NOT_BROUGHT_LABELS.showFewer
-                : `${NOT_BROUGHT_LABELS.showAll} (${notBrought.length})`}
+                ? m(NOT_BROUGHT_LABELS.showFewer)
+                : gt("Show all ({count})", { count: notBrought.length })}
             </Button>
           ) : null}
         </div>
@@ -215,16 +234,22 @@ export function RunningImportBody(props: {
   readonly cancelling: boolean;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const toFollow = props.operation.run?.remaining ?? 0;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <p className="min-w-0 flex-1">
-        {importProgressLabel(props.operation)}
-        {toFollow > 0 ? ` · ${toFollow.toLocaleString()} more to follow` : ""}
+        {toFollow > 0
+          ? gt("{progress} · {count} more to follow", {
+              progress: importProgressLabel(props.operation, m),
+              count: toFollow.toLocaleString(),
+            })
+          : importProgressLabel(props.operation, m)}
       </p>
       <Button size="xs" variant="ghost" disabled={props.cancelling} onClick={props.onCancel}>
         {props.cancelling ? <LoaderCircle className="animate-spin" /> : <X />}
-        {props.cancelling ? "Stopping…" : "Cancel after current item"}
+        {props.cancelling ? gt("Stopping…") : gt("Cancel after current item")}
       </Button>
     </div>
   );

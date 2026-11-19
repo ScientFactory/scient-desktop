@@ -1,4 +1,5 @@
 // Thin composer presentation for Scient-owned local voice dictation.
+import { T, useGT, Var } from "gt-react";
 // Async lifecycle and stale-operation protection live in the controller hook;
 // this component only renders the current state into one explicit footer slot.
 
@@ -57,6 +58,7 @@ export interface ScientVoiceComposerControlProps {
 }
 
 function formatModelSize(byteSize: number): string {
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- a size with its unit symbol
   return `~${Math.round(byteSize / 1024 / 1024)} MiB`;
 }
 
@@ -114,7 +116,7 @@ function VoiceErrorText({
         </Tooltip>
         {onOpenSettings ? (
           <InlineButton tone="destructive" onClick={onOpenSettings} type="button">
-            Open Settings
+            <T>Open Settings</T>
           </InlineButton>
         ) : null}
       </div>
@@ -154,7 +156,7 @@ function VoiceModelSetupPicker({
         }
       >
         <ComposerControlIcon icon={MicIcon} />
-        Choose voice model
+        <T>Choose voice model</T>
       </PopoverTrigger>
       <PopoverPopup
         align="end"
@@ -175,11 +177,14 @@ function VoiceModelSetupPicker({
                 <span className="flex flex-wrap items-center gap-1.5">
                   <span className="font-medium text-sm">ChatGPT</span>
                   <Badge size="sm" variant="info">
-                    Nothing to download
+                    <T>Nothing to download</T>
                   </Badge>
                 </span>
                 <span className="block text-muted-foreground text-xs leading-4">
-                  Uses your ChatGPT sign-in. Recordings go to OpenAI, which keeps them for 30 days.
+                  <T>
+                    Uses your ChatGPT sign-in. Recordings go to OpenAI, which keeps them for 30
+                    days.
+                  </T>
                 </span>
               </span>
               <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
@@ -187,7 +192,7 @@ function VoiceModelSetupPicker({
           ) : null}
           {onChooseChatGpt && models.length > 0 ? (
             <p className="px-2.5 pt-1.5 text-muted-foreground text-xs">
-              Or keep recordings on this computer
+              <T>Or keep recordings on this computer</T>
             </p>
           ) : null}
           {models.map((model) => {
@@ -206,13 +211,13 @@ function VoiceModelSetupPicker({
                     <span className="font-medium text-sm">{model.displayName}</span>
                     {recommended ? (
                       <Badge size="sm" variant="info">
-                        Best for this computer
+                        <T>Best for this computer</T>
                       </Badge>
                     ) : null}
                   </span>
                   <span className="block text-muted-foreground text-xs leading-4">
                     {model.description} ·{" "}
-                    {downloaded ? "On this computer" : formatModelSize(model.byteSize)}
+                    {downloaded ? <T>On this computer</T> : formatModelSize(model.byteSize)}
                   </span>
                 </span>
                 {downloaded ? (
@@ -233,7 +238,7 @@ function VoiceModelSetupPicker({
             variant="ghost-muted"
           >
             <SlidersHorizontalIcon className="text-current" />
-            Manage
+            <T context="verb, manage voice models">Manage</T>
           </Button>
         </div>
       </PopoverPopup>
@@ -250,10 +255,11 @@ export function ScientVoiceComposerControl({
   onBusyChange,
   onRequestSubmit,
   className,
-  ariaLabel = "Dictate a voice message",
+  ariaLabel,
   presentation = "composer",
   readyModelOnly = false,
 }: ScientVoiceComposerControlProps): ReactNode {
+  const gt = useGT();
   const client = getVoiceBridge();
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
@@ -332,7 +338,7 @@ export function ScientVoiceComposerControl({
                 {formatVoiceTimer(controller.elapsedMs)}
               </span>
               <span className="sr-only" role="status">
-                Recording
+                <T context="voice recording in progress">Recording</T>
               </span>
             </>
           ) : (
@@ -346,10 +352,10 @@ export function ScientVoiceComposerControl({
                 role="status"
               >
                 {controller.phase === "requesting-permission"
-                  ? "Waiting for microphone access…"
+                  ? gt("Waiting for microphone access…")
                   : controller.phase === "transcribing"
-                    ? "Transcribing…"
-                    : "Correcting transcript…"}
+                    ? gt("Transcribing…")
+                    : gt("Correcting transcript…")}
               </span>
               <span aria-hidden="true" className="w-9 shrink-0" />
             </>
@@ -363,7 +369,7 @@ export function ScientVoiceComposerControl({
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Cancel recording (Esc)"
+                    aria-label={gt("Cancel recording (Esc)")}
                     onClick={() => void controller.cancel()}
                     size="icon-sm"
                     variant="ghost"
@@ -372,13 +378,15 @@ export function ScientVoiceComposerControl({
               >
                 <XIcon />
               </TooltipTrigger>
-              <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
+              <TooltipPopup>
+                <T>Cancel recording (Esc)</T>
+              </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Transcribe and insert (Enter)"
+                    aria-label={gt("Transcribe and insert (Enter)")}
                     onClick={() => void controller.stop(false)}
                     size="icon-sm"
                     variant="ghost"
@@ -387,14 +395,16 @@ export function ScientVoiceComposerControl({
               >
                 <CornerDownLeftIcon />
               </TooltipTrigger>
-              <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
+              <TooltipPopup>
+                <T>Transcribe and insert (Enter)</T>
+              </TooltipPopup>
             </Tooltip>
             {onRequestSubmit ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Transcribe and send"
+                      aria-label={gt("Transcribe and send")}
                       onClick={() => void controller.stop(true)}
                       size="icon-sm"
                       variant="round-primary"
@@ -403,7 +413,9 @@ export function ScientVoiceComposerControl({
                 >
                   <ArrowUpIcon />
                 </TooltipTrigger>
-                <TooltipPopup>Transcribe and send</TooltipPopup>
+                <TooltipPopup>
+                  <T>Transcribe and send</T>
+                </TooltipPopup>
               </Tooltip>
             ) : null}
           </div>
@@ -412,14 +424,14 @@ export function ScientVoiceComposerControl({
         <div data-scient-voice-actions="true" className={actionsClassName}>
           {controller.phase === "correcting" ? (
             <Button onClick={controller.useOriginal} size="xs" variant="ghost-muted">
-              Use original
+              <T>Use original</T>
             </Button>
           ) : (
             <Button
               aria-label={
                 controller.phase === "requesting-permission"
-                  ? "Cancel microphone request"
-                  : "Cancel transcription"
+                  ? gt("Cancel microphone request")
+                  : gt("Cancel transcription")
               }
               onClick={() => void controller.cancel()}
               size="icon-sm"
@@ -451,7 +463,7 @@ export function ScientVoiceComposerControl({
             }
           />
           <Button
-            aria-label="Dismiss voice setup"
+            aria-label={gt("Dismiss voice setup")}
             onClick={controller.dismissSetup}
             size="icon-sm"
             variant="ghost"
@@ -464,7 +476,9 @@ export function ScientVoiceComposerControl({
           <div aria-live="polite" className="flex items-center gap-2" role="status">
             <Loader2Icon aria-hidden="true" className="size-4 shrink-0 animate-spin" />
             <span className="text-muted-foreground text-xs">
-              Downloading voice model… {controller.downloadPercent}%
+              <T>
+                Downloading voice model… <Var>{controller.downloadPercent}</Var>%
+              </T>
             </span>
           </div>
           <TooltipProvider delay={40} closeDelay={0} timeout={300}>
@@ -472,7 +486,7 @@ export function ScientVoiceComposerControl({
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Cancel voice setup"
+                    aria-label={gt("Cancel voice setup")}
                     onClick={() => void controller.cancel()}
                     size="icon-sm"
                     variant="ghost"
@@ -481,14 +495,16 @@ export function ScientVoiceComposerControl({
               >
                 <XIcon />
               </TooltipTrigger>
-              <TooltipPopup>Cancel voice setup</TooltipPopup>
+              <TooltipPopup>
+                <T>Cancel voice setup</T>
+              </TooltipPopup>
             </Tooltip>
           </TooltipProvider>
         </div>
       ) : (
         <>
           <ComposerControl
-            aria-label={ariaLabel}
+            aria-label={ariaLabel ?? gt("Dictate a voice message")}
             disabled={disabled || controller.phase !== "idle"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => void controller.activate()}

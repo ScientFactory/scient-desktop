@@ -11,6 +11,7 @@ import {
 } from "~/components/ui/dialog";
 import { insertMatrix, type MatrixEnvironment } from "../math/input/matrix";
 import { LatexMatrixBrackets } from "./LatexMatrixSizeMenu";
+import { T, useGT } from "gt-react";
 
 export function LatexMatrixDialog({
   open,
@@ -29,6 +30,7 @@ export function LatexMatrixDialog({
   onInsert: (tex: string) => void;
   display: boolean;
 }) {
+  const gt = useGT();
   const [rows, setRows] = useState(2);
   const [columns, setColumns] = useState(2);
   const matrix = insertMatrix({ from: 0, to: 0 }, environment, rows, columns, display);
@@ -36,9 +38,11 @@ export function LatexMatrixDialog({
     <Dialog open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
       <DialogPopup data-dock-command-scope="latex" finalFocus={false}>
         <DialogHeader>
-          <DialogTitle>Matrix</DialogTitle>
+          <DialogTitle>
+            <T>Matrix</T>
+          </DialogTitle>
           <DialogDescription>
-            Choose its size and brackets, then fill in the cells.
+            <T>Choose its size and brackets, then fill in the cells.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -51,9 +55,9 @@ export function LatexMatrixDialog({
           >
             <div className="grid grid-cols-2 gap-3">
               <label>
-                Rows{" "}
+                <T>Rows</T>{" "}
                 <Input
-                  aria-label="Matrix rows"
+                  aria-label={gt("Matrix rows")}
                   type="number"
                   min={1}
                   max={20}
@@ -62,9 +66,9 @@ export function LatexMatrixDialog({
                 />
               </label>
               <label>
-                Columns{" "}
+                <T>Columns</T>{" "}
                 <Input
-                  aria-label="Matrix columns"
+                  aria-label={gt("Matrix columns")}
                   type="number"
                   min={1}
                   max={20}
@@ -78,10 +82,10 @@ export function LatexMatrixDialog({
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button type="submit" disabled={!matrix}>
-                Insert matrix
+                <T>Insert matrix</T>
               </Button>
             </div>
           </form>

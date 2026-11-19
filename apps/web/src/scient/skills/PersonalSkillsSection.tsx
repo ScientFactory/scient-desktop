@@ -7,11 +7,13 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { EllipsisIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -41,9 +43,13 @@ const PERSONAL_PROBLEMS = new Set([
 const folderName = (path: string) => path.split(/[\\/]/u).pop() ?? path;
 
 /** "From notes.zip · Changed by an agent" */
-function statusOf(skill: ScientSkillCatalogItem): string {
-  const parts = [skill.personal?.source ? `From ${skill.personal.source}` : "Your skill"];
-  if (skill.personal?.changedBy === "agent") parts.push("Changed by an agent");
+function statusOf(skill: ScientSkillCatalogItem, resolve: MessageResolver): string {
+  const parts = [
+    skill.personal?.source
+      ? resolve(msg("From {source}", { source: skill.personal.source }))
+      : resolve(msg("Your skill")),
+  ];
+  if (skill.personal?.changedBy === "agent") parts.push(resolve(msg("Changed by an agent")));
   return parts.join(" · ");
 }
 
@@ -78,6 +84,8 @@ export function PersonalSkillsSection({
   // Removing, undoing and exporting need the settings grant; the server checks it too.
   const canWrite = useAtomValue(removePersonalSkill.permissionAtom(environmentId));
   const startChat = useSkillAgentChat(environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   const [pending, setPending] = useState<string | null>(null);
   const [opened, setOpened] = useState<ScientSkillCatalogItem | null>(null);
 
@@ -113,7 +121,7 @@ export function PersonalSkillsSection({
       if (result._tag === "Failure") {
         toastManager.add({
           type: "error",
-          title: "Unable to show the folder",
+          title: m(msg("Unable to show the folder")),
           description: folder,
         });
       }
@@ -133,8 +141,8 @@ export function PersonalSkillsSection({
       return;
     toastManager.add({
       type: "success",
-      title: `Removed ${name}`,
-      actionProps: { children: "Undo", onClick: () => undoChange(name) },
+      title: m(msg("Removed {skill}", { skill: name })),
+      actionProps: { children: m(msg("Undo")), onClick: () => undoChange(name) },
     });
   };
 
@@ -146,7 +154,7 @@ export function PersonalSkillsSection({
     else
       toastManager.add({
         type: "error",
-        title: `Could not export ${name}`,
+        title: m(msg("Could not export {skill}", { skill: name })),
         description: commandFailureMessage(result) ?? undefined,
       });
   };
@@ -154,7 +162,7 @@ export function PersonalSkillsSection({
   const ask = (prompt: string, purpose: SkillChatPurpose) => {
     if (!startChat) return;
     void startChat(prompt, purpose).then((opened) => {
-      if (!opened) toastManager.add({ type: "error", title: "Could not open a new chat" });
+      if (!opened) toastManager.add({ type: "error", title: m(msg("Could not open a new chat")) });
     });
   };
 
@@ -177,12 +185,16 @@ export function PersonalSkillsSection({
     );
 
   if (inventory.data === null && !inventory.error) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        <T>Loading…</T>
+      </p>
+    );
   }
   if (skills.length === 0 && problems.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        None yet. Add one from a file, a web address or another agent.
+        <T>None yet. Add one from a file, a web address or another agent.</T>
       </p>
     );
   }
@@ -197,7 +209,7 @@ export function PersonalSkillsSection({
               skill={skill}
               pending={pending === skill.name}
               disabled={pending !== null}
-              status={statusOf(skill)}
+              status={statusOf(skill, messages)}
               onOpen={() => setOpened(skill)}
               onUpdate={(patch) => update(skill, patch)}
               actions={
@@ -209,7 +221,7 @@ export function PersonalSkillsSection({
                       disabled={pending !== null || !canWrite}
                       onClick={() => undoChange(skill.name)}
                     >
-                      Undo
+                      <T>Undo</T>
                     </Button>
                   ) : null}
                   <Menu>
@@ -218,7 +230,7 @@ export function PersonalSkillsSection({
                         <Button
                           size="icon-sm"
                           variant="ghost-muted"
-                          aria-label={`More for ${skill.name}`}
+                          aria-label={gt("More for {name}", { name: skill.name })}
                         />
                       }
                     >
@@ -227,23 +239,25 @@ export function PersonalSkillsSection({
                     <MenuPopup align="end">
                       {startChat ? (
                         <MenuItem onClick={() => ask(improveSkillPrompt(skill.name), "improve")}>
-                          Improve with an agent
+                          <T>Improve with an agent</T>
                         </MenuItem>
                       ) : null}
                       {folder ? (
-                        <MenuItem onClick={() => showFolder(folder)}>Show in folder</MenuItem>
+                        <MenuItem onClick={() => showFolder(folder)}>
+                          <T>Show in folder</T>
+                        </MenuItem>
                       ) : null}
                       <MenuItem disabled={!canWrite} onClick={() => void exportZip(skill.name)}>
-                        Export as .zip
+                        <T>Export as .zip</T>
                       </MenuItem>
                       {skill.personal?.canUndo ? (
                         <MenuItem disabled={!canWrite} onClick={() => undoChange(skill.name)}>
-                          Undo last change
+                          <T>Undo last change</T>
                         </MenuItem>
                       ) : null}
                       <MenuSeparator />
                       <MenuItem disabled={!canWrite} onClick={() => void removeSkill(skill.name)}>
-                        Remove
+                        <T context="verb, removes the skill">Remove</T>
                       </MenuItem>
                     </MenuPopup>
                   </Menu>
@@ -271,7 +285,9 @@ export function PersonalSkillsSection({
           />
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Changes apply to the next message.</p>
+      <p className="text-xs text-muted-foreground">
+        <T>Changes apply to the next message.</T>
+      </p>
       {opened ? (
         <ManagedSkillCard
           key={opened.releaseKey}
@@ -303,32 +319,43 @@ function ProblemRow({
   readonly onFix: (() => void) | undefined;
   readonly onRemove: (() => void) | undefined;
 }) {
-  const name = problem.path ? folderName(problem.path) : "A skill";
+  const gt = useGT();
+  const name = problem.path ? folderName(problem.path) : gt("A skill");
   return (
     <div className="flex items-start justify-between gap-3 px-4 py-3">
       <div className="grid min-w-0 gap-0.5">
         <p className="truncate text-sm font-medium">{name}</p>
         <p className="text-xs text-destructive-foreground [overflow-wrap:anywhere]">
-          Does not load: {problem.message}
+          {gt("Does not load: {problem}", { problem: problem.message })}
         </p>
       </div>
       <span className="flex shrink-0 items-center gap-1">
         {onFix ? (
           <Button size="xs" variant="outline" disabled={pending} onClick={onFix}>
-            Fix with an agent
+            <T>Fix with an agent</T>
           </Button>
         ) : null}
         <Menu>
           <MenuTrigger
-            render={<Button size="icon-sm" variant="ghost-muted" aria-label={`More for ${name}`} />}
+            render={
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                aria-label={gt("More for {name}", { name })}
+              />
+            }
           >
             <EllipsisIcon aria-hidden />
           </MenuTrigger>
           <MenuPopup align="end">
-            {onShow ? <MenuItem onClick={onShow}>Show in folder</MenuItem> : null}
+            {onShow ? (
+              <MenuItem onClick={onShow}>
+                <T>Show in folder</T>
+              </MenuItem>
+            ) : null}
             {onRemove ? (
               <MenuItem disabled={pending} onClick={onRemove}>
-                Remove
+                <T context="verb, removes the skill">Remove</T>
               </MenuItem>
             ) : null}
           </MenuPopup>

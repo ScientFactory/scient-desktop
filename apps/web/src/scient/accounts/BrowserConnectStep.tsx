@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type { BrowserImportSource } from "@t3tools/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
@@ -13,11 +14,15 @@ import {
 } from "~/components/ui/dialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
-/** The switch's label on the browser's inspect page. */
-export const REMOTE_DEBUGGING_SETTING = "Allow remote debugging for this browser instance";
+/** The switch's label on the browser's inspect page, resolved where it is shown. */
+export const REMOTE_DEBUGGING_SETTING = msg("Allow remote debugging for this browser instance", {
+  $context: "Chrome's own switch label on chrome://inspect; use Chrome's translation",
+});
 
-/** The browser's own question, word for word. */
-export const REMOTE_DEBUGGING_QUESTION = "Allow remote debugging?";
+/** The browser's own question, word for word, resolved where it is shown. */
+export const REMOTE_DEBUGGING_QUESTION = msg("Allow remote debugging?", {
+  $context: "Chrome's own dialog question; use Chrome's translation",
+});
 
 /** A browser Windows keeps from other apps that hands its sign-ins over itself. */
 export type ConnectableSource<S extends BrowserImportSource = BrowserImportSource> = S & {
@@ -31,6 +36,7 @@ export const isConnectable = <S extends BrowserImportSource>(
 
 function CopyAddress({ address }: { readonly address: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard();
+  const gt = useGT();
   return (
     <span className="mt-1 flex items-center gap-2">
       <code className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
@@ -38,7 +44,7 @@ function CopyAddress({ address }: { readonly address: string }) {
       </code>
       <Button size="xs" variant="outline" onClick={() => copyToClipboard(address, undefined)}>
         {isCopied ? <CheckIcon /> : <CopyIcon />}
-        {isCopied ? "Copied" : "Copy"}
+        {isCopied ? gt("Copied") : gt("Copy")}
       </Button>
     </span>
   );
@@ -66,41 +72,61 @@ export function BrowserConnectStep({
     { on: false },
   );
   const browser = source.name;
+  const messages = useMessages();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Import from {browser}</DialogTitle>
+        <DialogTitle>
+          <T>
+            Import from <Var>{browser}</Var>
+          </T>
+        </DialogTitle>
         <DialogDescription>
-          Windows lets only {browser} read its sign-ins, so Scient asks {browser} to hand them over.
+          <T>
+            Windows lets only <Var>{browser}</Var> read its sign-ins, so Scient asks{" "}
+            <Var>{browser}</Var> to hand them over.
+          </T>
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <ol className="grid list-decimal gap-3 pl-5 text-sm">
           <li>
-            In {browser}, open
+            <T>
+              In <Var>{browser}</Var>, open
+            </T>
             <CopyAddress address={source.connection.settingsUrl} />
           </li>
           <li>
-            Turn on <span className="font-medium">{REMOTE_DEBUGGING_SETTING}</span>.{" "}
+            <T>
+              Turn on{" "}
+              <span className="font-medium">
+                <Var>{messages(REMOTE_DEBUGGING_SETTING)}</Var>
+              </span>
+              .
+            </T>{" "}
             {status.on ? (
               <span role="status" className="inline-flex items-center gap-1 text-muted-foreground">
-                <CheckIcon className="size-3.5" /> It&rsquo;s on.
+                <CheckIcon className="size-3.5" /> <T>It&rsquo;s on.</T>
               </span>
             ) : (
               <span role="status" className="text-muted-foreground">
-                Scient notices when it&rsquo;s on.
+                <T>Scient notices when it&rsquo;s on.</T>
               </span>
             )}
           </li>
           <li>
-            {browser} asks &ldquo;{REMOTE_DEBUGGING_QUESTION}&rdquo;: click{" "}
-            <span className="font-medium">Allow</span>. Scient copies the sign-ins, closes the tab
-            it opened and disconnects.
+            <T>
+              <Var>{browser}</Var> asks &ldquo;<Var>{messages(REMOTE_DEBUGGING_QUESTION)}</Var>
+              &rdquo;: click <span className="font-medium">Allow</span>. Scient copies the sign-ins,
+              closes the tab it opened and disconnects.
+            </T>
           </li>
         </ol>
         <p className="mt-4 text-xs text-muted-foreground">
-          The setting can be turned off again on the same page afterwards. Saved passwords stay in{" "}
-          {browser}.
+          <T>
+            The setting can be turned off again on the same page afterwards. Saved passwords stay in{" "}
+            <Var>{browser}</Var>.
+          </T>
         </p>
       </DialogPanel>
       <DialogFooter>
@@ -110,10 +136,10 @@ export function BrowserConnectStep({
           </Button>
         ) : null}
         <Button variant="outline" onClick={onCancel}>
-          Cancel
+          <T>Cancel</T>
         </Button>
         <DialogAction disabled={!status.on} onClick={onContinue}>
-          Continue
+          <T>Continue</T>
         </DialogAction>
       </DialogFooter>
     </>

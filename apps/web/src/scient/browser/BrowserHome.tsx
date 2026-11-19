@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { GripIcon, MoreVerticalIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { type FormEvent, useId, useRef, useState } from "react";
 
@@ -86,7 +87,7 @@ function GoogleApps({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<Button size="sm" variant="ghost" />}>
         <GripIcon />
-        Apps
+        <T context="Google apps menu">Apps</T>
       </PopoverTrigger>
       <PopoverPopup padding="tight">
         <ScrollArea scrollFade className={APPS_HEIGHT_CLASS}>
@@ -127,6 +128,7 @@ function ShortcutCircle({
   onEdit: () => void;
   onRemove: () => void;
 }) {
+  const gt = useGT();
   return (
     <div className="group/row relative w-20">
       <button type="button" className={SHORTCUT_TILE_CLASS} onClick={onOpen}>
@@ -142,15 +144,19 @@ function ShortcutCircle({
               <button
                 type="button"
                 className={SHORTCUT_MENU_CLASS}
-                aria-label={`${shortcut.name} options`}
+                aria-label={gt("{name} options", { name: shortcut.name })}
               />
             }
           >
             <MoreVerticalIcon className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="start">
-            <MenuItem onClick={onEdit}>Edit</MenuItem>
-            <MenuItem onClick={onRemove}>Remove</MenuItem>
+            <MenuItem onClick={onEdit}>
+              <T context="verb, edits the shortcut">Edit</T>
+            </MenuItem>
+            <MenuItem onClick={onRemove}>
+              <T context="verb, removes the shortcut">Remove</T>
+            </MenuItem>
           </MenuPopup>
         </Menu>
       ) : null}
@@ -168,6 +174,7 @@ function ShortcutDialog({
   shortcut: Shortcut | null;
   onClose: () => void;
 }) {
+  const gt = useGT();
   const save = useBrowserShortcuts((state) => state.save);
   const [name, setName] = useState(shortcut?.name ?? "");
   const [link, setLink] = useState(shortcut?.url ?? "");
@@ -191,23 +198,27 @@ function ShortcutDialog({
     >
       <DialogPopup className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>{shortcut ? "Edit shortcut" : "Add shortcut"}</DialogTitle>
+          <DialogTitle>{shortcut ? gt("Edit shortcut") : gt("Add shortcut")}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <form id={formId} className="grid gap-4" onSubmit={submit}>
             <label className="grid gap-1.5">
-              <Label render={<span />}>Name</Label>
+              <Label render={<span />}>
+                <T context="name of a browser shortcut">Name</T>
+              </Label>
               <Input
                 autoFocus={shortcut !== null}
                 maxLength={MAX_NAME_LENGTH}
-                placeholder="Optional"
+                placeholder={gt("Optional")}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
             <div className="grid gap-1.5">
               <label className="grid gap-1.5">
-                <Label render={<span />}>Link</Label>
+                <Label render={<span />}>
+                  <T context="web address of a browser shortcut">Link</T>
+                </Label>
                 <Input
                   autoFocus={shortcut === null}
                   aria-invalid={invalid}
@@ -220,17 +231,21 @@ function ShortcutDialog({
                 />
               </label>
               {invalid ? (
-                <p className="text-xs text-destructive-foreground">Enter a web address.</p>
+                <p className="text-xs text-destructive-foreground">
+                  <T>Enter a web address.</T>
+                </p>
               ) : null}
             </div>
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button type="submit" form={formId}>
-            {shortcut ? "Save" : "Add"}
+            {shortcut
+              ? gt("Save", { $context: "saves the browser shortcut" })
+              : gt("Add", { $context: "adds the browser shortcut" })}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -249,6 +264,7 @@ function HomeSearch({
   incognito: boolean;
   onSearch: (query: string) => void;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const anchor = useRef<HTMLFormElement>(null);
   return (
@@ -257,7 +273,9 @@ function HomeSearch({
         <ScientSymbol className="size-6" />
         <span>
           <span className="font-semibold">Scient</span>{" "}
-          <span className="text-muted-foreground">Browser</span>
+          <span className="text-muted-foreground">
+            <T context="the Scient Browser product name, after Scient">Browser</T>
+          </span>
         </span>
       </p>
       <form
@@ -283,8 +301,8 @@ function HomeSearch({
               render={
                 <InputGroupInput
                   type="search"
-                  aria-label="Search or enter an address"
-                  placeholder="Search or enter an address"
+                  aria-label={gt("Search or enter an address")}
+                  placeholder={gt("Search or enter an address")}
                   spellCheck={false}
                   // The list's hidden field stops the browser submitting this form on Enter.
                   onKeyDown={(event) => {
@@ -365,7 +383,9 @@ export function BrowserHome({
               <span className={`${CIRCLE_CLASS} bg-muted text-muted-foreground`}>
                 <PlusIcon className="size-5" />
               </span>
-              <span className={TILE_LABEL_CLASS}>Add</span>
+              <span className={TILE_LABEL_CLASS}>
+                <T context="adds a browser shortcut">Add</T>
+              </span>
             </button>
           </div>
         ) : null}

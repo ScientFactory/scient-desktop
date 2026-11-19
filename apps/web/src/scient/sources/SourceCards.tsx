@@ -1,6 +1,9 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { msg, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+
+import type { MessageResolver } from "~/i18n/messages";
 
 import { Checkbox } from "../../components/ui/checkbox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
@@ -38,12 +41,14 @@ const CARD_GAP_REM = 0.875;
 const CARD_ASPECT = 1.3;
 const NO_SECTIONS: ReadonlyArray<ScientSourceSection> = [];
 
-function authorsLine(record: SourceRecord): string {
+function authorsLine(record: SourceRecord, resolve: MessageResolver): string {
   const names = record.creators
     .map((creator) => creator.familyName ?? creator.literalName ?? creator.givenName)
     .filter((name): name is string => Boolean(name));
-  if (names.length === 0) return "Unknown author";
-  return names.length > 3 ? `${names.slice(0, 3).join(", ")}, et al.` : names.join(", ");
+  if (names.length === 0) return resolve(msg("Unknown author"));
+  return names.length > 3
+    ? resolve(msg("{authors}, et al.", { authors: names.slice(0, 3).join(", ") }))
+    : names.join(", ");
 }
 
 /**
@@ -75,6 +80,8 @@ function CardLabel(props: { readonly label: SourceCardLabel | null }) {
 
 function SourceCard(props: { readonly record: SourceRecord; readonly row: SourceRowContext }) {
   const { record, row } = props;
+  const gt = useGT();
+  const m = useMessages();
   const journal = record.containerTitle?.trim() || null;
   const selected = row.selection.has(record.sourceId);
   const diagnostics = row.diagnosticsBySourceId.get(record.sourceId);
@@ -109,17 +116,17 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
                   record={record}
                 />
                 <span className="truncate">
-                  {journal ?? SCIENT_SOURCE_TYPE_LABELS[record.type]}
+                  {journal ?? m(SCIENT_SOURCE_TYPE_LABELS[record.type])}
                 </span>
               </span>
               <span className="mt-2.5 line-clamp-5 font-serif text-[15px] leading-snug">
-                {record.title ?? "Untitled source"}
+                {record.title ?? gt("Untitled source")}
               </span>
               <span className="mt-auto line-clamp-3 pt-2 text-xs text-muted-foreground">
-                {authorsLine(record)}
+                {authorsLine(record, m)}
                 {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                {sourceTrustLabel(record)}
-                {record.fromSnapshot ? sourcePinLabel(record, row.listed) : null}
+                {sourceTrustLabel(record, m)}
+                {record.fromSnapshot ? sourcePinLabel(record, row.listed, m) : null}
               </span>
             </button>
           }
@@ -132,14 +139,14 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
         {row.selection.size > 0 ? (
           <Checkbox
             checked={selected}
-            aria-label={`Select ${record.title ?? "Untitled source"}`}
+            aria-label={gt("Select {title}", { title: record.title ?? gt("Untitled source") })}
             onCheckedChange={() => row.onToggleSelected(record.sourceId)}
           />
         ) : null}
         {record.readingStatus === "unread" ? (
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <span aria-hidden className="size-1.5 rounded-full bg-sky-500" />
-            {LIBRARY_LABELS.unread}
+            {m(LIBRARY_LABELS.unread)}
           </span>
         ) : null}
         <span className="flex-1" />

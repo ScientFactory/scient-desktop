@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CloudConversation,
@@ -48,6 +49,7 @@ import { SnapshotConversationView } from "./SnapshotConversationView";
 import { shareLinkOrigin, type CloudApi } from "./cloudApi";
 import { InfoTip } from "./InfoTip";
 import { useCloudAccount } from "./useCloudAccount";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 const decodeDocument = Schema.decodeUnknownSync(Schema.fromJsonString(CloudConversation));
 
@@ -77,17 +79,19 @@ function ShareLinkDialogSignedIn({
       <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
         <DialogPopup className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Share link</DialogTitle>
+            <DialogTitle>
+              <T>Share link</T>
+            </DialogTitle>
             <DialogDescription>
-              Sign in to Scient to share a link to this conversation.
+              <T>Sign in to Scient to share a link to this conversation.</T>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button size="sm" variant="outline" onClick={onClose}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button size="sm" onClick={account.openSignIn}>
-              Sign in
+              <T>Sign in</T>
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -137,14 +141,18 @@ function findShare(
   );
 }
 
-function accessSummary(access: ShareAccess): string {
+function accessSummary(access: ShareAccess, resolve: MessageResolver = m): string {
   switch (access.mode) {
     case "link":
-      return "Anyone with the link";
+      return resolve(msg("Anyone with the link"));
     case "me":
-      return "Only me";
+      return resolve(msg("Only me"));
     case "people":
-      return access.emails.length === 1 ? "1 person" : `${access.emails.length} people`;
+      return resolve(
+        msg("{count, plural, one {{count} person} other {{count} people}}", {
+          count: access.emails.length,
+        }),
+      );
   }
 }
 
@@ -152,10 +160,17 @@ const decodeShareRecord = Schema.decodeUnknownSync(ShareRecord);
 
 type ExpiryValue = ExpiryChoice | "current";
 
-function expiryLabel(expiresAt: string | null): string {
+function expiryLabel(expiresAt: string | null, resolve: MessageResolver = m): string {
   return expiresAt === null
-    ? "Never expires"
-    : `Expires ${new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+    ? resolve(msg("Never expires"))
+    : resolve(
+        msg("Expires {date}", {
+          date: new Date(expiresAt).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          }),
+        }),
+      );
 }
 
 const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
@@ -174,6 +189,8 @@ function ShareLinkDialog({
   api: CloudApi;
   onClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [existing, setExisting] = useState<ShareRecord | null | undefined>(undefined);
   const [lookupFailed, setLookupFailed] = useState(false);
   const [saved, setSaved] = useState<ShareSelection | null>(null);
@@ -273,7 +290,7 @@ function ShareLinkDialog({
             key,
             state: {
               status: "failed",
-              message: messageOf(error, "The copy couldn't be prepared."),
+              message: messageOf(error, m(msg("The copy couldn't be prepared."))),
             },
           });
         }
@@ -329,7 +346,10 @@ function ShareLinkDialog({
       setEditing(false);
       setPublish({ status: "idle" });
     } catch (error) {
-      setPublish({ status: "failed", message: messageOf(error, "The link couldn't be changed.") });
+      setPublish({
+        status: "failed",
+        message: messageOf(error, m(msg("The link couldn't be changed."))),
+      });
     }
   };
 
@@ -389,7 +409,7 @@ function ShareLinkDialog({
     } catch (error) {
       setPublish({
         status: "failed",
-        message: messageOf(error, "The link couldn't be published."),
+        message: messageOf(error, m(msg("The link couldn't be published."))),
       });
     }
   };
@@ -404,7 +424,10 @@ function ShareLinkDialog({
       onClose();
     } catch (error) {
       setConfirmingStop(false);
-      setPublish({ status: "failed", message: messageOf(error, "Sharing couldn't be stopped.") });
+      setPublish({
+        status: "failed",
+        message: messageOf(error, m(msg("Sharing couldn't be stopped."))),
+      });
     }
   };
 
@@ -454,7 +477,9 @@ function ShareLinkDialog({
   const settings = (
     <div className="flex flex-col gap-2 text-sm">
       <label className="flex items-center justify-between gap-3">
-        <span>Who can open it</span>
+        <span>
+          <T>Who can open it</T>
+        </span>
         <Select
           value={access.mode}
           onValueChange={(mode) => {
@@ -462,66 +487,70 @@ function ShareLinkDialog({
             setAccess(mode === "people" ? { mode, emails: [] } : { mode });
           }}
         >
-          <SelectTrigger size="sm" className="w-auto" aria-label="Who can open it">
+          <SelectTrigger size="sm" className="w-auto" aria-label={gt("Who can open it")}>
             <SelectValue>
               {(mode: ShareAccess["mode"]) =>
                 mode === "link"
-                  ? "Anyone with the link"
+                  ? gt("Anyone with the link")
                   : mode === "me"
-                    ? "Only me"
-                    : "People I name"
+                    ? gt("Only me")
+                    : gt("People I name")
               }
             </SelectValue>
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
             <SelectItem hideIndicator value="link">
-              Anyone with the link
+              <T>Anyone with the link</T>
             </SelectItem>
             <SelectItem hideIndicator value="people">
-              People I name
+              <T>People I name</T>
             </SelectItem>
             <SelectItem hideIndicator value="me">
-              Only me
+              <T>Only me</T>
             </SelectItem>
           </SelectPopup>
         </Select>
       </label>
       {access.mode === "people" ? (
         <Input
-          aria-label="Email addresses"
-          placeholder="Email addresses, separated by commas"
+          aria-label={gt("Email addresses")}
+          placeholder={gt("Email addresses, separated by commas")}
           value={emails}
           onChange={(event) => setEmails(event.target.value)}
         />
       ) : null}
       <label className="flex items-center justify-between gap-3">
-        <span>Expires</span>
+        <span>
+          <T>Expires</T>
+        </span>
         <Select value={expiry} onValueChange={(next) => next !== null && setExpiry(next)}>
-          <SelectTrigger size="sm" className="w-auto" aria-label="Expires">
+          <SelectTrigger size="sm" className="w-auto" aria-label={gt("Expires")}>
             <SelectValue>
-              {(choice: ExpiryValue) =>
-                choice === "current"
-                  ? expiryLabel(existing?.expiresAt ?? null)
-                  : EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label
-              }
+              {(choice: ExpiryValue) => {
+                if (choice === "current") return expiryLabel(existing?.expiresAt ?? null, messages);
+                const label = EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label;
+                return label === undefined ? undefined : messages(label);
+              }}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
             {existing?.expiresAt != null ? (
               <SelectItem hideIndicator value="current">
-                {expiryLabel(existing.expiresAt)}
+                {expiryLabel(existing.expiresAt, messages)}
               </SelectItem>
             ) : null}
             {EXPIRY_CHOICES.map((entry) => (
               <SelectItem hideIndicator key={entry.id} value={entry.id}>
-                {entry.label}
+                {messages(entry.label)}
               </SelectItem>
             ))}
           </SelectPopup>
         </Select>
       </label>
       <label className="flex items-center justify-between gap-3">
-        <span>Include reasoning</span>
+        <span>
+          <T>Include reasoning</T>
+        </span>
         <Switch
           checked={reasoning}
           onCheckedChange={(checked) => changeContent(() => setReasoning(Boolean(checked)))}
@@ -529,12 +558,14 @@ function ShareLinkDialog({
       </label>
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5">
-          <label htmlFor="share-link-encrypted">Encrypted</label>
-          <InfoTip label="About encryption">
+          <label htmlFor="share-link-encrypted">
+            <T>Encrypted</T>
+          </label>
+          <InfoTip label={gt("About encryption")}>
             {encrypted
-              ? "The key is part of the link, so Scient Cloud can't read what you share."
-              : "Scient Cloud can read it, and the link previews the title."}
-            {lockedEncryption ? " A link keeps the encryption it was created with." : null}
+              ? gt("The key is part of the link, so Scient Cloud can't read what you share.")
+              : gt("Scient Cloud can read it, and the link previews the title.")}
+            {lockedEncryption ? ` ${gt("A link keeps the encryption it was created with.")}` : null}
           </InfoTip>
         </span>
         <Switch
@@ -546,7 +577,9 @@ function ShareLinkDialog({
       </div>
       {!encrypted && access.mode === "link" ? (
         <label className="flex items-center justify-between gap-3">
-          <span>Show in search engines</span>
+          <span>
+            <T>Show in search engines</T>
+          </span>
           <Switch
             checked={indexable}
             onCheckedChange={(checked) => setIndexable(Boolean(checked))}
@@ -574,38 +607,40 @@ function ShareLinkDialog({
           <div className="flex items-center gap-2">
             <Input
               readOnly
-              aria-label="Share link"
+              aria-label={gt("Share link")}
               value={link}
               onFocus={(event) => event.currentTarget.select()}
             />
             <Button size="sm" variant="outline" onClick={() => copyToClipboard(link)}>
               {isCopied ? <CheckIcon /> : <CopyIcon />}
-              {isCopied ? "Copied" : "Copy"}
+              {isCopied ? gt("Copied") : gt("Copy")}
             </Button>
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
-            This link was made on another computer. Update it here to get a link you can copy; the
-            old one stops working.
+            <T>
+              This link was made on another computer. Update it here to get a link you can copy; the
+              old one stops working.
+            </T>
           </p>
         )}
         <p className="flex items-center gap-1 text-xs text-muted-foreground">
-          {accessSummary(existing.access)} · {expiryLabel(existing.expiresAt)}
+          {accessSummary(existing.access, messages)} · {expiryLabel(existing.expiresAt, messages)}
           <Button size="xs" variant="ghost-muted" onClick={() => setEditing(true)}>
-            Change
+            <T>Change</T>
           </Button>
         </p>
       </div>
     ) : null;
 
-  const title = showLink ? "Share link" : existing ? "Link settings" : "Share link";
+  const title = showLink ? gt("Share link") : existing ? gt("Link settings") : gt("Share link");
   const description = showLink
     ? outdated === "yes"
-      ? "The conversation has changed since you shared it."
+      ? gt("The conversation has changed since you shared it.")
       : null
     : existing
       ? null
-      : "Shares the conversation as it is now.";
+      : gt("Shares the conversation as it is now.");
 
   return (
     <Dialog
@@ -623,13 +658,15 @@ function ShareLinkDialog({
           <div className="flex flex-col gap-3">
             {existing === undefined && lookupFailed ? (
               <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
-                Scient Cloud couldn't be reached.
+                <T>Scient Cloud couldn't be reached.</T>
                 <Button size="xs" variant="outline" onClick={retryLookup}>
-                  Try again
+                  <T>Try again</T>
                 </Button>
               </p>
             ) : existing === undefined ? (
-              <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                <T>Loading…</T>
+              </p>
             ) : showLink ? (
               linkView
             ) : (
@@ -646,12 +683,14 @@ function ShareLinkDialog({
                   onClick={() => setPreviewOpen((open) => !open)}
                 >
                   {previewOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
-                  Preview
+                  <T>Preview</T>
                 </Button>
                 {previewOpen ? (
                   <div className="max-h-[50vh] min-h-32 overflow-auto rounded-lg border border-border px-3 py-4">
                     {build.status === "building" ? (
-                      <p className="py-8 text-center text-sm text-muted-foreground">Preparing…</p>
+                      <p className="py-8 text-center text-sm text-muted-foreground">
+                        <T>Preparing…</T>
+                      </p>
                     ) : build.status === "failed" ? null : (
                       <SnapshotConversationView
                         conversation={build.document}
@@ -662,7 +701,7 @@ function ShareLinkDialog({
                             : {
                                 markedMessageIds: redactedItems,
                                 messageAction: {
-                                  label: "Leave out",
+                                  label: gt("Leave out"),
                                   onSelect: (messageId) =>
                                     changeContent(() =>
                                       setExcluded((current) => [...current, messageId]),
@@ -683,8 +722,10 @@ function ShareLinkDialog({
             ) : null}
             {editing && existingKeyMissing ? (
               <p className="text-xs text-muted-foreground">
-                This link was made on another computer. Updating it here makes a new key, so send
-                the new link again.
+                <T>
+                  This link was made on another computer. Updating it here makes a new key, so send
+                  the new link again.
+                </T>
               </p>
             ) : null}
             {publish.status === "failed" ? (
@@ -698,7 +739,7 @@ function ShareLinkDialog({
           {showLink && confirmingStop ? (
             <>
               <p className="me-auto self-center text-xs text-muted-foreground">
-                The link stops working for everyone.
+                <T>The link stops working for everyone.</T>
               </p>
               <Button
                 size="sm"
@@ -706,7 +747,7 @@ function ShareLinkDialog({
                 disabled={busy}
                 onClick={() => setConfirmingStop(false)}
               >
-                Keep sharing
+                <T>Keep sharing</T>
               </Button>
               <Button
                 size="sm"
@@ -714,7 +755,7 @@ function ShareLinkDialog({
                 disabled={busy}
                 onClick={() => void stopSharing()}
               >
-                {busy ? "Stopping…" : "Stop sharing"}
+                {busy ? gt("Stopping…") : gt("Stop sharing")}
               </Button>
             </>
           ) : showLink ? (
@@ -726,22 +767,22 @@ function ShareLinkDialog({
                 disabled={busy}
                 onClick={() => setConfirmingStop(true)}
               >
-                Stop sharing
+                <T>Stop sharing</T>
               </Button>
               <Button
                 size="sm"
                 variant="ghost-muted"
                 render={<Link to="/settings/access" hash="shared-links" onClick={onClose} />}
               >
-                All links
+                <T>All links</T>
               </Button>
               {outdated !== "no" || existingKeyMissing ? (
                 <Button size="sm" variant="outline" disabled={!ready || busy} onClick={startUpdate}>
-                  {busy ? "Updating…" : "Update link"}
+                  {busy ? gt("Updating…") : gt("Update link")}
                 </Button>
               ) : null}
               <Button size="sm" disabled={busy} onClick={onClose}>
-                Done
+                <T>Done</T>
               </Button>
             </>
           ) : (
@@ -762,21 +803,21 @@ function ShareLinkDialog({
                     : onClose
                 }
               >
-                {existing ? "Back" : "Cancel"}
+                {existing ? gt("Back") : gt("Cancel")}
               </Button>
               {existing && !republish ? (
                 <Button size="sm" disabled={busy} onClick={() => void saveSettings()}>
-                  {busy ? "Saving…" : "Save"}
+                  {busy ? gt("Saving…") : gt("Save")}
                 </Button>
               ) : (
                 <Button size="sm" disabled={!ready || busy} onClick={() => void doPublish()}>
                   {busy
                     ? existing
-                      ? "Updating link…"
-                      : "Creating link…"
+                      ? gt("Updating link…")
+                      : gt("Creating link…")
                     : existing
-                      ? "Update link"
-                      : "Create link"}
+                      ? gt("Update link")
+                      : gt("Create link")}
                 </Button>
               )}
             </>
@@ -800,13 +841,16 @@ function RedactionList({
   onBlank: (id: string) => void;
   onPutBack: () => void;
 }) {
+  const gt = useGT();
   if (build.redactions.length === 0 && build.kept.length === 0 && excludedCount === 0) {
     return null;
   }
   return (
     <div className="flex flex-col gap-1 text-sm">
       {build.redactions.length > 0 ? (
-        <p className="text-xs text-muted-foreground">Hidden from the link:</p>
+        <p className="text-xs text-muted-foreground">
+          <T>Hidden from the link:</T>
+        </p>
       ) : null}
       <ul className="flex flex-col gap-0.5">
         {build.redactions.map((redaction) => (
@@ -817,26 +861,29 @@ function RedactionList({
               <span className="text-muted-foreground"> → {redaction.replacement}</span>
             </span>
             <Button size="xs" variant="ghost-muted" onClick={() => onShow(redaction.id)}>
-              Show
+              <T>Show</T>
             </Button>
           </li>
         ))}
         {build.kept.map((redaction) => (
           <li key={redaction.id} className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-muted-foreground">
-              {redaction.label}: shown
+              {gt("{label}: shown", { label: redaction.label })}
             </span>
             <Button size="xs" variant="ghost-muted" onClick={() => onBlank(redaction.id)}>
-              Hide
+              <T>Hide</T>
             </Button>
           </li>
         ))}
       </ul>
       {excludedCount > 0 ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          {excludedCount} message{excludedCount === 1 ? "" : "s"} left out.
+          {gt(
+            "{count, plural, one {{count} message left out.} other {{count} messages left out.}}",
+            { count: excludedCount },
+          )}
           <Button size="xs" variant="ghost-muted" onClick={onPutBack}>
-            Put back
+            <T>Put back</T>
           </Button>
         </p>
       ) : null}

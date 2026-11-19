@@ -10,10 +10,12 @@ import {
   SourceControlProviderKind,
   type SourceControlSignInPrompt,
 } from "@t3tools/contracts";
+import { msg, T, useGT, Var } from "gt-react";
 import { CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Button, InlineButton } from "../../components/ui/button";
+import { m } from "../../i18n/messages";
 import { Label } from "../../components/ui/label";
 import { NativeSelect } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
@@ -40,7 +42,7 @@ function signInFailure(result: AtomCommandResult<unknown, unknown>): string {
   const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : undefined;
   return error instanceof Error && "detail" in error
     ? error.message
-    : "Scient could not sign in to GitHub. Try again.";
+    : m(msg("Scient could not sign in to GitHub. Try again."));
 }
 
 /**
@@ -60,6 +62,7 @@ export function GitHubConnect({
   readonly onConnect: (account: string) => void;
   readonly onUseToken: () => void;
 }) {
+  const gt = useGT();
   const appSignIn = sourceControlClients.find(SIGN_IN_INPUT.provider)?.credentials?.appSignIn;
   const canSignIn = useAtomValue(
     sourceControlEnvironment.startSignIn.permissionAtom(environmentId),
@@ -124,19 +127,28 @@ export function GitHubConnect({
     return (
       <div className="grid gap-3">
         <p className="text-sm text-muted-foreground">
-          Enter this code on GitHub's device page, then approve {appSignIn?.appName ?? "the app"}.
-          Source Control uses the same sign-in.
+          {appSignIn?.appName === undefined ? (
+            <T>
+              Enter this code on GitHub's device page, then approve the app. Source Control uses the
+              same sign-in.
+            </T>
+          ) : (
+            <T>
+              Enter this code on GitHub's device page, then approve <Var>{appSignIn.appName}</Var>.
+              Source Control uses the same sign-in.
+            </T>
+          )}
         </p>
         <div className="flex items-center gap-2">
           <code className="font-mono text-lg font-medium tracking-widest">{userCode}</code>
           <Button
             size="xs"
             variant="outline"
-            aria-label="Copy sign-in code"
+            aria-label={gt("Copy sign-in code")}
             onClick={() => copyToClipboard(userCode)}
           >
             <CopyIcon aria-hidden />
-            {isCopied ? "Copied" : "Copy"}
+            {isCopied ? gt("Copied") : gt("Copy")}
           </Button>
         </div>
         <div className="flex items-center gap-3 text-xs">
@@ -149,7 +161,7 @@ export function GitHubConnect({
               setSignIn({ status: "idle" });
             }}
           >
-            Cancel sign-in
+            <T>Cancel sign-in</T>
           </InlineButton>
         </div>
       </div>
@@ -162,7 +174,9 @@ export function GitHubConnect({
         <>
           {logins.length > 1 ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="github-account">Account</Label>
+              <Label htmlFor="github-account">
+                <T>Account</T>
+              </Label>
               <NativeSelect
                 id="github-account"
                 value={selected.login}
@@ -178,10 +192,12 @@ export function GitHubConnect({
           ) : null}
           <Button disabled={busy} onClick={() => onConnect(selected.login)}>
             {busy ? <Spinner /> : null}
-            Connect as {selected.login}
+            {gt("Connect as {login}", { login: selected.login })}
           </Button>
           <p className="text-xs text-muted-foreground">
-            The account Source Control uses. Agents act as {selected.login}.
+            <T>
+              The account Source Control uses. Agents act as <Var>{selected.login}</Var>.
+            </T>
           </p>
         </>
       ) : (
@@ -190,7 +206,7 @@ export function GitHubConnect({
           onClick={() => void startSignIn()}
         >
           {signIn.status === "starting" ? <Spinner /> : null}
-          {signIn.status === "failed" ? "Try again" : "Sign in with GitHub"}
+          {signIn.status === "failed" ? gt("Try again") : gt("Sign in with GitHub")}
         </Button>
       )}
       {signIn.status === "failed" ? (
@@ -200,15 +216,18 @@ export function GitHubConnect({
       ) : null}
       {appSignIn && (selected === undefined || selected.via === "app") ? (
         <p className="text-xs text-muted-foreground">
-          {appSignIn.appName} reaches the accounts and organizations it is installed on.{" "}
+          <T>
+            <Var>{appSignIn.appName}</Var> reaches the accounts and organizations it is installed
+            on.
+          </T>{" "}
           <InlineButton render={<a href={appSignIn.installUrl} target="_blank" rel="noreferrer" />}>
-            Install on an organization
+            <T>Install on an organization</T>
           </InlineButton>
         </p>
       ) : null}
       <p className="text-xs">
         <InlineButton tone="muted" onClick={onUseToken}>
-          Use a token instead
+          <T>Use a token instead</T>
         </InlineButton>
       </p>
     </div>

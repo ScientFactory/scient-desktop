@@ -1,5 +1,7 @@
+import { msg } from "gt-react";
 import { useEffect } from "react";
 import { flushComposerDraftPersistence } from "../../composerDraftStore";
+import { m } from "../../i18n/messages";
 import { registerDesktopUpdateSaveHandler } from "../../lib/desktopUpdateSaveBridge";
 import { windowEditors } from "../../scient/editorFlush/EditorFlushHosts";
 import { toastManager } from "../ui/toast";
@@ -34,9 +36,12 @@ export function useDesktopUpdateSaveHandling(): void {
         if (!saved && !document.hasFocus())
           toastManager.add({
             type: "warning",
-            title: "Restart paused",
-            description:
-              "A file or draft in this window could not be saved. Resolve its save notice and try again.",
+            title: m(msg("Restart paused")),
+            description: m(
+              msg(
+                "A file or draft in this window could not be saved. Resolve its save notice and try again.",
+              ),
+            ),
           });
         return saved;
       }),

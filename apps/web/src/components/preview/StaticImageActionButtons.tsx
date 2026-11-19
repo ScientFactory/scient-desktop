@@ -1,6 +1,7 @@
 "use client";
 
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { CopyIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -27,10 +28,11 @@ function addThreadToast(
 }
 
 function StaticImageActionButton(props: StaticImageActionButtonProps) {
+  const gt = useGT();
   const [running, setRunning] = useState(false);
   const isCopy = props.action === "copy";
-  const idleLabel = isCopy ? "Copy image" : "Download original";
-  const runningLabel = isCopy ? "Copying image…" : "Preparing download…";
+  const idleLabel = isCopy ? gt("Copy image") : gt("Download original");
+  const runningLabel = isCopy ? gt("Copying image…") : gt("Preparing download…");
 
   const runAction = async () => {
     if (running || props.assetUrl === null) return;
@@ -43,18 +45,18 @@ function StaticImageActionButton(props: StaticImageActionButtonProps) {
             await copyStaticImage(props.assetUrl);
             addThreadToast(props.threadRef, {
               type: "success",
-              title: "Image copied",
+              title: gt("Image copied"),
               timeout: 1_800,
             });
           } else {
             await downloadStaticImage(props.assetUrl, props.fileName);
           }
         } catch (cause) {
-          console.error(`[preview] ${idleLabel} failed`, cause);
+          console.error(`[preview] ${isCopy ? "Copy image" : "Download original"} failed`, cause);
           addThreadToast(props.threadRef, {
             type: "error",
-            title: isCopy ? "Unable to copy image" : "Unable to download image",
-            description: cause instanceof Error ? cause.message : "The image action failed.",
+            title: isCopy ? gt("Unable to copy image") : gt("Unable to download image"),
+            description: cause instanceof Error ? cause.message : gt("The image action failed."),
           });
         }
       }

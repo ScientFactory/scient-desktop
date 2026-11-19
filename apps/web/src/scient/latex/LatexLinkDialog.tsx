@@ -2,6 +2,7 @@ import { useRef, useState, type RefObject } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
+import { T, useGT } from "gt-react";
 
 export function LatexLinkDialog(props: {
   open: boolean;
@@ -12,6 +13,7 @@ export function LatexLinkDialog(props: {
   onClosed: () => void;
   onInsert: (text: string, url: string) => void;
 }) {
+  const gt = useGT();
   const addressInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(props.text);
   const [url, setUrl] = useState("");
@@ -40,7 +42,9 @@ export function LatexLinkDialog(props: {
         data-keybinding-capture=""
       >
         <div className="grid gap-2">
-          <PopoverTitle size="compact">Insert link</PopoverTitle>
+          <PopoverTitle size="compact">
+            <T>Insert link</T>
+          </PopoverTitle>
           <form
             className="grid gap-2"
             onSubmit={(event) => {
@@ -49,18 +53,18 @@ export function LatexLinkDialog(props: {
             }}
           >
             <label className="grid gap-1 text-xs">
-              Text
+              <T context="link text field">Text</T>
               <Input
-                aria-label="Link text"
+                aria-label={gt("Link text")}
                 value={text}
                 onChange={(event) => setText(event.target.value)}
               />
             </label>
             <label className="grid gap-1 text-xs">
-              Address
+              <T context="link URL">Address</T>
               <Input
                 ref={addressInput}
-                aria-label="Link destination"
+                aria-label={gt("Link destination")}
                 type="url"
                 placeholder="https://"
                 value={url}
@@ -69,10 +73,10 @@ export function LatexLinkDialog(props: {
             </label>
             <div className="flex justify-end gap-2">
               <Button size="xs" type="button" variant="outline" onClick={() => props.onClose(true)}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button size="xs" type="submit" disabled={!valid}>
-                Insert link
+                <T>Insert link</T>
               </Button>
             </div>
           </form>

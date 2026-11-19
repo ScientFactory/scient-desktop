@@ -95,6 +95,8 @@ import {
   type MathSelectionGeometry,
   type MathSelectionPoint,
 } from "./mathLiveSelection";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 // Vite packages fonts alongside the renderer; no CDN or network math service.
 MathfieldElement.fontsDirectory = null;
@@ -431,7 +433,9 @@ export const LatexMathField = forwardRef<
       math.defaultMode = currentConfiguration.current.display ? "math" : "inline-math";
       math.setAttribute(
         "aria-label",
-        currentConfiguration.current.display ? "Display equation" : "Inline equation",
+        currentConfiguration.current.display
+          ? m(msg("Display equation"))
+          : m(msg("Inline equation")),
       );
       math.mathVirtualKeyboardPolicy = "manual";
       math.popoverPolicy = "auto";
@@ -669,10 +673,10 @@ export const LatexMathField = forwardRef<
         const snapshot = reading.snapshot;
         const selected = Boolean(rectangle) || !math.selectionIsCollapsed;
         const items = [
-          { id: "cut", label: "Cut", disabled: math.readOnly || !selected },
-          { id: "copy", label: "Copy", disabled: !selected },
-          { id: "paste", label: "Paste", disabled: math.readOnly },
-          { id: "selectAll", label: "Select All", disabled: mathFieldIsEmpty(math) },
+          { id: "cut", label: m(msg("Cut")), disabled: math.readOnly || !selected },
+          { id: "copy", label: m(msg("Copy")), disabled: !selected },
+          { id: "paste", label: m(msg("Paste")), disabled: math.readOnly },
+          { id: "selectAll", label: m(msg("Select All")), disabled: mathFieldIsEmpty(math) },
         ] as const;
         const releaseSelection = retainLatexSelection(root);
         const position = { x: event.clientX, y: event.clientY };
@@ -712,7 +716,10 @@ export const LatexMathField = forwardRef<
           })
           .catch(() => {
             releaseSelection?.();
-            toastManager.add({ type: "error", title: "Could not complete the editing action" });
+            toastManager.add({
+              type: "error",
+              title: m(msg("Could not complete the editing action")),
+            });
           });
       };
       let previousMode = math.mode;
@@ -1611,7 +1618,10 @@ export const LatexMathField = forwardRef<
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs aria label and default mode onto the MathLive field DOM element
   useEffect(() => {
     if (!field.current) return;
-    field.current.setAttribute("aria-label", display ? "Display equation" : "Inline equation");
+    field.current.setAttribute(
+      "aria-label",
+      display ? m(msg("Display equation")) : m(msg("Inline equation")),
+    );
     field.current.defaultMode = display ? "math" : "inline-math";
   }, [display]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs read-only state and external value into the MathLive field, preserving its selection

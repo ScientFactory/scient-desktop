@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import {
   SCIENT_REFERENCE_STYLES,
   type ScientReferenceStyleId,
@@ -75,6 +76,7 @@ export function SourceReference(props: {
   readonly record: SourceRecord;
   readonly project?: CitationStyleProject;
 }) {
+  const gt = useGT();
   const [style, setStyle] = useLocalStorage<ScientReferenceStyleId, ScientReferenceStyleId>(
     referenceStyleStorageKey(props.record.projectId),
     "vancouver",
@@ -129,14 +131,14 @@ export function SourceReference(props: {
     >
       <div className="flex flex-wrap items-center gap-1">
         <h3 id="source-reference-heading" className="text-sm font-medium text-foreground">
-          Reference
+          <T context="noun, a cited reference">Reference</T>
         </h3>
         {props.project ? (
           <Button
             size="xs"
             variant="ghost"
             className="min-w-0 max-w-full"
-            aria-label={`Citation style: ${styleLabel}`}
+            aria-label={gt("Citation style: {styleLabel}", { styleLabel })}
             onClick={() => setPicking(true)}
           >
             <PenLine className="size-3.5" aria-hidden="true" />
@@ -154,7 +156,7 @@ export function SourceReference(props: {
               size="xs"
               variant="ghost"
               className="w-auto min-w-0 cursor-pointer"
-              aria-label="Reference style"
+              aria-label={gt("Reference style")}
             >
               <PenLine className="size-3.5" aria-hidden="true" />
               <SelectValue className="flex-none" />
@@ -172,11 +174,16 @@ export function SourceReference(props: {
 
       {projectStyle?._tag === "unavailable" ? (
         <p className="text-xs text-muted-foreground">
-          {projectStyle.message} Showing {localLabel} instead.
+          <T>
+            <Var>{projectStyle.message}</Var> Showing <Var>{localLabel}</Var> instead.
+          </T>
         </p>
       ) : projectStyle?._tag === "failed" ? (
         <p className="text-xs text-muted-foreground">
-          Scient could not read this project's citation style. Showing {localLabel} instead.
+          <T>
+            Scient could not read this project's citation style. Showing <Var>{localLabel}</Var>{" "}
+            instead.
+          </T>
         </p>
       ) : null}
 
@@ -191,7 +198,7 @@ export function SourceReference(props: {
                     size="icon-xs"
                     variant="ghost"
                     className="shrink-0"
-                    aria-label={isCopied ? "Reference copied" : "Copy reference"}
+                    aria-label={isCopied ? gt("Reference copied") : gt("Copy reference")}
                     onClick={() => copyToClipboard(reference.value, undefined)}
                   >
                     {isCopied ? <Check /> : <Copy />}
@@ -199,19 +206,24 @@ export function SourceReference(props: {
                 }
               />
               <TooltipPopup side="top">
-                {isCopied ? "Reference copied" : "Copy reference"}
+                {isCopied ? gt("Reference copied") : gt("Copy reference")}
               </TooltipPopup>
             </Tooltip>
           </>
         ) : reference.status === "error" ? (
           <p className="text-sm text-muted-foreground">
             {projectStyle?._tag === "ready"
-              ? `${projectStyle.title} could not format this reference. Check the source metadata, or choose another citation style.`
-              : "Scient could not format this reference. Check the source metadata and try again."}
+              ? gt(
+                  "{title} could not format this reference. Check the source metadata, or choose another citation style.",
+                  { title: projectStyle.title },
+                )
+              : gt(
+                  "Scient could not format this reference. Check the source metadata and try again.",
+                )}
           </p>
         ) : (
           <p className="text-sm text-muted-foreground" role="status">
-            Preparing reference…
+            <T>Preparing reference…</T>
           </p>
         )}
       </div>

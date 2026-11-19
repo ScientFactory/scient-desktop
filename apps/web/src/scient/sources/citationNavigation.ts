@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { msg } from "gt-react";
+
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -59,7 +62,7 @@ export interface CitationOpenRequest {
 
 type SourceAttachment = ScientSourceDetailResult["attachments"][number];
 
-const SHOWING_DETAILS = "Showing its details in the Library.";
+const SHOWING_DETAILS = msg("Showing its details in the Library.");
 
 /** A later citation click wins over one still reading its source. */
 let latestOpen = 0;
@@ -106,7 +109,7 @@ async function chooseEntry(
   const api = readLocalApi();
   if (!api) return null;
   const items: ContextMenuItem[] = [
-    { id: "choose", label: "Open which source?", header: true },
+    { id: "choose", label: m(msg("Open which source?")), header: true },
     ...entries.map((entry, index) => {
       const text = citationChoiceText(entry);
       return {
@@ -123,11 +126,14 @@ async function chooseEntry(
 function passageNotice(notice: CitationPassageNotice, showing: string): CitationNotice {
   switch (notice) {
     case "not-found":
-      return { title: "This passage is not among the source's highlights", description: showing };
+      return {
+        title: m(msg("This passage is not among the source's highlights")),
+        description: showing,
+      };
     case "repeated":
-      return { title: "This passage is highlighted more than once", description: showing };
+      return { title: m(msg("This passage is highlighted more than once")), description: showing };
     case "unread":
-      return { title: "Couldn't read this source's highlights", description: showing };
+      return { title: m(msg("Couldn't read this source's highlights")), description: showing };
   }
 }
 
@@ -188,7 +194,9 @@ async function openEntry(
   const step = citationOpenStep(entry, request.quote ?? null);
   if (step._tag === "Details") {
     showDetails(
-      step.noPdf ? { title: "This source has no PDF here", description: SHOWING_DETAILS } : null,
+      step.noPdf
+        ? { title: m(msg("This source has no PDF here")), description: m(SHOWING_DETAILS) }
+        : null,
     );
     return;
   }
@@ -210,8 +218,8 @@ async function openEntry(
   const pdfs = detail?.attachments.filter((attachment) => attachment.kind === "pdf") ?? [];
   if (!detail || pdfs.length === 0) {
     showDetails({
-      title: detail ? "This source has no PDF here" : "Couldn't read this source",
-      description: SHOWING_DETAILS,
+      title: detail ? m(msg("This source has no PDF here")) : m(msg("Couldn't read this source")),
+      description: m(SHOWING_DETAILS),
     });
     return;
   }
@@ -236,7 +244,7 @@ async function openEntry(
   const reveal = citationReveal(step, known, labels);
   switch (reveal._tag) {
     case "Details":
-      showDetails(reveal.notice ? passageNotice(reveal.notice, SHOWING_DETAILS) : null);
+      showDetails(reveal.notice ? passageNotice(reveal.notice, m(SHOWING_DETAILS)) : null);
       return;
     case "Page": {
       const attachment = pdfs.find((pdf) => pdf.attachmentId === step.pdf.attachmentId) ?? pdfs[0]!;
@@ -248,7 +256,10 @@ async function openEntry(
       if (reveal.notice) {
         toastManager.add({
           type: "info",
-          ...passageNotice(reveal.notice, `Showing page ${reveal.pageLabel}.`),
+          ...passageNotice(
+            reveal.notice,
+            m(msg("Showing page {page}.", { page: reveal.pageLabel })),
+          ),
         });
       }
       return;

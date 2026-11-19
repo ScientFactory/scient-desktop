@@ -1,4 +1,5 @@
 import type { EnvironmentId, ToolHostPermission } from "@t3tools/contracts";
+import { T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import { MacAccessibilityIcon, MacScreenRecordingIcon } from "~/components/Icons";
@@ -45,6 +46,7 @@ function ComputerControlPermissionChecklist({
 }: {
   status: Record<ToolHostPermission, boolean>;
 }) {
+  const m = useMessages();
   const [requested, setRequested] = useState<ReadonlySet<ToolHostPermission>>(new Set());
   return (
     <PermissionChecklist
@@ -56,11 +58,15 @@ function ComputerControlPermissionChecklist({
           ) : (
             <MacAccessibilityIcon className="size-8 shrink-0 drop-shadow-sm" />
           ),
-        title: COPY[permission].title,
-        description: computerControlPermissionDescription(permission, {
-          granted: status[permission],
-          requested: requested.has(permission),
-        }),
+        title: m(COPY[permission].title),
+        description: computerControlPermissionDescription(
+          permission,
+          {
+            granted: status[permission],
+            requested: requested.has(permission),
+          },
+          m,
+        ),
         granted: status[permission],
         onAllow: () => {
           setRequested((current) => new Set(current).add(permission));
@@ -76,6 +82,7 @@ const useComputerControlPermissionStatus = () =>
 
 /** Polls only while shown on the Mac running the conversation. */
 function LiveComputerControlPermissions({ refused }: { refused: boolean }) {
+  const gt = useGT();
   const { status } = useComputerControlPermissionStatus();
   const ready = ALL.every((permission) => status[permission]);
   return (
@@ -83,9 +90,11 @@ function LiveComputerControlPermissions({ refused }: { refused: boolean }) {
       <p className="text-muted-foreground">
         {ready
           ? refused
-            ? "Both permissions are on. Ask the agent to try again."
-            : "Both permissions are on."
-          : "The agent needs two macOS permissions for Scient. Click Allow on each and turn Scient on in the pane that opens; macOS lists Scient for you."}
+            ? gt("Both permissions are on. Ask the agent to try again.")
+            : gt("Both permissions are on.")
+          : gt(
+              "The agent needs two macOS permissions for Scient. Click Allow on each and turn Scient on in the pane that opens; macOS lists Scient for you.",
+            )}
       </p>
       <ComputerControlPermissionChecklist status={status} />
     </div>
@@ -104,17 +113,24 @@ export function ComputerControlPermissionNotice({
   permissions: ReadonlyArray<ToolHostPermission>;
   environmentId: EnvironmentId | null;
 }) {
+  const m = useMessages();
+  const locale = useLocale();
   const here = useComputerControlPermissionsHere(environmentId);
   if (permissions.length === 0) return null;
+  const panes = new Intl.ListFormat(locale, { type: "conjunction" }).format(
+    permissions.map((permission) => m(COPY[permission].title)),
+  );
   return (
     <div className="mt-1 ms-7 max-w-md text-sm" data-computer-control-permissions>
       {here ? (
         <LiveComputerControlPermissions refused />
       ) : (
         <p className="text-muted-foreground">
-          macOS refused the agent on the Mac running this conversation. On that Mac, open System
-          Settings → Privacy & Security → {permissions.map((p) => COPY[p].title).join(" and ")} and
-          turn on the app the agent named in its message.
+          <T>
+            macOS refused the agent on the Mac running this conversation. On that Mac, open System
+            Settings → Privacy & Security → <Var>{panes}</Var> and turn on the app the agent named
+            in its message.
+          </T>
         </p>
       )}
     </div>
@@ -136,12 +152,13 @@ export function ScientAgentComputerControlPermissionsRow({
   config: unknown;
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const here = useComputerControlPermissionsHere(environmentId);
   if (!here || !computerControlOn(config)) return null;
   return (
     <SettingsRow
-      title="macOS permissions"
-      description="What macOS asks before the agent can see and use other apps."
+      title={gt("macOS permissions")}
+      description={gt("What macOS asks before the agent can see and use other apps.")}
     >
       <LiveComputerControlPermissions refused={false} />
     </SettingsRow>

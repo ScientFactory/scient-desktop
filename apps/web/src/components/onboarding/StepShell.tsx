@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ChevronLeftIcon } from "lucide-react";
 import { Button } from "../ui/button";
 
@@ -25,7 +26,7 @@ export function StepShell({
           variant="ghost-muted"
         >
           <ChevronLeftIcon className="size-3.5" />
-          Back
+          <T context="go to the previous onboarding step">Back</T>
         </Button>
       ) : null}
       <h1 className="text-3xl font-semibold text-foreground sm:text-[34px]">{title}</h1>

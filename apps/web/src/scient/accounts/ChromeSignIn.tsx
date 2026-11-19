@@ -1,3 +1,4 @@
+import { msg, T, useGT, Var } from "gt-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   GOOGLE_SITE,
@@ -27,9 +28,11 @@ import {
 import { noteGoogleCopy } from "./googleCopyObservation";
 import { recordImportedSessions } from "./importedSessions";
 import { chromeSignInIntoMain } from "./mainFill";
+import { m } from "~/i18n/messages";
 
 const GOOGLE_SIGN_IN_URL = "https://accounts.google.com/";
-export const CHROME_WINDOW_ACTION = "Sign in in a Chrome window";
+/** A button label, resolved where it is shown. */
+export const CHROME_WINDOW_ACTION = msg("Sign in in a Chrome window");
 
 type WindowEvent = AccountBrowserEvents["accounts.browser_window"];
 
@@ -76,56 +79,80 @@ function report(result: DesktopChromeSignInResult, into: string) {
   if (result.outcome === "copied") {
     const { copied, held, missed, google } = copyReport(result);
     const others = copied.filter((site) => !isGoogle(site));
-    const alsoCopied = others.length > 0 ? `Also copied: ${others.join(", ")}.` : undefined;
+    const alsoCopied =
+      others.length > 0 ? m(msg("Also copied: {sites}.", { sites: others.join(", ") })) : undefined;
     if (held.length > 0)
       toastManager.add({
         type: "info",
-        title: `${into} already holds a sign-in for ${held.join(", ")}`,
-        description: `Sign out of it in ${into}, then sign in again.`,
+        title: m(
+          msg("{into} already holds a sign-in for {sites}", { into, sites: held.join(", ") }),
+        ),
+        description: m(msg("Sign out of it in {into}, then sign in again.", { into })),
       });
     else if (missed.length > 0)
       toastManager.add({
         type: "error",
-        title: `Couldn't bring the sign-in for ${missed.join(", ")} into ${into}`,
-        ...(copied.length > 0 ? { description: `Copied: ${copied.join(", ")}.` } : {}),
+        title: m(
+          msg("Couldn't bring the sign-in for {sites} into {into}", {
+            sites: missed.join(", "),
+            into,
+          }),
+        ),
+        ...(copied.length > 0
+          ? { description: m(msg("Copied: {sites}.", { sites: copied.join(", ") })) }
+          : {}),
       });
     else if (google === "rejected")
       toastManager.add({
         type: "error",
-        title: "Google didn't accept the copied sign-in",
-        description: `Google turned down the copy in ${into}. Using Google in your own browser is the reliable way.${alsoCopied ? ` ${alsoCopied}` : ""}`,
+        title: m(msg("Google didn't accept the copied sign-in")),
+        description: `${m(
+          msg(
+            "Google turned down the copy in {into}. Using Google in your own browser is the reliable way.",
+            { into },
+          ),
+        )}${alsoCopied ? ` ${alsoCopied}` : ""}`,
       });
     else if (google === "accepted")
       toastManager.add({
         type: "success",
-        title: `Google accepted the sign-in in ${into}`,
+        title: m(msg("Google accepted the sign-in in {into}", { into })),
         ...(alsoCopied ? { description: alsoCopied } : {}),
       });
     else if (google === "unknown")
       toastManager.add({
         type: "info",
-        title: `Copied the sign-in into ${into}, but couldn't check it with Google`,
+        title: m(
+          msg("Copied the sign-in into {into}, but couldn't check it with Google", { into }),
+        ),
         ...(alsoCopied ? { description: alsoCopied } : {}),
       });
     else
       toastManager.add({
         type: "success",
-        title: `Copied the sign-in for ${copied.join(", ")} into ${into}`,
+        title: m(
+          msg("Copied the sign-in for {sites} into {into}", { sites: copied.join(", "), into }),
+        ),
       });
   } else if (result.outcome === "nothing")
     toastManager.add({
       type: "info",
-      title: `No sign-in found in the ${browser ?? "browser"} window`,
+      title: browser
+        ? m(msg("No sign-in found in the {browser} window", { browser }))
+        : m(msg("No sign-in found in the browser window")),
     });
   else if (result.outcome === "no-browser")
     toastManager.add({
       type: "info",
-      title: "Signing in this way needs Chrome or Edge on this computer",
+      title: m(msg("Signing in this way needs Chrome or Edge on this computer")),
     });
   else if (result.outcome === "busy")
-    toastManager.add({ type: "info", title: "A sign-in window is already open" });
+    toastManager.add({ type: "info", title: m(msg("A sign-in window is already open")) });
   else if (result.outcome === "failed")
-    toastManager.add({ type: "error", title: `Couldn't bring the sign-in into ${into}` });
+    toastManager.add({
+      type: "error",
+      title: m(msg("Couldn't bring the sign-in into {into}", { into })),
+    });
 }
 
 /**
@@ -133,6 +160,7 @@ function report(result: DesktopChromeSignInResult, into: string) {
  * own Chrome (or Edge…), on a profile Scient owns, and the sign-in comes into a Scient profile.
  */
 export function useChromeSignIn(environmentId: EnvironmentId) {
+  const gt = useGT();
   const accounts = window.desktopBridge?.accounts;
   const [open, setOpen] = useState<{
     readonly browser: string;
@@ -195,11 +223,21 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     >
       <DialogPopup data-accounts-dialog>
         <DialogHeader>
-          <DialogTitle>Sign in in {open.browser}</DialogTitle>
+          <DialogTitle>
+            <T>
+              Sign in in <Var>{open.browser}</Var>
+            </T>
+          </DialogTitle>
           <DialogDescription>
             {open.canQuit
-              ? `Sign in in the ${open.browser} window, then click Done. ${open.into} gets a copy of the sign-in and the window closes.`
-              : `Sign in in the ${open.browser} window, then close it. ${open.into} gets a copy of the sign-in.`}
+              ? gt(
+                  "Sign in in the {browser} window, then click Done. {into} gets a copy of the sign-in and the window closes.",
+                  { browser: open.browser, into: open.into },
+                )
+              : gt(
+                  "Sign in in the {browser} window, then close it. {into} gets a copy of the sign-in.",
+                  { browser: open.browser, into: open.into },
+                )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -207,25 +245,33 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
             {open.purpose === "google" ? (
               <>
                 <li>
-                  If {browserPlatform() === "windows" ? "Windows Security" : open.browser} asks for
-                  a passkey you don't have, cancel it, then choose Try another way on Google's page.
+                  <T>
+                    If{" "}
+                    <Var>{browserPlatform() === "windows" ? "Windows Security" : open.browser}</Var>{" "}
+                    asks for a passkey you don't have, cancel it, then choose Try another way on
+                    Google's page.
+                  </T>
                 </li>
-                <li>You don't need to install an authenticator app for this window.</li>
+                <li>
+                  <T>You don't need to install an authenticator app for this window.</T>
+                </li>
               </>
             ) : null}
             <li>
-              The window uses its own temporary profile, apart from your {open.browser} profiles,
-              and it's deleted afterwards.
+              <T>
+                The window uses its own temporary profile, apart from your <Var>{open.browser}</Var>{" "}
+                profiles, and it's deleted afterwards.
+              </T>
             </li>
           </ul>
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" disabled={open.ending} onClick={() => end(false)}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           {open.canQuit ? (
             <Button disabled={open.ending} onClick={() => end(true)}>
-              {open.ending ? `Bringing it into ${open.into}…` : "Done"}
+              {open.ending ? gt("Bringing it into {into}…", { into: open.into }) : gt("Done")}
             </Button>
           ) : null}
         </DialogFooter>

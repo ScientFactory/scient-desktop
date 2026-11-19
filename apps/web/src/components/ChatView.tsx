@@ -3378,6 +3378,7 @@ function ChatViewContent(props: ChatViewProps) {
       hasTokenLimitNotice,
       tokenLimitNoticeKey,
       onDismissed: incrementDismissTick(setThreadErrorBannerDismissTick),
+      resolve: messages,
     });
     // SCIENT-FORK:END
     const fallbackSelection = draftFallback?.selection;
@@ -5118,7 +5119,7 @@ function ChatViewContent(props: ChatViewProps) {
         // SCIENT-FORK:START — the dialog stays open while rewinding, says why files stay, and
         // shows file-history diagnostics and the last failure.
         reverting={isRevertingCheckpoint}
-        describeUnrestorableFiles={describeUnrestorableRevertFiles}
+        describeUnrestorableFiles={(reason) => describeUnrestorableRevertFiles(reason, messages)}
         renderDetails={(error) => (
           <ScientRevertDialogDiagnostics fileHistoryIssue={fileHistoryIssue} error={error} />
         )}

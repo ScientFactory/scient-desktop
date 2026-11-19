@@ -2,9 +2,11 @@ import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { m } from "~/i18n/messages";
 import { resolveStorage } from "~/lib/storage";
 
 import {
@@ -85,7 +87,7 @@ function sanitizePersistedRelation(candidate: HtmlPdfSourceRelation): HtmlPdfSou
     updatePhase: candidate.updatePhase === "updating" ? "update-available" : candidate.updatePhase,
     updateMessage:
       candidate.updatePhase === "updating"
-        ? "The source may have changed while Scient was closed."
+        ? m(msg("The source may have changed while Scient was closed."))
         : candidate.updateMessage,
     manualRequestId: 0,
   };
@@ -120,7 +122,7 @@ function persistedRelations(
             relation.updatePhase === "updating" ? "update-available" : relation.updatePhase,
           updateMessage:
             relation.updatePhase === "updating"
-              ? "The source may have changed while Scient was closed."
+              ? m(msg("The source may have changed while Scient was closed."))
               : relation.updateMessage,
           manualRequestId: 0,
         },

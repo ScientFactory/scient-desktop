@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { AccountsError, AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
@@ -10,6 +11,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
 import { type SavedAccount, withSavedAccounts } from "./accountsView";
+import { m } from "~/i18n/messages";
 
 const isAccountsError = Schema.is(AccountsError);
 const NOTHING_SAVED = Atom.make<ReadonlyArray<SavedAccount>>([]);
@@ -56,7 +58,7 @@ export function useAccountCommand<A, E, I>(
     const error = Cause.squash(result.cause);
     toastManager.add({
       type: "error",
-      title: isAccountsError(error) ? error.message : "Account action failed",
+      title: isAccountsError(error) ? error.message : m(msg("Account action failed")),
     });
     return { ok: false };
   };

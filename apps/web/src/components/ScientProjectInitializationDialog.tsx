@@ -1,4 +1,5 @@
 import type { ScientProjectInspection } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { FolderCogIcon, FolderIcon } from "lucide-react";
 
 import {
@@ -23,6 +24,7 @@ export function ScientProjectInitializationDialog(props: {
   readonly inspection: ScientProjectInspection | null;
   readonly onDecision: (decision: ScientProjectInitializationDecision) => void;
 }) {
+  const gt = useGT();
   const inspection = props.inspection;
   const ready = inspection?.state === "ordinary" || inspection?.state === "recoverable";
   const recovering = inspection?.state === "recoverable";
@@ -40,17 +42,21 @@ export function ScientProjectInitializationDialog(props: {
             <DialogHeader>
               <DialogTitle>
                 {recovering
-                  ? "Finish setting up this Scient project?"
+                  ? gt("Finish setting up this Scient project?")
                   : inspection.state === "conflicting"
-                    ? "This folder needs attention"
-                    : `Open “${scientProjectFolderName(inspection.root)}”`}
+                    ? gt("This folder needs attention")
+                    : gt("Open “{folder}”", { folder: scientProjectFolderName(inspection.root) })}
               </DialogTitle>
               <DialogDescription>
                 {recovering
-                  ? "A previous setup stopped before it finished. Scient can safely continue it without replacing your files."
+                  ? gt(
+                      "A previous setup stopped before it finished. Scient can safely continue it without replacing your files.",
+                    )
                   : inspection.state === "conflicting"
-                    ? "Scient will not replace or repair these files automatically. You can still open the folder normally."
-                    : "Choose whether to add Scient's small, portable project foundation."}
+                    ? gt(
+                        "Scient will not replace or repair these files automatically. You can still open the folder normally.",
+                      )
+                    : gt("Choose whether to add Scient's small, portable project foundation.")}
               </DialogDescription>
             </DialogHeader>
 
@@ -80,12 +86,18 @@ export function ScientProjectInitializationDialog(props: {
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold leading-5 text-foreground">
-                        {recovering ? "Finish setup" : "Set up a Scient project"}
+                        {recovering ? gt("Finish setup") : gt("Set up a Scient project")}
                       </span>
                       <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                         {recovering
-                          ? "Continue only the unchanged setup files."
-                          : "Create PROJECT.md, AGENTS.md, and a durable local identity."}
+                          ? gt("Continue only the unchanged setup files.")
+                          : gt(
+                              "Create {projectFile}, {agentsFile}, and a durable local identity.",
+                              {
+                                projectFile: "PROJECT.md",
+                                agentsFile: "AGENTS.md",
+                              },
+                            )}
                       </span>
                     </span>
                   </button>
@@ -100,10 +112,10 @@ export function ScientProjectInitializationDialog(props: {
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold leading-5 text-foreground">
-                        Open without setup
+                        <T>Open without setup</T>
                       </span>
                       <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                        Keep using the folder as an ordinary project.
+                        <T>Keep using the folder as an ordinary project.</T>
                       </span>
                     </span>
                   </button>
@@ -113,7 +125,9 @@ export function ScientProjectInitializationDialog(props: {
 
             {inspection.state === "conflicting" ? (
               <DialogFooter>
-                <Button onClick={() => props.onDecision("open-only")}>Open without setup</Button>
+                <Button onClick={() => props.onDecision("open-only")}>
+                  <T>Open without setup</T>
+                </Button>
               </DialogFooter>
             ) : null}
           </>

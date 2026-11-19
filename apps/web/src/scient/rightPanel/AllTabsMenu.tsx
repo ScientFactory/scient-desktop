@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { CheckIcon, ChevronDown, XIcon } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -16,6 +17,7 @@ export function AllTabsMenu<Tab extends { readonly id: string }>(props: {
   /** Closes a tab from the list; the list stays open for closing more. */
   readonly onClose: (tab: Tab) => void;
 }) {
+  const gt = useGT();
   return (
     <Menu>
       <Tooltip>
@@ -24,7 +26,7 @@ export function AllTabsMenu<Tab extends { readonly id: string }>(props: {
             <MenuTrigger
               render={
                 <Button
-                  aria-label="All tabs"
+                  aria-label={gt("All tabs")}
                   className="shrink-0 self-center"
                   size="icon-sm"
                   variant="ghost-muted"
@@ -35,7 +37,9 @@ export function AllTabsMenu<Tab extends { readonly id: string }>(props: {
         >
           <ChevronDown aria-hidden className="scient-quiet-icon size-4" />
         </TooltipTrigger>
-        <TooltipPopup>All tabs</TooltipPopup>
+        <TooltipPopup>
+          <T>All tabs</T>
+        </TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="max-h-96 min-w-48 max-w-72">
         {props.tabs.map((tab) => (
@@ -49,7 +53,7 @@ export function AllTabsMenu<Tab extends { readonly id: string }>(props: {
             ) : null}
             <button
               type="button"
-              aria-label={`Close ${props.titleOf(tab)}`}
+              aria-label={gt("Close {tab}", { tab: props.titleOf(tab) })}
               className="-me-1 grid size-5 shrink-0 cursor-pointer place-items-center rounded-full text-muted-foreground/70 opacity-0 transition-[opacity,background-color,color] hover:bg-foreground/8 hover:text-foreground active:bg-foreground/12 focus-visible:opacity-100 group-hover/tab-row:opacity-100 group-data-highlighted/tab-row:opacity-100"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {

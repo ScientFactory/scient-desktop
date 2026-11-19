@@ -1,5 +1,6 @@
 import type { DataTableQuery, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useGT } from "gt-react";
 import { useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -30,6 +31,7 @@ export function DataFileTable(props: {
 }) {
   // Each move checks the file's revision; the table reads its rows again only for a new one.
   // An environment that reports no revision reads them on every move.
+  const gt = useGT();
   const asset = useAssetUrlState(
     props.environmentId,
     {
@@ -70,7 +72,11 @@ export function DataFileTable(props: {
       toolbarStart={
         sheets.length > 1 ? (
           <Select value={sheet} onValueChange={(value) => setSheet(value ?? 0)}>
-            <SelectTrigger size="xs" className="w-fit max-w-40 shrink-0" aria-label="Sheet">
+            <SelectTrigger
+              size="xs"
+              className="w-fit max-w-40 shrink-0"
+              aria-label={gt("Sheet", { $context: "spreadsheet worksheet picker" })}
+            >
               <SelectValue>{sheets[sheet]}</SelectValue>
             </SelectTrigger>
             <SelectPopup alignItemWithTrigger={false}>

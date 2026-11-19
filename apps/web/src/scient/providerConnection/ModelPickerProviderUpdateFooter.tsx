@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import { DownloadIcon, Loader2Icon } from "lucide-react";
 import { ProviderInstanceIcon } from "~/components/chat/ProviderInstanceIcon";
@@ -17,15 +18,21 @@ export function ModelPickerProviderUpdateFooter(props: {
   readonly hasError?: boolean | undefined;
   readonly onUpdate: () => void;
 }) {
-  const actionLabel = props.hasError ? "Retry" : "Update";
+  const gt = useGT();
+  const provider = props.displayName;
+  const actionLabel = props.hasError
+    ? gt("Retry", { $context: "verb, retry the provider update" })
+    : gt("Update", { $context: "verb, update the provider" });
   const accessibleActionLabel = props.disabledReason
-    ? `${props.displayName} update unavailable. ${props.disabledReason}`
-    : `${actionLabel} ${props.displayName}`;
+    ? gt("{provider} update unavailable. {reason}", { provider, reason: props.disabledReason })
+    : props.hasError
+      ? gt("Retry {provider}", { provider })
+      : gt("Update {provider}", { provider });
   const progressLabel = props.isWaitingForIdle
-    ? `${props.displayName} will update when idle`
+    ? gt("{provider} will update when idle", { provider })
     : props.isUpdating
-      ? `Updating ${props.displayName}…`
-      : `Preparing ${props.displayName} update…`;
+      ? gt("Updating {provider}…", { provider })
+      : gt("Preparing {provider} update…", { provider });
 
   return (
     <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
@@ -61,7 +68,9 @@ export function ModelPickerProviderUpdateFooter(props: {
               props.hasError && "text-destructive",
             )}
           >
-            {props.hasError ? "Couldn’t start update" : `${props.displayName} update available`}
+            {props.hasError
+              ? gt("Couldn’t start update")
+              : gt("{provider} update available", { provider })}
           </p>
           <Button
             type="button"

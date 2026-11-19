@@ -5,6 +5,9 @@ import {
   type ScientPdfAnnotation,
   type ScientSourceCitationKeyResolution,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import type { PdfPageLabels } from "../annotations/pdfQuotePageLabels";
 import { quotePageLabels, quoteProse } from "../annotations/quoteFormat";
@@ -67,8 +70,8 @@ export function checkedCitationEntries(
       entries,
       notices: [
         {
-          title: "Couldn't check this citation in the document's bibliography",
-          description: "Opening the Library source it names in this project.",
+          title: m(msg("Couldn't check this citation in the document's bibliography")),
+          description: m(msg("Opening the Library source it names in this project.")),
         },
       ],
     };
@@ -87,18 +90,35 @@ export function checkedCitationEntries(
       case "other-work":
         notices.push({
           title: bibliography
-            ? `In this document, ${key} is another work (${bibliography}), not the Library source.`
-            : `In this document, ${key} is another work, not the Library source.`,
+            ? m(
+                msg(
+                  "In this document, {key} is another work ({bibliography}), not the Library source.",
+                  { key, bibliography },
+                ),
+              )
+            : m(msg("In this document, {key} is another work, not the Library source.", { key })),
         });
         continue;
       case "not-library":
-        notices.push({ title: `In this document, ${key} is not a Library source.` });
+        notices.push({
+          title: m(msg("In this document, {key} is not a Library source.", { key })),
+        });
         continue;
       case "unconfirmed":
         notices.push({
           title: bibliography
-            ? `Not confirmed to be the Library source: ${bibliography} defines ${key} without an identifier to compare.`
-            : `Not confirmed to be the Library source: what ${key} names in this document could not be checked.`,
+            ? m(
+                msg(
+                  "Not confirmed to be the Library source: {bibliography} defines {key} without an identifier to compare.",
+                  { bibliography, key },
+                ),
+              )
+            : m(
+                msg(
+                  "Not confirmed to be the Library source: what {key} names in this document could not be checked.",
+                  { key },
+                ),
+              ),
         });
         break;
       case "library":

@@ -33,6 +33,7 @@ import {
   type ScopedThreadRef,
   ThreadSectionId,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { ChevronRightIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   Fragment,
@@ -220,6 +221,7 @@ type HeldLayout = { readonly ids: readonly string[]; readonly expiresAt: number 
 const HELD_LAYOUT_MS = 2_000;
 
 export function SidebarSectionsView(props: SidebarSectionsViewProps) {
+  const gt = useGT();
   const {
     activeKeysById,
     canDragThread,
@@ -428,7 +430,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        description: error instanceof Error ? error.message : gt("An error occurred."),
       }),
     );
   };
@@ -572,14 +574,14 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         const result = await unsettleThread(threadRef);
         if (result._tag === "Failure") {
           release();
-          return reportFailure("Failed to un-settle thread", result);
+          return reportFailure(gt("Failed to un-settle thread"), result);
         }
       }
       if (plan.unsnooze) {
         const result = await unsnoozeThread(threadRef);
         if (result._tag === "Failure") {
           release();
-          return reportFailure("Failed to wake thread", result);
+          return reportFailure(gt("Failed to wake thread"), result);
         }
       }
       if (
@@ -605,8 +607,8 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         if (result._tag === "Failure") {
           reportFailure(
             plan.group === "pinned"
-              ? "Failed to reorder pinned threads"
-              : "Failed to reorder threads",
+              ? gt("Failed to reorder pinned threads")
+              : gt("Failed to reorder threads"),
             result,
           );
           release();
@@ -687,7 +689,9 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   key={item.id}
                   itemId={item.id}
                   group={group}
-                  label={group.section?.name ?? "General"}
+                  label={
+                    group.section?.name ?? gt("General", { $context: "default sidebar section" })
+                  }
                   machine={
                     group.environmentId === null
                       ? null
@@ -749,7 +753,12 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       {liftedGroup ? (
         <DragOverlay dropAnimation={null}>
           <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
-            <FadeTruncate text={liftedGroup.section?.name ?? "General"} className="shrink" />
+            <FadeTruncate
+              text={
+                liftedGroup.section?.name ?? gt("General", { $context: "default sidebar section" })
+              }
+              className="shrink"
+            />
             <span aria-hidden className="h-px min-w-6 flex-1 bg-sidebar-foreground/25" />
           </div>
         </DragOverlay>
@@ -792,6 +801,7 @@ function SectionHeaderRow(props: {
   onMenu: (position: { x: number; y: number }) => void;
   onNewThread: () => void;
 }) {
+  const gt = useGT();
   const { group } = props;
   const isUserSection = group.section !== null;
   const { listeners, setNodeRef, transform, transition } = useSortable({
@@ -838,7 +848,7 @@ function SectionHeaderRow(props: {
         {props.renaming && group.section ? (
           <SectionNameInput
             initialName={group.section.name}
-            ariaLabel="Section name"
+            ariaLabel={gt("Section name")}
             onSubmit={props.onRename}
             onCancel={props.onCancelRename}
           />
@@ -920,7 +930,7 @@ function SectionHeaderRow(props: {
             {/* General can't be renamed or deleted, so it has no section menu. */}
             {isUserSection ? (
               <HeaderIconButton
-                label="Section actions"
+                label={gt("Section actions")}
                 onClick={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();
                   props.onMenu({ x: rect.left, y: rect.bottom + 4 });
@@ -930,7 +940,7 @@ function SectionHeaderRow(props: {
               </HeaderIconButton>
             ) : null}
             <HeaderIconButton
-              label={isUserSection ? "New thread in section" : "New thread"}
+              label={isUserSection ? gt("New thread in section") : gt("New thread")}
               onClick={props.onNewThread}
             >
               {/* Same glyph as the sidebar's New thread button. */}
@@ -1063,7 +1073,7 @@ function AddSectionRow(props: { onClick: (anchor: SectionCreateAnchor) => void }
         className="flex h-full w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
       >
         <PlusIcon aria-hidden className="size-3 shrink-0" />
-        New section
+        <T>New section</T>
       </button>
     </li>
   );

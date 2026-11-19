@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { LRUCache } from "~/lib/lruCache";
 import { dependencies } from "../../../package.json";
 import { renderMermaidSvg } from "../../components/chat/MermaidDiagram";
@@ -129,7 +131,7 @@ export class MermaidRenderError extends Schema.TaggedError<MermaidRenderError>()
   private get detail(): string {
     return this.cause instanceof Error && this.cause.message.trim()
       ? this.cause.message.trim()
-      : "Mermaid could not render this diagram.";
+      : m(msg("Mermaid could not render this diagram."));
   }
 
   override get message(): string {

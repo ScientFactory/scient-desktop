@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
@@ -27,15 +28,18 @@ export function ProjectBrowserProfile({
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const { data, canWrite } = useAccounts(environmentId);
   const choose = useAccountCommand(accountsState.chooseProfile, environmentId);
+  const gt = useGT();
   if (!data) return null;
   const profiles = mergeProfiles(userProfiles, data.profiles);
   const chosen = data.profileChoices?.projects[projectId];
   const value = profiles.some((profile) => profile.id === chosen) ? chosen! : NONE;
   return (
-    <SettingsSection title="Browser">
+    <SettingsSection title={gt("Browser")}>
       <SettingsRow
-        title="Browser profile"
-        description="Conversations in this project open web pages in this profile, unless they choose another."
+        title={gt("Browser profile")}
+        description={gt(
+          "Conversations in this project open web pages in this profile, unless they choose another.",
+        )}
         control={
           <Select
             value={value}
@@ -44,14 +48,14 @@ export function ProjectBrowserProfile({
               void choose({ projectId, profileId: next === NONE || next === null ? null : next })
             }
           >
-            <SelectTrigger size="sm" aria-label="Browser profile for this project">
+            <SelectTrigger size="sm" aria-label={gt("Browser profile for this project")}>
               <SelectValue>
-                {profiles.find((profile) => profile.id === value)?.name ?? "New-tab default"}
+                {profiles.find((profile) => profile.id === value)?.name ?? gt("New-tab default")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               <SelectItem hideIndicator value={NONE}>
-                New-tab default
+                <T>New-tab default</T>
               </SelectItem>
               {profiles.map((profile) => (
                 <SelectItem hideIndicator key={profile.id} value={profile.id}>

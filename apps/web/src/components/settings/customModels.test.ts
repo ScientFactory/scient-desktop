@@ -286,10 +286,16 @@ describe("custom model agents", () => {
 
 describe("model availability hint", () => {
   it("points to the model ID only for agents that list models by it", () => {
-    expect(modelUnavailableHint("pi")).toBe(". Check the model ID and limits in Edit");
-    expect(modelUnavailableHint("omp")).toBe(". Check the model ID and limits in Edit");
+    expect(modelUnavailableHint("pi", "Needs setup")).toBe(
+      "Needs setup. Check the model ID and limits in Edit",
+    );
+    expect(modelUnavailableHint("omp", "Needs setup")).toBe(
+      "Needs setup. Check the model ID and limits in Edit",
+    );
     // Droid lists every model Scient gives it; an absent one means its list is out of date.
-    expect(modelUnavailableHint("droid")).toBe(". Use Check again to refresh Droid's list");
+    expect(modelUnavailableHint("droid", "Needs setup")).toBe(
+      "Needs setup. Use Check again to refresh Droid's list",
+    );
   });
 });
 

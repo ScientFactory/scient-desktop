@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import { lazy, Suspense, useRef } from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -36,10 +37,11 @@ function tableText(table: ComputeTablePreview): string {
 }
 
 export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
+  const gt = useGT();
   return (
     <figure className="min-w-0">
       <div className="max-w-full overflow-x-auto">
-        <table className="scient-compute-table text-xs" aria-label="Result table">
+        <table className="scient-compute-table text-xs" aria-label={gt("Result table")}>
           <thead>
             <tr>
               {props.table.columns.map((column) => (
@@ -69,7 +71,9 @@ export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
       </div>
       {props.table.truncated ? (
         <figcaption className="mt-1 text-[11px] text-muted-foreground">
-          First {props.table.rows.length} rows
+          <T>
+            First <Var>{props.table.rows.length}</Var> rows
+          </T>
         </figcaption>
       ) : null}
     </figure>

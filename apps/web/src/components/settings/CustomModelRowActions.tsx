@@ -1,4 +1,5 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { CheckIcon, CircleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -11,7 +12,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { modelTestGuidance } from "./customModels";
+import { type ModelConnectionStatusKind, modelTestGuidance } from "./customModels";
 
 export interface CustomModelTestNotice {
   readonly text: string;
@@ -36,7 +37,7 @@ export function CustomModelRowActions({
   /** A Test of this model is running. */
   testing: boolean;
   /** Each attached agent's status label, when it has one. */
-  statuses: ReadonlyArray<string | undefined>;
+  statuses: ReadonlyArray<ModelConnectionStatusKind | undefined>;
   /** An agent reports the connection's saved key missing (see `connectionKeyMissing`). */
   keyMissing: boolean;
   /** Agents the model can be tested through (see `modelTestAgents`). */
@@ -46,17 +47,18 @@ export function CustomModelRowActions({
   onReenterKey: () => void;
   onTest: (agent: ProviderInstanceId) => void;
 }) {
+  const gt = useGT();
   return (
     <>
-      {statuses.some((label) => label === "Needs setup" || label === "Check agent") ? (
+      {statuses.some((kind) => kind === "needs-setup" || kind === "check-agent") ? (
         <Button size="xs" variant="ghost" disabled={busy} onClick={onCheckAgain}>
-          Check again
+          <T>Check again</T>
         </Button>
       ) : null}
       {/* The key belongs to the connection: whatever any agent's status says, only this restores it. */}
       {keyMissing ? (
         <Button size="xs" variant="ghost" disabled={busy} onClick={onReenterKey}>
-          Re-enter key
+          <T>Re-enter key</T>
         </Button>
       ) : null}
       {testAgents.length > 0 && notice && !notice.error ? (
@@ -77,7 +79,9 @@ export function CustomModelRowActions({
                     size="xs"
                     variant="ghost-destructive"
                     disabled={busy}
-                    aria-label={`Test failed. ${notice.text} Select to try again.`}
+                    aria-label={gt("Test failed. {reason} Select to try again.", {
+                      reason: notice.text,
+                    })}
                     onClick={() =>
                       onTest(
                         testAgents.find((agent) => agent.id === notice.agent)?.id ??
@@ -88,7 +92,7 @@ export function CustomModelRowActions({
                 }
               >
                 <CircleAlertIcon />
-                Failed
+                <T context="the model test failed">Failed</T>
                 <span role="alert" className="sr-only">
                   {notice.text}
                 </span>
@@ -100,12 +104,14 @@ export function CustomModelRowActions({
           {testAgents.length > 1 ? (
             <Menu>
               <MenuTrigger render={<Button size="xs" variant="ghost" disabled={busy} />}>
-                {testing ? "Testing…" : "Test"}
+                {testing ? gt("Testing…") : gt("Test", { $context: "verb, tests the model" })}
               </MenuTrigger>
               <MenuPopup align="end">
                 {/* A group label needs its group: Base UI throws on one outside. */}
                 <MenuGroup>
-                  <MenuGroupLabel>Send a small request through</MenuGroupLabel>
+                  <MenuGroupLabel>
+                    <T>Send a small request through</T>
+                  </MenuGroupLabel>
                   {testAgents.map((agent) => (
                     <MenuItem key={agent.id} onClick={() => onTest(agent.id)}>
                       {agent.name}
@@ -114,7 +120,9 @@ export function CustomModelRowActions({
                 </MenuGroup>
                 <MenuSeparator />
                 <MenuGroup>
-                  <MenuGroupLabel>API charges may apply.</MenuGroupLabel>
+                  <MenuGroupLabel>
+                    <T>API charges may apply.</T>
+                  </MenuGroupLabel>
                 </MenuGroup>
               </MenuPopup>
             </Menu>
@@ -130,10 +138,13 @@ export function CustomModelRowActions({
                   />
                 }
               >
-                {testing ? "Testing…" : "Test"}
+                {testing ? gt("Testing…") : gt("Test", { $context: "verb, tests the model" })}
               </TooltipTrigger>
               <TooltipPopup>
-                Sends a small request through {testAgents[0]!.name}. API charges may apply.
+                <T>
+                  Sends a small request through <Var>{testAgents[0]!.name}</Var>. API charges may
+                  apply.
+                </T>
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -152,9 +163,13 @@ export function CustomModelTestGuidance({
   /** Every agent that can use custom models. */
   agents: ReadonlyArray<{ readonly name: string }>;
 }) {
+  const messages = useMessages();
   return testAgents.length === 0 ? (
     <p className="text-xs text-muted-foreground">
-      {modelTestGuidance(agents.map((agent) => agent.name))}
+      {modelTestGuidance(
+        agents.map((agent) => agent.name),
+        messages,
+      )}
     </p>
   ) : null;
 }

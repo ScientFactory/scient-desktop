@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Table as TableIcon } from "lucide-react";
 
@@ -44,6 +45,7 @@ export function InsertMenuContent(props: {
   /** Lets the menu close before the command runs. */
   readonly onRun?: ((command: () => void) => void) | undefined;
 }) {
+  const gt = useGT();
   const run = (command: () => void) => (props.onRun ? props.onRun(command) : command());
   const actionById = new Map(props.actions.map((action) => [action.id, action]));
   const renderAction = (id: string) => {
@@ -67,7 +69,10 @@ export function InsertMenuContent(props: {
   const table =
     onInsertTable === undefined ? null : props.unavailableReason ? (
       <DockCommandItem disabled title={props.unavailableReason}>
-        <MenuRow icon={<TableIcon className="size-4" />} label="Table" />
+        <MenuRow
+          icon={<TableIcon className="size-4" />}
+          label={gt("Table", { $context: "insert a table" })}
+        />
       </DockCommandItem>
     ) : (
       <DocumentTableSizeMenu
@@ -92,6 +97,7 @@ export function InsertMenu(props: {
   /** Attributes an editor needs on the popup, for example to scope its shortcuts. */
   readonly popupAttributes?: Readonly<Record<`data-${string}`, string>> | undefined;
 }) {
+  const m = useMessages();
   const ownerId = useId();
   const [ownOpen, setOwnOpen] = useState(false);
   const open = props.open ?? ownOpen;
@@ -130,7 +136,7 @@ export function InsertMenu(props: {
         command?.();
       }}
     >
-      <ScientTooltip content={WRITING_COMMAND_LABELS.insert}>
+      <ScientTooltip content={m(WRITING_COMMAND_LABELS.insert)}>
         <MenuTrigger
           id={ownerId}
           disabled={props.disabled}
@@ -138,11 +144,11 @@ export function InsertMenu(props: {
             <button
               id={ownerId}
               type="button"
-              aria-label={WRITING_COMMAND_LABELS.insert}
+              aria-label={m(WRITING_COMMAND_LABELS.insert)}
               className={dockButtonClass()}
             >
               {/* A word, not a plus: what the button does is read at a glance. */}
-              <span className="text-[13px]">{WRITING_COMMAND_LABELS.insert}</span>
+              <span className="text-[13px]">{m(WRITING_COMMAND_LABELS.insert)}</span>
               <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
             </button>
           }

@@ -4,7 +4,9 @@ import { EnvironmentId, type ScientSourceDetailResult } from "@t3tools/contracts
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { I18nProvider } from "~/i18n/I18nProvider";
+import { setI18nLanguage, startI18n } from "~/i18n/runtime";
+import { act, render } from "../../../test/render";
 import { SourceEditor } from "./SourceEditor";
 
 const mocks = vi.hoisted(() => ({ update: vi.fn() }));
@@ -104,24 +106,30 @@ describe("the editor's further details", () => {
 
 describe("the editor's type and creators", () => {
   it("shows names a person knows, saves the roles the record uses, and can say a list is complete", async () => {
+    await using locale = new AsyncDisposableStack();
+    locale.defer(() => act(() => setI18nLanguage("en")));
+    startI18n();
+    await setI18nLanguage("en");
     mocks.update.mockReset().mockResolvedValue({ outcome: "updated", record });
     await using _screen = await render(
-      <SourceEditor
-        environmentId={EnvironmentId.make("environment_test")}
-        root="/project"
-        record={{
-          ...record,
-          type: "book-chapter",
-          creators: [
-            ...record.creators,
-            { creatorType: "compiler", givenName: "Ann", familyName: "Lee", literalName: null },
-          ],
-          incompleteCreatorRoles: ["author"],
-        }}
-        onCancel={() => undefined}
-        onRefreshed={() => undefined}
-        onSaved={() => undefined}
-      />,
+      <I18nProvider>
+        <SourceEditor
+          environmentId={EnvironmentId.make("environment_test")}
+          root="/project"
+          record={{
+            ...record,
+            type: "book-chapter",
+            creators: [
+              ...record.creators,
+              { creatorType: "compiler", givenName: "Ann", familyName: "Lee", literalName: null },
+            ],
+            incompleteCreatorRoles: ["author"],
+          }}
+          onCancel={() => undefined}
+          onRefreshed={() => undefined}
+          onSaved={() => undefined}
+        />
+      </I18nProvider>,
       { router: false },
     );
 
@@ -134,9 +142,13 @@ describe("the editor's type and creators", () => {
     await expect
       .element(page.getByRole("button", { name: "The author list is complete" }))
       .not.toBeInTheDocument();
-    await userEvent.fill(author!, "Editor");
+    await act(() => setI18nLanguage("de"));
+    const [localizedAuthor] = page.getByRole("combobox", { name: "Rolle" }).all();
+    await expect.element(localizedAuthor!).toHaveValue("Autor");
+    await userEvent.fill(localizedAuthor!, "Editor");
     await userEvent.keyboard("{Escape}");
-    await userEvent.click(page.getByRole("button", { name: "Save", exact: true }));
+    await expect.element(localizedAuthor!).toHaveValue("Herausgeber");
+    await userEvent.click(page.getByRole("button", { name: "Speichern", exact: true }));
     await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
     expect(mocks.update.mock.calls[0]?.[1].metadata).toMatchObject({
       type: "book-chapter",

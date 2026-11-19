@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   type EnvironmentId,
@@ -46,14 +47,27 @@ import {
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
 
-const RUNTIME_ACTION_VERBS = {
-  install: "Install",
-  update: "Update",
-  repair: "Repair",
-  remove: "Remove",
+const RUNTIME_ACTION_TITLES = {
+  install: msg("Install {provider}"),
+  update: msg("Update {provider}"),
+  repair: msg("Repair {provider}"),
+  remove: msg("Remove {provider}"),
+} satisfies Record<ProviderManagedRuntimeAction, string>;
+const CANCEL_RETRY_LABELS = {
+  install: msg("Cancel {provider} install retry"),
+  update: msg("Cancel {provider} update retry"),
+  repair: msg("Cancel {provider} repair retry"),
+  remove: msg("Cancel {provider} remove retry"),
+} satisfies Record<ProviderManagedRuntimeAction, string>;
+const RETRY_ACTION_NOUNS = {
+  install: msg("install", { $context: "noun, the requested runtime action" }),
+  update: msg("update", { $context: "noun, the requested runtime action" }),
+  repair: msg("repair", { $context: "noun, the requested runtime action" }),
+  remove: msg("remove", { $context: "noun, the requested runtime action" }),
 } satisfies Record<ProviderManagedRuntimeAction, string>;
 type StartedRuntimeOperation = {
   readonly action: ProviderManagedRuntimeAction;
@@ -144,7 +158,8 @@ export function resolveProviderRuntimeForPresentation(
 /** The qualified-release line, re-rendered each minute so "checked … ago" stays true. */
 function ProviderRuntimeCatalogLine({ runtime }: { readonly runtime: ProviderRuntimeSummary }) {
   useNowMinute();
-  const line = describeProviderRuntimeCatalog(runtime);
+  const messages = useMessages();
+  const line = describeProviderRuntimeCatalog(runtime, undefined, messages);
   if (!line) return null;
   return (
     <p
@@ -161,20 +176,22 @@ function ProviderRuntimeCatalogLine({ runtime }: { readonly runtime: ProviderRun
 function runtimeSourceLabel(
   runtime: ProviderRuntimeSummary,
   driver: ServerProvider["driver"],
+  resolve: MessageResolver = m,
 ): string {
   if (driver === "cursor") {
-    if (runtime.source === "scient_managed") return "Cursor CLI managed by Scient";
-    if (runtime.source === "system") return "System Cursor CLI";
-    if (runtime.source === "custom") return "Custom Cursor CLI";
-    if (runtime.source === "missing") return "Cursor CLI not installed";
-    return "Cursor CLI status unavailable";
+    if (runtime.source === "scient_managed") return resolve(msg("Cursor CLI managed by Scient"));
+    if (runtime.source === "system") return resolve(msg("System Cursor CLI"));
+    if (runtime.source === "custom") return resolve(msg("Custom Cursor CLI"));
+    if (runtime.source === "missing") return resolve(msg("Cursor CLI not installed"));
+    return resolve(msg("Cursor CLI status unavailable"));
   }
-  if (runtime.source === "registry") return "ACP Registry installation managed by Scient";
-  if (runtime.source === "scient_managed") return "Managed by Scient";
-  if (runtime.source === "system") return "System installation";
-  if (runtime.source === "custom") return "Custom installation";
-  if (runtime.source === "missing") return "Provider tool required";
-  return "Provider tool status unavailable";
+  if (runtime.source === "registry")
+    return resolve(msg("ACP Registry installation managed by Scient"));
+  if (runtime.source === "scient_managed") return resolve(msg("Managed by Scient"));
+  if (runtime.source === "system") return resolve(msg("System installation"));
+  if (runtime.source === "custom") return resolve(msg("Custom installation"));
+  if (runtime.source === "missing") return resolve(msg("Provider tool required"));
+  return resolve(msg("Provider tool status unavailable"));
 }
 
 export function ProviderRuntimeSection(props: {
@@ -195,6 +212,8 @@ export function ProviderRuntimeSection(props: {
   readonly onPlanOpenChange?: (open: boolean) => void;
 }) {
   const { environmentId, provider, onActionSucceeded, onPlanOpenChange } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const runtimeDisplayName =
     provider.driver === "cursor" ? `${props.displayName} CLI` : props.displayName;
   const planRuntime = useAtomCommand(serverEnvironment.planProviderRuntime, {
@@ -336,7 +355,9 @@ export function ProviderRuntimeSection(props: {
               operationId,
               message: providerLifecycleFailureMessage(
                 failure,
-                `Scient could not start the ${runtimeDisplayName} runtime operation.`,
+                gt("Scient could not start the {provider} runtime operation.", {
+                  provider: runtimeDisplayName,
+                }),
               ),
             });
           }
@@ -406,7 +427,9 @@ export function ProviderRuntimeSection(props: {
               action,
               message: providerLifecycleFailureMessage(
                 squashAtomCommandFailure(result),
-                `Scient could not prepare the ${runtimeDisplayName} setup plan.`,
+                gt("Scient could not prepare the {provider} setup plan.", {
+                  provider: runtimeDisplayName,
+                }),
               ),
             });
           }
@@ -476,7 +499,9 @@ export function ProviderRuntimeSection(props: {
       if (!isAtomCommandInterrupted(result)) {
         const message = providerLifecycleFailureMessage(
           squashAtomCommandFailure(result),
-          `Scient could not cancel the ${runtimeDisplayName} runtime operation.`,
+          gt("Scient could not cancel the {provider} runtime operation.", {
+            provider: runtimeDisplayName,
+          }),
         );
         setLocalFailure(
           activeOperation
@@ -504,13 +529,15 @@ export function ProviderRuntimeSection(props: {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">
               {activeOperation.background
-                ? `Downloading in the background${progress === null ? "" : ` · ${progress}%`}`
+                ? `${gt("Downloading in the background")}${progress === null ? "" : ` · ${progress}%`}`
                 : activeOperation.message}
             </p>
             {!props.compact ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                You can keep using Scient. The previous working runtime remains available until the
-                new copy is verified.
+                <T>
+                  You can keep using Scient. The previous working runtime remains available until
+                  the new copy is verified.
+                </T>
               </p>
             ) : null}
           </div>
@@ -519,7 +546,7 @@ export function ProviderRuntimeSection(props: {
           <div
             className="space-y-1"
             role="progressbar"
-            aria-label="Provider download progress"
+            aria-label={gt("Provider download progress")}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progress}
@@ -542,13 +569,17 @@ export function ProviderRuntimeSection(props: {
           {props.compact && progress !== null ? (
             <span
               className="text-xs tabular-nums text-muted-foreground"
-              aria-label={`Download progress ${progress}%`}
+              aria-label={gt("Download progress {percent}%", { percent: progress })}
             >
               {progress}%
             </span>
           ) : null}
           <Button
-            aria-label={cancelRuntimeActionLabel(runtimeDisplayName, activeOperation.action)}
+            aria-label={cancelRuntimeActionLabel(
+              runtimeDisplayName,
+              activeOperation.action,
+              messages,
+            )}
             type="button"
             size="sm"
             variant={props.compact ? "ghost-destructive-action" : "destructive-outline"}
@@ -556,7 +587,7 @@ export function ProviderRuntimeSection(props: {
             onClick={() => void cancel()}
           >
             {pendingAction === "cancel" ? <LoaderIcon className="animate-spin" /> : <XIcon />}
-            Cancel
+            <T>Cancel</T>
           </Button>
         </div>
       </div>
@@ -575,7 +606,9 @@ export function ProviderRuntimeSection(props: {
         <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
         <div className="min-w-0">
           <p role="status" className="text-sm font-medium text-foreground">
-            Preparing {runtimeDisplayName}…
+            <T>
+              Preparing <Var>{runtimeDisplayName}</Var>…
+            </T>
           </p>
         </div>
       </div>
@@ -594,10 +627,16 @@ export function ProviderRuntimeSection(props: {
         <div className="flex items-start gap-3">
           <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">Remove {runtimeDisplayName}?</p>
+            <p className="text-sm font-medium text-foreground">
+              <T>
+                Remove <Var>{runtimeDisplayName}</Var>?
+              </T>
+            </p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              Only Scient’s managed copy will be removed. Your account and other{" "}
-              {runtimeDisplayName} installations stay unchanged.
+              <T>
+                Only Scient’s managed copy will be removed. Your account and other{" "}
+                <Var>{runtimeDisplayName}</Var> installations stay unchanged.
+              </T>
             </p>
           </div>
         </div>
@@ -617,7 +656,7 @@ export function ProviderRuntimeSection(props: {
               onPlanOpenChange?.(false);
             }}
           >
-            Back
+            <T>Back</T>
           </Button>
           <Button
             type="button"
@@ -627,7 +666,7 @@ export function ProviderRuntimeSection(props: {
             onClick={() => void start()}
           >
             {pendingAction === "start" ? <LoaderIcon className="animate-spin" /> : <Trash2Icon />}
-            Remove
+            <T>Remove</T>
           </Button>
         </div>
       </div>
@@ -671,14 +710,21 @@ export function ProviderRuntimeSection(props: {
       {pendingRecovery ? (
         <div className="flex items-start justify-between gap-3" role="status">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Scient will retry this requested {pendingRecovery.action} after{" "}
-            <time dateTime={pendingRecovery.nextRetryAt}>
-              {new Date(pendingRecovery.nextRetryAt).toLocaleString()}
-            </time>
-            .
+            <T>
+              Scient will retry this requested{" "}
+              <Var>{messages(RETRY_ACTION_NOUNS[pendingRecovery.action])}</Var> after{" "}
+              <Var>
+                <time dateTime={pendingRecovery.nextRetryAt}>
+                  {new Date(pendingRecovery.nextRetryAt).toLocaleString()}
+                </time>
+              </Var>
+              .
+            </T>
           </p>
           <Button
-            aria-label={`Cancel ${runtimeDisplayName} ${pendingRecovery.action} retry`}
+            aria-label={messages(CANCEL_RETRY_LABELS[pendingRecovery.action], {
+              provider: runtimeDisplayName,
+            })}
             type="button"
             size="sm"
             variant="ghost-destructive-action"
@@ -686,7 +732,7 @@ export function ProviderRuntimeSection(props: {
             onClick={() => void cancel()}
           >
             <XIcon />
-            Cancel retry
+            <T>Cancel retry</T>
           </Button>
         </div>
       ) : null}
@@ -703,11 +749,13 @@ export function ProviderRuntimeSection(props: {
           {statusIcon}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">
-              {runtimeSourceLabel(runtime, provider.driver)}
+              {runtimeSourceLabel(runtime, provider.driver, messages)}
             </p>
             {provider.driver === "cursor" ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                Conversations use the bundled Cursor SDK. These controls manage the separate CLI.
+                <T>
+                  Conversations use the bundled Cursor SDK. These controls manage the separate CLI.
+                </T>
               </p>
             ) : null}
             {statusMessage ? (
@@ -726,8 +774,8 @@ export function ProviderRuntimeSection(props: {
                 <Button
                   aria-label={
                     isSystemManagedSwitch
-                      ? `Use Scient-managed ${runtimeDisplayName}`
-                      : `${RUNTIME_ACTION_VERBS[action]} ${runtimeDisplayName}`
+                      ? gt("Use Scient-managed {provider}", { provider: runtimeDisplayName })
+                      : messages(RUNTIME_ACTION_TITLES[action], { provider: runtimeDisplayName })
                   }
                   key={action}
                   type="button"
@@ -759,13 +807,13 @@ export function ProviderRuntimeSection(props: {
                   )}
                   {action === "install"
                     ? isSystemManagedSwitch
-                      ? "Use Scient-managed"
-                      : "Install"
+                      ? gt("Use Scient-managed")
+                      : gt("Install", { $context: "verb, provider runtime action" })
                     : action === "update"
-                      ? "Update"
+                      ? gt("Update", { $context: "verb, provider runtime action" })
                       : action === "repair"
-                        ? "Repair"
-                        : "Remove"}
+                        ? gt("Repair", { $context: "verb, provider runtime action" })
+                        : gt("Remove", { $context: "verb, provider runtime action" })}
                 </Button>
               );
               return isSystemManagedSwitch ? (
@@ -774,11 +822,15 @@ export function ProviderRuntimeSection(props: {
                   <TooltipPopup className="max-w-64" side="top">
                     <div className="space-y-0.5 py-0.5">
                       <p className="font-medium text-foreground">
-                        Scient-managed {runtimeDisplayName}
+                        <T>
+                          Scient-managed <Var>{runtimeDisplayName}</Var>
+                        </T>
                       </p>
                       <p className="leading-relaxed text-muted-foreground">
-                        Scient installs and maintains a private copy, including updates and repairs.
-                        Your system installation stays unchanged and remains available.
+                        <T>
+                          Scient installs and maintains a private copy, including updates and
+                          repairs. Your system installation stays unchanged and remains available.
+                        </T>
                       </p>
                     </div>
                   </TooltipPopup>
@@ -816,7 +868,7 @@ export function ProviderRuntimeSection(props: {
             ) : (
               <RefreshCwIcon />
             )}
-            Update
+            <T>Update</T>
           </Button>
         </div>
       ) : (

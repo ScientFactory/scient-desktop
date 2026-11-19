@@ -1,11 +1,13 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg, T, useGT } from "gt-react";
 import { MessageSquareDashedIcon, SquarePenIcon } from "lucide-react";
 import { useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { SidebarMenuButton } from "../../components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import type { useScratchProject } from "../../hooks/useScratchProject";
 import { startNewThreadFromContext } from "../../lib/chatThreadActions";
@@ -23,10 +25,13 @@ export function SidebarNewThreadRow(props: {
   /** Shift+click only matters once there is a project to start in. */
   readonly showInProjectHint: boolean;
 }) {
+  const gt = useGT();
   const startingScratchRef = useRef(false);
   const [startingScratch, setStartingScratch] = useState(false);
   const onNewWithoutProject = props.onNewWithoutProject ?? null;
-  const label = props.shortcutLabel ? `New thread (${props.shortcutLabel})` : "New thread";
+  const label = props.shortcutLabel
+    ? gt("New thread ({shortcut})", { shortcut: props.shortcutLabel })
+    : gt("New thread");
   const startWithoutProject = async () => {
     if (startingScratchRef.current || onNewWithoutProject === null) return;
     startingScratchRef.current = true;
@@ -56,7 +61,7 @@ export function SidebarNewThreadRow(props: {
                   type="button"
                   size="icon"
                   data-testid="sidebar-new-without-project"
-                  aria-label="Chat without a project"
+                  aria-label={gt("Chat without a project")}
                   aria-busy={startingScratch}
                   disabled={startingScratch}
                   onClick={() => void startWithoutProject()}
@@ -65,7 +70,9 @@ export function SidebarNewThreadRow(props: {
             >
               <MessageSquareDashedIcon className="size-3.5" />
             </TooltipTrigger>
-            <TooltipPopup side="right">Chat without a project</TooltipPopup>
+            <TooltipPopup side="right">
+              <T>Chat without a project</T>
+            </TooltipPopup>
           </Tooltip>
           <span
             aria-hidden
@@ -86,15 +93,20 @@ export function SidebarNewThreadRow(props: {
             }
           >
             <SquarePenIcon className="size-3.5" />
-            <span className="text-[13px]">New thread</span>
+            <span className="text-[13px]">
+              <T>New thread</T>
+            </span>
           </TooltipTrigger>
           <TooltipPopup side="right">
             {props.showInProjectHint ? (
               <span className="flex flex-col gap-0.5">
                 <span>{label}</span>
                 <span className="text-muted-foreground">
-                  In current project
-                  {props.inProjectShortcutLabel ? ` (${props.inProjectShortcutLabel})` : ""}
+                  {props.inProjectShortcutLabel
+                    ? gt("In current project ({shortcut})", {
+                        shortcut: props.inProjectShortcutLabel,
+                      })
+                    : gt("In current project")}
                 </span>
               </span>
             ) : (
@@ -154,8 +166,8 @@ export function useSidebarNewThreadRowActions(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not start without a project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(msg("Could not start without a project")),
+          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
         }),
       );
     }

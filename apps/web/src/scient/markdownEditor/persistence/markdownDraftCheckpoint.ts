@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import { createIndexedDbConnection } from "~/scient/storage/indexedDbConnection";
 import { randomUUID } from "~/lib/utils";
 import type {
@@ -240,7 +243,10 @@ export const documentRecoveryDatabase = createIndexedDbConnection({
     for (const name of ["drafts", "document-input-owners", "document-input-blocks"])
       if (!database.objectStoreNames.contains(name)) database.createObjectStore(name);
   },
-  blockedMessage: "Markdown recovery storage is blocked.",
+  // Read when the connection is blocked, so it is in the language of that moment.
+  get blockedMessage() {
+    return m(msg("Markdown recovery storage is blocked."));
+  },
 });
 
 function decode(value: unknown): MarkdownDraftCheckpoint | undefined {

@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import type {
   EnvironmentId,
   ScientSourceRestoreResult,
@@ -52,12 +55,12 @@ export function announceSourceMovedToTrash(input: {
   const elsewhere = alsoInOtherProjectsLabel(input.alsoPinnedIn);
   const id = toastManager.add({
     type: "success",
-    title: "Moved to Trash",
+    title: m(msg("Moved to Trash")),
     description: elsewhere
       ? [input.title, elsewhere].filter(Boolean).join(" ")
       : (input.title ?? undefined),
     actionProps: {
-      children: "Undo",
+      children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {
         toastManager.close(id);
         void restoreSourceFromTrash(input)
@@ -65,7 +68,7 @@ export function announceSourceMovedToTrash(input: {
           .catch((cause: unknown) =>
             toastManager.add({
               type: "error",
-              title: "Source could not be restored",
+              title: m(msg("Source could not be restored")),
               description: errorMessage(cause),
             }),
           );
@@ -82,6 +85,7 @@ export function SourceTrashPopover(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onChanged: () => Promise<unknown>;
 }) {
+  const m = useMessages();
   const [listing, setListing] = useState<ScientSourceTrashListing | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
@@ -114,9 +118,10 @@ export function SourceTrashPopover(props: {
   };
 
   const entries = listing?.entries ?? [];
-  const stillCited = stillCitedInLabel([
-    ...new Set(entries.flatMap((entry) => entry.citedBy ?? [])),
-  ]);
+  const stillCited = stillCitedInLabel(
+    [...new Set(entries.flatMap((entry) => entry.citedBy ?? []))],
+    m,
+  );
   return (
     <Popover
       open={props.open}
@@ -136,12 +141,14 @@ export function SourceTrashPopover(props: {
         className="w-[22rem] max-w-[calc(100vw-1rem)]"
       >
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <PopoverTitle>Trash</PopoverTitle>
+          <PopoverTitle>
+            <T context="the Library's Trash">Trash</T>
+          </PopoverTitle>
           {entries.length > 0 ? (
             confirmingEmpty ? (
               <div className="flex items-center gap-1">
                 <Button size="xs" variant="ghost" onClick={() => setConfirmingEmpty(false)}>
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
                 <Button
                   size="xs"
@@ -154,7 +161,7 @@ export function SourceTrashPopover(props: {
                   }
                 >
                   {pending === "empty" ? <LoaderCircle className="animate-spin" /> : null}
-                  Delete for good
+                  <T>Delete for good</T>
                 </Button>
               </div>
             ) : (
@@ -164,15 +171,17 @@ export function SourceTrashPopover(props: {
                 disabled={!canChange}
                 onClick={() => setConfirmingEmpty(true)}
               >
-                Empty trash
+                <T>Empty trash</T>
               </Button>
             )
           ) : null}
         </div>
         {confirmingEmpty ? (
           <p className="px-3 pt-2 text-xs text-muted-foreground">
-            Sources in the trash, their saved versions and PDFs nothing else uses are deleted. This
-            cannot be undone. {stillCited}
+            <T>
+              Sources in the trash, their saved versions and PDFs nothing else uses are deleted.
+              This cannot be undone. <Var>{stillCited}</Var>
+            </T>
           </p>
         ) : null}
         {problem ? (
@@ -182,9 +191,13 @@ export function SourceTrashPopover(props: {
         ) : null}
         <ScrollArea className="max-h-80">
           {listing === null ? (
-            <div className="px-3 py-3 text-xs text-muted-foreground">Loading…</div>
+            <div className="px-3 py-3 text-xs text-muted-foreground">
+              <T>Loading…</T>
+            </div>
           ) : entries.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-muted-foreground">The trash is empty.</div>
+            <div className="px-3 py-3 text-xs text-muted-foreground">
+              <T>The trash is empty.</T>
+            </div>
           ) : (
             <ul className="divide-y divide-border">
               {entries.map((entry) => (
@@ -218,15 +231,19 @@ function TrashRow(props: {
   readonly disabled: boolean;
   readonly onRestore: () => void;
 }) {
+  const resolve = useMessages();
+  const gt = useGT();
   return (
     <li className="flex items-center gap-2 px-3 py-2">
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm">{props.entry.title ?? "Untitled source"}</div>
-        <div className="truncate text-xs text-muted-foreground">{removedLabel(props.entry)}</div>
+        <div className="truncate text-sm">{props.entry.title ?? gt("Untitled source")}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {removedLabel(props.entry, resolve)}
+        </div>
       </div>
       <Button size="xs" variant="ghost" disabled={props.disabled} onClick={props.onRestore}>
         {props.pending ? <LoaderCircle className="animate-spin" /> : null}
-        Restore
+        <T context="verb, button">Restore</T>
       </Button>
     </li>
   );

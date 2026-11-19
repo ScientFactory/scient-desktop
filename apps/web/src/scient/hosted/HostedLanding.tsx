@@ -8,6 +8,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ChevronLeftIcon, ChevronRightIcon, PauseIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
@@ -76,6 +77,7 @@ export function HostedLanding() {
 }
 
 /** Development-only walk through every screen; the first five play as the real flow does. */
+/* oxlint-disable t3code/no-untranslated-copy -- the design preview's step names, shown only in development builds */
 const PREVIEW_STEPS: ReadonlyArray<{ readonly name: string; readonly label: string }> = [
   { name: "loading", label: "Loading" },
   { name: "signed-out", label: "Signed out" },
@@ -89,6 +91,7 @@ const PREVIEW_STEPS: ReadonlyArray<{ readonly name: string; readonly label: stri
   { name: "cant-list", label: "Can't load computers" },
   { name: "local-off", label: "This computer is off" },
 ];
+/* oxlint-enable t3code/no-untranslated-copy */
 const PREVIEW_PLAY_MS: Record<string, number> = {
   loading: 1800,
   "signed-out": 2800,
@@ -98,6 +101,7 @@ const PREVIEW_PLAY_MS: Record<string, number> = {
 const PREVIEW_PLAY_END = "opening";
 
 function HostedLandingPreview({ initial }: { readonly initial: string }) {
+  const gt = useGT();
   const [name, setName] = useState(initial);
   const [playing, setPlaying] = useState(false);
   const index = Math.max(
@@ -136,7 +140,7 @@ function HostedLandingPreview({ initial }: { readonly initial: string }) {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label={playing ? "Pause" : "Play the flow"}
+            aria-label={playing ? gt("Pause") : gt("Play the flow")}
             onClick={() => {
               if (playing) return setPlaying(false);
               if (PREVIEW_PLAY_MS[name] === undefined) show("loading");
@@ -148,7 +152,7 @@ function HostedLandingPreview({ initial }: { readonly initial: string }) {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="Previous screen"
+            aria-label={gt("Previous screen")}
             disabled={index === 0}
             onClick={() => show(PREVIEW_STEPS[index - 1]!.name)}
           >
@@ -160,7 +164,7 @@ function HostedLandingPreview({ initial }: { readonly initial: string }) {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="Next screen"
+            aria-label={gt("Next screen")}
             disabled={index === PREVIEW_STEPS.length - 1}
             onClick={() => show(PREVIEW_STEPS[index + 1]!.name)}
           >
@@ -351,54 +355,71 @@ function HostedLandingView({
   readonly model: HostedLandingModel;
   readonly actions: HostedLandingActions;
 }) {
+  const gt = useGT();
   switch (model.kind) {
     case "loading":
       return <HostedSplash />;
     case "signed-out":
       return (
         <HostedFrame
-          title="Your Scient, from any browser"
-          description="Open the projects and agents on your computer from here. Your files stay on your computer."
+          title={gt("Your Scient, from any browser")}
+          description={gt(
+            "Open the projects and agents on your computer from here. Your files stay on your computer.",
+          )}
         >
           <div className="flex justify-center">
             <button type="button" className="scient-hosted-pill min-w-28" onClick={actions.signIn}>
-              Sign in
+              <T>Sign in</T>
             </button>
           </div>
           <p className="mt-4 text-center text-xs text-muted-foreground">
-            New to Scient? <ExternalLink href={DOWNLOAD_URL}>Get it for your computer</ExternalLink>
+            <T>
+              New to Scient?{" "}
+              <ExternalLink href={DOWNLOAD_URL}>Get it for your computer</ExternalLink>
+            </T>
           </p>
         </HostedFrame>
       );
     case "waiting":
       return (
         <HostedFrame
-          title="Turn on Scient Connect"
-          description="On the computer you work on:"
+          title={gt("Turn on Scient Connect")}
+          description={gt("On the computer you work on:")}
           footer={<AccountFooter account={model.account} onSignOut={actions.signOut} />}
         >
           <ol className="space-y-3 text-sm text-foreground">
-            <Step number={1}>Open Scient.</Step>
+            <Step number={1}>
+              <T>Open Scient.</T>
+            </Step>
             <Step number={2}>
-              Go to <span className="font-medium">Settings → Sharing & access</span>.
+              <T>
+                Go to <span className="font-medium">Settings → Sharing & access</span>.
+              </T>
             </Step>
             <Step number={3}>
-              Sign in
               {model.account ? (
-                <>
-                  {" "}
-                  as <span className="font-medium">{model.account}</span>
-                </>
-              ) : null}{" "}
-              and turn on <span className="font-medium">Scient Connect</span>.
+                <T>
+                  Sign in as{" "}
+                  <span className="font-medium">
+                    <Var>{model.account}</Var>
+                  </span>{" "}
+                  and turn on <span className="font-medium">Scient Connect</span>.
+                </T>
+              ) : (
+                <T>
+                  Sign in and turn on <span className="font-medium">Scient Connect</span>.
+                </T>
+              )}
             </Step>
           </ol>
           <StatusLine status="checking" className="mt-8">
-            Looking for your computer…
+            <T>Looking for your computer…</T>
           </StatusLine>
           <p className="mt-6 text-xs text-muted-foreground">
-            Don't have Scient there yet?{" "}
-            <ExternalLink href={DOWNLOAD_URL}>Download it</ExternalLink>
+            <T>
+              Don't have Scient there yet?{" "}
+              <ExternalLink href={DOWNLOAD_URL}>Download it</ExternalLink>
+            </T>
           </p>
         </HostedFrame>
       );
@@ -407,27 +428,29 @@ function HostedLandingView({
     case "cant-list":
       return (
         <HostedFrame
-          title="Can't load your computers"
+          title={gt("Can't load your computers")}
           description={
             model.offline
-              ? "This browser looks offline. Check your connection."
-              : "Scient Connect didn't answer. Try again in a moment."
+              ? gt("This browser looks offline. Check your connection.")
+              : gt("Scient Connect didn't answer. Try again in a moment.")
           }
           footer={<AccountFooter account={model.account} onSignOut={actions.signOut} />}
         >
           <Button variant="outline" onClick={actions.tryAgain}>
-            Try again
+            <T>Try again</T>
           </Button>
         </HostedFrame>
       );
     case "local-off":
       return (
         <HostedFrame
-          title="This computer is off"
-          description="Scient on this computer is turned off for this window. Turn it back on, or open another computer."
+          title={gt("This computer is off")}
+          description={gt(
+            "Scient on this computer is turned off for this window. Turn it back on, or open another computer.",
+          )}
         >
           <Button variant="outline" render={<Link to="/settings/connections" />}>
-            Open settings
+            <T>Open settings</T>
           </Button>
         </HostedFrame>
       );
@@ -441,13 +464,14 @@ function ComputersView({
   readonly model: Extract<HostedLandingModel, { kind: "computers" }>;
   readonly actions: HostedLandingActions;
 }) {
+  const messages = useMessages();
   const summary = summarizeComputers(model.computers);
   const single = model.computers.length === 1;
   const copy = COMPUTERS_COPY[summary];
   return (
     <HostedFrame
-      title={copy.title(single)}
-      description={copy.description(single)}
+      title={messages(copy.title(single))}
+      description={messages(copy.description(single))}
       footer={<AccountFooter account={model.account} onSignOut={actions.signOut} />}
     >
       <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
@@ -462,20 +486,21 @@ function ComputersView({
               {computer.label}
             </span>
             <StatusLine status={computer.status} className="shrink-0">
-              {HOSTED_COMPUTER_STATUS_LABEL[computer.status]}
+              {messages(HOSTED_COMPUTER_STATUS_LABEL[computer.status])}
             </StatusLine>
           </li>
         ))}
       </ul>
       {summary === "unreachable" || summary === "off" ? (
         <Button variant="outline" className="mt-6" onClick={actions.tryAgain}>
-          Try again
+          <T>Try again</T>
         </Button>
       ) : null}
     </HostedFrame>
   );
 }
 
+/** `msg()` strings, resolved where they show. */
 const COMPUTERS_COPY: Record<
   Exclude<HostedComputerStatus, "open">,
   {
@@ -484,31 +509,36 @@ const COMPUTERS_COPY: Record<
   }
 > = {
   opening: {
-    title: (single) => (single ? "Opening your computer" : "Opening your computers"),
-    description: () => "Loading your projects. This takes a few seconds.",
+    title: (single) => (single ? msg("Opening your computer") : msg("Opening your computers")),
+    description: () => msg("Loading your projects. This takes a few seconds."),
   },
   checking: {
-    title: (single) => (single ? "Checking your computer" : "Checking your computers"),
+    title: (single) => (single ? msg("Checking your computer") : msg("Checking your computers")),
     description: (single) =>
       single
-        ? "Found it. Making sure it's awake and ready to open."
-        : "Found them. Making sure they're awake and ready to open.",
+        ? msg("Found it. Making sure it's awake and ready to open.")
+        : msg("Found them. Making sure they're awake and ready to open."),
   },
   off: {
     title: (single) =>
-      single ? "Your computer is off or asleep" : "Your computers are off or asleep",
+      single ? msg("Your computer is off or asleep") : msg("Your computers are off or asleep"),
     description: (single) =>
-      `Wake ${single ? "it" : "one"} and open Scient there. This page opens it by itself.`,
+      single
+        ? msg("Wake it and open Scient there. This page opens it by itself.")
+        : msg("Wake one and open Scient there. This page opens it by itself."),
   },
   unreachable: {
-    title: (single) => (single ? "Can't reach your computer" : "Can't reach your computers"),
+    title: (single) =>
+      single ? msg("Can't reach your computer") : msg("Can't reach your computers"),
     description: (single) =>
-      `Check that ${single ? "it's" : "they're"} online and Scient is open there.`,
+      single
+        ? msg("Check that it's online and Scient is open there.")
+        : msg("Check that they're online and Scient is open there."),
   },
   "needs-update": {
     title: (single) =>
-      single ? "Update Scient on your computer" : "Update Scient on your computers",
-    description: () => "This page needs a newer version of Scient there.",
+      single ? msg("Update Scient on your computer") : msg("Update Scient on your computers"),
+    description: () => msg("This page needs a newer version of Scient there."),
   },
 };
 
@@ -633,7 +663,7 @@ function AccountFooter({
         className="underline-offset-2 hover:text-foreground hover:underline"
         onClick={onSignOut}
       >
-        Sign out
+        <T>Sign out</T>
       </button>
     </span>
   );

@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/no-untranslated-copy -- the standalone page the desktop prints to PDF (main.tsx) mounts no GT provider and has no UI language; its placeholders stay English */
 import {
   DOCUMENT_ASSET_URL_PREFIX,
   type ScientDocumentPageAsset,

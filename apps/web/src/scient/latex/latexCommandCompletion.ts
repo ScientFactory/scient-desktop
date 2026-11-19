@@ -336,6 +336,7 @@ export function latexSourceChoices(
       const insertion = latexChoiceInsertion({ label: name, latex, preview: latex });
       const following = /^[A-Za-z*]*\}?/u.exec(source.slice(caret))![0];
       return {
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- a LaTeX environment command
         label: `\\begin{${name}}`,
         latex,
         preview: `\\begin{${name}}${argument.replace("#?", name === "tabular" ? "columns" : "pairs")} … \\end{${name}}`,

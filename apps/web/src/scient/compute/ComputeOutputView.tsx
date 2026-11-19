@@ -7,6 +7,7 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { CircleAlert, Info } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
@@ -175,7 +176,7 @@ function ComputeDiagnostic(props: {
                   variant="outline"
                   onClick={() => props.onAskAgent?.([summary, ...diagnostic.traceback].join("\n"))}
                 >
-                  Ask agent
+                  <T>Ask agent</T>
                 </Button>
               )}
             </div>
@@ -201,7 +202,7 @@ function ComputeDiagnostic(props: {
                       />
                     }
                   >
-                    Python settings
+                    <T>Python settings</T>
                   </Button>
                 )}
               </div>
@@ -209,7 +210,9 @@ function ComputeDiagnostic(props: {
             <ComputeDiagnosticFrames frames={diagnostic.frames} threadRef={props.threadRef} />
             {diagnostic.traceback.length > 0 ? (
               <details className="mt-1 text-muted-foreground">
-                <summary className="cursor-pointer">Traceback</summary>
+                <summary className="cursor-pointer">
+                  <T>Traceback</T>
+                </summary>
                 <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px]">
                   {diagnostic.traceback.join("\n")}
                 </pre>
@@ -252,16 +255,22 @@ export function ComputeOutputView(props: {
     readonly onSettled: () => void;
   };
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const blocks = projectBlocks(props.outputs);
   if (blocks.length === 0 && !props.corruptLineCount && !props.clipped) return null;
 
   return (
     <div className="space-y-2">
       {props.clipped ? (
-        <p className="text-[11px] text-muted-foreground">Earlier output hidden</p>
+        <p className="text-[11px] text-muted-foreground">
+          <T>Earlier output hidden</T>
+        </p>
       ) : null}
       {props.corruptLineCount ? (
-        <p className="text-[11px] text-destructive">Some output couldn&apos;t be read</p>
+        <p className="text-[11px] text-destructive">
+          <T>Some output couldn&apos;t be read</T>
+        </p>
       ) : null}
       {blocks.map((block) => {
         switch (block.kind) {
@@ -288,19 +297,22 @@ export function ComputeOutputView(props: {
             return (
               <ComputeFigure
                 key={block.key}
-                presentation={computeFigurePresentation({
-                  allowFollowing: props.allowFigureFollowing ?? false,
-                  cwd: props.cwd,
-                  session: props.session,
-                  executionId: props.executionId,
-                  ...(props.executionGeneration === undefined
-                    ? {}
-                    : { executionGeneration: props.executionGeneration }),
-                  output: block.image,
-                  displayOrdinal: block.displayOrdinal,
-                  runtimeDisplayOrdinal: block.runtimeDisplayOrdinal,
-                  source: props.source ?? null,
-                })}
+                presentation={computeFigurePresentation(
+                  {
+                    allowFollowing: props.allowFigureFollowing ?? false,
+                    cwd: props.cwd,
+                    session: props.session,
+                    executionId: props.executionId,
+                    ...(props.executionGeneration === undefined
+                      ? {}
+                      : { executionGeneration: props.executionGeneration }),
+                    output: block.image,
+                    displayOrdinal: block.displayOrdinal,
+                    runtimeDisplayOrdinal: block.runtimeDisplayOrdinal,
+                    source: props.source ?? null,
+                  },
+                  messages,
+                )}
                 environmentId={props.environmentId}
                 cwd={props.cwd}
                 threadRef={props.threadRef}
@@ -314,8 +326,12 @@ export function ComputeOutputView(props: {
               >
                 <Info className="mt-0.5 size-3 shrink-0" />
                 <span>
-                  {computeSystemEventLabel(block.output.event)}
-                  {block.output.detail ? ` · ${block.output.detail}` : ""}
+                  {block.output.detail
+                    ? gt("{event} · {detail}", {
+                        event: computeSystemEventLabel(block.output.event, messages),
+                        detail: block.output.detail,
+                      })
+                    : computeSystemEventLabel(block.output.event, messages)}
                 </span>
               </div>
             );

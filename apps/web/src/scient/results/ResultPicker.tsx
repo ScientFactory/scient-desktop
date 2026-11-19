@@ -1,5 +1,6 @@
 import type { ComputeResultScript, ComputeResultValue, EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -11,6 +12,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -51,6 +53,7 @@ export function ResultPicker(props: {
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the project's results over the environment connection while the picker is open
   useEffect(() => {
@@ -59,7 +62,7 @@ export function ResultPicker(props: {
       const result = await list({ environmentId: props.environmentId, input: { cwd: props.cwd } });
       if (cancelled) return;
       if (result._tag !== "Success") {
-        setMessage(resultErrorMessage(result, "The results could not be read."));
+        setMessage(resultErrorMessage(result, m(msg("The results could not be read."))));
         setScripts([]);
         return;
       }
@@ -117,10 +120,14 @@ export function ResultPicker(props: {
         finalFocus={false}
       >
         <DialogHeader>
-          <DialogTitle>Insert a result</DialogTitle>
+          <DialogTitle>
+            <T>Insert a result</T>
+          </DialogTitle>
           <DialogDescription>
-            Values, tables and figures from scripts run from scratch. Each one stays tied to its
-            run.
+            <T>
+              Values, tables and figures from scripts run from scratch. Each one stays tied to its
+              run.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -129,17 +136,19 @@ export function ResultPicker(props: {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Find a value, figure, or script…"
-              aria-label="Search results"
+              placeholder={gt("Find a value, figure, or script…")}
+              aria-label={gt("Search results")}
             />
             {message === null ? null : (
               <p className="text-xs text-destructive-foreground">{message}</p>
             )}
             {scripts !== null && scripts.length === 0 && message === null ? (
               <p className="text-xs text-muted-foreground">
-                No results yet. Have a script write a JSON file of values, CSV tables or figures
-                into the folder named by the SCIENT_RESULTS_DIR environment variable, then run it in
-                a fresh session.
+                <T>
+                  No results yet. Have a script write a JSON file of values, CSV tables or figures
+                  into the folder named by the SCIENT_RESULTS_DIR environment variable, then run it
+                  in a fresh session.
+                </T>
               </p>
             ) : null}
             <div className="flex max-h-80 flex-col overflow-y-auto" role="list">
@@ -167,7 +176,7 @@ export function ResultPicker(props: {
                     row(
                       `${script.latest.revision}:${table}`,
                       table,
-                      `Table · ${script.latest.scriptPath}`,
+                      gt("Table · {path}", { path: script.latest.scriptPath }),
                       { kind: "table", script, output: table },
                     ),
                   ),
@@ -180,7 +189,7 @@ export function ResultPicker(props: {
                     row(
                       `${script.latest.revision}:${figure}`,
                       figure,
-                      `Figure · ${script.latest.scriptPath}`,
+                      gt("Figure · {path}", { path: script.latest.scriptPath }),
                       { kind: "figure", script, output: figure },
                     ),
                   ),

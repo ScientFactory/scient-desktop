@@ -13,9 +13,11 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
+import { m } from "../../i18n/messages";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import {
   Dialog,
@@ -77,30 +79,30 @@ function screenFor(pathname: string, hasThread: boolean): FeedbackScreen {
 
 function resultToast(result: Exclude<FeedbackSubmitResult, { _tag: "failed" }>) {
   const copyId = {
-    children: "Copy ID",
+    children: m(msg("Copy ID")),
     onClick: () => void writeTextToClipboard(result.id, namedClipboardTarget("feedback report ID")),
   };
   if (result._tag === "sent") {
     toastManager.add({
       type: "success",
-      title: "Feedback sent",
-      description: "Thank you for helping make Scient better.",
+      title: m(msg("Feedback sent")),
+      description: m(msg("Thank you for helping make Scient better.")),
       actionProps: copyId,
       data: { actionVariant: "outline" },
     });
   } else if (result._tag === "queued") {
     toastManager.add({
       type: "info",
-      title: "Feedback saved",
-      description: "Scient will send it when you're back online.",
+      title: m(msg("Feedback saved")),
+      description: m(msg("Scient will send it when you're back online.")),
       actionProps: copyId,
       data: { actionVariant: "outline" },
     });
   } else {
     toastManager.add({
       type: "info",
-      title: "Feedback saved on this computer",
-      description: "Development builds don't send reports.",
+      title: m(msg("Feedback saved on this computer")),
+      description: m(msg("Development builds don't send reports.")),
       actionProps: copyId,
       data: { actionVariant: "outline" },
     });
@@ -111,9 +113,11 @@ function AttachmentRow(props: {
   readonly icon: ReactNode;
   readonly label: string;
   readonly detail: string;
+  readonly removeLabel: string;
   readonly onRemove: () => void;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
   const [shown, setShown] = useState(false);
   return (
     <li className="rounded-lg border border-border/70">
@@ -124,13 +128,13 @@ function AttachmentRow(props: {
           <span className="text-muted-foreground"> {props.detail}</span>
         </span>
         <Button type="button" variant="ghost" size="xs" onClick={() => setShown(!shown)}>
-          {shown ? "Hide" : "Show"}
+          {shown ? gt("Hide") : gt("Show")}
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label={`Remove ${props.label.toLowerCase()}`}
+          aria-label={props.removeLabel}
           onClick={props.onRemove}
         >
           <XIcon />
@@ -166,7 +170,7 @@ export function FeedbackDialogHost() {
           (screenshot) => {
             if (cancelled) return;
             if (screenshot === null) {
-              toastManager.add({ type: "error", title: "Couldn't capture the window" });
+              toastManager.add({ type: "error", title: m(msg("Couldn't capture the window")) });
             } else {
               setFeedbackScreenshot(screenshot);
             }
@@ -189,6 +193,8 @@ export function FeedbackDialogHost() {
 }
 
 function FeedbackDialog() {
+  const gt = useGT();
+  const resolve = useMessages();
   const draft = useFeedbackDraft();
   const routeThreadRef = useThreadRouteRef();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -228,7 +234,7 @@ function FeedbackDialog() {
         (logs) => {
           if (feedbackDraftStillOpen(openKey)) updateFeedbackDraft({ logs });
         },
-        () => setError("Scient couldn't read its logs."),
+        () => setError(m(msg("Scient couldn't read its logs."))),
       )
       .then(() => setBusy(null));
   };
@@ -246,18 +252,26 @@ function FeedbackDialog() {
           if (!feedbackDraftStillOpen(openKey)) return;
           const text = result.text ?? "";
           if (text.trim().length === 0) {
-            setError("This conversation has nothing to attach yet.");
+            setError(m(msg("This conversation has nothing to attach yet.")));
             return;
           }
-          const messages =
-            result.messageCount === 1 ? "1 message" : `${result.messageCount} messages`;
+          const withoutRunningTurn = result.warnings.some(
+            (warning) => warning.code === "running-turn-omitted",
+          );
           updateFeedbackDraft({
             conversation: fitConversation(text),
-            conversationDetail: result.warnings.some(
-              (warning) => warning.code === "running-turn-omitted",
-            )
-              ? `${messages}, without the running turn`
-              : messages,
+            conversationDetail: withoutRunningTurn
+              ? m(
+                  msg(
+                    "{count, plural, =1 {1 message, without the running turn} other {{count} messages, without the running turn}}",
+                    { count: result.messageCount },
+                  ),
+                )
+              : m(
+                  msg("{count, plural, =1 {1 message} other {{count} messages}}", {
+                    count: result.messageCount,
+                  }),
+                ),
           });
         },
         (cause: unknown) => setError(exportErrorMessage(cause)),
@@ -297,7 +311,7 @@ function FeedbackDialog() {
           resultToast(result);
         },
         () => {
-          setError("Scient couldn't save the report. Your text is still here.");
+          setError(m(msg("Scient couldn't save the report. Your text is still here.")));
           setBusy(null);
         },
       );
@@ -306,17 +320,20 @@ function FeedbackDialog() {
   const rows =
     preparation === null
       ? []
-      : feedbackPreviewRows({
-          message: draft.message,
-          source: draft.source,
-          screen,
-          email: emailInvalid ? "" : draft.email,
-          details: preparation.details,
-          error: draft.error,
-          screenshot: draft.screenshot !== null,
-          logs: draft.logs !== null,
-          conversation: draft.conversation === null ? null : (draft.conversationDetail ?? ""),
-        });
+      : feedbackPreviewRows(
+          {
+            message: draft.message,
+            source: draft.source,
+            screen,
+            email: emailInvalid ? "" : draft.email,
+            details: preparation.details,
+            error: draft.error,
+            screenshot: draft.screenshot !== null,
+            logs: draft.logs !== null,
+            conversation: draft.conversation === null ? null : (draft.conversationDetail ?? ""),
+          },
+          resolve,
+        );
 
   return (
     <Dialog
@@ -328,20 +345,22 @@ function FeedbackDialog() {
       <DialogPopup className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {draft.error === null ? "Send feedback to Scient" : "Report a problem to Scient"}
+            {draft.error === null
+              ? gt("Send feedback to Scient")
+              : gt("Report a problem to Scient")}
           </DialogTitle>
         </DialogHeader>
         <DialogPanel spacing="compact">
           <Textarea
-            aria-label="Your feedback"
+            aria-label={gt("Your feedback")}
             autoFocus
             dir="auto"
             rows={5}
             value={draft.message}
             placeholder={
               draft.error === null
-                ? "What happened, or what would make Scient better?"
-                : "What were you doing when this happened? (optional)"
+                ? gt("What happened, or what would make Scient better?")
+                : gt("What were you doing when this happened? (optional)")
             }
             onChange={(event) => updateFeedbackDraft({ message: event.target.value })}
             onKeyDown={(event) => {
@@ -356,12 +375,16 @@ function FeedbackDialog() {
           draft.screenshot !== null ||
           draft.logs !== null ||
           draft.conversation !== null ? (
-            <ul className="space-y-1.5" aria-label="Attached">
+            <ul
+              className="space-y-1.5"
+              aria-label={gt("Attached", { $context: "files attached to the feedback" })}
+            >
               {draft.error !== null ? (
                 <AttachmentRow
                   icon={<TriangleAlertIcon />}
-                  label="Error"
+                  label={gt("Error", { $context: "the error attached to a feedback report" })}
                   detail={draft.error.message.split("\n")[0] ?? ""}
+                  removeLabel={gt("Remove error")}
                   onRemove={() => updateFeedbackDraft({ error: null })}
                 >
                   <TextPreview text={draft.error.message} />
@@ -370,13 +393,14 @@ function FeedbackDialog() {
               {draft.screenshot !== null ? (
                 <AttachmentRow
                   icon={<CameraIcon />}
-                  label="Screenshot"
-                  detail="of this window"
+                  label={gt("Screenshot")}
+                  detail={gt("of this window", { $context: "after: Screenshot" })}
+                  removeLabel={gt("Remove screenshot")}
                   onRemove={() => setFeedbackScreenshot(null)}
                 >
                   <img
                     src={draft.screenshot.url}
-                    alt="Screenshot that will be sent"
+                    alt={gt("Screenshot that will be sent")}
                     className="max-h-72 w-full rounded-md object-contain"
                   />
                 </AttachmentRow>
@@ -384,8 +408,9 @@ function FeedbackDialog() {
               {draft.logs !== null ? (
                 <AttachmentRow
                   icon={<ScrollTextIcon />}
-                  label="Recent logs"
+                  label={gt("Recent logs")}
                   detail=""
+                  removeLabel={gt("Remove recent logs")}
                   onRemove={() => updateFeedbackDraft({ logs: null })}
                 >
                   <TextPreview text={draft.logs} />
@@ -394,8 +419,9 @@ function FeedbackDialog() {
               {draft.conversation !== null ? (
                 <AttachmentRow
                   icon={<MessagesSquareIcon />}
-                  label="This conversation"
+                  label={gt("This conversation")}
                   detail={draft.conversationDetail ?? ""}
+                  removeLabel={gt("Remove this conversation")}
                   onRemove={() => updateFeedbackDraft({ conversation: null })}
                 >
                   <TextPreview text={draft.conversation} />
@@ -414,7 +440,7 @@ function FeedbackDialog() {
                 onClick={() => updateFeedbackDraft({ capturing: true })}
               >
                 <CameraIcon />
-                Add screenshot
+                <T>Add screenshot</T>
               </Button>
             ) : null}
             {draft.logs === null ? (
@@ -426,7 +452,7 @@ function FeedbackDialog() {
                 onClick={addLogs}
               >
                 <ScrollTextIcon />
-                {busy === "logs" ? "Reading logs…" : "Add recent logs"}
+                {busy === "logs" ? gt("Reading logs…") : gt("Add recent logs")}
               </Button>
             ) : null}
             {draft.conversation === null && threadRef !== null ? (
@@ -438,15 +464,17 @@ function FeedbackDialog() {
                 onClick={addConversation}
               >
                 <MessagesSquareIcon />
-                {busy === "conversation" ? "Preparing…" : "Add this conversation"}
+                {busy === "conversation" ? gt("Preparing…") : gt("Add this conversation")}
               </Button>
             ) : null}
           </div>
 
           <div className="grid gap-1.5">
             <Label htmlFor={EMAIL_FIELD_ID}>
-              Email for a reply{" "}
-              <span className="font-normal text-muted-foreground">(optional)</span>
+              <T>Email for a reply</T>{" "}
+              <span className="font-normal text-muted-foreground">
+                <T>(optional)</T>
+              </span>
             </Label>
             <Input
               id={EMAIL_FIELD_ID}
@@ -463,7 +491,7 @@ function FeedbackDialog() {
             <Collapsible>
               <CollapsibleTrigger className="group flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground">
                 <ChevronRightIcon className="size-3.5 transition-transform group-data-[panel-open]:rotate-90" />
-                What's sent
+                <T>What's sent</T>
               </CollapsibleTrigger>
               <CollapsiblePanel>
                 <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
@@ -487,10 +515,12 @@ function FeedbackDialog() {
         <DialogFooter>
           <p className="text-muted-foreground text-xs sm:me-auto sm:self-center">
             {preparation?.canSend === false
-              ? "Development builds keep reports on this computer."
+              ? gt("Development builds keep reports on this computer.")
               : preparation !== null && preparation.pendingReports > 0
-                ? `Sent privately to the Scient team · ${preparation.pendingReports} waiting to send`
-                : "Sent privately to the Scient team."}
+                ? gt("Sent privately to the Scient team · {count} waiting to send", {
+                    count: preparation.pendingReports,
+                  })
+                : gt("Sent privately to the Scient team.")}
           </p>
           <Button
             type="button"
@@ -498,10 +528,12 @@ function FeedbackDialog() {
             disabled={busy === "send"}
             onClick={() => closeFeedback()}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button type="button" disabled={!canSubmit} onClick={submit}>
-            {busy === "send" ? "Sending…" : "Send"}
+            {busy === "send"
+              ? gt("Sending…")
+              : gt("Send", { $context: "verb, sends the feedback" })}
           </Button>
         </DialogFooter>
       </DialogPopup>

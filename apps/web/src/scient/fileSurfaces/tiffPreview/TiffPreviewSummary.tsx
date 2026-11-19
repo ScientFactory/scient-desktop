@@ -1,31 +1,39 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
 import { FileSurfaceAction } from "~/components/files/fileSurfaceChrome";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import type { MessageResolver } from "~/i18n/messages";
 
 import type { TiffAxisName, TiffPreviewInfo } from "./tiffPreview";
 import { formatTiffValue, tiffAxisSteps, tiffRangeText, tiffRangeWidth } from "./tiffPreviewText";
 import type { TiffPreviewState } from "./useTiffPreview";
 
-function depth(info: TiffPreviewInfo) {
-  if (info.format === "float") return `${info.bits}-bit float`;
-  return info.format === "int" ? `${info.bits}-bit signed` : `${info.bits}-bit`;
+function depth(info: TiffPreviewInfo, resolve: MessageResolver) {
+  if (info.format === "float") return resolve(msg("{bits}-bit float", { bits: info.bits }));
+  return info.format === "int"
+    ? resolve(msg("{bits}-bit signed", { bits: info.bits }))
+    : resolve(msg("{bits}-bit", { bits: info.bits }));
 }
 
-const AXIS_NAMES: Readonly<Record<TiffAxisName, string>> = {
-  C: "channel",
-  Z: "Z slice",
-  T: "time point",
+type StepLabels = { readonly previous: string; readonly next: string };
+
+const AXIS_STEP_LABELS: Readonly<Record<TiffAxisName | "page", StepLabels>> = {
+  C: { previous: msg("Previous channel"), next: msg("Next channel") },
+  Z: { previous: msg("Previous Z slice"), next: msg("Next Z slice") },
+  T: { previous: msg("Previous time point"), next: msg("Next time point") },
+  page: { previous: msg("Previous page"), next: msg("Next page") },
 };
 
 function Stepper(props: {
   readonly label: string;
   readonly width: number;
-  readonly name: string;
+  readonly steps: StepLabels;
   readonly atStart: boolean;
   readonly atEnd: boolean;
   readonly onStep: (delta: -1 | 1) => void;
 }) {
+  const m = useMessages();
   return (
     <span className="flex items-center gap-0.5">
       {/* Reserved for the widest position, so stepping never rewraps the toolbar. */}
@@ -37,14 +45,14 @@ function Stepper(props: {
         {props.label}
       </span>
       <FileSurfaceAction
-        label={`Previous ${props.name}`}
+        label={m(props.steps.previous)}
         disabled={props.atStart}
         onPress={() => props.onStep(-1)}
       >
         <ChevronLeftIcon className="size-3.5" />
       </FileSurfaceAction>
       <FileSurfaceAction
-        label={`Next ${props.name}`}
+        label={m(props.steps.next)}
         disabled={props.atEnd}
         onPress={() => props.onStep(1)}
       >
@@ -58,6 +66,8 @@ export function TiffPreviewSummary(props: {
   readonly info: TiffPreviewInfo;
   readonly preview: TiffPreviewState;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { info, preview } = props;
   const size = `${info.width.toLocaleString()} × ${info.height.toLocaleString()}`;
   // Labels name the plane on screen; buttons step from the plane last asked for.
@@ -69,13 +79,17 @@ export function TiffPreviewSummary(props: {
       {info.scale < 1 ? (
         <Tooltip>
           <TooltipTrigger render={<span>{size}</span>} />
-          <TooltipPopup>Previewed at 1/{Math.round(1 / info.scale)} resolution</TooltipPopup>
+          <TooltipPopup>
+            <T>
+              Previewed at 1/<Var>{Math.round(1 / info.scale)}</Var> resolution
+            </T>
+          </TooltipPopup>
         </Tooltip>
       ) : (
         <span>{size}</span>
       )}
       <span aria-hidden>·</span>
-      <span>{depth(info)}</span>
+      <span>{depth(info, m)}</span>
       {info.range ? (
         <>
           <span aria-hidden>·</span>
@@ -85,8 +99,14 @@ export function TiffPreviewSummary(props: {
               <TooltipTrigger render={<span>{tiffRangeText(info.range, info.format)}</span>} />
               <TooltipPopup>
                 {info.display
-                  ? `Values in this plane. Shown with automatic contrast from ${formatTiffValue(info.display[0], info.format)} to ${formatTiffValue(info.display[1], info.format)}.`
-                  : "Values in this plane."}
+                  ? gt(
+                      "Values in this plane. Shown with automatic contrast from {low} to {high}.",
+                      {
+                        low: formatTiffValue(info.display[0], info.format),
+                        high: formatTiffValue(info.display[1], info.format),
+                      },
+                    )
+                  : gt("Values in this plane.")}
               </TooltipPopup>
             </Tooltip>
           </span>
@@ -101,7 +121,7 @@ export function TiffPreviewSummary(props: {
                 key={axis.name}
                 label={`${axis.name} ${axis.index + 1}/${axis.size}`}
                 width={3 + 2 * digits}
-                name={AXIS_NAMES[axis.name]}
+                steps={AXIS_STEP_LABELS[axis.name]}
                 atStart={current.index === 0}
                 atEnd={current.index === axis.size - 1}
                 onStep={(delta) => preview.step(delta * axis.stride)}
@@ -110,9 +130,9 @@ export function TiffPreviewSummary(props: {
           })
         : info.planes > 1 && (
             <Stepper
-              label={`Page ${info.plane + 1} of ${info.planes}`}
+              label={gt("Page {page} of {pages}", { page: info.plane + 1, pages: info.planes })}
               width={9 + 2 * pageDigits}
-              name="page"
+              steps={AXIS_STEP_LABELS.page}
               atStart={preview.requestedPlane === 0}
               atEnd={preview.requestedPlane >= info.planes - 1}
               onStep={(delta) => preview.step(delta)}

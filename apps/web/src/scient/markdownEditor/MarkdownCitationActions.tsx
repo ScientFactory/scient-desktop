@@ -1,7 +1,9 @@
 import type { FileCitation } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import {
   captureMarkdownCitation,
   markdownCitationRevision,
@@ -64,8 +66,8 @@ export function MarkdownCitationActions({
         ) {
           toastManager.add({
             type: "warning",
-            title: "The selection has changed",
-            description: "Select the text again to cite its current version.",
+            title: m(msg("The selection has changed")),
+            description: m(msg("Select the text again to cite its current version.")),
           });
           return false;
         }
@@ -73,8 +75,8 @@ export function MarkdownCitationActions({
         if (!accepted)
           toastManager.add({
             type: "warning",
-            title: "Could not add the citation",
-            description: "The chat input is not ready. Your selection is unchanged.",
+            title: m(msg("Could not add the citation")),
+            description: m(msg("The chat input is not ready. Your selection is unchanged.")),
           });
         return accepted;
       }}

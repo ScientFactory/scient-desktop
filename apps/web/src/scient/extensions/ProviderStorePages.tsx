@@ -8,6 +8,7 @@ import {
   type ServerProviderPlugin,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { T, useGT, Var } from "gt-react";
 import { useContext, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -49,6 +50,7 @@ export function StoreInstall({
   /** In a list under the store's own heading: "Add" and "Remove", the agent goes without saying. */
   readonly compact?: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, providers } = useExtensionsEnvironment();
   const target =
     entry.kind === "shared" && provider.driver === "scient"
@@ -64,7 +66,12 @@ export function StoreInstall({
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
   if (installed && plugin?.canUninstall)
     return <StoreRemove provider={target} plugin={plugin} refresh={refresh} compact={compact} />;
-  if (compact && installed) return <span className="text-sm text-muted-foreground">Added</span>;
+  if (compact && installed)
+    return (
+      <span className="text-sm text-muted-foreground">
+        <T>Added</T>
+      </span>
+    );
   return (
     <>
       <PrimaryAction
@@ -91,20 +98,26 @@ export function StoreInstall({
         }
       >
         {lock.busy
-          ? "Adding…"
+          ? gt("Adding…")
           : compact
-            ? "Add"
+            ? gt("Add", { $context: "verb, adds an extension" })
             : installed
-              ? "Added"
+              ? gt("Added")
               : target.driver === "codex"
-                ? "Add to Codex"
+                ? gt("Add to Codex")
                 : target.driver === "claudeAgent"
-                  ? "Add to Claude Code"
-                  : "Add to Scient Agent"}
+                  ? gt("Add to Claude Code")
+                  : gt("Add to Scient Agent")}
       </PrimaryAction>
       {installed ? (
         <MutedLine>
-          Remove this plugin in {target.displayName ?? "the agent"}’s plugin manager.
+          {target.displayName === undefined ? (
+            <T>Remove this plugin in the agent’s plugin manager.</T>
+          ) : (
+            <T>
+              Remove this plugin in <Var>{target.displayName}</Var>’s plugin manager.
+            </T>
+          )}
         </MutedLine>
       ) : null}
       <ActionFeedback feedback={lock.feedback} />
@@ -123,9 +136,10 @@ function StoreRemove({
   readonly refresh: () => void;
   readonly compact: boolean;
 }) {
+  const gt = useGT();
   const actions = useProviderPluginActions(
     provider,
-    provider.displayName ?? "this agent",
+    provider.displayName ?? gt("this agent"),
     plugin,
     undefined,
   );
@@ -138,10 +152,12 @@ function StoreRemove({
         onClick={() => void actions.uninstall().then(refresh)}
       >
         {actions.busy
-          ? "Removing…"
+          ? gt("Removing…")
           : compact
-            ? "Remove"
-            : `Remove from ${provider.displayName ?? "this agent"}`}
+            ? gt("Remove")
+            : provider.displayName === undefined
+              ? gt("Remove from this agent")
+              : gt("Remove from {agent}", { agent: provider.displayName })}
       </Button>
       <ActionFeedback feedback={actions.feedback} />
     </>
@@ -159,6 +175,7 @@ function StoreResults({
   readonly preview: boolean;
   readonly cursor?: string;
 }) {
+  const gt = useGT();
   const { environmentId, providers } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStorePage({
@@ -206,27 +223,35 @@ function StoreResults({
     <>
       {page.error ? (
         <MutedLine>
-          {provider.displayName ??
-            (provider.driver === "scient"
-              ? "Scient Agent"
-              : provider.driver === "claudeAgent"
-                ? "Claude Code"
-                : "Codex")}
-          : {page.error}{" "}
-          <Button size="sm" variant="ghost-muted" onClick={refresh}>
-            Retry
-          </Button>
+          <T>
+            <Var>
+              {provider.displayName ??
+                (provider.driver === "scient"
+                  ? "Scient Agent"
+                  : provider.driver === "claudeAgent"
+                    ? "Claude Code"
+                    : "Codex")}
+            </Var>
+            : <Var>{page.error}</Var>{" "}
+            <Button size="sm" variant="ghost-muted" onClick={refresh}>
+              Retry
+            </Button>
+          </T>
         </MutedLine>
       ) : page.data === null ? (
-        <MutedLine>Loading plugins…</MutedLine>
+        <MutedLine>
+          <T>Loading plugins…</T>
+        </MutedLine>
       ) : (
         <>
           {page.data.sourceFailures?.length ? (
             <MutedLine>
-              Could not read {page.data.sourceFailures.join(", ")}.{" "}
-              <Button size="sm" variant="ghost-muted" onClick={refresh}>
-                Retry
-              </Button>
+              <T>
+                Could not read <Var>{page.data.sourceFailures.join(", ")}</Var>.{" "}
+                <Button size="sm" variant="ghost-muted" onClick={refresh}>
+                  Retry
+                </Button>
+              </T>
             </MutedLine>
           ) : null}
           {page.data.message ? <MutedLine>{page.data.message}</MutedLine> : null}
@@ -249,11 +274,11 @@ function StoreResults({
                 })
               }
             >
-              {lock.busy ? "Adding store…" : "Add Claude Code's store"}
+              {lock.busy ? gt("Adding store…") : gt("Add Claude Code's store")}
             </Button>
           ) : null}
           <ActionFeedback feedback={lock.feedback} />
-          <ExtensionGrid label="Plugins">
+          <ExtensionGrid label={gt("Plugins")}>
             {entries.map((entry) => (
               <ExtensionRow
                 key={entry.id}
@@ -266,14 +291,18 @@ function StoreResults({
                 name={entry.displayName}
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
-                status={entry.installed ? "Added" : null}
+                status={entry.installed ? gt("Added") : null}
               />
             ))}
           </ExtensionGrid>
-          {!entries.length && !page.data.message ? <MutedLine>No plugins found.</MutedLine> : null}
+          {!entries.length && !page.data.message ? (
+            <MutedLine>
+              <T>No plugins found.</T>
+            </MutedLine>
+          ) : null}
           {!preview && page.data.nextCursor && !next ? (
             <Button size="sm" variant="ghost-muted" onClick={() => setNext(page.data!.nextCursor)}>
-              Load more
+              <T>Load more</T>
             </Button>
           ) : null}
           {!preview && next ? (
@@ -314,7 +343,7 @@ export function ProviderStoreShelves({ query = "" }: { readonly query?: string }
               params={{ instanceId: primary.instanceId }}
               className={SECTION_TITLE_LINK_CLASS}
             >
-              Plugins for Claude and Scient Agent
+              <T>Plugins for Claude and Scient Agent</T>
               <SectionTitleChevron />
             </Link>
           }
@@ -338,7 +367,7 @@ export function ProviderStoreShelves({ query = "" }: { readonly query?: string }
               params={{ instanceId: provider.instanceId }}
               className={SECTION_TITLE_LINK_CLASS}
             >
-              From the Codex store
+              <T>From the Codex store</T>
               <SectionTitleChevron />
             </Link>
           }
@@ -356,6 +385,7 @@ export function ProviderStoreShelves({ query = "" }: { readonly query?: string }
 }
 
 function Store({ instanceId }: { readonly instanceId: string }) {
+  const gt = useGT();
   const { providers } = useExtensionsEnvironment();
   const provider = providers.find((item) => item.instanceId === instanceId);
   const [search, setSearch] = useState("");
@@ -366,15 +396,17 @@ function Store({ instanceId }: { readonly instanceId: string }) {
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const lock = useActionLock(JSON.stringify(["refresh-store", instanceId]));
   const title =
-    provider?.driver === "codex" ? "From the Codex store" : "Plugins for Claude and Scient Agent";
+    provider?.driver === "codex"
+      ? gt("From the Codex store")
+      : gt("Plugins for Claude and Scient Agent");
   useRememberListPage(title);
   return (
     <>
-      <BackLink to="/settings/extensions">Discover</BackLink>
+      <BackLink to="/settings/extensions">{gt("Discover")}</BackLink>
       <ExtensionsSection title={title}>
         <Input
-          aria-label="Search plugins"
-          placeholder="Search plugins"
+          aria-label={gt("Search plugins")}
+          placeholder={gt("Search plugins")}
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
         />
@@ -399,7 +431,7 @@ function Store({ instanceId }: { readonly instanceId: string }) {
               })
             }
           >
-            {lock.busy ? "Refreshing…" : "Refresh"}
+            {lock.busy ? gt("Refreshing…") : gt("Refresh")}
           </Button>
         ) : null}
         <ActionFeedback feedback={lock.feedback} />
@@ -422,7 +454,9 @@ function Store({ instanceId }: { readonly instanceId: string }) {
             ))}
           </>
         ) : (
-          <MutedLine>This agent is no longer available.</MutedLine>
+          <MutedLine>
+            <T>This agent is no longer available.</T>
+          </MutedLine>
         )}
       </ExtensionsSection>
     </>
@@ -442,6 +476,7 @@ function StoreDetail({
   readonly instanceId: string;
   readonly entryId: string;
 }) {
+  const gt = useGT();
   const { environmentId, providers, catalog } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStoreEntry({
@@ -451,7 +486,8 @@ function StoreDetail({
   const result = useEnvironmentQuery(atom);
   useWindowFocusRefresh(() => registry.refresh(atom));
   const provider = providers.find((item) => item.instanceId === instanceId);
-  if (!provider || !result.data) return <MutedLine>{result.error ?? "Loading plugin…"}</MutedLine>;
+  if (!provider || !result.data)
+    return <MutedLine>{result.error ?? gt("Loading plugin…")}</MutedLine>;
   const entry = result.data;
   const connector = catalog?.sections
     .flatMap((section) => section.entries)
@@ -488,7 +524,7 @@ function StoreDetail({
       <AboutCard
         rows={[
           [
-            "Works with",
+            gt("Works with"),
             <WorksWithValue
               key="works-with"
               audience={providerStoreAudience(provider, entry.kind)}
@@ -496,23 +532,25 @@ function StoreDetail({
           ],
           connector
             ? [
-                "Also available",
+                gt("Also available"),
                 <Link
                   key="connector"
                   to="/settings/extensions/item/server/$"
                   params={{ _splat: connector.name }}
                 >
-                  Connect with Scient for all your agents
+                  <T>Connect with Scient for all your agents</T>
                 </Link>,
               ]
             : null,
-          ["Marketplace", entry.marketplace],
-          entry.version ? ["Version", entry.version] : null,
-          entry.publisher ? ["Publisher", entry.publisher] : null,
+          [gt("Marketplace"), entry.marketplace],
+          entry.version ? [gt("Version"), entry.version] : null,
+          entry.publisher ? [gt("Publisher"), entry.publisher] : null,
           entry.review
             ? [
-                "Review",
-                entry.review === "anthropic" ? "Reviewed by Anthropic" : "Reviewed by a partner",
+                gt("Review", { $context: "noun, who reviewed a plugin" }),
+                entry.review === "anthropic"
+                  ? gt("Reviewed by Anthropic")
+                  : gt("Reviewed by a partner"),
               ]
             : null,
         ]}

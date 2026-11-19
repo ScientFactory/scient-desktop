@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import { useEffect, useRef } from "react";
 
 import { computeEnvironment } from "~/state/compute";
@@ -30,6 +31,13 @@ export function LatexResultPicker(props: {
     computeEnvironment.resultsPlaceLatex.permissionAtom(props.environmentId),
   );
   const place = useAtomCommand(computeEnvironment.resultsPlaceLatex, { reportFailure: false });
+  const gt = useGT();
+  // LaTeX's braces would read as ICU placeholders, so the commands go in as values.
+  const preambleRefused = (line: string) =>
+    gt("The preamble could not be changed. Add {line} before {beginDocument}, then try again.", {
+      line,
+      beginDocument: String.raw`\begin{document}`,
+    });
   // A picker closed while its result was being placed must not edit the document afterwards.
   const open = useRef(true);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks the picker closed on unmount so a pending placement does not edit the document
@@ -41,7 +49,7 @@ export function LatexResultPicker(props: {
   }, []);
 
   const pick = async (choice: ResultChoice): Promise<string | null> => {
-    if (!canPlace) return "You don't have permission to add files to this project.";
+    if (!canPlace) return gt("You don't have permission to add files to this project.");
     const result = await place({
       environmentId: props.environmentId,
       input: {
@@ -54,12 +62,12 @@ export function LatexResultPicker(props: {
       },
     });
     if (result._tag !== "Success")
-      return resultErrorMessage(result, "The result could not be placed in the project.");
+      return resultErrorMessage(result, gt("The result could not be placed in the project."));
     const placed = result.value;
     let preambleChanged = false;
     window.dispatchEvent(new Event(RESULTS_PLACED_EVENT));
     if (!(await props.prepareFiles(placed.files)))
-      return "The placed files could not be read yet. Try again in a moment.";
+      return gt("The placed files could not be read yet. Try again in a moment.");
     if (!open.current) return null;
     for (const name of placed.packages)
       if (
@@ -68,17 +76,20 @@ export function LatexResultPicker(props: {
           new RegExp(String.raw`\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\b${name}\b`, "u"),
         )
       )
-        return `The preamble could not be changed. Add \\usepackage{${name}} before \\begin{document}, then try again.`;
+        return preambleRefused(`\\usepackage{${name}}`);
       else preambleChanged = true;
     // A refused body leaves the preamble line it needed; say so, since nothing else does.
-    const leftBehind = preambleChanged
-      ? " Any preamble line Scient added stays; it does nothing until a result uses it."
-      : "";
     if (placed.insert.kind === "block")
       return props.insertBlock(placed.insert.source)
         ? null
-        : `This spot cannot take a block. Place the cursor between paragraphs, then try again.${leftBehind}`;
-    if (placed.macro === null) return "The result could not be placed in the project.";
+        : preambleChanged
+          ? gt(
+              "This spot cannot take a block. Place the cursor between paragraphs, then try again. Any preamble line Scient added stays; it does nothing until a result uses it.",
+            )
+          : gt(
+              "This spot cannot take a block. Place the cursor between paragraphs, then try again.",
+            );
+    if (placed.macro === null) return gt("The result could not be placed in the project.");
     if (
       placed.preambleInput !== null &&
       // The values file's own first line shows it is included; a definition of the same name in
@@ -88,10 +99,13 @@ export function LatexResultPicker(props: {
         new RegExp(placed.macro.includedMarker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
       )
     )
-      return `The preamble could not be changed. Add ${placed.preambleInput} before \\begin{document}, then try again.`;
+      return preambleRefused(placed.preambleInput);
     return props.insertMacro({ ...placed.macro, source: placed.insert.source })
       ? null
-      : "Place the cursor in ordinary text, then try again. The \\input line Scient added to the preamble stays; it does nothing until a result uses it.";
+      : gt(
+          "Place the cursor in ordinary text, then try again. The {input} line Scient added to the preamble stays; it does nothing until a result uses it.",
+          { input: String.raw`\input` },
+        );
   };
 
   return (

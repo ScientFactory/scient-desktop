@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState, type ReactNode } from "react";
 import { MoreHorizontalIcon } from "lucide-react";
 import type { ComputeLanguageId, EnvironmentId } from "@t3tools/contracts";
@@ -38,20 +39,21 @@ export function ComputeInstallationRow({
   forgetDisabled?: boolean;
   onVersion?: (version: string) => void;
 }) {
+  const gt = useGT();
   const [copyError, setCopyError] = useState<string | null>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget("runtime path"),
     onCopy: () => setCopyError(null),
-    onError: () => setCopyError("The path could not be copied. Try again."),
+    onError: () => setCopyError(gt("The path could not be copied. Try again.")),
   });
   const items = installation ? (
     <>
       <MenuItem onClick={() => copyToClipboard(installation.executable, undefined)}>
-        {isCopied ? "Copied" : "Copy path"}
+        {isCopied ? gt("Copied") : gt("Copy path")}
       </MenuItem>
       {onForget ? (
         <MenuItem disabled={disabled || forgetDisabled} onClick={onForget}>
-          Forget path
+          <T>Forget path</T>
         </MenuItem>
       ) : null}
     </>
@@ -74,7 +76,11 @@ export function ComputeInstallationRow({
           className="flex flex-wrap items-center justify-end gap-1.5"
           data-compute-installation={installation?.executable}
         >
-          {inUse ? <span className="text-xs text-muted-foreground">In use</span> : null}
+          {inUse ? (
+            <span className="text-xs text-muted-foreground">
+              <T>In use</T>
+            </span>
+          ) : null}
           {testable && installation && !installation.problem ? (
             <ComputeRuntimeTest
               executable={installation.executable}
@@ -94,7 +100,7 @@ export function ComputeInstallationRow({
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label={`Actions for ${title}`}
+                    aria-label={gt("Actions for {name}", { name: title })}
                   />
                 }
               >

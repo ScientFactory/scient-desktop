@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { T, useGT, Var } from "gt-react";
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 
 import { toastManager } from "~/components/ui/toast";
@@ -45,6 +46,7 @@ export function useTemplateSaving(input: {
   readonly lease: MarkdownPersistenceLease | null;
 }): { readonly menuItems: ReactNode; readonly dialog: ReactNode } {
   const { environmentId, cwd, relativePath, lease } = input;
+  const gt = useGT();
   const readFile = useAtomCommand(projectEnvironment.readFileOrdered, { reportFailure: false });
   const [naming, setNaming] = useState(false);
   const templates = useSyncExternalStore(userTemplates.subscribe, userTemplates.list);
@@ -109,17 +111,20 @@ export function useTemplateSaving(input: {
         name: replacing?.name ?? name,
       });
       templateEdits.set(key, saved.id);
-      toastManager.add({ type: "success", title: `Saved as the template “${saved.name}”.` });
+      toastManager.add({
+        type: "success",
+        title: gt("Saved as the template “{name}”.", { name: saved.name }),
+      });
     } catch (error) {
       if (isIncomplete(error))
         toastManager.add({
           type: "error",
-          title: "The template could not be saved.",
-          description: `${error.path} could not be read whole.`,
+          title: gt("The template could not be saved."),
+          description: gt("{path} could not be read whole.", { path: error.path }),
         });
       else {
         console.error("The template could not be saved:", error);
-        toastManager.add({ type: "error", title: "The template could not be saved." });
+        toastManager.add({ type: "error", title: gt("The template could not be saved.") });
       }
     }
   };
@@ -130,18 +135,26 @@ export function useTemplateSaving(input: {
       <>
         {edited ? (
           <DockCommandItem onClick={() => void save(edited.name, edited)}>
-            Update “{edited.name}”
+            <T>
+              Update “<Var>{edited.name}</Var>”
+            </T>
           </DockCommandItem>
         ) : null}
-        <DockCommandItem onClick={() => setNaming(true)}>Save as template…</DockCommandItem>
+        <DockCommandItem onClick={() => setNaming(true)}>
+          <T>Save as template…</T>
+        </DockCommandItem>
       </>
     ),
     dialog: (
       <TemplateNameDialog
         open={naming}
-        title="Save as template"
+        title={gt("Save as template")}
         initialName={edited?.name ?? newDocumentTitle(lease.getSnapshot().draftSource, "latex")}
-        actionFor={(name) => (taken(name) ? "Replace" : "Save")}
+        actionFor={(name) =>
+          taken(name)
+            ? gt("Replace", { $context: "button, replaces the template with that name" })
+            : gt("Save", { $context: "button, saves the template" })
+        }
         onSubmit={(name) => save(name, taken(name) ?? null)}
         onOpenChange={setNaming}
       />

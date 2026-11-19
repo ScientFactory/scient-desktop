@@ -1,4 +1,5 @@
 import type { ProjectFileErrorReason, ProjectFileFailure } from "@t3tools/contracts";
+import { T, useMessages } from "gt-react";
 
 import { FileSurfaceFailure } from "~/components/files/fileSurfaceChrome";
 import { Button } from "~/components/ui/button";
@@ -32,6 +33,7 @@ export function FileReadFailure(props: {
   /** Opens the absolute path read-only, for servers that refused it as outside the project. */
   readonly onOpenReadOnly?: () => void;
 }) {
+  const m = useMessages();
   const notFound = props.reason === "not_found";
   const openCandidate = props.onOpenCandidate;
   const candidates = notFound && openCandidate ? (props.candidates ?? []) : [];
@@ -42,6 +44,7 @@ export function FileReadFailure(props: {
     hostOs: props.hostOs ?? null,
     message: props.message,
     candidateCount: candidates.length,
+    resolve: m,
   });
   const description =
     notFound && props.path ? (
@@ -52,14 +55,16 @@ export function FileReadFailure(props: {
         </span>
         {candidates.length > 0 ? (
           <span className="mt-2 block">
-            {candidates.length === 1
-              ? "One file in this project has the same name:"
-              : "These files in this project have the same name:"}
+            {candidates.length === 1 ? (
+              <T>One file in this project has the same name:</T>
+            ) : (
+              <T>These files in this project have the same name:</T>
+            )}
           </span>
         ) : null}
         {props.candidatesIncomplete ? (
           <span className="mt-2 block">
-            Scient couldn't search the whole project, so there may be others.
+            <T>Scient couldn't search the whole project, so there may be others.</T>
           </span>
         ) : null}
       </>
@@ -90,12 +95,12 @@ export function FileReadFailure(props: {
         : null}
       {props.failure === "binary_file" && props.onSaveCopy ? (
         <Button type="button" size="xs" variant="outline" onClick={props.onSaveCopy}>
-          Save a copy
+          <T>Save a copy</T>
         </Button>
       ) : null}
       {isOutsideProjectFailure(props.failure) && props.onOpenReadOnly ? (
         <Button type="button" size="xs" variant="outline" onClick={props.onOpenReadOnly}>
-          Open read-only
+          <T>Open read-only</T>
         </Button>
       ) : null}
     </FileSurfaceFailure>

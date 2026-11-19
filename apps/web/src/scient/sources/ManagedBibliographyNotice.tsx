@@ -1,4 +1,7 @@
 import type { ScientManagedBibliographyFileStatus } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { Button } from "../../components/ui/button";
 import type { SourcesActivityItem } from "./sourcesFeedback";
@@ -15,28 +18,65 @@ interface ManagedBibliographyProps {
 const needsAttention = (file: ScientManagedBibliographyFileStatus) =>
   file.state === "edited" || file.state === "unmanaged" || (file.kept?.length ?? 0) > 0;
 
-function changeSummary(file: ScientManagedBibliographyFileStatus): string {
+function changeSummary(
+  file: ScientManagedBibliographyFileStatus,
+  resolve: MessageResolver,
+): string {
   const changes = file.changes;
   if (!changes) return "";
   const parts = [
-    changes.added.length > 0 ? `${changes.added.length} added` : null,
-    changes.changed.length > 0 ? `${changes.changed.length} changed` : null,
-    changes.removed.length > 0 ? `${changes.removed.length} removed` : null,
+    changes.added.length > 0
+      ? resolve(
+          msg("{count} added", { count: changes.added.length, $context: "bibliography entries" }),
+        )
+      : null,
+    changes.changed.length > 0
+      ? resolve(
+          msg("{count} changed", {
+            count: changes.changed.length,
+            $context: "bibliography entries",
+          }),
+        )
+      : null,
+    changes.removed.length > 0
+      ? resolve(
+          msg("{count} removed", {
+            count: changes.removed.length,
+            $context: "bibliography entries",
+          }),
+        )
+      : null,
   ].filter((part): part is string => part !== null);
-  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return parts.length > 0 ? parts.join(", ") : "";
 }
 
-function keptSummary(file: ScientManagedBibliographyFileStatus, failed: boolean): string | null {
+function keptSummary(
+  file: ScientManagedBibliographyFileStatus,
+  failed: boolean,
+  resolve: MessageResolver,
+): string | null {
   const kept = file.kept ?? [];
   if (kept.length === 0) return null;
-  const them = kept.length === 1 ? "it" : "them";
+  const values = { name: file.name, files: kept.join(", "), count: kept.length };
   return failed
-    ? `${file.name} could not be written. Its earlier text is kept in ${kept.join(", ")}; delete ${them} once you no longer need ${them}.`
-    : `Earlier text of ${file.name} is kept in ${kept.join(", ")}; delete ${them} once you no longer need ${them}.`;
+    ? resolve(
+        msg(
+          "{count, plural, one {{name} could not be written. Its earlier text is kept in {files}; delete it once you no longer need it.} other {{name} could not be written. Its earlier text is kept in {files}; delete them once you no longer need them.}}",
+          values,
+        ),
+      )
+    : resolve(
+        msg(
+          "{count, plural, one {Earlier text of {name} is kept in {files}; delete it once you no longer need it.} other {Earlier text of {name} is kept in {files}; delete them once you no longer need them.}}",
+          values,
+        ),
+      );
 }
 
 /** Each managed bibliography file that needs a decision, or whose earlier text is kept. */
 function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
+  const gt = useGT();
+  const m = useMessages();
   const attention = props.files.filter(needsAttention);
   if (attention.length === 0) return null;
   const replaceButton = (file: ScientManagedBibliographyFileStatus) => (
@@ -46,7 +86,7 @@ function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
       disabled={props.replacing}
       onClick={() => props.onResolve(file.name, "replace")}
     >
-      Use Library version
+      <T>Use Library version</T>
     </Button>
   );
   return (
@@ -55,7 +95,7 @@ function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
         // An edited file with nothing to compare is one a failed write moved aside.
         const failed =
           file.state === "edited" && file.changes === null && Boolean(file.kept?.length);
-        const kept = keptSummary(file, failed);
+        const kept = keptSummary(file, failed, m);
         if (failed) {
           return (
             <div key={file.name} className="flex items-center gap-2">
@@ -69,7 +109,14 @@ function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
             {file.state === "edited" ? (
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1">
-                  {file.name} was edited outside Scient{changeSummary(file)}. Your edits are kept.
+                  {changeSummary(file, m)
+                    ? gt("{name} was edited outside Scient ({changes}). Your edits are kept.", {
+                        name: file.name,
+                        changes: changeSummary(file, m),
+                      })
+                    : gt("{name} was edited outside Scient. Your edits are kept.", {
+                        name: file.name,
+                      })}
                 </span>
                 {file.changes && file.changes.added.length > 0 ? (
                   <Button
@@ -78,13 +125,17 @@ function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
                     disabled={props.replacing}
                     onClick={() => props.onResolve(file.name, "import")}
                   >
-                    Import new entries
+                    <T>Import new entries</T>
                   </Button>
                 ) : null}
                 {replaceButton(file)}
               </div>
             ) : file.state === "unmanaged" ? (
-              <div>{file.name} was not written by Scient, so the Library is not saved to it.</div>
+              <div>
+                {gt("{name} was not written by Scient, so the Library is not saved to it.", {
+                  name: file.name,
+                })}
+              </div>
             ) : null}
             {kept ? <div className="break-words">{kept}</div> : null}
           </div>
@@ -100,6 +151,7 @@ function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
  */
 export function managedBibliographyActivity(
   props: ManagedBibliographyProps,
+  resolve: MessageResolver = m,
 ): SourcesActivityItem | null {
   const attention = props.files.filter(needsAttention);
   if (attention.length === 0) return null;
@@ -108,10 +160,10 @@ export function managedBibliographyActivity(
     key: "managed-bibliography",
     tone: edited ? "decision" : "advisory",
     label: edited
-      ? "A bibliography file was edited outside Scient"
+      ? resolve(msg("A bibliography file was edited outside Scient"))
       : attention.some((file) => file.state === "unmanaged")
-        ? "A bibliography file was not written by Scient"
-        : "Earlier bibliography text is kept",
+        ? resolve(msg("A bibliography file was not written by Scient"))
+        : resolve(msg("Earlier bibliography text is kept")),
     body: <ManagedBibliographyNotice {...props} />,
   };
 }

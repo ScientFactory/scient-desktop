@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import type { ProviderRuntimeSummary, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
@@ -70,6 +71,8 @@ export function DroidInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   /** A status check that could not run; not a failure of the action it follows. */
   const [checkError, setCheckError] = useState<string | null>(null);
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
@@ -142,7 +145,14 @@ export function DroidInlineSetup(props: {
           props.onRepairSucceeded?.();
         }
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Droid.`));
+        setLocalError(
+          providerLifecycleFailureMessage(
+            error,
+            action === "install"
+              ? gt("Scient could not install Droid.")
+              : gt("Scient could not repair Droid."),
+          ),
+        );
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -160,11 +170,11 @@ export function DroidInlineSetup(props: {
         const provider = await updateManagedOrExternalProviderRuntime(
           props.controller,
           props.provider,
-          "No Droid update is currently available.",
+          gt("No Droid update is currently available."),
         );
         setLocalRuntime(provider.connection?.runtime ?? null);
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Droid."));
+        setLocalError(providerLifecycleFailureMessage(error, gt("Scient could not update Droid.")));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -183,7 +193,7 @@ export function DroidInlineSetup(props: {
         await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not cancel Droid setup."),
+          providerLifecycleFailureMessage(error, gt("Scient could not cancel Droid setup.")),
         );
       }
     } catch (cause) {
@@ -204,7 +214,7 @@ export function DroidInlineSetup(props: {
         await props.controller.startConnection("droid_device_pairing");
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not start Droid sign in."),
+          providerLifecycleFailureMessage(error, gt("Scient could not start Droid sign in.")),
         );
       }
     } catch (cause) {
@@ -224,7 +234,7 @@ export function DroidInlineSetup(props: {
       try {
         await props.controller.refresh();
       } catch (error) {
-        setCheckError(providerLifecycleFailureMessage(error, "Scient could not check Droid."));
+        setCheckError(providerLifecycleFailureMessage(error, gt("Scient could not check Droid.")));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -235,7 +245,7 @@ export function DroidInlineSetup(props: {
   /** `quiet` beside the frame's own primary action. */
   const checkAgainButton = (label: string, quiet = false) => (
     <Button
-      aria-label="Check Droid again"
+      aria-label={gt("Check Droid again")}
       disabled={pendingAction !== null}
       onClick={() => void checkAgain()}
       size="sm"
@@ -261,7 +271,7 @@ export function DroidInlineSetup(props: {
         await props.controller.cancelConnection(activeConnectionOperation.operationId);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not cancel Droid sign in."),
+          providerLifecycleFailureMessage(error, gt("Scient could not cancel Droid sign in.")),
         );
       }
     } catch (cause) {
@@ -281,7 +291,11 @@ export function DroidInlineSetup(props: {
   if (ownsOverlay && modelsActions) {
     return (
       <AssistedSetupFrame>
-        <AssistedSetupStatus icon={null} title="Custom models" body="Connect models to Droid." />
+        <AssistedSetupStatus
+          icon={null}
+          title={gt("Custom models")}
+          body={gt("Connect models to Droid.")}
+        />
         <AssistedSetupActions key="connect-models">{modelsActions.primary}</AssistedSetupActions>
       </AssistedSetupFrame>
     );
@@ -296,20 +310,24 @@ export function DroidInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={activeRuntimeOperation?.message ?? "Preparing the private Droid runtime…"}
+          body={activeRuntimeOperation?.message ?? gt("Preparing the private Droid runtime…")}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
             action === "update"
-              ? "Updating Droid"
+              ? gt("Updating Droid")
               : action === "repair"
-                ? "Repairing Droid"
-                : "Installing Droid"
+                ? gt("Repairing Droid")
+                : gt("Installing Droid")
           }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label={cancelRuntimeActionLabel("Droid", activeRuntimeOperation.action)}
+              aria-label={cancelRuntimeActionLabel(
+                "Droid",
+                activeRuntimeOperation.action,
+                messages,
+              )}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -321,7 +339,7 @@ export function DroidInlineSetup(props: {
               ) : (
                 <XIcon aria-hidden />
               )}
-              Cancel
+              <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -350,15 +368,15 @@ export function DroidInlineSetup(props: {
           body={
             checkError ??
             localError ??
-            managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation)
+            managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation, messages)
           }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Droid needs repair"
+          title={gt("Droid needs repair")}
         />
         <AssistedSetupActions>
           {/* A start that failed once may work again; Droid is only re-checked on request. */}
-          {checkAgainButton("Try again", true)}
+          {checkAgainButton(gt("Try again"), true)}
           <Button
             disabled={pendingAction === "check"}
             onClick={() => void runRuntime("repair")}
@@ -366,7 +384,7 @@ export function DroidInlineSetup(props: {
             type="button"
             variant="ghost-primary"
           >
-            <RefreshCwIcon aria-hidden /> Repair Droid
+            <RefreshCwIcon aria-hidden /> <T>Repair Droid</T>
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -384,8 +402,8 @@ export function DroidInlineSetup(props: {
           body={
             installationError ??
             (canInstall
-              ? "Scient can install a reviewed Factory Droid runtime privately for this app."
-              : (props.provider.message ?? "Install Droid to continue."))
+              ? gt("Scient can install a reviewed Factory Droid runtime privately for this app.")
+              : (props.provider.message ?? gt("Install Droid to continue.")))
           }
           icon={
             installationError ? (
@@ -395,19 +413,21 @@ export function DroidInlineSetup(props: {
             )
           }
           role={installationError ? "alert" : undefined}
-          title={installationError ? "Droid installation couldn’t finish" : "Install Droid"}
+          title={installationError ? gt("Droid installation couldn’t finish") : gt("Install Droid")}
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={installationError ? "Retry installation of Droid" : "Install Droid"}
+              aria-label={
+                installationError ? gt("Retry installation of Droid") : gt("Install Droid")
+              }
               onClick={() => void runRuntime("install")}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
               {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {installationError ? "Retry installation" : "Install"}
+              {installationError ? gt("Retry installation") : gt("Install")}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -424,18 +444,24 @@ export function DroidInlineSetup(props: {
         <AssistedSetupStatus
           body={
             starting
-              ? "Checking Droid and preparing Factory sign in…"
+              ? gt("Checking Droid and preparing Factory sign in…")
               : verifying
-                ? "Confirming your Factory account…"
-                : "Complete Factory sign in in the browser opened by Droid."
+                ? gt("Confirming your Factory account…")
+                : gt("Complete Factory sign in in the browser opened by Droid.")
           }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={starting ? "Starting sign in" : verifying ? "Verifying sign in" : "Finish sign in"}
+          title={
+            starting
+              ? gt("Starting sign in")
+              : verifying
+                ? gt("Verifying sign in")
+                : gt("Finish sign in")
+          }
         />
         {activeConnectionOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label="Cancel Droid sign-in"
+              aria-label={gt("Cancel Droid sign-in")}
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -447,7 +473,7 @@ export function DroidInlineSetup(props: {
               ) : (
                 <XIcon aria-hidden />
               )}
-              Cancel sign in
+              <T>Cancel sign in</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -486,10 +512,10 @@ export function DroidInlineSetup(props: {
           body={
             isReady ? (
               <ProviderAccountManagementLink provider="droid">
-                {providerAccountIdentity(props.provider) ?? "Factory account"}
+                {providerAccountIdentity(props.provider) ?? gt("Factory account")}
               </ProviderAccountManagementLink>
             ) : (
-              (props.provider.message ?? "Your Factory account is connected.")
+              (props.provider.message ?? gt("Your Factory account is connected."))
             )
           }
           icon={
@@ -499,7 +525,7 @@ export function DroidInlineSetup(props: {
               <TriangleAlertIcon className="size-5 text-warning" />
             )
           }
-          title={isReady ? "Droid is ready" : "Droid needs attention"}
+          title={isReady ? gt("Droid is ready") : gt("Droid needs attention")}
           trailing={props.accountAction}
         />
         {modelsActions ? (
@@ -519,14 +545,17 @@ export function DroidInlineSetup(props: {
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
-            checkError ?? localError ?? props.provider.message ?? "Scient could not start Droid."
+            checkError ??
+            localError ??
+            props.provider.message ??
+            gt("Scient could not start Droid.")
           }
           icon={<TriangleAlertIcon className="size-5 text-destructive" />}
           role="alert"
-          title="Droid couldn’t start"
+          title={gt("Droid couldn’t start")}
         />
         <AssistedSetupActions>
-          {checkAgainButton("Try again", updateOffer !== null)}
+          {checkAgainButton(gt("Try again"), updateOffer !== null)}
           {updateOffer ? (
             <AssistedSetupUpdateButton name="Droid" onClick={() => void update()} retry={false} />
           ) : null}
@@ -555,13 +584,15 @@ export function DroidInlineSetup(props: {
             checkError ??
             signInError ??
             props.provider.message ??
-            "Assisted sign in is unavailable."
+            gt("Assisted sign in is unavailable.")
           }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role={(checkError ?? signInError) ? "alert" : undefined}
-          title={usesApiKey ? "Factory rejected the API key" : "Assisted sign in unavailable"}
+          title={
+            usesApiKey ? gt("Factory rejected the API key") : gt("Assisted sign in unavailable")
+          }
         />
-        <AssistedSetupActions>{checkAgainButton("Check again")}</AssistedSetupActions>
+        <AssistedSetupActions>{checkAgainButton(gt("Check again"))}</AssistedSetupActions>
         {secondaryActions}
         {runtimeDiagnostics}
       </AssistedSetupFrame>
@@ -574,7 +605,9 @@ export function DroidInlineSetup(props: {
         body={
           checkError ??
           signInError ??
-          "Sign in with your existing Factory subscription. Droid owns the secure flow; Scient never sees your password."
+          gt(
+            "Sign in with your existing Factory subscription. Droid owns the secure flow; Scient never sees your password.",
+          )
         }
         icon={
           (checkError ?? signInError) ? (
@@ -584,13 +617,13 @@ export function DroidInlineSetup(props: {
           )
         }
         role={(checkError ?? signInError) ? "alert" : undefined}
-        title={signInError ? "Droid sign-in didn’t finish" : "Sign in required"}
+        title={signInError ? gt("Droid sign-in didn’t finish") : gt("Sign in required")}
       />
       <AssistedSetupActions>
         {/* A sign-in finished outside Scient shows only after a status check. */}
-        {checkAgainButton("Check again", true)}
+        {checkAgainButton(gt("Check again"), true)}
         <Button
-          aria-label={signInError ? "Try again to sign in to Droid" : undefined}
+          aria-label={signInError ? gt("Try again to sign in to Droid") : undefined}
           disabled={pendingAction === "check"}
           onClick={() => void signIn()}
           size="sm"
@@ -598,7 +631,7 @@ export function DroidInlineSetup(props: {
           variant="ghost-primary"
         >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
-          {signInError ? "Try sign in again" : "Sign in with Factory"}
+          {signInError ? gt("Try sign in again") : gt("Sign in with Factory")}
         </Button>
       </AssistedSetupActions>
       {secondaryActions}

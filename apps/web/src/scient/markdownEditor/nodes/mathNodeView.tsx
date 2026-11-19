@@ -1,8 +1,11 @@
 import { createRoot, type Root } from "react-dom/client";
+import { msg } from "gt-react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import { closeHistory, undo, redo } from "prosemirror-history";
+import { I18nProvider } from "~/i18n/I18nProvider";
+import { m } from "~/i18n/messages";
 import { MathInputController } from "~/scient/math/input/controller";
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
@@ -68,7 +71,7 @@ class ScientMathNodeView implements NodeView {
     if (this.sourceEditor instanceof HTMLTextAreaElement) this.sourceEditor.rows = 1;
     this.sourceEditor.setAttribute(
       "aria-label",
-      display ? "Display math source" : "Inline math source",
+      display ? m(msg("Display math source")) : m(msg("Inline math source")),
     );
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("compositionend", this.handleInput);
@@ -114,7 +117,7 @@ class ScientMathNodeView implements NodeView {
     this.mathInput = controller;
     this.retainedNotice = document.createElement("span");
     this.retainedNotice.className = "scient-markdown-math-retained";
-    this.retainedNotice.textContent = "Preview kept at the last valid equation.";
+    this.retainedNotice.textContent = m(msg("Preview kept at the last valid equation."));
     this.retainedNotice.setAttribute("role", "status");
     this.retainedNotice.hidden = true;
     this.dom.append(this.retainedNotice);
@@ -291,7 +294,11 @@ class ScientMathNodeView implements NodeView {
   private showSourceEditor(): void {
     if (!this.toolsRoot) {
       this.toolsRoot = createRoot(this.toolsHost);
-      this.toolsRoot.render(<MathInputTools controller={this.mathInput} />);
+      this.toolsRoot.render(
+        <I18nProvider>
+          <MathInputTools controller={this.mathInput} />
+        </I18nProvider>,
+      );
     }
     this.sourceEditor.hidden = false;
     this.toolsHost.hidden = false;
@@ -312,7 +319,13 @@ class ScientMathNodeView implements NodeView {
       retained ? "retained" : "current",
     );
     this.reactRoot.render(
-      this.isDisplay(this.node) ? <ScientDisplayMath tex={tex} /> : <ScientInlineMath tex={tex} />,
+      <I18nProvider>
+        {this.isDisplay(this.node) ? (
+          <ScientDisplayMath tex={tex} />
+        ) : (
+          <ScientInlineMath tex={tex} />
+        )}
+      </I18nProvider>,
     );
   }
 

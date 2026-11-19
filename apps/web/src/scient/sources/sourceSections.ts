@@ -1,4 +1,7 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import {
   sameScientSourceText,
@@ -18,15 +21,18 @@ export interface ScientSourceSection {
 }
 
 const ADDED_SECTION_LABELS = {
-  today: "Today",
-  week: "This week",
-  month: "This month",
-  earlier: "Earlier",
-  unknown: "Date added unknown",
+  today: msg("Today", { $context: "list heading, sources added today" }),
+  week: msg("This week", { $context: "list heading, sources added this week" }),
+  month: msg("This month", { $context: "list heading, sources added this month" }),
+  earlier: msg("Earlier", { $context: "list heading, sources added before this month" }),
+  unknown: msg("Date added unknown"),
 } as const;
 
 /** Local-calendar bounds; the week starts on Monday. A bucket never repeats an earlier one. */
-function addedSectionLabel(now: number): (source: SourceSummary) => string {
+function addedSectionLabel(
+  now: number,
+  resolve: MessageResolver,
+): (source: SourceSummary) => string {
   const today = new Date(now);
   const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const startOfWeek = new Date(
@@ -37,11 +43,11 @@ function addedSectionLabel(now: number): (source: SourceSummary) => string {
   const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
   return (source) => {
     const time = scientSourceAddedTime(source);
-    if (time === null) return ADDED_SECTION_LABELS.unknown;
-    if (time >= startOfDay) return ADDED_SECTION_LABELS.today;
-    if (time >= startOfWeek) return ADDED_SECTION_LABELS.week;
-    if (time >= startOfMonth) return ADDED_SECTION_LABELS.month;
-    return ADDED_SECTION_LABELS.earlier;
+    if (time === null) return resolve(ADDED_SECTION_LABELS.unknown);
+    if (time >= startOfDay) return resolve(ADDED_SECTION_LABELS.today);
+    if (time >= startOfWeek) return resolve(ADDED_SECTION_LABELS.week);
+    if (time >= startOfMonth) return resolve(ADDED_SECTION_LABELS.month);
+    return resolve(ADDED_SECTION_LABELS.earlier);
   };
 }
 
@@ -53,6 +59,7 @@ export function scientSourceSections(
   sources: ReadonlyArray<SourceSummary>,
   sort: ScientSourceSort,
   now: number,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ScientSourceSection> {
   let headingOf: (source: SourceSummary) => string;
   // Journals the sort counts as equal (case, accents) share the first one's heading.
@@ -62,10 +69,11 @@ export function scientSourceSections(
     case "author":
       return [];
     case "last-added":
-      headingOf = addedSectionLabel(now);
+      headingOf = addedSectionLabel(now, resolve);
       break;
     case "publication-year":
-      headingOf = (source) => (source.issuedYear === null ? "No year" : String(source.issuedYear));
+      headingOf = (source) =>
+        source.issuedYear === null ? resolve(msg("No year")) : String(source.issuedYear);
       break;
     case "journal":
       headingOf = (source) => scientSourceJournal(source) ?? "";
@@ -76,7 +84,11 @@ export function scientSourceSections(
   let heading = "";
   let start = 0;
   const close = (end: number) =>
-    sections.push({ label: heading || "No journal or proceedings", start, count: end - start });
+    sections.push({
+      label: heading || resolve(msg("No journal or proceedings")),
+      start,
+      count: end - start,
+    });
   for (let index = 0; index < sources.length; index += 1) {
     const next = headingOf(sources[index]!);
     if (index > 0 && same(heading, next)) continue;

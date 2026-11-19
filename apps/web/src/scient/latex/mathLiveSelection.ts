@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { MathfieldElement, Style } from "mathlive";
 import { mathFormattingScopeCommand } from "./mathTextFormatting";
 
@@ -155,8 +157,8 @@ function mutateMath(
 /** Split the caret's math flow, keeping complete nested atoms and column positions. */
 export function splitMathRow(math: MathfieldElement): string | null {
   const model = mathModel(math);
-  if (math.readOnly || !model) return "This formula is not editable.";
-  if (math.mode === "latex") return "Finish the math command before splitting the row.";
+  if (math.readOnly || !model) return m(msg("This formula is not editable."));
+  if (math.mode === "latex") return m(msg("Finish the math command before splitting the row."));
   let position = math.position;
   if (!math.selectionIsCollapsed) {
     const range = math.selection.ranges[0];
@@ -166,13 +168,13 @@ export function splitMathRow(math: MathfieldElement): string | null {
       range[1] - range[0] !== 1 ||
       model.at(range[1]).type !== "placeholder"
     )
-      return "Place the caret where the math row should split.";
+      return m(msg("Place the caret where the math row should split."));
     position = range[0];
   }
   const cursor = model.at(position);
   const parent = cursor.parent;
   const branch = cursor.parentBranch;
-  if (!parent) return "Place the caret inside the math row.";
+  if (!parent) return m(msg("Place the caret inside the math row."));
   const mode = math.mode;
   if (parent.type === "array" && Array.isArray(branch)) {
     const [row, column] = branch;
@@ -183,11 +185,11 @@ export function splitMathRow(math: MathfieldElement): string | null {
       !parent.setCell ||
       !parent.getCell
     )
-      return "This math layout cannot split rows.";
-    if ((parent.rowCount ?? 0) >= 20) return "This editor supports up to 20 rows.";
+      return m(msg("This math layout cannot split rows."));
+    if ((parent.rowCount ?? 0) >= 20) return m(msg("This editor supports up to 20 rows."));
     const cell = parent.getCell(row, column);
     const index = cell?.indexOf(cursor) ?? -1;
-    if (!cell || index < 0) return "Place the caret inside the math cell.";
+    if (!cell || index < 0) return m(msg("Place the caret inside the math cell."));
     const before = cell.slice(0, index + 1).filter((atom) => atom.type !== "first");
     const tails = Array.from({ length: (parent.colCount ?? 0) - column }, (_, offset) =>
       (offset === 0 ? cell.slice(index + 1) : (parent.getCell!(row, column + offset) ?? [])).filter(
@@ -208,16 +210,17 @@ export function splitMathRow(math: MathfieldElement): string | null {
       },
       "insertLineBreak",
     );
-    return changed ? null : "The math row could not be split.";
+    return changed ? null : m(msg("The math row could not be split."));
   }
   // A fraction/root body remains intact: add rows within its own flow rather
   // than extracting incomplete parts into the surrounding equation.
   const siblings = parent.branch?.(branch);
   if (!siblings?.length || !siblings.includes(cursor))
-    return "This math slot cannot contain multiple rows.";
+    return m(msg("This math slot cannot contain multiple rows."));
   const from = model.offsetOf(siblings[0]!);
   const to = model.offsetOf(siblings.at(-1)!);
-  if (from < 0 || to < position || from > position) return "Place the caret inside the math row.";
+  if (from < 0 || to < position || from > position)
+    return m(msg("Place the caret inside the math row."));
   const before = math.getValue([from, position], "latex");
   const after = math.getValue([position, to], "latex");
   const selection = math.selection;
@@ -233,7 +236,7 @@ export function splitMathRow(math: MathfieldElement): string | null {
   );
   if (!inserted) {
     math.selection = selection;
-    return "The math row could not be split.";
+    return m(msg("The math row could not be split."));
   }
   const array = model.at(math.position);
   const first = array.type === "array" ? array.getCell?.(1, 0)?.[0] : null;
@@ -378,15 +381,18 @@ export function mathArrayContext(math: MathfieldElement): MathArrayContext | nul
 export function mathStructureCommandReason(
   context: MathArrayContext | null,
   command: MathStructureCommand,
+  resolve: MessageResolver = m,
 ): string | null {
-  if (!context) return "Place the caret in a matrix, cases or aligned equation cell.";
+  if (!context) return resolve(msg("Place the caret in a matrix, cases or aligned equation cell."));
   if (command.includes("Column") && ["cases", "aligned", "gathered"].includes(context.environment))
-    return "This structure has a fixed number of columns.";
-  if (command === "removeRow" && context.rows <= 1) return "Keep at least one row.";
-  if (command === "removeColumn" && context.columns <= 1) return "Keep at least one column.";
-  if (command === "addRowAfter" && context.rows >= 20) return "This editor supports up to 20 rows.";
+    return resolve(msg("This structure has a fixed number of columns."));
+  if (command === "removeRow" && context.rows <= 1) return resolve(msg("Keep at least one row."));
+  if (command === "removeColumn" && context.columns <= 1)
+    return resolve(msg("Keep at least one column."));
+  if (command === "addRowAfter" && context.rows >= 20)
+    return resolve(msg("This editor supports up to 20 rows."));
   if (command === "addColumnAfter" && context.columns >= 20)
-    return "This editor supports up to 20 columns.";
+    return resolve(msg("This editor supports up to 20 columns."));
   return null;
 }
 
@@ -537,30 +543,31 @@ export interface MathEditingScope {
   readonly exit: readonly [number, number];
   readonly leaveStyle?: Style;
 }
+/** `msg()` strings, resolved with `m` when the scopes are read. */
 const mathScopeLabels: Readonly<Record<string, string>> = {
-  genfrac: "Fraction",
-  surd: "Root",
-  leftright: "Brackets",
-  subsup: "Scripts",
-  underbrace: "Underbrace",
-  overbrace: "Overbrace",
-  textbf: "Bold",
-  mathbf: "Bold",
-  textit: "Italic",
-  mathit: "Italic",
-  texttt: "Monospace",
-  mathtt: "Monospace",
-  text: "Text",
-  mathcal: "Calligraphic",
-  mathbb: "Blackboard bold",
-  mathfrak: "Fraktur",
-  mathscr: "Script",
-  mathrm: "Roman",
-  mathsf: "Sans serif",
-  mathnormal: "Math",
-  mathbfit: "Bold italic",
-  boldsymbol: "Bold",
-  bm: "Bold",
+  genfrac: msg("Fraction", { $context: "math structure" }),
+  surd: msg("Root", { $context: "math structure" }),
+  leftright: msg("Brackets", { $context: "math structure" }),
+  subsup: msg("Scripts", { $context: "math structure" }),
+  underbrace: msg("Underbrace", { $context: "math structure" }),
+  overbrace: msg("Overbrace", { $context: "math structure" }),
+  textbf: msg("Bold", { $context: "math structure" }),
+  mathbf: msg("Bold", { $context: "math structure" }),
+  textit: msg("Italic", { $context: "math structure" }),
+  mathit: msg("Italic", { $context: "math structure" }),
+  texttt: msg("Monospace", { $context: "math structure" }),
+  mathtt: msg("Monospace", { $context: "math structure" }),
+  text: msg("Text", { $context: "math structure" }),
+  mathcal: msg("Calligraphic", { $context: "math structure" }),
+  mathbb: msg("Blackboard bold", { $context: "math structure" }),
+  mathfrak: msg("Fraktur", { $context: "math structure" }),
+  mathscr: msg("Script", { $context: "math structure" }),
+  mathrm: msg("Roman", { $context: "math structure" }),
+  mathsf: msg("Sans serif", { $context: "math structure" }),
+  mathnormal: msg("Math", { $context: "math structure" }),
+  mathbfit: msg("Bold italic", { $context: "math structure" }),
+  boldsymbol: msg("Bold", { $context: "math structure" }),
+  bm: msg("Bold", { $context: "math structure" }),
 };
 
 /** Innermost first; formatting participates in explicit scope commands only. */
@@ -581,7 +588,7 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
     leaveStyle: Style;
   }[] = [
     {
-      label: "Bold",
+      label: m(msg("Bold", { $context: "math structure" })),
       active:
         math.queryStyle({ fontSeries: "b" }) === "all" ||
         math.queryStyle({ variantStyle: "bold" }) === "all" ||
@@ -597,7 +604,7 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
             },
     },
     {
-      label: "Italic",
+      label: m(msg("Italic", { $context: "math structure" })),
       active:
         math.queryStyle({ fontShape: "it" }) === "all" ||
         math.queryStyle({ variantStyle: "italic" }) === "all" ||
@@ -613,7 +620,7 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
             },
     },
     {
-      label: "Monospace",
+      label: m(msg("Monospace", { $context: "math structure" })),
       active:
         math.queryStyle({ fontFamily: "monospace" }) === "all" ||
         math.queryStyle({ variant: "monospace" }) === "all",
@@ -645,7 +652,12 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
   const script = atom ? mathScriptOwner(atom) : null;
   if (script) {
     const range = mathOwnerRange(model, script);
-    result.push({ label: "Scripts", kind: "structure", range, exit: range });
+    result.push({
+      label: m(msg("Scripts", { $context: "math structure" })),
+      kind: "structure",
+      range,
+      exit: range,
+    });
   }
   while (atom?.parent && !atom.parent.isRoot) {
     const owner = atom.parent,
@@ -666,13 +678,15 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
             ? arrayCell(model, owner, Math.floor((index + 1) / columns), (index + 1) % columns)
             : null;
         result.push({
-          label: `Cell (${cell.row + 1}, ${cell.column + 1})`,
+          label: m(msg("Cell ({row}, {column})", { row: cell.row + 1, column: cell.column + 1 })),
           kind: "cell",
           range: cell.cell,
           exit: [previous?.cell[1] ?? cell.environment[0], next?.cell[0] ?? cell.environment[1]],
         });
         result.push({
-          label: /cases/u.test(owner.environmentName ?? "") ? "Cases" : "Matrix",
+          label: /cases/u.test(owner.environmentName ?? "")
+            ? m(msg("Cases", { $context: "math structure" }))
+            : m(msg("Matrix", { $context: "math structure" })),
           kind: "structure",
           range: [before, after],
           exit: [before, after],
@@ -681,8 +695,11 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
     } else {
       const contents = owner.branch?.(branch);
       const command = mathFormattingScopeCommand(owner) ?? owner.command?.replace(/^\\/u, "");
+      const knownLabel = mathScopeLabels[command ?? ""] ?? mathScopeLabels[owner.type ?? ""];
       const label =
-        mathScopeLabels[command ?? ""] ?? mathScopeLabels[owner.type ?? ""] ?? command ?? "Group";
+        knownLabel !== undefined
+          ? m(knownLabel)
+          : (command ?? m(msg("Group", { $context: "math structure" })));
       if (contents?.length && after >= before) {
         const range: [number, number] = [
           model.offsetOf(contents[0]!),
@@ -710,27 +727,32 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
           const slotLabel =
             (command === "underbrace" || command === "overbrace") &&
             (branch === "subscript" || branch === "superscript")
-              ? "Label"
+              ? m(msg("Label", { $context: "math structure" }))
               : branch === "above"
                 ? owner.type === "genfrac"
-                  ? "Numerator"
-                  : "Above"
+                  ? m(msg("Numerator", { $context: "math structure" }))
+                  : m(msg("Above", { $context: "math structure" }))
                 : branch === "below"
                   ? owner.type === "genfrac"
-                    ? "Denominator"
-                    : "Below"
+                    ? m(msg("Denominator", { $context: "math structure" }))
+                    : m(msg("Below", { $context: "math structure" }))
                   : branch === "superscript"
-                    ? "Superscript"
+                    ? m(msg("Superscript", { $context: "math structure" }))
                     : branch === "subscript"
-                      ? "Subscript"
+                      ? m(msg("Subscript", { $context: "math structure" }))
                       : branch === "body"
-                        ? "Body"
+                        ? m(msg("Body", { $context: "math structure" }))
                         : String(branch);
           result.push({ label: slotLabel, kind: "slot", range, exit: whole });
           result.push({ label, kind: "structure", range: whole, exit: whole });
           if (owner.rightSibling?.type === "subsup") {
             const scripted = mathOwnerRange(model, owner.rightSibling);
-            result.push({ label: "Scripts", kind: "structure", range: scripted, exit: scripted });
+            result.push({
+              label: m(msg("Scripts", { $context: "math structure" })),
+              kind: "structure",
+              range: scripted,
+              exit: scripted,
+            });
           }
         }
       }
@@ -738,7 +760,7 @@ export function mathEditingScopes(math: MathfieldElement): MathEditingScope[] {
     atom = owner;
   }
   result.push({
-    label: "Equation",
+    label: m(msg("Equation", { $context: "math structure" })),
     kind: "equation",
     range: [0, math.lastOffset],
     exit: [0, math.lastOffset],
@@ -1148,11 +1170,16 @@ export function mathSelectionRevision(math: MathfieldElement): object | null {
 }
 
 /** A wrapper can contain a whole array or one cell's expression, never partial cells. */
-export function mathSelectionWrapReason(math: MathfieldElement): string | null {
+export function mathSelectionWrapReason(
+  math: MathfieldElement,
+  resolve: MessageResolver = m,
+): string | null {
   if (math.selectionIsCollapsed) return null;
   const ranges = math.selection.ranges;
   if (ranges.length !== 1)
-    return "Select an expression within one math cell, or select the complete matrix.";
+    return resolve(
+      msg("Select an expression within one math cell, or select the complete matrix."),
+    );
   const [from, to] = ranges[0]!;
   const start = mathCellPathAt(math, Math.min(from, to));
   const end = mathCellPathAt(math, Math.max(from, to));
@@ -1166,7 +1193,7 @@ export function mathSelectionWrapReason(math: MathfieldElement): string | null {
         cell.column !== other.column
       );
     })
-    ? "Select an expression within one math cell, or select the complete matrix."
+    ? resolve(msg("Select an expression within one math cell, or select the complete matrix."))
     : null;
 }
 

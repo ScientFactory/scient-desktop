@@ -8,6 +8,7 @@ import {
   FileImageIcon,
   ImageIcon,
 } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -56,6 +57,8 @@ export function PlotlyChartDialog({
   theme,
   title,
 }: PlotlyChartDialogProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const controllerRef = useRef<PlotlyViewController | null>(null);
   const [controller, setController] = useState<PlotlyViewController | null>(null);
   const [initialInteractionMode, setInitialInteractionMode] = useState<
@@ -65,7 +68,11 @@ export function PlotlyChartDialog({
   const [status, setStatus] = useState<"error" | "loading" | "ready">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<DialogAction>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    readonly message: string;
+    readonly copiedKind?: "source";
+  } | null>(null);
+  const actionMessage = actionNotice === null ? null : messages(actionNotice.message);
   const [retryVersion, setRetryVersion] = useState(0);
   const { active: dialogActive, ref: dialogRef } = usePlotlyViewportActivity(
     parsed.hasWebGl,
@@ -87,12 +94,12 @@ export function PlotlyChartDialog({
     if (open) setStatus("loading");
   }
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, copiedKind?: "source") => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
-    setActionMessage(message);
+    setActionNotice({ message, ...(copiedKind ? { copiedKind } : {}) });
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
-      setActionMessage(null);
+      setActionNotice(null);
     }, 1_500);
   };
 
@@ -101,7 +108,7 @@ export function PlotlyChartDialog({
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
-    setActionMessage(message);
+    setActionNotice({ message });
   };
 
   const runControllerAction = (
@@ -129,18 +136,18 @@ export function PlotlyChartDialog({
   const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
-      showPersistentMessage("Clipboard access is unavailable.");
+      showPersistentMessage(msg("Clipboard access is unavailable."));
       return;
     }
     setActiveAction("copy-source");
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage("Source copied");
+        showTransientMessage(msg("Source copied"), "source");
       },
       () => {
         setActiveAction(null);
-        showPersistentMessage("Unable to copy the Plotly source.");
+        showPersistentMessage(msg("Unable to copy the Plotly source."));
       },
     );
   });
@@ -162,8 +169,10 @@ export function PlotlyChartDialog({
               <span className="block truncate">{title}</span>
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Expanded interactive Plotly figure. The current view returns to the inline figure when
-              this dialog closes.
+              <T>
+                Expanded interactive Plotly figure. The current view returns to the inline figure
+                when this dialog closes.
+              </T>
             </DialogDescription>
           </div>
           <Menu>
@@ -173,7 +182,7 @@ export function PlotlyChartDialog({
                   <MenuTrigger
                     render={
                       <Button
-                        aria-label="More Plotly actions"
+                        aria-label={gt("More Plotly actions")}
                         disabled={activeAction != null}
                         size="icon-sm"
                         type="button"
@@ -185,16 +194,18 @@ export function PlotlyChartDialog({
               >
                 <EllipsisIcon />
               </TooltipTrigger>
-              <TooltipPopup side="bottom">More Plotly actions</TooltipPopup>
+              <TooltipPopup side="bottom">
+                <T>More Plotly actions</T>
+              </TooltipPopup>
             </Tooltip>
             <MenuPopup align="end" className="min-w-56">
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
-                {activeAction === "copy-source" ? "Copying source…" : "Copy source"}
+                {actionNotice?.copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
+                {activeAction === "copy-source" ? gt("Copying source…") : gt("Copy source")}
               </MenuItem>
               <MenuItem onClick={() => downloadPlotlySource(source, title)}>
                 <FileBracesIcon />
-                Download Plotly JSON
+                <T>Download Plotly JSON</T>
               </MenuItem>
               <MenuItem
                 disabled={status !== "ready" || activeAction != null}
@@ -202,13 +213,13 @@ export function PlotlyChartDialog({
                   runControllerAction(
                     "download-svg",
                     (controller) => downloadPlotlySvg(controller, title),
-                    parsed.hasWebGl ? "SVG downloaded; WebGL layers are rasterized" : null,
-                    "Unable to create the SVG image.",
+                    parsed.hasWebGl ? msg("SVG downloaded; WebGL layers are rasterized") : null,
+                    msg("Unable to create the SVG image."),
                   )
                 }
               >
                 <DownloadIcon />
-                Download current SVG
+                <T>Download current SVG</T>
               </MenuItem>
               <MenuItem
                 disabled={status !== "ready" || activeAction != null}
@@ -216,13 +227,13 @@ export function PlotlyChartDialog({
                   runControllerAction(
                     "copy-png",
                     copyPlotlyPng,
-                    "Image copied",
-                    "Copy image is unavailable. You can download the PNG instead.",
+                    msg("Image copied"),
+                    msg("Copy image is unavailable. You can download the PNG instead."),
                   )
                 }
               >
                 <ImageIcon />
-                {activeAction === "copy-png" ? "Copying image…" : "Copy current image"}
+                {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy current image")}
               </MenuItem>
               <MenuItem
                 disabled={status !== "ready" || activeAction != null}
@@ -231,12 +242,12 @@ export function PlotlyChartDialog({
                     "download-png",
                     (controller) => downloadPlotlyPng(controller, title),
                     null,
-                    "Unable to create the PNG image.",
+                    msg("Unable to create the PNG image."),
                   )
                 }
               >
                 <FileImageIcon />
-                {activeAction === "download-png" ? "Creating PNG…" : "Download current PNG"}
+                {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download current PNG")}
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -268,7 +279,7 @@ export function PlotlyChartDialog({
         <div ref={dialogRef} className="relative min-h-0 flex-1 bg-secondary/30 p-4 sm:p-8">
           {status === "loading" ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-              Rendering interactive Plotly figure…
+              <T>Rendering interactive Plotly figure…</T>
             </div>
           ) : null}
           {open && dialogActive ? (
@@ -288,7 +299,9 @@ export function PlotlyChartDialog({
                 setStatus("ready");
               }}
               onWebGlContextLost={() => {
-                setErrorMessage("The graphics context was lost. Retry to recreate this figure.");
+                setErrorMessage(
+                  gt("The graphics context was lost. Retry to recreate this figure."),
+                );
                 setStatus("error");
               }}
               parsed={parsed}
@@ -308,7 +321,7 @@ export function PlotlyChartDialog({
                 type="button"
                 variant="outline"
               >
-                Retry figure
+                <T>Retry figure</T>
               </Button>
             </div>
           ) : null}

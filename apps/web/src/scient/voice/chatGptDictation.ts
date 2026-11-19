@@ -14,8 +14,10 @@ import {
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react";
 
 import { connectionAtomRuntime } from "../../connection/runtime.ts";
+import { m } from "../../i18n/messages.ts";
 import { useEnvironmentProviders } from "../../state/environments.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { scientAgentChatGptSignedIn } from "../liveVoice/liveVoiceAvailability.ts";
@@ -88,7 +90,7 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
     if (reason._tag === "Fail" && reason.error instanceof Error && reason.error.message)
       return reason.error.message;
   }
-  return "ChatGPT dictation isn't responding. Try again.";
+  return m(msg("ChatGPT dictation isn't responding. Try again."));
 }
 
 /** Transcribes committed dictation with ChatGPT through one provider instance. */

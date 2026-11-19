@@ -140,6 +140,10 @@ vi.mock("./useProviderEnableAction", () => ({
 
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("antigravity"),
   driver: ProviderDriverKind.make("antigravity"),

@@ -1,4 +1,6 @@
 import type { SelectProviderOptionDescriptor, ServerProviderModel } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 /** A presentation-only control: its values are native model IDs, never model options. */
 export const ANTIGRAVITY_REASONING_CONTROL = "scient:antigravity-model";
@@ -64,6 +66,7 @@ export function getAntigravityModelGroups(
 export function getAntigravityReasoningControl(
   groups: ReadonlyArray<AntigravityModelGroup>,
   selectedModel: string | null | undefined,
+  resolve: MFunctionType = mFallback,
 ): SelectProviderOptionDescriptor | null {
   const group = groups.find((candidate) =>
     candidate.models.some(({ slug }) => slug === selectedModel),
@@ -71,7 +74,7 @@ export function getAntigravityReasoningControl(
   if (!group || !selectedModel) return null;
   return {
     id: ANTIGRAVITY_REASONING_CONTROL,
-    label: "Reasoning",
+    label: resolve(msg("Reasoning", { $context: "model reasoning effort picker" })),
     type: "select",
     currentValue: selectedModel,
     options: group.models.map(({ slug, label }) => ({ id: slug, label })),

@@ -8,6 +8,10 @@ import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
 import { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
 import { describeVoiceError } from "./voiceErrorPresentation.ts";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 function stubVoiceBridge(): void {
   const voice = {
     getModelsState: vi.fn().mockResolvedValue({

@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   DEFAULT_PROVIDER_STARTING_MESSAGE,
@@ -60,6 +61,7 @@ import {
 import { DiagnosticsSettingsLink } from "./DiagnosticsSettingsLink";
 import { providerSignInPageState, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type PendingAction =
   | "install"
@@ -78,24 +80,37 @@ type SignInInvocation = {
   operationObserved: boolean;
 };
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): string {
+const ANTIGRAVITY_ACTION_FAILURES = {
+  install: msg("Scient could not install Antigravity."),
+  repair: msg("Scient could not repair Antigravity."),
+  update: msg("Scient could not update Antigravity."),
+  "cancel-runtime": msg("Scient could not cancel-runtime Antigravity."),
+  "sign-in": msg("Scient could not sign-in Antigravity."),
+  "submit-code": msg("Scient could not submit-code Antigravity."),
+  "cancel-sign-in": msg("Scient could not cancel-sign-in Antigravity."),
+} satisfies Record<Exclude<PendingAction, null>, string>;
+
+function runtimeStage(
+  operation: ProviderRuntimeOperation | null,
+  resolve: MessageResolver = m,
+): string {
   switch (operation?.status) {
     case "preparing":
-      return "Preparing the reviewed download…";
+      return resolve(msg("Preparing the reviewed download…"));
     case "downloading":
-      return "Downloading Antigravity from Google…";
+      return resolve(msg("Downloading Antigravity from Google…"));
     case "verifying":
-      return "Verifying the Google release…";
+      return resolve(msg("Verifying the Google release…"));
     case "installing":
-      return "Installing Antigravity privately…";
+      return resolve(msg("Installing Antigravity privately…"));
     case "testing":
-      return "Checking the installation…";
+      return resolve(msg("Checking the installation…"));
     case "activating":
-      return "Finishing setup…";
+      return resolve(msg("Finishing setup…"));
     case "removing":
-      return "Removing Scient’s private Antigravity copy…";
+      return resolve(msg("Removing Scient’s private Antigravity copy…"));
     default:
-      return "Preparing Antigravity…";
+      return resolve(msg("Preparing Antigravity…"));
   }
 }
 
@@ -115,6 +130,8 @@ export function AntigravityInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   const [copiedInstallCommand, setCopiedInstallCommand] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [authorizationResponseExpanded, setAuthorizationResponseExpanded] = useState(false);
@@ -261,7 +278,7 @@ export function AntigravityInlineSetup(props: {
       } catch (error) {
         if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
           setLocalError(
-            providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
+            providerLifecycleFailureMessage(error, messages(ANTIGRAVITY_ACTION_FAILURES[action])),
           );
         }
       }
@@ -338,7 +355,7 @@ export function AntigravityInlineSetup(props: {
         setLocalError(
           providerLifecycleFailureMessage(
             error,
-            "Scient could not return the sign-in response to Antigravity.",
+            gt("Scient could not return the sign-in response to Antigravity."),
           ),
         );
       }
@@ -366,22 +383,26 @@ export function AntigravityInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={runtimeStage(activeRuntimeOperation)}
+          body={runtimeStage(activeRuntimeOperation, messages)}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
             action === "update"
-              ? "Updating Antigravity"
+              ? gt("Updating Antigravity")
               : action === "repair"
-                ? "Repairing Antigravity"
+                ? gt("Repairing Antigravity")
                 : action === "remove"
-                  ? "Removing Antigravity"
-                  : "Installing Antigravity"
+                  ? gt("Removing Antigravity")
+                  : gt("Installing Antigravity")
           }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label={cancelRuntimeActionLabel("Antigravity", activeRuntimeOperation.action)}
+              aria-label={cancelRuntimeActionLabel(
+                "Antigravity",
+                activeRuntimeOperation.action,
+                messages,
+              )}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -393,7 +414,7 @@ export function AntigravityInlineSetup(props: {
               ) : (
                 <XIcon aria-hidden />
               )}
-              Cancel
+              <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -419,10 +440,13 @@ export function AntigravityInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? managedRuntimeRepairMessage(props.provider, "Antigravity")}
+          body={
+            localError ??
+            managedRuntimeRepairMessage(props.provider, "Antigravity", undefined, messages)
+          }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Antigravity needs repair"
+          title={gt("Antigravity needs repair")}
         />
         <AssistedSetupActions>
           <Button
@@ -431,7 +455,7 @@ export function AntigravityInlineSetup(props: {
             type="button"
             variant="ghost-primary"
           >
-            <RefreshCwIcon aria-hidden /> Repair Antigravity
+            <RefreshCwIcon aria-hidden /> <T>Repair Antigravity</T>
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -449,18 +473,18 @@ export function AntigravityInlineSetup(props: {
         <AssistedSetupStatus
           body={runtimeOperation.message}
           icon={<CheckCircle2Icon className="size-5 text-success" />}
-          title="Antigravity removed"
+          title={gt("Antigravity removed")}
         />
         {runtime?.actions.includes("install") ? (
           <AssistedSetupActions>
             <Button
-              aria-label="Install Antigravity"
+              aria-label={gt("Install Antigravity")}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
-              <DownloadIcon aria-hidden /> Install
+              <DownloadIcon aria-hidden /> <T>Install</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -477,18 +501,22 @@ export function AntigravityInlineSetup(props: {
         accountAction={props.accountAction}
         body={
           usesCredentials ? (
-            "Your configured credentials are unchanged."
+            gt("Your configured credentials are unchanged.")
           ) : (
-            <>
+            <T>
               Your{" "}
               <ProviderAccountManagementLink provider="antigravity">
                 Google account
               </ProviderAccountManagementLink>{" "}
               remains connected.
-            </>
+            </T>
           )
         }
-        title={usesCredentials ? "Antigravity credentials configured" : "Google account connected"}
+        title={
+          usesCredentials
+            ? gt("Antigravity credentials configured")
+            : gt("Google account connected")
+        }
       />
     ) : null;
   }
@@ -504,8 +532,11 @@ export function AntigravityInlineSetup(props: {
           body={
             installationError ??
             (canInstall
-              ? "Scient can install a reviewed official Antigravity runtime privately."
-              : `Assisted installation is not available on ${providerRuntimeComputerLabel(props.provider)}. Use Google’s official installer.`)
+              ? gt("Scient can install a reviewed official Antigravity runtime privately.")
+              : gt(
+                  "Assisted installation is not available on {computer}. Use Google’s official installer.",
+                  { computer: providerRuntimeComputerLabel(props.provider, messages) },
+                ))
           }
           icon={
             installationError ? (
@@ -516,14 +547,18 @@ export function AntigravityInlineSetup(props: {
           }
           role={installationError ? "alert" : undefined}
           title={
-            installationError ? "Antigravity installation couldn’t finish" : "Install Antigravity"
+            installationError
+              ? gt("Antigravity installation couldn’t finish")
+              : gt("Install Antigravity")
           }
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
               aria-label={
-                installationError ? "Retry installation of Antigravity" : "Install Antigravity"
+                installationError
+                  ? gt("Retry installation of Antigravity")
+                  : gt("Install Antigravity")
               }
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
@@ -531,7 +566,7 @@ export function AntigravityInlineSetup(props: {
               variant="ghost-primary"
             >
               {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {installationError ? "Retry installation" : "Install"}
+              {installationError ? gt("Retry installation") : gt("Install")}
             </Button>
           </AssistedSetupActions>
         ) : (
@@ -570,13 +605,13 @@ export function AntigravityInlineSetup(props: {
       activeConnectionOperation?.authorizationUrlKind === "primary" &&
       (page.notOpenedHere || openingFailure !== null);
     const waitingBody = blocked
-      ? "Open Google sign-in to continue."
+      ? gt("Open Google sign-in to continue.")
       : (openingFailure ??
         (page.opened
-          ? "Complete the official Antigravity sign-in in your browser."
+          ? gt("Complete the official Antigravity sign-in in your browser.")
           : page.notOpenedHere
-            ? "Open the Google sign-in page to continue."
-            : "Opening Google sign-in in your browser…"));
+            ? gt("Open the Google sign-in page to continue.")
+            : gt("Opening Google sign-in in your browser…")));
     const waitingForAuthorizationCode =
       (activeConnectionOperation?.acceptsAuthorizationCode === true ||
         (activeConnectionOperation?.acceptsAuthorizationCode === undefined &&
@@ -590,7 +625,7 @@ export function AntigravityInlineSetup(props: {
             starting
               ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
               : verifying
-                ? "Finding the models available to your account…"
+                ? gt("Finding the models available to your account…")
                 : waitingBody
           }
           icon={
@@ -605,14 +640,14 @@ export function AntigravityInlineSetup(props: {
           role={openingFailure ? "alert" : undefined}
           title={
             usesCredentials
-              ? "Checking credentials"
+              ? gt("Checking credentials")
               : starting
-                ? "Starting Google sign-in"
+                ? gt("Starting Google sign-in")
                 : verifying
-                  ? "Checking your Google account"
+                  ? gt("Checking your Google account")
                   : blocked
-                    ? "Sign-in page blocked"
-                    : "Finish signing in"
+                    ? gt("Sign-in page blocked")
+                    : gt("Finish signing in")
           }
         />
         {waitingForAuthorizationCode &&
@@ -631,7 +666,7 @@ export function AntigravityInlineSetup(props: {
         ) : waitingForAuthorizationCode ? (
           <div className="w-full space-y-2">
             <p className="text-muted-foreground text-xs">
-              Paste the code Google shows after sign in.
+              <T>Paste the code Google shows after sign in.</T>
             </p>
             <ProviderAuthorizationCodeForm
               authorizationCode={authorizationCode}
@@ -657,22 +692,22 @@ export function AntigravityInlineSetup(props: {
               >
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
-                  ? "Open sign-in help"
+                  ? gt("Open sign-in help")
                   : page.notOpenedHere || blocked
-                    ? "Open Google sign-in"
-                    : "Reopen Google sign-in"}
+                    ? gt("Open Google sign-in")
+                    : gt("Reopen Google sign-in")}
               </Button>
             ) : null}
             {activeConnectionOperation ? (
               <Button
-                aria-label="Cancel Antigravity sign-in"
+                aria-label={gt("Cancel Antigravity sign-in")}
                 disabled={pendingAction === "submit-code" || pendingAction === "cancel-sign-in"}
                 onClick={() => void cancelSignIn()}
                 size="sm"
                 type="button"
                 variant="ghost-destructive-action"
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
             ) : null}
           </AssistedSetupActions>
@@ -686,9 +721,11 @@ export function AntigravityInlineSetup(props: {
       <AssistedSetupStatusFrame
         body={
           props.provider.message ??
-          "Scient could not confirm the Google account state. Check the provider again before signing in."
+          gt(
+            "Scient could not confirm the Google account state. Check the provider again before signing in.",
+          )
         }
-        title="Couldn’t verify your Google account"
+        title={gt("Couldn’t verify your Google account")}
         warning
         diagnostics={runtimeDiagnostics}
       />
@@ -708,19 +745,24 @@ export function AntigravityInlineSetup(props: {
         : null;
     const signInGuidance =
       (failedAfterSignIn ? (
-        <>
-          {usesCredentials
-            ? "Your credentials were accepted. Try again, or check "
-            : "Your Google account is connected. Try again, or check "}
-          <DiagnosticsSettingsLink /> if it keeps failing.
-        </>
+        usesCredentials ? (
+          <T>
+            Your credentials were accepted. Try again, or check <DiagnosticsSettingsLink /> if it
+            keeps failing.
+          </T>
+        ) : (
+          <T>
+            Your Google account is connected. Try again, or check <DiagnosticsSettingsLink /> if it
+            keeps failing.
+          </T>
+        )
       ) : (
         signInError
       )) ??
       configurationWarning ??
       (usesCredentials
-        ? "Connect with the credentials in the provider settings."
-        : "Sign in with your existing Gemini subscription. Scient never sees your password.");
+        ? gt("Connect with the credentials in the provider settings.")
+        : gt("Sign in with your existing Gemini subscription. Scient never sees your password."));
     const canInstallManaged =
       !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
     return (
@@ -739,23 +781,23 @@ export function AntigravityInlineSetup(props: {
             signInError
               ? failedAfterSignIn
                 ? usesCredentials
-                  ? "Connected, but Antigravity couldn’t start"
-                  : "Signed in, but Antigravity couldn’t start"
+                  ? gt("Connected, but Antigravity couldn’t start")
+                  : gt("Signed in, but Antigravity couldn’t start")
                 : usesCredentials
-                  ? "Connection didn’t finish"
-                  : "Google sign-in didn’t finish"
+                  ? gt("Connection didn’t finish")
+                  : gt("Google sign-in didn’t finish")
               : usesCredentials
-                ? "Connection required"
-                : "Sign in required"
+                ? gt("Connection required")
+                : gt("Sign in required")
           }
         />
         <AssistedSetupActions>
           <Button
             aria-label={
               failedAfterSignIn
-                ? "Try starting Antigravity again"
+                ? gt("Try starting Antigravity again")
                 : signInError
-                  ? "Try again to sign in to Antigravity"
+                  ? gt("Try again to sign in to Antigravity")
                   : undefined
             }
             onClick={() => void startSignIn()}
@@ -770,7 +812,11 @@ export function AntigravityInlineSetup(props: {
             ) : (
               <ExternalLinkIcon aria-hidden />
             )}{" "}
-            {signInError ? "Try again" : usesCredentials ? "Connect" : "Sign in with Google"}
+            {signInError
+              ? gt("Try again")
+              : usesCredentials
+                ? gt("Connect")
+                : gt("Sign in with Google")}
           </Button>
         </AssistedSetupActions>
         {signInError && !props.managedRuntimePresentedExternally ? (
@@ -795,9 +841,9 @@ export function AntigravityInlineSetup(props: {
         accountAction={props.accountAction}
         body={
           props.provider.message ??
-          "Antigravity is connected, but did not report an available model."
+          gt("Antigravity is connected, but did not report an available model.")
         }
-        title="Antigravity needs attention"
+        title={gt("Antigravity needs attention")}
         warning
         diagnostics={runtimeDiagnostics}
       />
@@ -835,19 +881,23 @@ export function AntigravityInlineSetup(props: {
       body={
         <>
           {usesCredentials ? (
-            `Connected with ${props.provider.auth.label ?? "your configured credentials"}.`
+            props.provider.auth.label ? (
+              gt("Connected with {credentials}.", { credentials: props.provider.auth.label })
+            ) : (
+              gt("Connected with your configured credentials.")
+            )
           ) : (
-            <>
+            <T>
               Your{" "}
               <ProviderAccountManagementLink provider="antigravity">
                 Google account
               </ProviderAccountManagementLink>{" "}
               is connected.
-            </>
+            </T>
           )}
         </>
       }
-      title="Antigravity is ready"
+      title={gt("Antigravity is ready")}
     />
   );
 }

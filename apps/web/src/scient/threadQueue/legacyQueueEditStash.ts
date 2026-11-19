@@ -4,6 +4,8 @@
  * attachment bytes. This reads such a stash back once and then removes it. Nothing writes the
  * journal any more.
  */
+import { msg } from "gt-react";
+
 import {
   composerDraftHasUserContent,
   composerTargetKey,
@@ -12,6 +14,7 @@ import {
   type ComposerThreadDraftState,
   type ComposerThreadTarget,
 } from "../../composerDraftStore";
+import { m } from "../../i18n/messages";
 import { usePromptStashStore, type PromptStashEntry } from "../../promptStashStore";
 import { serializeComposerImages } from "../../components/chat/composerImagePersistence";
 import { createIndexedDbConnection } from "../storage/indexedDbConnection";
@@ -24,7 +27,10 @@ const journal = createIndexedDbConnection({
       database.createObjectStore("edits", { keyPath: "journalKey" });
     if (!database.objectStoreNames.contains("files")) database.createObjectStore("files");
   },
-  blockedMessage: "Close older Scient windows and reload to restore this stash.",
+  // Read when the connection is blocked, so it is in the language of that moment.
+  get blockedMessage() {
+    return m(msg("Close older Scient windows and reload to restore this stash."));
+  },
 });
 
 type StoredAttachment = {

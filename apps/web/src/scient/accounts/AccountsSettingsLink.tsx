@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
@@ -7,6 +8,7 @@ import { SettingsRow } from "~/components/settings/settingsLayout";
 import { accountsAvailability } from "./accountsState";
 
 export function AccountsSettingsLink({ disabled }: { disabled: boolean }) {
+  const gt = useGT();
   const primary = usePrimaryEnvironmentId();
   const scope = useOptionalSettingsScope();
   const available = useAtomValue(
@@ -14,10 +16,10 @@ export function AccountsSettingsLink({ disabled }: { disabled: boolean }) {
   );
   return available ? (
     <SettingsRow
-      title="Accounts & secrets"
+      title={gt("Accounts & secrets")}
       control={
         <Link to="/settings/accounts" className="text-sm text-primary hover:underline">
-          Manage accounts
+          <T>Manage accounts</T>
         </Link>
       }
     />

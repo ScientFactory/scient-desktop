@@ -2,8 +2,10 @@ import type { PreviewStreamControl } from "@t3tools/client-runtime/preview/serve
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { msg, useMessages } from "gt-react";
 import { useState } from "react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
 
@@ -18,22 +20,38 @@ export type BrowserControlChipState = {
 export function browserControlChipState(
   control: PreviewStreamControl | null,
   agentAround: boolean,
+  resolve: MessageResolver = m,
 ): BrowserControlChipState {
   if (!control) return null;
-  if (!control.canOperate) return { label: "View only", action: null };
+  if (!control.canOperate) return { label: resolve(msg("View only")), action: null };
   switch (control.controller) {
     case "agent":
-      return { label: "Agent is using this page", action: { label: "Take over", kind: "take" } };
+      return {
+        label: resolve(msg("Agent is using this page")),
+        action: { label: resolve(msg("Take over")), kind: "take" },
+      };
     case "unclaimed":
-      return { label: "Watching this page", action: { label: "Take control", kind: "take" } };
+      return {
+        label: resolve(msg("Watching this page")),
+        action: { label: resolve(msg("Take control")), kind: "take" },
+      };
     case "another-viewer":
-      return { label: "In use in another window", action: null };
+      return { label: resolve(msg("In use in another window")), action: null };
     case "you":
       if (agentAround) {
-        return { label: "You're in control", action: { label: "Hand back", kind: "release" } };
+        return {
+          label: resolve(msg("You're in control")),
+          action: { label: resolve(msg("Hand back")), kind: "release" },
+        };
       }
       return (control.otherViewers ?? 0) > 0
-        ? { label: "You're in control", action: { label: "Release", kind: "release" } }
+        ? {
+            label: resolve(msg("You're in control")),
+            action: {
+              label: resolve(msg("Release", { $context: "give up control of the page" })),
+              kind: "release",
+            },
+          }
         : null;
   }
 }
@@ -48,6 +66,7 @@ export function BrowserControlChip(props: {
   readonly onRelease: () => void;
 }) {
   const { control } = props;
+  const messages = useMessages();
   // The server names the agent only while no person drives, so remember once
   // it has appeared: handing back must stay possible after taking over.
   const [agentSeen, setAgentSeen] = useState(false);
@@ -58,7 +77,7 @@ export function BrowserControlChip(props: {
   );
   const agentWorking = shell !== null && isThreadWorking(shell);
 
-  const state = browserControlChipState(control, agentSeen || agentWorking);
+  const state = browserControlChipState(control, agentSeen || agentWorking, messages);
   if (!state) return null;
   const action = state.action;
 

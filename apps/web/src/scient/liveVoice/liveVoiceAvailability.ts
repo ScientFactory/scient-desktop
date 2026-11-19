@@ -1,5 +1,8 @@
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { scientAgentAccounts } from "../providerConnection/scientAgentAccountList.ts";
 
@@ -32,14 +35,17 @@ export function liveVoiceCallInstance(
 }
 
 /** Why a voice call can't start in this thread now, or null when it can. */
-export function liveVoiceUnavailableReason(input: {
-  readonly provider: ServerProvider | undefined;
-  readonly threadStarted: boolean;
-}): string | null {
+export function liveVoiceUnavailableReason(
+  input: {
+    readonly provider: ServerProvider | undefined;
+    readonly threadStarted: boolean;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   const signedIn = input.provider ? scientAgentChatGptSignedIn(input.provider) : undefined;
-  if (signedIn === false) return "Sign in to ChatGPT in Scient Agent to talk";
+  if (signedIn === false) return resolve(msg("Sign in to ChatGPT in Scient Agent to talk"));
   if (!input.threadStarted && liveVoiceCallInstance(input.provider) === null) {
-    return "Send a first message, then talk";
+    return resolve(msg("Send a first message, then talk"));
   }
   return null;
 }

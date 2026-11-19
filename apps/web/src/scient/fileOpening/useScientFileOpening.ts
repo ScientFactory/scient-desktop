@@ -5,7 +5,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { msg } from "gt-react";
+
 import { openFileInPreview } from "~/browser/openFileInPreview";
+import { m } from "~/i18n/messages";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { assetEnvironment } from "~/state/assets";
@@ -67,8 +70,12 @@ export function useScientFileOpening(input: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to preview HTML",
-            description: `${error instanceof Error ? error.message : "An error occurred."} Opened the source instead.`,
+            title: m(msg("Unable to preview HTML")),
+            description: m(
+              msg("{error} Opened the source instead.", {
+                error: error instanceof Error ? error.message : m(msg("An error occurred.")),
+              }),
+            ),
           }),
         );
       } catch (cause) {
@@ -77,8 +84,12 @@ export function useScientFileOpening(input: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to preview HTML",
-            description: `${cause instanceof Error ? cause.message : "An error occurred."} Opened the source instead.`,
+            title: m(msg("Unable to preview HTML")),
+            description: m(
+              msg("{error} Opened the source instead.", {
+                error: cause instanceof Error ? cause.message : m(msg("An error occurred.")),
+              }),
+            ),
           }),
         );
       }

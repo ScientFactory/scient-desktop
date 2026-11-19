@@ -8,11 +8,13 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -197,7 +199,7 @@ export function useComputeSessionStart(input: {
       void confirmFailedStart(sessionId, generation);
     }
     if (!isAtomCommandInterrupted(result)) {
-      reportComputeFailure("Unable to start compute", result);
+      reportComputeFailure(m(msg("Unable to start compute")), result);
       runtimes.refresh();
       input.model.sessions.refresh();
     }
@@ -217,8 +219,8 @@ export function useComputeSessionStart(input: {
     }).catch((error: unknown) => {
       toastManager.add({
         type: "error",
-        title: `Unable to stop ${session.label}`,
-        description: error instanceof Error ? error.message : "The stop request failed.",
+        title: m(msg("Unable to stop {name}", { name: session.label })),
+        description: error instanceof Error ? error.message : m(msg("The stop request failed.")),
       });
       return null;
     });
@@ -243,7 +245,7 @@ export function useComputeSessionStart(input: {
       return;
     }
     if (!isAtomCommandInterrupted(result))
-      reportComputeFailure(`Unable to stop ${session.label}`, result);
+      reportComputeFailure(m(msg("Unable to stop {name}", { name: session.label })), result);
   };
 
   return {
@@ -277,17 +279,20 @@ export function ComputeCapacityMenu(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
 }) {
+  const gt = useGT();
   if (!props.start.capacityBlocked) return null;
   return (
     <Menu>
       <MenuTrigger
         render={<Button size="xs" variant="ghost-muted" disabled={props.start.stopping !== null} />}
       >
-        <span className="font-normal text-warning">Stop a session…</span>
+        <span className="font-normal text-warning">
+          <T>Stop a session…</T>
+        </span>
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-64">
         {props.start.capacitySessions.length === 0 ? (
-          <MenuItem disabled>No running sessions in this project</MenuItem>
+          <MenuItem disabled>{gt("No running sessions in this project")}</MenuItem>
         ) : (
           props.start.capacitySessions.map((session) => (
             <MenuItem
@@ -295,7 +300,9 @@ export function ComputeCapacityMenu(props: {
               disabled={props.start.stopping !== null}
               onClick={() => props.start.stopUnused(session)}
             >
-              Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)}
+              <T>
+                Stop <Var>{computeSessionOwnerLabel(session, props.environmentId, props.cwd)}</Var>
+              </T>
             </MenuItem>
           ))
         )}

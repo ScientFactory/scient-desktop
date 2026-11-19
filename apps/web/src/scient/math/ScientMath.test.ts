@@ -11,6 +11,10 @@ import {
   ScientInlineMath,
 } from "./ScientMath";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 describe("renderScientTexToHtml", () => {
   it("renders KaTeX markup for both modes", () => {
     const inline = renderScientTexToHtml("x^2", false);

@@ -216,7 +216,9 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         if (status.phase === "waiting-to-retry") return false;
         if (status.phase !== "connected") {
           reportUpdateFailure(
-            new Error(describeScientConnectHost(status, true) ?? "Scient Connect is not on yet."),
+            new Error(
+              describeScientConnectHost(status, true) ?? m(msg("Scient Connect is not on yet.")),
+            ),
           );
           return false;
         }

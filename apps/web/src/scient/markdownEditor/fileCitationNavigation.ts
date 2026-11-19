@@ -8,8 +8,10 @@ import {
 import { formatFileCitationHref, parseFileCitationHref } from "@t3tools/shared/composerCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
+import { msg } from "gt-react";
 import { useEffect, useRef } from "react";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { cancelComputeQuoteReveal } from "~/scient/compute/computeQuoteReveal";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -100,9 +102,12 @@ export function openFileCitation(
     if (!sameWorkspace)
       toastManager.add({
         type: "info",
-        title: "Opening the original workspace file",
-        description:
-          "This conversation has moved to another workspace. The original file opens read-only; the saved quote is unchanged.",
+        title: m(msg("Opening the original workspace file")),
+        description: m(
+          msg(
+            "This conversation has moved to another workspace. The original file opens read-only; the saved quote is unchanged.",
+          ),
+        ),
       });
   });
 }

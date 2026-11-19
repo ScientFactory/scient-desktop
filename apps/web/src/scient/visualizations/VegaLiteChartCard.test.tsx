@@ -2,9 +2,13 @@
 import * as NodeFS from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { VegaLiteChartCard } from "./VegaLiteChartCard";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const chartCardSource = NodeFS.readFileSync(
   new URL("./VegaLiteChartCard.tsx", import.meta.url),

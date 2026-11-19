@@ -13,8 +13,10 @@ import type {
 } from "@t3tools/contracts";
 
 import type { useNavigate } from "@tanstack/react-router";
+import { msg } from "gt-react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
+import { m } from "~/i18n/messages";
 import { ensureLocalApi } from "~/localApi";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -41,6 +43,8 @@ export type DocumentPdfDelivery =
       readonly _tag: "delivered";
       /** "Export saved" or "Download started", as for every other format. */
       readonly title: string;
+      /** Which of the two; picks the notice title when the export has notes. */
+      readonly outcome?: "saved" | "download-started";
       /** The saved path, or the downloaded file's name. */
       readonly description: string;
     };
@@ -76,11 +80,17 @@ export async function deliverDocumentPdf(
     case "failed":
       throw new Error(saveFailureMessage(saved));
     case "saved":
-      return { _tag: "delivered", title: "Export saved", description: saved.path };
+      return {
+        _tag: "delivered",
+        title: m(msg("Export saved")),
+        outcome: "saved",
+        description: saved.path,
+      };
     case "download-started":
       return {
         _tag: "delivered",
-        title: "Download started",
+        title: m(msg("Download started")),
+        outcome: "download-started",
         description: suggestedFileName,
       };
   }
@@ -122,14 +132,17 @@ export function documentPdfSavedNotice(input: {
 }) {
   const { delivery, published, threadRef, navigate } = input;
   const actionProps = {
-    children: "Open",
+    children: m(msg("Open", { $context: "verb, opens the exported PDF" })),
     onClick: () =>
       showInOwningThread(navigate, threadRef, () => openDocumentPdf(threadRef, published)),
   };
   return published.warnings.length > 0
     ? {
         type: "warning" as const,
-        title: `${delivery.title} with notes`,
+        title:
+          delivery.outcome === "download-started"
+            ? m(msg("Download started with notes"))
+            : m(msg("Export saved with notes")),
         description: summarizeDocumentWarnings(published.warnings),
         actionProps,
       }

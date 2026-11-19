@@ -1,5 +1,6 @@
 import type { OrchestrationV2ProviderGoal } from "@t3tools/contracts";
 import { presentProviderGoal } from "@t3tools/client-runtime/state/thread-execution";
+import { msg, T, useGT } from "gt-react";
 import { ListChecksIcon, TargetIcon, XIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -28,22 +29,27 @@ export function composerModePrompt(mode: ComposerMode, text: string): string {
   return `${MODE_COMMANDS[mode]} ${trimmed}`;
 }
 
+/** `msg()` strings: resolve them with `useMessages()` where they show. */
 export const COMPOSER_MODE_PLACEHOLDERS: Record<ComposerMode, string> = {
-  goal: "Describe the goal. The agent keeps working until it is done.",
-  plan: "Describe what to plan. Nothing changes until you approve the plan.",
+  goal: msg("Describe the goal. The agent keeps working until it is done."),
+  plan: msg("Describe what to plan. Nothing changes until you approve the plan."),
 };
 
 /** Short state for the chip; the full title stays on the goal row in the conversation. */
-function goalChipLabel(goal: OrchestrationV2ProviderGoal, working: boolean): string {
+function goalChipLabel(
+  goal: OrchestrationV2ProviderGoal,
+  working: boolean,
+  gt: ReturnType<typeof useGT>,
+): string {
   switch (goal.status) {
     case "active":
-      return working ? "Goal · running" : "Goal set";
+      return working ? gt("Goal · running") : gt("Goal set");
     case "paused":
-      return "Goal paused";
+      return gt("Goal paused");
     case "complete":
-      return "Goal done";
+      return gt("Goal done");
     default:
-      return "Goal stopped";
+      return gt("Goal stopped");
   }
 }
 
@@ -62,6 +68,7 @@ export const ComposerModeChips = memo(function ComposerModeChips(props: {
   /** Sends a goal or plan command as its own turn; absent before the thread exists. */
   onSendCommand: ((text: string, failureMessage: string) => Promise<void>) | undefined;
 }) {
+  const gt = useGT();
   // Small chips: they sit beside the attach button, not with the model picker.
   const size = props.size ?? "xs";
   const composerMenuProps = useComposerMenuProps();
@@ -77,7 +84,11 @@ export const ComposerModeChips = memo(function ComposerModeChips(props: {
       size={size}
       className={chipClassName}
       aria-pressed
-      aria-label={`${label}: your next message is sent as a ${mode}. Click to cancel.`}
+      aria-label={
+        mode === "goal"
+          ? gt("{label}: your next message is sent as a goal. Click to cancel.", { label })
+          : gt("{label}: your next message is sent as a plan. Click to cancel.", { label })
+      }
       onClick={() => props.onModeChange(null)}
     >
       <ComposerControlIcon icon={icon} size={size} />
@@ -91,7 +102,7 @@ export const ComposerModeChips = memo(function ComposerModeChips(props: {
   // A chip shows only while it means something: a mode picked from the / menu, a goal still
   // being worked on, or plan mode on in the agent.
   const goalChip = !props.supportsGoal ? null : props.mode === "goal" ? (
-    modeChip("goal", goal === null ? "Goal" : "New goal", TargetIcon)
+    modeChip("goal", goal === null ? gt("Goal") : gt("New goal"), TargetIcon)
   ) : goal === null || goal.status === "complete" || onSendCommand === undefined ? null : (
     <Menu open={goalMenuOpen} onOpenChange={setGoalMenuOpen}>
       <MenuTrigger
@@ -106,27 +117,31 @@ export const ComposerModeChips = memo(function ComposerModeChips(props: {
       >
         <ComposerControlIcon icon={TargetIcon} size={size} />
         <span data-composer-control-label className="max-sm:sr-only">
-          {goalChipLabel(goal, props.working)}
+          {goalChipLabel(goal, props.working, gt)}
         </span>
       </MenuTrigger>
       <MenuPopup align="start" className="max-w-80" {...composerMenuProps}>
         <div className="px-2 py-1.5 text-muted-foreground text-xs">{goal.objective}</div>
         <MenuSeparator />
         {presentProviderGoal(goal, props.working).canResume && !props.working ? (
-          <MenuItem onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}>
-            Resume goal
+          <MenuItem
+            onClick={() => void onSendCommand("/goal resume", gt("Failed to resume goal."))}
+          >
+            <T>Resume goal</T>
           </MenuItem>
         ) : null}
-        <MenuItem onClick={() => props.onModeChange("goal")}>Set a new goal</MenuItem>
-        <MenuItem onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}>
-          Clear goal
+        <MenuItem onClick={() => props.onModeChange("goal")}>
+          <T>Set a new goal</T>
+        </MenuItem>
+        <MenuItem onClick={() => void onSendCommand("/goal clear", gt("Failed to clear goal."))}>
+          <T>Clear goal</T>
         </MenuItem>
       </MenuPopup>
     </Menu>
   );
 
   const planChip = !props.supportsPlan ? null : props.mode === "plan" ? (
-    modeChip("plan", "Plan", ListChecksIcon)
+    modeChip("plan", gt("Plan", { $context: "noun, composer mode chip" }), ListChecksIcon)
   ) : !props.planMode || onSendCommand === undefined ? null : (
     <Menu open={planMenuOpen} onOpenChange={setPlanMenuOpen}>
       <MenuTrigger
@@ -135,18 +150,18 @@ export const ComposerModeChips = memo(function ComposerModeChips(props: {
             size={size}
             className={chipClassName}
             aria-pressed
-            aria-label="Planning: the agent changes nothing until you approve a plan"
+            aria-label={gt("Planning: the agent changes nothing until you approve a plan")}
           />
         }
       >
         <ComposerControlIcon icon={ListChecksIcon} size={size} />
         <span data-composer-control-label className="max-sm:sr-only">
-          Planning
+          <T>Planning</T>
         </span>
       </MenuTrigger>
       <MenuPopup align="start" {...composerMenuProps}>
-        <MenuItem onClick={() => void onSendCommand("/plan off", "Failed to leave plan mode.")}>
-          Leave plan mode
+        <MenuItem onClick={() => void onSendCommand("/plan off", gt("Failed to leave plan mode."))}>
+          <T>Leave plan mode</T>
         </MenuItem>
       </MenuPopup>
     </Menu>

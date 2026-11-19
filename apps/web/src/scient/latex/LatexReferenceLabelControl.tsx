@@ -1,5 +1,6 @@
 import { useId, type ComponentProps } from "react";
 import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { T } from "gt-react";
 
 /** Reference keys stay visible; the field gains a border only while editing. */
 export function LatexReferenceLabelControl({
@@ -14,7 +15,9 @@ export function LatexReferenceLabelControl({
       data-keybinding-capture=""
       onFocus={onEdit}
     >
-      <label htmlFor={id}>Label</label>
+      <label htmlFor={id}>
+        <T context="reference label field">Label</T>
+      </label>
       <LatexReferenceLabelField {...props} id={id} />
     </div>
   );

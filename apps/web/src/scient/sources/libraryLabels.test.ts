@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { m } from "~/i18n/messages";
+
 import {
   addedToProjectLabel,
   alsoInOtherProjectsLabel,
@@ -25,7 +27,7 @@ const strings = (value: unknown): ReadonlyArray<string> =>
 describe("library labels", () => {
   it("never call a source pinned", () => {
     const shown = [
-      ...strings(LIBRARY_LABELS),
+      ...strings(LIBRARY_LABELS).map((text) => m(text)),
       ...[1, 2].flatMap((count) => [
         addedToProjectLabel(count),
         removedFromProjectLabel(count),

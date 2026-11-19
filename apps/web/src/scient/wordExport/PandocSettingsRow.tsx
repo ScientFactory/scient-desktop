@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -13,21 +14,26 @@ import type { PandocToolController } from "./usePandocTool";
  * "Pandoc".
  */
 export function PandocSettingsRow({ controller }: { readonly controller: PandocToolController }) {
+  const gt = useGT();
   const { status, view, act, checking } = controller;
   const notice = pandocReleaseNotice(status);
   // The Word tab already says what this is for, so the row names Pandoc and
   // keeps the export dialogs' longer sentences for the states that need them.
   const description =
     view.kind === "ready"
-      ? "Installed"
+      ? gt("Installed")
       : view.kind === "offer"
-        ? ["Not installed", status?.downloadBytes ? formatMegabytes(status.downloadBytes) : null]
+        ? [
+            gt("Not installed"),
+            status?.downloadBytes ? formatMegabytes(status.downloadBytes) : null,
+          ]
             .filter(Boolean)
             .join(" · ")
         : view.detail;
   return (
     <SettingsRow
       id="word-export"
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
       title="Pandoc"
       description={description}
       status={
@@ -38,13 +44,15 @@ export function PandocSettingsRow({ controller }: { readonly controller: PandocT
               <>
                 {" · "}
                 <a
-                  aria-label={`${notice.release} source code (opens in browser)`}
+                  aria-label={gt("{release} source code (opens in browser)", {
+                    release: notice.release,
+                  })}
                   className="inline-flex items-center gap-1 text-foreground/80 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
                   href={notice.sourceUrl}
                   rel="noreferrer noopener"
                   target="_blank"
                 >
-                  Source code
+                  <T>Source code</T>
                   <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
                 </a>
               </>
@@ -62,7 +70,7 @@ export function PandocSettingsRow({ controller }: { readonly controller: PandocT
             disabled={view.busy || checking}
             onClick={act}
           >
-            {view.kind === "offer" ? "Install now" : view.actionLabel}
+            {view.kind === "offer" ? gt("Install now") : view.actionLabel}
           </Button>
         )
       }

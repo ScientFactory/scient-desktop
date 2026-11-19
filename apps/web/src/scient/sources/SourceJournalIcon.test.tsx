@@ -4,6 +4,10 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { SourceJournalIcon } from "./SourceJournalIcon";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const record = {
   formatVersion: 1 as const,
   sourceId: "source_test",

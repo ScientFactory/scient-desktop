@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { LatexTextField, replaceLatexFieldDraft } from "./LatexTextField";
+import { useGT } from "gt-react";
 
 /** Invalid input remains a field draft; it is never silently reset on blur. */
 export function LatexReferenceLabelField(props: {
@@ -13,13 +14,14 @@ export function LatexReferenceLabelField(props: {
   isAvailable?: (value: string) => boolean;
   onCommit: (value: string, fieldId?: string) => void;
 }) {
+  const gt = useGT();
   const messageId = useId();
   const [message, setMessage] = useState<string | null>(null);
   const validate = (value: string) =>
     !((props.allowEmpty && value === "") || /^[^{}\\%\s#$&~^]+$/u.test(value))
-      ? "Use a label without spaces or LaTeX special characters."
+      ? gt("Use a label without spaces or LaTeX special characters.")
       : !(props.isAvailable?.(value) ?? true)
-        ? "This label is already used. Choose another label."
+        ? gt("This label is already used. Choose another label.")
         : null;
   return (
     <div className="scient-latex-reference-label-field">
@@ -30,7 +32,7 @@ export function LatexReferenceLabelField(props: {
         aria-invalid={message !== null}
         rows={1}
         wrap="off"
-        placeholder="Add label"
+        placeholder={gt("Add label")}
         spellCheck={false}
         disabled={props.disabled}
         value={props.value}

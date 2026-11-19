@@ -90,7 +90,7 @@ export function focusNewDocumentWhenOpen(
         return;
       }
       // A template without a title is named above its page instead.
-      const name = page.querySelector<HTMLInputElement>('input[aria-label="Document name"]');
+      const name = page.querySelector<HTMLInputElement>("input[data-document-name]");
       if (visible(name)) {
         name.focus({ preventScroll: true });
         return;

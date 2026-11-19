@@ -1,8 +1,11 @@
+import { msg } from "gt-react";
 import { useRef, useState } from "react";
 import type {
   ComputeLanguageRuntimeInventory,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
+import { m } from "~/i18n/messages";
+
 import type { ComputeManagedRuntimeController } from "./ComputeManagedRuntimeControls";
 import { selectExistingComputeInstallation } from "./computeInstallationSettingsModel";
 
@@ -48,7 +51,11 @@ export function useComputeInstallationSelection({
           useExisting: async () => {
             if (!(await runtime.act("use-existing")))
               throw new Error(
-                "Scient-managed Python is still selected. Try switching again when its current operation finishes.",
+                m(
+                  msg(
+                    "Scient-managed Python is still selected. Try switching again when its current operation finishes.",
+                  ),
+                ),
               );
           },
         });
@@ -58,7 +65,9 @@ export function useComputeInstallationSelection({
     })()
       .catch(async (cause) => {
         setError(
-          cause instanceof Error ? cause.message : "The installation could not be selected.",
+          cause instanceof Error
+            ? cause.message
+            : m(msg("The installation could not be selected.")),
         );
         return false;
       })

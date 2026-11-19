@@ -7,9 +7,11 @@ import type {
   ScientOverleafSyncResult,
   ScientOverleafUndoResult,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 
 import {
@@ -89,7 +91,7 @@ export async function unlinkOverleaf(
   connectionId: string,
 ): Promise<boolean> {
   const failed = (description: string) => {
-    toastManager.add({ type: "error", title: "Couldn't unlink", description });
+    toastManager.add({ type: "error", title: m(msg("Couldn't unlink")), description });
     return false;
   };
   try {
@@ -106,10 +108,14 @@ export async function unlinkOverleaf(
     forgetOverleafConnection(environmentId, connectionId);
     toastManager.add({
       type: "success",
-      title: "Unlinked from Overleaf",
+      title: m(msg("Unlinked from Overleaf")),
       description: result.finishedInterruptedSync
-        ? "The interrupted sync was finished first. Your files stay as they are now, here and on Overleaf."
-        : "Your files stay as they are, here and on Overleaf.",
+        ? m(
+            msg(
+              "The interrupted sync was finished first. Your files stay as they are now, here and on Overleaf.",
+            ),
+          )
+        : m(msg("Your files stay as they are, here and on Overleaf.")),
     });
     return true;
   } catch (error) {
@@ -163,7 +169,7 @@ export async function runOverleafSync(
     if (context.quiet) throw error;
     toastManager.add({
       type: "error",
-      title: "Couldn't sync with Overleaf",
+      title: m(msg("Couldn't sync with Overleaf")),
       description: operationErrorText(error),
     });
     return null;
@@ -257,7 +263,7 @@ export function reportOverleafSync(
     ...(view.hasChanges && !view.needsDecision && openReview
       ? {
           actionProps: {
-            children: "See changes",
+            children: m(msg("See changes")),
             onClick: () => {
               toastManager.close(id);
               openReview();
@@ -306,7 +312,7 @@ export async function readOverleafChanges(
                 ? [settled, refusalText(result.refusal, "sync", settled !== null)]
                     .filter(Boolean)
                     .join(" ")
-                : "An interrupted sync was finished first. Read the changes again.",
+                : m(msg("An interrupted sync was finished first. Read the changes again.")),
           },
     );
   } catch (error) {
@@ -332,14 +338,14 @@ export async function cancelOverleafRun(
   try {
     const result = await cancelOverleafSync(environmentId, { workspaceRoot, connectionId });
     if (result._tag === "nothing-running") {
-      toastManager.add({ type: "info", title: "No sync is running" });
+      toastManager.add({ type: "info", title: m(msg("No sync is running")) });
       // A chip still on "Syncing…" read a busy status that has since ended.
       void reloadOverleafWorkspaces(environmentId, workspaceRoot, { afterOwnOperation: false });
     }
   } catch (error) {
     toastManager.add({
       type: "error",
-      title: "Couldn't cancel the sync",
+      title: m(msg("Couldn't cancel the sync")),
       description: operationErrorText(error),
     });
   }

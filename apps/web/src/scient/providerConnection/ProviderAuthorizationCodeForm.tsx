@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon, LoaderIcon } from "lucide-react";
 import { useId } from "react";
 
@@ -17,6 +18,7 @@ export function ProviderAuthorizationCodeForm(props: {
   readonly onAuthorizationCodeChange: (value: string) => void;
   readonly onSubmit: () => void;
 }) {
+  const gt = useGT();
   return (
     <form
       className="flex w-full items-center gap-2"
@@ -28,7 +30,9 @@ export function ProviderAuthorizationCodeForm(props: {
       <input
         aria-label={
           props.inputLabel ??
-          `${props.providerName} ${props.responseKind === "callback_url" ? "sign-in redirect URL" : "one-time authorization code"}`
+          (props.responseKind === "callback_url"
+            ? gt("{provider} sign-in redirect URL", { provider: props.providerName })
+            : gt("{provider} one-time authorization code", { provider: props.providerName }))
         }
         autoCapitalize="none"
         autoComplete="off"
@@ -38,8 +42,8 @@ export function ProviderAuthorizationCodeForm(props: {
         placeholder={
           props.placeholder ??
           (props.responseKind === "callback_url"
-            ? "Paste the full redirect URL"
-            : "Paste authorization code")
+            ? gt("Paste the full redirect URL")
+            : gt("Paste authorization code"))
         }
         spellCheck={false}
         type={props.secret ? "password" : "text"}
@@ -52,7 +56,7 @@ export function ProviderAuthorizationCodeForm(props: {
         variant="outline"
       >
         {props.submitting ? <LoaderIcon className="animate-spin" /> : null}
-        Submit
+        <T>Submit</T>
       </Button>
     </form>
   );
@@ -70,6 +74,7 @@ export function ProviderAuthorizationCodeDisclosure(props: {
   readonly onSubmit: () => void;
 }) {
   const formId = useId();
+  const gt = useGT();
 
   return (
     <div className="w-full space-y-2 in-[[data-model-picker-content=true]]:max-w-64">
@@ -85,14 +90,14 @@ export function ProviderAuthorizationCodeDisclosure(props: {
       >
         {props.expanded ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
         {props.responseKind === "callback_url"
-          ? "Signing in on another computer?"
-          : "Have a sign-in code?"}
+          ? gt("Signing in on another computer?")
+          : gt("Have a sign-in code?")}
       </Button>
       {props.expanded ? (
         <div className="space-y-2" id={formId}>
           {props.responseKind === "callback_url" ? (
             <p className="text-muted-foreground text-xs">
-              If Google redirects to an unreachable localhost page, paste its full URL here.
+              <T>If Google redirects to an unreachable localhost page, paste its full URL here.</T>
             </p>
           ) : null}
           <ProviderAuthorizationCodeForm
@@ -102,8 +107,8 @@ export function ProviderAuthorizationCodeDisclosure(props: {
             onSubmit={props.onSubmit}
             placeholder={
               props.responseKind === "callback_url"
-                ? "Paste the full redirect URL"
-                : "Paste sign-in code"
+                ? gt("Paste the full redirect URL")
+                : gt("Paste sign-in code")
             }
             providerName={props.providerName}
             responseKind={props.responseKind ?? "code"}

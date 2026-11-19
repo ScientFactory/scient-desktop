@@ -1,3 +1,6 @@
+import { msg, T, useGT, Var } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { ScientSourceImportOperation } from "@t3tools/contracts";
 import {
   Activity as ActivityIcon,
@@ -131,11 +134,11 @@ export function SourcesResultSlot(props: {
         {result.actions}
         {result.details && props.onDetails ? (
           <Button size="xs" variant="ghost" onClick={props.onDetails}>
-            Details
+            <T context="noun, more information">Details</T>
           </Button>
         ) : null}
         <Button size="xs" variant="ghost" onClick={props.onDismiss}>
-          Dismiss
+          <T>Dismiss</T>
         </Button>
       </div>
     </div>
@@ -183,6 +186,7 @@ export function SourcesActivityButton(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onDismissResult: () => void;
 }) {
+  const gt = useGT();
   const { activity, result } = props;
   if (activity.count === 0 && !result && !props.open) return null;
   const choices = activity.issues.filter((item) => item.tone !== "advisory");
@@ -191,11 +195,17 @@ export function SourcesActivityButton(props: {
     <Button
       size="xs"
       variant="ghost"
-      aria-label={activity.count > 0 ? `Activity: ${activity.count}` : "Activity"}
+      aria-label={
+        activity.count > 0
+          ? gt("Activity: {count}", { count: activity.count })
+          : gt("Activity", { $context: "running and finished Library work" })
+      }
       onClick={() => props.onOpenChange(true)}
     >
       <ActivityIcon />
-      <span className="@max-[20rem]:hidden">Activity</span>
+      <span className="@max-[20rem]:hidden">
+        <T context="running and finished Library work">Activity</T>
+      </span>
       {activity.count > 0 ? <span className="tabular-nums">{activity.count}</span> : null}
     </Button>
   );
@@ -209,19 +219,26 @@ export function SourcesActivityButton(props: {
       <Dialog open={props.open} onOpenChange={props.onOpenChange}>
         <DialogPopup className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Activity</DialogTitle>
+            <DialogTitle>
+              <T context="running and finished Library work">Activity</T>
+            </DialogTitle>
             <DialogDescription>
               {activity.summary ??
-                (activity.count === 0 ? "Nothing is running and nothing needs you." : null)}
+                (activity.count === 0 ? gt("Nothing is running and nothing needs you.") : null)}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <ActivitySection title="Running" items={activity.running} />
-            <ActivitySection title="Needs you" items={choices} />
-            <ActivitySection title="Other notices" items={notices} />
+            <ActivitySection
+              title={gt("Running", { $context: "status of a task" })}
+              items={activity.running}
+            />
+            <ActivitySection title={gt("Needs you")} items={choices} />
+            <ActivitySection title={gt("Other notices")} items={notices} />
             {result ? (
-              <section aria-label="Latest result" className="space-y-2">
-                <h3 className="text-xs font-medium text-muted-foreground">Latest result</h3>
+              <section aria-label={gt("Latest result")} className="space-y-2">
+                <h3 className="text-xs font-medium text-muted-foreground">
+                  <T>Latest result</T>
+                </h3>
                 <div className="space-y-2 rounded-md bg-muted/40 px-3 py-2 text-xs break-words">
                   <div className="flex items-start gap-2">
                     {RESULT_ICON[result.tone]}
@@ -231,7 +248,7 @@ export function SourcesActivityButton(props: {
                   <div className="flex flex-wrap items-center justify-end gap-1">
                     {result.actions}
                     <Button size="xs" variant="ghost" onClick={props.onDismissResult}>
-                      Dismiss
+                      <T>Dismiss</T>
                     </Button>
                   </div>
                 </div>
@@ -245,24 +262,27 @@ export function SourcesActivityButton(props: {
 }
 
 /** Activity items from the Library's own state: import work, an action's error, a failed read. */
-export function sourcesStateActivity(input: {
-  readonly importPreparation: ImportPreparation | null;
-  readonly operation: ScientSourceImportOperation | null;
-  /** The running import's own view, with its Cancel; its progress line otherwise. */
-  readonly operationBody?: ReactNode;
-  readonly error: string | null;
-  readonly onDismissError: () => void;
-  /** Pass only while a list is shown: with none, the panel shows the load failure itself. */
-  readonly overviewError: string | null;
-  readonly onRetryOverview: () => void;
-}): ReadonlyArray<SourcesActivityItem> {
+export function sourcesStateActivity(
+  input: {
+    readonly importPreparation: ImportPreparation | null;
+    readonly operation: ScientSourceImportOperation | null;
+    /** The running import's own view, with its Cancel; its progress line otherwise. */
+    readonly operationBody?: ReactNode;
+    readonly error: string | null;
+    readonly onDismissError: () => void;
+    /** Pass only while a list is shown: with none, the panel shows the load failure itself. */
+    readonly overviewError: string | null;
+    readonly onRetryOverview: () => void;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<SourcesActivityItem> {
   const items: SourcesActivityItem[] = [];
   if (input.importPreparation) {
-    const label = importPreparationLabel(input.importPreparation);
+    const label = importPreparationLabel(input.importPreparation, resolve);
     items.push({ key: "import-preparation", tone: "running", label, body: <p>{label}…</p> });
   }
   if (input.operation?.state === "running") {
-    const label = importProgressLabel(input.operation);
+    const label = importProgressLabel(input.operation, resolve);
     items.push({
       key: `import:${input.operation.operationId}`,
       tone: "running",
@@ -279,7 +299,7 @@ export function sourcesStateActivity(input: {
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1 text-destructive">{input.error}</p>
           <Button size="xs" variant="ghost" onClick={input.onDismissError}>
-            Dismiss
+            <T>Dismiss</T>
           </Button>
         </div>
       ),
@@ -289,14 +309,17 @@ export function sourcesStateActivity(input: {
     items.push({
       key: "overview-error",
       tone: "error",
-      label: "The list could not be read again",
+      label: resolve(msg("The list could not be read again")),
       body: (
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1">
-            The list could not be read again, so it may be out of date: {input.overviewError}
+            <T>
+              The list could not be read again, so it may be out of date:{" "}
+              <Var>{input.overviewError}</Var>
+            </T>
           </p>
           <Button size="xs" variant="ghost" onClick={input.onRetryOverview}>
-            Try again
+            <T>Try again</T>
           </Button>
         </div>
       ),

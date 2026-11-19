@@ -1,7 +1,9 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { m } from "~/i18n/messages";
 import { ensureLocalApi } from "~/localApi";
 import { analysisEnvironment } from "~/state/analysis";
 import { computeEnvironment } from "~/state/compute";
@@ -109,7 +111,11 @@ export function useCloseComputeOwnedSurfaces(input: {
     if (
       working.some(Boolean) &&
       !(await ensureLocalApi().dialogs.confirm(
-        "Stop what is running and close this tab?\n\nWhat it has printed so far stays with the file.",
+        m(
+          msg(
+            "Stop what is running and close this tab?\n\nWhat it has printed so far stays with the file.",
+          ),
+        ),
         { variant: "destructive" },
       ))
     )

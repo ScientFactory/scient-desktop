@@ -5,6 +5,9 @@ import {
   type ComputeOutput,
   type ComputeProjectedOutput,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 type ComputeExecutionStatus = NonNullable<ComputeExecutionRecord["result"]>["status"];
@@ -186,41 +189,65 @@ export function mergeComputeOutputs(
     .flatMap(([, outputs]) => outputs);
 }
 
+/** `msg()` strings. */
 const SOURCE_ORIGIN_LABELS = {
-  file: "File",
-  selection: "Selection",
-  cell: "Cell",
+  file: msg("File", { $context: "a run of the whole file" }),
+  selection: msg("Selection", { $context: "a run of selected code" }),
+  cell: msg("Cell", { $context: "a run of one notebook-style cell" }),
 } as const satisfies Record<
   Extract<ComputeExecutionSource, { _tag: "document" }>["origin"],
   string
 >;
 
+/** The origin with its line or line range. */
+function sourceOriginRangeLabel(
+  origin: Extract<ComputeExecutionSource, { _tag: "document" }>["origin"],
+  range: string,
+  resolve: MessageResolver,
+): string {
+  switch (origin) {
+    case "file":
+      return resolve(
+        msg("File {range}", { range, $context: "a run of the whole file, then its lines" }),
+      );
+    case "selection":
+      return resolve(
+        msg("Selection {range}", { range, $context: "a run of selected code, then its lines" }),
+      );
+    case "cell":
+      return resolve(msg("Cell {range}", { range, $context: "a run of one cell, then its lines" }));
+  }
+}
+
+/** `msg()` strings. */
 const EXECUTION_STATUS_LABELS = {
-  queued: "Queued",
-  submitting: "Starting",
-  running: "Running",
-  succeeded: "Succeeded",
-  failed: "Failed",
-  interrupting: "Stopping",
-  cancelled: "Cancelled",
-  lost: "Session ended",
+  queued: msg("Queued"),
+  submitting: msg("Starting", { $context: "run status" }),
+  running: msg("Running"),
+  succeeded: msg("Succeeded"),
+  failed: msg("Failed", { $context: "run status" }),
+  interrupting: msg("Stopping"),
+  cancelled: msg("Cancelled"),
+  lost: msg("Session ended"),
 } as const satisfies Record<ComputeExecutionStatus, string>;
 
+/** `msg()` strings. */
 const SYSTEM_EVENT_LABELS = {
-  "session-started": "Session started",
-  "session-restarted": "Session restarted",
-  "execution-interrupted": "Execution interrupted",
-  "session-lost": "Session ended unexpectedly",
-  "output-truncated": "Some output was not retained",
-  "input-unsupported": "Interactive input is not supported",
-  "runtime-warning": "Runtime warning",
+  "session-started": msg("Session started"),
+  "session-restarted": msg("Session restarted"),
+  "execution-interrupted": msg("Execution interrupted"),
+  "session-lost": msg("Session ended unexpectedly"),
+  "output-truncated": msg("Some output was not retained"),
+  "input-unsupported": msg("Interactive input is not supported"),
+  "runtime-warning": msg("Runtime warning"),
 } as const satisfies Record<ComputeSystemEvent, string>;
 
 export function computeSourceLabel(
   source: ComputeExecutionSource,
   options: { readonly includePath: boolean },
+  resolve: MessageResolver = m,
 ): string {
-  if (source._tag === "console") return "Console";
+  if (source._tag === "console") return resolve(msg("Console"));
   const range =
     source.origin === "file" || source.range === null
       ? null
@@ -231,12 +258,14 @@ export function computeSourceLabel(
     source.origin === "file"
       ? options.includePath
         ? null
-        : SOURCE_ORIGIN_LABELS.file
-      : [SOURCE_ORIGIN_LABELS[source.origin], range].filter(Boolean).join(" ");
+        : resolve(SOURCE_ORIGIN_LABELS.file)
+      : range === null
+        ? resolve(SOURCE_ORIGIN_LABELS[source.origin])
+        : sourceOriginRangeLabel(source.origin, range, resolve);
   return [
     options.includePath ? source.path : null,
     what,
-    source.bufferState === "dirty" ? "unsaved" : null,
+    source.bufferState === "dirty" ? resolve(msg("unsaved")) : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
@@ -244,16 +273,22 @@ export function computeSourceLabel(
 
 export function computeExecutionStatusLabel(
   result: Pick<NonNullable<ComputeExecutionRecord["result"]>, "status" | "queuePosition"> | null,
+  resolve: MessageResolver = m,
 ): string {
-  if (result === null) return "Pending";
+  if (result === null) return resolve(msg("Pending"));
   if (result.status !== "queued" || result.queuePosition === null) {
-    return EXECUTION_STATUS_LABELS[result.status];
+    return resolve(EXECUTION_STATUS_LABELS[result.status]);
   }
-  return result.queuePosition <= 1 ? "Queued · next" : `Queued · ${result.queuePosition} ahead`;
+  return result.queuePosition <= 1
+    ? resolve(msg("Queued · next"))
+    : resolve(msg("Queued · {count} ahead", { count: result.queuePosition }));
 }
 
-export function computeSystemEventLabel(event: ComputeSystemEvent): string {
-  return SYSTEM_EVENT_LABELS[event];
+export function computeSystemEventLabel(
+  event: ComputeSystemEvent,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(SYSTEM_EVENT_LABELS[event]);
 }
 
 export function computeRunDurationLabel(

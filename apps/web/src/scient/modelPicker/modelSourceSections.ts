@@ -1,5 +1,8 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /**
  * Oh My Pi, Pi and Scient Agent list the user's own sign-ins and API keys together with the
@@ -89,8 +92,11 @@ export function parseModelSourceSectionKey(
 export function modelSourceSectionLabel(
   section: ModelSourceSection,
   providerDisplayName: string,
+  resolve: MessageResolver = m,
 ): string {
-  return section === "custom" ? "Scient custom models" : `Your ${providerDisplayName} accounts`;
+  return section === "custom"
+    ? resolve(msg("Scient custom models"))
+    : resolve(msg("Your {provider} accounts", { provider: providerDisplayName }));
 }
 
 /** Collapsed sections, as section keys, remembered on this device. */

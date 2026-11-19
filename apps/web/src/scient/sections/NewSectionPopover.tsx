@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useId, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -79,6 +80,8 @@ function NewSectionForm(props: {
   readonly onSubmit: (name: string) => Promise<boolean>;
 }) {
   const { environmentPicker, onOpenChange, onSubmit, threadCount } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const id = useId();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -97,9 +100,9 @@ function NewSectionForm(props: {
           {
             try {
               if (await onSubmit(name)) onOpenChange(false);
-              else setError("The section could not be saved. Try again.");
+              else setError(gt("The section could not be saved. Try again."));
             } catch {
-              setError("The section could not be saved. Try again.");
+              setError(gt("The section could not be saved. Try again."));
             }
           }
         } catch (error) {
@@ -112,18 +115,18 @@ function NewSectionForm(props: {
       }}
     >
       <div className="sr-only">
-        <PopoverTitle size="compact">{newSectionTitle(threadCount)}</PopoverTitle>
+        <PopoverTitle size="compact">{newSectionTitle(threadCount, messages)}</PopoverTitle>
       </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${id}-name`} className="sr-only">
-          Section name
+          <T>Section name</T>
         </label>
         <Input
           id={`${id}-name`}
           value={name}
           autoFocus
           maxLength={80}
-          placeholder="Section name"
+          placeholder={gt("Section name")}
           onChange={(event) => {
             setName(readTypedSectionName(event));
             setError(null);
@@ -136,14 +139,14 @@ function NewSectionForm(props: {
       ) : null}
       <div className="flex justify-end gap-1">
         <Button type="button" variant="ghost" size="xs" onClick={() => onOpenChange(false)}>
-          Cancel
+          <T>Cancel</T>
         </Button>
         <Button
           type="submit"
           size="xs"
           disabled={saving || name.trim().length === 0 || environmentPicker?.value === null}
         >
-          Create
+          <T context="verb, creates the section">Create</T>
         </Button>
       </div>
     </form>
@@ -156,6 +159,7 @@ function EnvironmentSelect(props: {
   readonly disabled: boolean;
 }) {
   const { picker } = props;
+  const gt = useGT();
   const current = picker.choices.find((choice) => choice.environmentId === picker.value);
   return (
     <Select
@@ -166,12 +170,17 @@ function EnvironmentSelect(props: {
         if (choice) picker.onChange(choice.environmentId);
       }}
     >
-      <SelectTrigger size="xs" aria-label="Machine">
+      <SelectTrigger
+        size="xs"
+        aria-label={gt("Machine", { $context: "computer the section is on" })}
+      >
         <SelectValue>
           {current ? (
-            `On ${current.label}`
+            gt("On {machine}", { machine: current.label })
           ) : (
-            <span className="text-muted-foreground">Choose a machine</span>
+            <span className="text-muted-foreground">
+              <T>Choose a machine</T>
+            </span>
           )}
         </SelectValue>
       </SelectTrigger>

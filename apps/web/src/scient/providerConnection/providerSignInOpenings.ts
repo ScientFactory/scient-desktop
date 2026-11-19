@@ -5,7 +5,10 @@
  */
 import { useEffect, useSyncExternalStore } from "react";
 
+import { msg } from "gt-react";
+
 import { toastManager } from "../../components/ui/toast";
+import { m } from "~/i18n/messages";
 import { isSignInPageBlocked, openProviderAuthorizationPage } from "./providerSignInPage";
 import {
   notifyProviderSignIn,
@@ -21,9 +24,10 @@ export interface ProviderSignInOpening {
   readonly blocked?: boolean;
 }
 
-const OPEN_FAILURE =
-  "Scient could not open the sign-in page in your browser. Try opening it again.";
-const BLOCKED = "Your browser blocked the sign-in page. Open it to continue.";
+const OPEN_FAILURE = msg(
+  "Scient could not open the sign-in page in your browser. Try opening it again.",
+);
+const BLOCKED = msg("Your browser blocked the sign-in page. Open it to continue.");
 const MAX_RETAINED_OPENINGS = 64;
 
 const openings = new Map<string, ProviderSignInOpening>();
@@ -62,16 +66,19 @@ export async function openProviderSignInPage(input: {
     const blocked = isSignInPageBlocked(error);
     setOpening(id, {
       status: "failed",
-      error: blocked ? BLOCKED : OPEN_FAILURE,
+      error: m(blocked ? BLOCKED : OPEN_FAILURE),
       ...(blocked ? { blocked } : {}),
     });
     if ((surfaces.get(signInKeyOf(input.key)) ?? 0) > 0) return;
     toastManager.add({
       type: blocked ? "warning" : "error",
       title: blocked
-        ? `${input.providerName} sign-in page blocked`
-        : `${input.providerName} sign-in didn’t open`,
-      actionProps: { children: "Open", onClick: () => void openProviderSignInPage(input) },
+        ? m(msg("{provider} sign-in page blocked", { provider: input.providerName }))
+        : m(msg("{provider} sign-in didn’t open", { provider: input.providerName })),
+      actionProps: {
+        children: m(msg("Open", { $context: "verb, opens the sign-in page" })),
+        onClick: () => void openProviderSignInPage(input),
+      },
     });
   }
 }

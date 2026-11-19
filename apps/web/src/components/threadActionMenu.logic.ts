@@ -270,7 +270,7 @@ export function buildThreadActionMenuItems(
       : []),
     { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
     // SCIENT-FORK:START — one Share item: a lasting link, a live guest, or both in a submenu.
-    ...shareMenuItems(state.canShareWithGuest === true),
+    ...shareMenuItems(state.canShareWithGuest === true, resolve),
     // SCIENT-FORK:END
     ...(state.projectFilter
       ? [
@@ -315,7 +315,7 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     // SCIENT-FORK:START — keep the computer awake until a thread is done.
-    ...keepAwakeMenu(state.keepAwakeChosen),
+    ...keepAwakeMenu(state.keepAwakeChosen, resolve),
     // SCIENT-FORK:END
     // SCIENT-FORK:START — the conversation's browser profile.
     ...(state.browserProfileMenu ? [state.browserProfileMenu] : []),
@@ -352,7 +352,7 @@ export function buildThreadActionMenuItems(
       ],
     },
     // SCIENT-FORK:START
-    conversationExportMenuItem(),
+    conversationExportMenuItem(resolve),
     // SCIENT-FORK:END
     { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
     {
