@@ -2358,7 +2358,10 @@ it.effect.each(["auto", "deferred", "promote-edited"] as const)(
               creationSource: "mobile",
             });
             yield* worker.drain();
-            assert.lengthOf(steered, 1);
+            // SCIENT-FORK:START — dispatch accepts it; Scient's provider-input limit, which counts
+            // captured context, then refuses the steer before the provider sees it.
+            assert.lengthOf(steered, 0);
+            // SCIENT-FORK:END
           }
         }).pipe(Effect.provide(layer));
       }),

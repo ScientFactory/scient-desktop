@@ -416,6 +416,9 @@ describe.each([
       promotedTo: null,
       threadId: "thread-home",
     });
+    // SCIENT-FORK:START — the other opener's navigation fires the before-navigate event.
+    testState.navigateAway();
+    // SCIENT-FORK:END
     testState.router.state.location.href = "/draft/draft-home";
     testState.completeProjectFileRead(null);
 

@@ -131,7 +131,7 @@ describe("right panel new-tab shortcut", () => {
       );
       expect(event.defaultPrevented).toBe(true);
       expect(document.querySelector('[role="menu"]')?.textContent).toContain(
-        "Linked pull requests",
+        "Linked items",
       );
       expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
       expect(
