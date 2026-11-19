@@ -62,7 +62,7 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
           } finally {
             database.close();
           }
-          return yield* check({ stopReason: "end_turn" });
+          return (yield* check({ stopReason: "end_turn" }))?.failure;
         });
 
       // regression: a refused connector `initialize` failed every turn as a generic error.

@@ -48,6 +48,7 @@ import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as BrowserImport from "../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as LoopbackTunnel from "../preview/LoopbackTunnel.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
@@ -233,6 +234,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
         }),
       }),
       Layer.mock(DesktopLinuxUrlHandler.DesktopLinuxUrlHandler, { register: Effect.void }),
+      Layer.mock(LoopbackTunnel.LoopbackTunnel, {}),
       Layer.mock(PreviewPasskeys.PreviewPasskeys, {
         bridgeEnabled: false,
         configure: Effect.void,

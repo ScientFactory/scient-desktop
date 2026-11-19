@@ -2558,6 +2558,9 @@ function ChatViewContent(props: ChatViewProps) {
   const visiblePullRequestCount = visiblePullRequests.length;
   const pullRequestsSurfaceAvailable =
     isServerThread && supportsThreadPullRequests && visiblePullRequestCount > 0;
+  const linkedItemsSurfaceAvailable =
+    pullRequestsSurfaceAvailable ||
+    (isServerThread && (activeThreadShell?.issues?.length ?? 0) > 0);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
@@ -3123,7 +3126,7 @@ function ChatViewContent(props: ChatViewProps) {
     canMaximizeRightPanel,
     rightPanelMaximized,
     supportsPullRequests,
-    pullRequestsSurfaceAvailable,
+    pullRequestsSurfaceAvailable: linkedItemsSurfaceAvailable,
     onDiffPanelOpen,
     closeRightPanelSurface,
   });
@@ -3675,7 +3678,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
   );
   // SCIENT-FORK:END
-  const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
+  const sendSideChatStable = useStableCallback(sideChat.open);
   const { onConfirmRevertStable, onRevertTimelineTurnStable } = useTimelineRewind({
     hasProjectWorkspace,
     environmentId,
@@ -5075,7 +5078,7 @@ function ChatViewContent(props: ChatViewProps) {
           diffAvailable={diffAvailable}
           filesAvailable={activeWorkspaceRoot !== undefined}
           pullRequestAvailable={pullRequestSurfaceAvailable}
-          pullRequestsAvailable={pullRequestsSurfaceAvailable}
+          pullRequestsAvailable={linkedItemsSurfaceAvailable}
           agentsAvailable
           liveAgentCount={agentPanelModel.liveCount}
           sourcesAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
