@@ -36,6 +36,7 @@ import type {
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
 import { observeAnalyticsEffect } from "../../telemetry/OperationAnalytics.ts";
+import { EXTERNAL_PROVIDER_AUTH_TYPES } from "./ClaudeApiEndpoint.ts";
 
 export interface ProviderConnectionManagerShape {
   readonly start: (
@@ -633,7 +634,14 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           const fresh = yield* providerRegistry
             .readFreshInstance(input.instanceId)
             .pipe(Effect.option);
-          if (Option.getOrUndefined(fresh)?.auth.status === "authenticated") return;
+          // A custom endpoint or API key reads as authenticated without any sign-in.
+          const auth = Option.getOrUndefined(fresh)?.auth;
+          if (
+            auth?.status === "authenticated" &&
+            (auth.type === undefined || !EXTERNAL_PROVIDER_AUTH_TYPES.has(auth.type))
+          ) {
+            return;
+          }
         }
       });
       const completion =
