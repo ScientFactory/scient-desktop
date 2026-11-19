@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { FilmIcon, ImageIcon } from "lucide-react";
 import { createContext, useRef, useState, type ReactNode } from "react";
 
@@ -37,6 +38,7 @@ export function ScientRemoteImageReference(props: {
   readonly insideLink?: boolean | undefined;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
   const { allowed, allow } = useRemoteImagePermission(props.address.url);
   const moveFocusToMedia = useRef(false);
   const focusLoadedMedia = (element: HTMLSpanElement | null) => {
@@ -54,14 +56,14 @@ export function ScientRemoteImageReference(props: {
     );
   }
 
-  const noun = props.kind === "video" ? "video" : "image";
-  const name = props.alt.trim() || (props.kind === "video" ? "Video" : "Image");
+  const video = props.kind === "video";
+  const name = props.alt.trim() || (video ? gt("Video") : gt("Image"));
   const Icon = props.kind === "video" ? FilmIcon : ImageIcon;
   return (
     <span
       id={props.id}
       role="group"
-      aria-label={`Web ${noun}: ${name}`}
+      aria-label={video ? gt("Web video: {name}", { name }) : gt("Web image: {name}", { name })}
       data-markdown-copy={props.copyMarkdown}
       data-scient-remote-image=""
       className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 py-0.5 ps-2 pe-0.5 align-middle text-xs text-muted-foreground"
@@ -88,7 +90,7 @@ export function ScientRemoteImageReference(props: {
             target="_blank"
             rel="noopener noreferrer"
             dir="ltr"
-            aria-label={`Open ${props.address.label} in browser`}
+            aria-label={gt("Open {address} in browser", { address: props.address.label })}
             className="inline-flex min-w-0 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
           >
             <MiddleTruncate value={props.address.label} showTitle={false} />
@@ -98,7 +100,11 @@ export function ScientRemoteImageReference(props: {
       <Button
         size="micro"
         variant="outline"
-        aria-label={`Load ${noun} from ${props.address.host}`}
+        aria-label={
+          video
+            ? gt("Load video from {host}", { host: props.address.host })
+            : gt("Load image from {host}", { host: props.address.host })
+        }
         onClick={(event) => {
           // Inside a link, loading the image must not also follow the link.
           event.preventDefault();
@@ -107,7 +113,7 @@ export function ScientRemoteImageReference(props: {
           allow();
         }}
       >
-        {`Load ${noun}`}
+        {video ? gt("Load video") : gt("Load image")}
       </Button>
     </span>
   );

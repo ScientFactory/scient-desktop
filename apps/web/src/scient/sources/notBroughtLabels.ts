@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+
 export {
   notBroughtAmount,
   notBroughtBySource,
@@ -6,11 +8,12 @@ export {
 } from "@scientfactory/scient-sources";
 
 export const NOT_BROUGHT_LABELS = {
-  heading: "Not brought from Zotero",
-  about:
+  heading: msg("Not brought from Zotero"),
+  about: msg(
     "Zotero holds more for these references than Scient brought. All of it is still in Zotero. Not looked at: Zotero's Trash, saved searches and tag colours.",
-  show: "Show",
-  showAll: "Show all",
-  showFewer: "Show fewer",
-  shownSources: "References this was not brought for",
+  ),
+  show: msg("Show", { $context: "verb, shows the references a line names" }),
+  showAll: msg("Show all"),
+  showFewer: msg("Show fewer"),
+  shownSources: msg("References this was not brought for"),
 } as const;

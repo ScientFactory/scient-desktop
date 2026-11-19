@@ -2,10 +2,12 @@
 
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg, useMessages } from "gt-react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import type { MessageResolver } from "~/i18n/messages";
 
 import { resolveMarkdownDirectionHint } from "../bidi/contentDirection";
 import {
@@ -15,16 +17,19 @@ import {
 } from "../documentExport/htmlPdfSourceStore";
 import { ScientPdfReader } from "./ScientPdfReader";
 
-function updateActionPresentation(relation: HtmlPdfSourceRelation) {
+function updateActionPresentation(relation: HtmlPdfSourceRelation, resolve: MessageResolver) {
   switch (relation.updatePhase) {
     case "updating":
-      return { label: "Updating PDF from HTML…", tone: null } as const;
+      return { label: resolve(msg("Updating PDF from HTML…")), tone: null } as const;
     case "update-available":
-      return { label: "Source changed. Update PDF from HTML", tone: "warning" } as const;
+      return {
+        label: resolve(msg("Source changed. Update PDF from HTML")),
+        tone: "warning",
+      } as const;
     case "failed":
-      return { label: "Retry PDF update from HTML", tone: "destructive" } as const;
+      return { label: resolve(msg("Retry PDF update from HTML")), tone: "destructive" } as const;
     case "idle":
-      return { label: "Update PDF from HTML", tone: null } as const;
+      return { label: resolve(msg("Update PDF from HTML")), tone: null } as const;
   }
 }
 
@@ -33,8 +38,9 @@ export function GeneratedPdfTitleRow(props: {
   readonly relation: HtmlPdfSourceRelation | undefined;
   readonly onRequestUpdate: () => void;
 }) {
+  const m = useMessages();
   const updating = props.relation?.updatePhase === "updating";
-  const updateAction = props.relation ? updateActionPresentation(props.relation) : null;
+  const updateAction = props.relation ? updateActionPresentation(props.relation, m) : null;
   const titleDirection = resolveMarkdownDirectionHint(props.title) ?? "ltr";
 
   return (

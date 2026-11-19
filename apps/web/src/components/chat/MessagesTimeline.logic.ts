@@ -193,7 +193,7 @@ export function workEntryDisplayLabel(
 ) {
   // SCIENT-FORK:START — activity-kind issues always lead their row's label.
   const issue = activityIssuePolicy(entry.sourceActivityKind);
-  if (issue) return issue.summary;
+  if (issue) return resolve(issue.summary);
   // SCIENT-FORK:END
   if (entry.itemType === "system_notice") return entry.label;
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {

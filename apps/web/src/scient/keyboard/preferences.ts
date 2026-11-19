@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import { validateCustomMath, type CustomMathCommand } from "./customMath";
 import { surfaceCommands, scopesOverlap, type KeyboardScope } from "./catalog";
 import {
@@ -296,7 +299,8 @@ function readPreferences(): KeyboardPreferencesSnapshot {
   } catch (error) {
     return {
       preferences: DEFAULT_KEYBOARD_PREFERENCES,
-      error: error instanceof Error ? error.message : "Keyboard preferences could not be read.",
+      error:
+        error instanceof Error ? error.message : m(msg("Keyboard preferences could not be read.")),
       migrated: false,
     };
   }

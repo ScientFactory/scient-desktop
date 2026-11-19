@@ -187,7 +187,7 @@
     },
     {
       "path": "apps/web/src/session-logic.ts",
-      "anchor": "const skillUsageLabel = scientSkillUsageLabel({",
+      "anchor": "const skillUsageLabel = scientSkillUsageLabel(",
       "purpose": "Present managed native V2 skill-load status through the shared provider-prefix resolver and retained skill label policy (session-logic.test.ts)."
     },
     {

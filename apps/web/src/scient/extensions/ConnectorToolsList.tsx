@@ -1,4 +1,5 @@
 import type { ConnectorToolSummary, EnvironmentId } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { ChevronDownIcon, WrenchIcon } from "lucide-react";
 import { useState } from "react";
 import ChatMarkdown from "../../components/ChatMarkdown";
@@ -22,6 +23,7 @@ export function ConnectorToolsList({
   /** A plain list inside an already-labelled group: no heading, frame, icons or change badges. */
   readonly embedded?: boolean | undefined;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<ConnectorToolSummary | null>(null);
   const ordered = [
@@ -32,13 +34,24 @@ export function ConnectorToolsList({
   const names = hidden.slice(0, 2).map(toolDisplayName);
   const more =
     hidden.length > 2
-      ? `See ${names.join(", ")}, and ${hidden.length - 2} more`
-      : `See ${names.join(" and ")}`;
+      ? gt("See {first}, {second}, and {count} more", {
+          first: names[0] ?? "",
+          second: names[1] ?? "",
+          count: hidden.length - 2,
+        })
+      : names.length === 2
+        ? gt("See {first} and {second}", { first: names[0] ?? "", second: names[1] ?? "" })
+        : gt("See {name}", { name: names[0] ?? "" });
   return (
-    <section className={embedded ? undefined : "grid gap-3"} aria-label="Tools">
+    <section className={embedded ? undefined : "grid gap-3"} aria-label={gt("Tools")}>
       {embedded ? null : (
         <h2 className={SECTION_HEADING_CLASS}>
-          Tools <span className="font-normal text-muted-foreground">{tools.length}</span>
+          <T>
+            Tools{" "}
+            <span className="font-normal text-muted-foreground">
+              <Var>{tools.length}</Var>
+            </span>
+          </T>
         </h2>
       )}
       <div
@@ -47,7 +60,9 @@ export function ConnectorToolsList({
         }
       >
         {tools.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted-foreground">No tools reported.</p>
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            <T>No tools reported.</T>
+          </p>
         ) : null}
         {(expanded ? ordered : ordered.slice(0, 6)).map((tool) => (
           <button
@@ -68,7 +83,9 @@ export function ConnectorToolsList({
               </span>
             </span>
             {!embedded && toolMakesChanges(tool) ? (
-              <span className="shrink-0 text-xs text-muted-foreground">Makes changes</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                <T>Makes changes</T>
+              </span>
             ) : null}
           </button>
         ))}
@@ -103,9 +120,13 @@ export function ConnectorToolsList({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-6 py-3 text-xs text-muted-foreground">
             <code className="break-all">{selected.name}</code>
             {toolMakesChanges(selected) ? (
-              <span>Makes changes</span>
+              <span>
+                <T>Makes changes</T>
+              </span>
             ) : selected.readOnly === true ? (
-              <span>Read-only</span>
+              <span>
+                <T>Read-only</T>
+              </span>
             ) : null}
           </div>
           {toolDescription(selected) ? (
@@ -117,7 +138,9 @@ export function ConnectorToolsList({
               className="p-6"
             />
           ) : (
-            <p className="p-6 text-sm text-muted-foreground">No description provided.</p>
+            <p className="p-6 text-sm text-muted-foreground">
+              <T>No description provided.</T>
+            </p>
           )}
         </ExtensionContentDialog>
       ) : null}

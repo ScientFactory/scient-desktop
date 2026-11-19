@@ -1,3 +1,4 @@
+import { T, useMessages } from "gt-react";
 import { useId, useRef } from "react";
 
 import { Popover, PopoverPopup } from "~/components/ui/popover";
@@ -21,6 +22,7 @@ export function UpdateEverythingAsk({
   readonly onUpdate: () => void;
   readonly onCancel: () => void;
 }) {
+  const messages = useMessages();
   const questionId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
@@ -51,13 +53,13 @@ export function UpdateEverythingAsk({
         >
           <div className="flex items-center gap-2.5 whitespace-nowrap" data-update-ask>
             <span className="tabular-nums" id={questionId}>
-              {stopsThreadsLabel(stops)}
+              {stopsThreadsLabel(stops, messages)}
             </span>
             <UpdateTextButton onClick={onCancel} ref={cancelRef}>
-              Cancel
+              <T>Cancel</T>
             </UpdateTextButton>
             <UpdateTextButton emphasis onClick={onUpdate}>
-              Update
+              <T context="verb, installs the updates">Update</T>
             </UpdateTextButton>
           </div>
         </PopoverPopup>

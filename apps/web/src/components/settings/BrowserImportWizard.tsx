@@ -620,7 +620,7 @@ function DoneStep({
               ? gt("No cookies were imported for {environment}.", { environment })
               : gt("There were no cookies to import for {environment}.", { environment })}
           {/* SCIENT-FORK:START — Scient Accounts: say why cookies were left behind. */}
-          {protectedSkipped ? ` ${protectedNotice(protectedSkipped)}` : null}
+          {protectedSkipped ? ` ${protectedNotice(protectedSkipped, m)}` : null}
           {/* SCIENT-FORK:END */}
         </DialogDescription>
       </DialogHeader>

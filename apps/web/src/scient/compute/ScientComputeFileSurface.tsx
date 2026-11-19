@@ -11,6 +11,7 @@ import { classifyMatlabSource, isSqliteScript } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
 import { Columns2, LoaderCircle, Play, Rows2 } from "lucide-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -181,6 +182,7 @@ function RunFileButton(props: {
   readonly environmentId: EnvironmentId;
   readonly onRun: () => void;
 }) {
+  const gt = useGT();
   const { batch } = props;
   const missing = batch.profile?.availability === "missing";
   return (
@@ -197,12 +199,14 @@ function RunFileButton(props: {
             />
           }
         >
-          {props.languageName} not found
+          <T>
+            <Var>{props.languageName}</Var> not found
+          </T>
         </Button>
       ) : (
         <Button size="xs" variant="outline" disabled={!batch.canStart} onClick={props.onRun}>
           {batch.isStarting ? <LoaderCircle className="animate-spin" /> : <Play />}
-          Run file
+          {gt("Run file")}
         </Button>
       )}
     </div>
@@ -309,6 +313,8 @@ function ComputeFileSurfaceContent(
     readonly hasRun?: boolean;
   },
 ) {
+  const gt = useGT();
+  const messages = useMessages();
   const view = useComputeFilePresentationStore(
     (state) => state.presentations[props.contextId]?.view ?? "code",
   );
@@ -432,7 +438,7 @@ function ComputeFileSurfaceContent(
           <div
             className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
             role="group"
-            aria-label={`${props.language.displayName} view layout`}
+            aria-label={gt("{language} view layout", { language: props.language.displayName })}
           >
             {COMPUTE_FILE_VIEWS.map((candidate) => (
               <button
@@ -446,7 +452,7 @@ function ComputeFileSurfaceContent(
                 aria-pressed={view === candidate}
                 onClick={() => selectView(candidate)}
               >
-                {COMPUTE_FILE_VIEW_LABELS[candidate]}
+                {messages(COMPUTE_FILE_VIEW_LABELS[candidate])}
               </button>
             ))}
           </div>
@@ -455,9 +461,9 @@ function ComputeFileSurfaceContent(
           <div
             className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
             role="group"
-            aria-label="Split layout orientation"
+            aria-label={gt("Split layout orientation")}
           >
-            <ScientTooltip content="Side by side">
+            <ScientTooltip content={gt("Side by side")}>
               <button
                 type="button"
                 className={cn(
@@ -466,13 +472,13 @@ function ComputeFileSurfaceContent(
                   splitLayout === "side-by-side" && "bg-accent text-accent-foreground",
                 )}
                 aria-pressed={splitLayout === "side-by-side"}
-                aria-label="Arrange code and results side by side"
+                aria-label={gt("Arrange code and results side by side")}
                 onClick={() => selectSplitLayout("side-by-side")}
               >
                 <Columns2 className="size-3" />
               </button>
             </ScientTooltip>
-            <ScientTooltip content="Stacked">
+            <ScientTooltip content={gt("Stacked")}>
               <button
                 type="button"
                 className={cn(
@@ -481,7 +487,7 @@ function ComputeFileSurfaceContent(
                   splitLayout === "stacked" && "bg-accent text-accent-foreground",
                 )}
                 aria-pressed={splitLayout === "stacked"}
-                aria-label="Stack code above results"
+                aria-label={gt("Stack code above results")}
                 onClick={() => selectSplitLayout("stacked")}
               >
                 <Rows2 className="size-3" />
@@ -571,7 +577,7 @@ function ComputeFileSurfaceContent(
                       <button
                         type="button"
                         className="flex size-5 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        aria-label="Run cell"
+                        aria-label={gt("Run cell")}
                         onClick={() => {
                           const hoveredLine = getHoveredLine();
                           if (hoveredLine !== undefined) {
@@ -601,7 +607,9 @@ function ComputeFileSurfaceContent(
                 orientation={isStacked ? "horizontal" : "vertical"}
                 className={cn("absolute", isStacked ? "inset-x-0 -top-1" : "inset-y-0 -left-1")}
                 tabIndex={0}
-                aria-label={`Resize ${props.language.displayName} results`}
+                aria-label={gt("Resize {language} results", {
+                  language: props.language.displayName,
+                })}
                 aria-valuemin={Math.round(MIN_COMPUTE_FILE_SPLIT * 100)}
                 aria-valuemax={Math.round((1 - MIN_COMPUTE_FILE_SPLIT) * 100)}
                 aria-valuenow={Math.round(split * 100)}

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { EnvironmentId, ScientSourcesExportRequest } from "@t3tools/contracts";
 import { Upload } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -32,7 +33,9 @@ const FORMATS: ReadonlyArray<{
     extension: ".ris",
     mediaType: "application/x-research-info-systems",
   },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- a file format's name
   { format: "csl-json", label: "CSL-JSON", extension: ".json", mediaType: "application/json" },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- a file format's name
   { format: "endnote-xml", label: "EndNote XML", extension: ".xml", mediaType: "application/xml" },
 ];
 
@@ -48,6 +51,7 @@ export function useSourcesExport(props: {
   /** The selected or shown sources; null exports everything. */
   readonly scope: SourcesExportScope | null;
 }) {
+  const gt = useGT();
   const [includeNotes, setIncludeNotes] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -70,9 +74,9 @@ export function useSourcesExport(props: {
               type: "warning",
               title:
                 missing === 1
-                  ? "1 selected source is not in this file"
-                  : `${missing} selected sources are not in this file`,
-              description: "They are no longer in the Library.",
+                  ? gt("1 selected source is not in this file")
+                  : gt("{missing} selected sources are not in this file", { missing }),
+              description: gt("They are no longer in the Library."),
             });
           }
           if (result.notKept.length > 0) {
@@ -83,14 +87,14 @@ export function useSourcesExport(props: {
               .join(", ");
             toastManager.add({
               type: "warning",
-              title: "Some details are not in this file",
-              description: `${option.label} has no place for: ${lost}.`,
+              title: gt("Some details are not in this file"),
+              description: gt("{label} has no place for: {lost}.", { label: option.label, lost }),
             });
           }
         } catch (cause) {
           toastManager.add({
             type: "error",
-            title: "Export failed",
+            title: gt("Export failed"),
             description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
           });
         }
@@ -112,13 +116,14 @@ export function SourcesExportSubmenu(props: {
   readonly scope: SourcesExportScope | null;
   readonly projectPackage?: ReactNode;
 }) {
+  const gt = useGT();
   const { exporter } = props;
   const count = props.scope?.sourceIds.length ?? props.totalCount;
   return (
     <MenuSub>
       <MenuSubTrigger disabled={exporter.exporting}>
         <Upload />
-        Export
+        <T context="verb, button">Export</T>
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-52">
         {props.totalCount > 0 ? (
@@ -126,8 +131,14 @@ export function SourcesExportSubmenu(props: {
             <MenuGroup>
               <MenuGroupLabel>
                 {props.scope
-                  ? `Export ${count.toLocaleString()} ${props.scope.kind}`
-                  : `Export ${count === 1 ? "1 source" : `all ${count.toLocaleString()} sources`}`}
+                  ? gt(
+                      "{kind, select, selected {Export {count} selected} other {Export {count} shown}}",
+                      { count: count.toLocaleString(), kind: props.scope.kind },
+                    )
+                  : gt("{count, plural, =1 {Export 1 source} other {Export all {shown} sources}}", {
+                      count,
+                      shown: count.toLocaleString(),
+                    })}
               </MenuGroupLabel>
               {FORMATS.map((option) => (
                 <MenuItem key={option.format} onClick={() => void exporter.exportAs(option)}>
@@ -141,7 +152,7 @@ export function SourcesExportSubmenu(props: {
               checked={exporter.includeNotes}
               onCheckedChange={exporter.setIncludeNotes}
             >
-              Include notes
+              <T>Include notes</T>
             </MenuCheckboxItem>
           </>
         ) : null}

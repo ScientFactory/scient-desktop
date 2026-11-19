@@ -1,22 +1,24 @@
+import { msg } from "gt-react";
+
 /**
  * The one name for each writing command that more than one document editor
  * offers. Bars, menus and slash menus take their wording from here, so a
  * command cannot be called "Bullet list" in one place and "Bulleted list" in
- * another. Each editor keeps its own code for carrying the command out.
+ * another. Labels are `msg()` strings: resolve them where they show.
  */
 export const WRITING_COMMAND_LABELS = {
-  undo: "Undo",
-  redo: "Redo",
-  bold: "Bold",
-  italic: "Italic",
-  inlineCode: "Inline code",
-  link: "Link",
-  text: "Text",
-  quote: "Quote",
-  bulletList: "Bullet list",
-  numberedList: "Numbered list",
-  noList: "No list",
-  insert: "Insert",
+  undo: msg("Undo"),
+  redo: msg("Redo"),
+  bold: msg("Bold"),
+  italic: msg("Italic"),
+  inlineCode: msg("Inline code"),
+  link: msg("Link"),
+  text: msg("Text"),
+  quote: msg("Quote"),
+  bulletList: msg("Bullet list"),
+  numberedList: msg("Numbered list"),
+  noList: msg("No list"),
+  insert: msg("Insert"),
 } as const;
 
 export type WritingCommandId = keyof typeof WRITING_COMMAND_LABELS;

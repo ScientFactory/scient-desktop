@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
@@ -38,6 +39,8 @@ export function SourceHistoryDialog(props: {
   readonly onClose: () => void;
   readonly onReverted: (record: ScientSourceDetailResult) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [revisions, setRevisions] = useState<ReadonlyArray<Revision> | null>(null);
   const [pending, setPending] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -86,13 +89,17 @@ export function SourceHistoryDialog(props: {
           toastManager.add({
             type: "success",
             title:
-              result.outcome === "unchanged" ? "Already this version" : "Earlier version restored",
+              result.outcome === "unchanged"
+                ? gt("Already this version")
+                : gt("Earlier version restored"),
             ...(result.missingAttachmentCount > 0
               ? {
                   description:
                     result.missingAttachmentCount === 1
-                      ? "Its PDF was deleted when the trash was emptied."
-                      : `${result.missingAttachmentCount} of its PDFs were deleted when the trash was emptied.`,
+                      ? gt("Its PDF was deleted when the trash was emptied.")
+                      : gt("{count} of its PDFs were deleted when the trash was emptied.", {
+                          count: result.missingAttachmentCount,
+                        }),
                 }
               : {}),
           });
@@ -113,9 +120,11 @@ export function SourceHistoryDialog(props: {
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>History</DialogTitle>
+          <DialogTitle>
+            <T context="a source's earlier versions">History</T>
+          </DialogTitle>
           <DialogDescription>
-            Restoring a version saves it as the newest one, so nothing is lost.
+            <T>Restoring a version saves it as the newest one, so nothing is lost.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -125,21 +134,25 @@ export function SourceHistoryDialog(props: {
             </p>
           ) : null}
           {revisions === null ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <p className="text-sm text-muted-foreground">
+              <T>Loading…</T>
+            </p>
           ) : (
             <ul className="divide-y divide-border">
               {revisions.map((revision) => (
                 <li key={revision.revision} className="flex items-center gap-3 py-2">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm">{revisionLabel(revision)}</div>
+                    <div className="truncate text-sm">{revisionLabel(revision, m)}</div>
                     {revision.changes.length > 0 ? (
                       <div className="truncate text-xs text-muted-foreground">
-                        {changedFieldsLabel(revision.changes)}
+                        {changedFieldsLabel(revision.changes, m)}
                       </div>
                     ) : null}
                   </div>
                   {revision.current ? (
-                    <span className="text-xs text-muted-foreground">Current</span>
+                    <span className="text-xs text-muted-foreground">
+                      {gt("Current", { $context: "the newest version of a source" })}
+                    </span>
                   ) : (
                     <Button
                       size="xs"
@@ -150,7 +163,7 @@ export function SourceHistoryDialog(props: {
                       {pending === revision.revision ? (
                         <LoaderCircle className="animate-spin" />
                       ) : null}
-                      Restore
+                      {gt("Restore", { $context: "verb, restores an earlier version" })}
                     </Button>
                   )}
                 </li>

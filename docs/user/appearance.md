@@ -31,8 +31,8 @@ follow the same choice.
 On mobile, choose it under **Settings → General → Language**. The phone saves its own choice,
 separately from your computer.
 
-Scient's own panels, such as the Library, Compute, documents, Overleaf and Accounts, are still in
-English. Your messages, agent replies, code and file names are never translated.
+Scient's own panels, such as the Library, Compute, documents, Overleaf and Accounts, follow it
+too. Your messages, agent replies, code, LaTeX and file names are never translated.
 
 ## Composer context
 

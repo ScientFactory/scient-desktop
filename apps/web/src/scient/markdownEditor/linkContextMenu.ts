@@ -1,4 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export type ScientMarkdownLinkContextMenuAction =
   | "open"
@@ -30,25 +33,32 @@ export function scientMarkdownLinkContextMenuItems(
     ScientMarkdownLinkContextMenuRequest,
     "canCopy" | "canOpen" | "editable" | "fullPath" | "kind"
   >,
+  resolve: MessageResolver = m,
 ): readonly ContextMenuItem<ScientMarkdownLinkContextMenuAction>[] {
   const wikiLink = request.kind === "wiki-link";
   const items: ContextMenuItem<ScientMarkdownLinkContextMenuAction>[] = [];
   if (request.canOpen) {
-    items.push({ id: "open", label: wikiLink ? "Open linked file" : "Open link" });
+    items.push({
+      id: "open",
+      label: wikiLink ? resolve(msg("Open linked file")) : resolve(msg("Open link")),
+    });
   }
   if (request.canCopy) {
-    items.push({ id: "copy-link", label: "Copy link" });
+    items.push({ id: "copy-link", label: resolve(msg("Copy link")) });
     if (request.fullPath !== null) {
-      items.push({ id: "copy-full-path", label: "Copy full path" });
+      items.push({ id: "copy-full-path", label: resolve(msg("Copy full path")) });
     }
   }
   if (request.editable) {
     items.push({
       id: "edit",
-      label: wikiLink ? "Edit wiki link" : "Edit link",
+      label: wikiLink ? resolve(msg("Edit wiki link")) : resolve(msg("Edit link")),
       separatorBefore: items.length > 0,
     });
-    items.push({ id: "remove", label: wikiLink ? "Remove wiki link" : "Remove link" });
+    items.push({
+      id: "remove",
+      label: wikiLink ? resolve(msg("Remove wiki link")) : resolve(msg("Remove link")),
+    });
   }
   return items;
 }

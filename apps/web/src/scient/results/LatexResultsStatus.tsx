@@ -6,6 +6,7 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -17,11 +18,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { resultErrorMessage } from "./ResultPicker";
 import { resultCauseText } from "./resultState";
 
+/** `msg()` strings: resolve them with `useMessages()` where they show. */
 const FILE_STATE_TEXT: Record<ComputeResultPlacedFile["state"], string> = {
-  current: "matches its run",
-  "out-of-date": "out of date",
-  edited: "edited after Scient placed it",
-  missing: "missing",
+  current: msg("matches its run"),
+  "out-of-date": msg("out of date", { $context: "A placed result file's state" }),
+  edited: msg("edited after Scient placed it"),
+  missing: msg("missing", { $context: "A placed result file's state" }),
 };
 
 const fileName = (path: string) => path.split("/").at(-1) ?? path;
@@ -46,14 +48,15 @@ function scriptAttention(script: ComputeResultPlacedScript): string | null {
   return null;
 }
 
+/** A `msg()` string to resolve with `useMessages()`; null when nothing needs attention. */
 function chipLabel(result: ComputeResultsPlacementsResult): string | null {
   const needs = result.scripts.map(scriptAttention).filter((need) => need !== null);
-  if (needs.includes("interrupted")) return "Results update unfinished";
-  if (needs.includes("missing")) return "Result files missing";
-  if (needs.includes("out of date")) return "Results out of date";
-  if (needs.includes("newer run")) return "Newer results";
-  if (needs.includes("edited")) return "Results edited";
-  if (needs.includes("rebuild")) return "Rebuild for new results";
+  if (needs.includes("interrupted")) return msg("Results update unfinished");
+  if (needs.includes("missing")) return msg("Result files missing");
+  if (needs.includes("out of date")) return msg("Results out of date");
+  if (needs.includes("newer run")) return msg("Newer results");
+  if (needs.includes("edited")) return msg("Results edited");
+  if (needs.includes("rebuild")) return msg("Rebuild for new results");
   return null;
 }
 
@@ -74,6 +77,8 @@ export function LatexResultsStatus(props: {
   const placements = useStableCallback(
     useAtomCommand(computeEnvironment.resultsPlacements, { reportFailure: false }),
   );
+  const gt = useGT();
+  const messages = useMessages();
   const [result, setResult] = useState<ComputeResultsPlacementsResult | null>(null);
   const [tick, setTick] = useState(0);
   const [open, setOpen] = useState(false);
@@ -145,7 +150,9 @@ export function LatexResultsStatus(props: {
         {label === null ? null : (
           <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
         )}
-        <span className="scient-latex-chip-text">{label ?? "Results current"}</span>
+        <span className="scient-latex-chip-text">
+          {label === null ? gt("Results current") : messages(label)}
+        </span>
       </PopoverTrigger>
       <PopoverPopup side="bottom" align="end" className="w-96">
         <div className="flex flex-col gap-3 text-xs" data-testid="latex-results">
@@ -161,7 +168,10 @@ export function LatexResultsStatus(props: {
           ))}
           {result.coverage === "placed" ? (
             <span className="text-muted-foreground">
-              Checked against Scient's record of placed files; build the PDF to check what it used.
+              <T>
+                Checked against Scient's record of placed files; build the PDF to check what it
+                used.
+              </T>
             </span>
           ) : null}
         </div>
@@ -177,6 +187,8 @@ function ScriptResults(props: {
   readonly script: ComputeResultPlacedScript;
   readonly onChanged: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { script } = props;
   const scriptPath = script.summary.scriptPath;
   const rerun = useAtomCommand(computeEnvironment.resultsRerun, { reportFailure: false });
@@ -218,7 +230,7 @@ function ScriptResults(props: {
       input: { cwd: props.cwd, scriptPath },
     });
     if (response._tag !== "Success")
-      setMessage(resultErrorMessage(response, "The script could not run."));
+      setMessage(resultErrorMessage(response, gt("The script could not run.")));
     else if (response.value._tag === "failed") setMessage(response.value.message);
   };
 
@@ -237,7 +249,7 @@ function ScriptResults(props: {
       },
     });
     if (response._tag !== "Success") {
-      setMessage(resultErrorMessage(response, "The files could not be updated."));
+      setMessage(resultErrorMessage(response, gt("The files could not be updated.")));
       return;
     }
     if (response.value._tag === "refused") {
@@ -258,7 +270,7 @@ function ScriptResults(props: {
       input: { cwd: props.cwd, documentPath: props.rootPath, scriptPath },
     });
     if (response._tag !== "Success")
-      setMessage(resultErrorMessage(response, "The update could not be undone."));
+      setMessage(resultErrorMessage(response, gt("The update could not be undone.")));
     else if (response.value._tag === "refused") setMessage(response.value.message);
   };
 
@@ -272,7 +284,7 @@ function ScriptResults(props: {
         <ul className="flex flex-col gap-0.5">
           {causes.map((cause) => (
             <li key={`${cause.kind}:${cause.path}`} className="text-foreground">
-              {resultCauseText(cause)}
+              {resultCauseText(cause, messages)}
             </li>
           ))}
         </ul>
@@ -280,22 +292,32 @@ function ScriptResults(props: {
       <ul className="flex flex-col gap-0.5 text-muted-foreground">
         {script.files.map((file) => (
           <li key={file.path}>
-            {fileName(file.path)} · {FILE_STATE_TEXT[file.state]}
-            {file.usedByBuild === false ? " · not in this PDF" : ""}
+            {file.usedByBuild === false
+              ? gt("{name} · {state} · not in this PDF", {
+                  name: fileName(file.path),
+                  state: messages(FILE_STATE_TEXT[file.state]),
+                })
+              : gt("{name} · {state}", {
+                  name: fileName(file.path),
+                  state: messages(FILE_STATE_TEXT[file.state]),
+                })}
           </li>
         ))}
       </ul>
       {script.interrupted ? (
         <span className="text-foreground">
-          The last update of these files stopped part way. Undo update puts the earlier files back.
+          <T>
+            The last update of these files stopped part way. Undo update puts the earlier files
+            back.
+          </T>
         </span>
       ) : null}
       {script.newer === null ? null : (
         <span className="text-foreground">
           {script.updateBlocked ??
             (script.newer.causes.length > 0
-              ? "A newer run is ready, but it is out of date too."
-              : "A newer run is ready.")}
+              ? gt("A newer run is ready, but it is out of date too.")
+              : gt("A newer run is ready."))}
         </span>
       )}
       {script.changes.length > 0 ? (
@@ -307,7 +329,7 @@ function ScriptResults(props: {
       ) : null}
       {rebuild && script.newer === null ? (
         <span className="text-muted-foreground">
-          The PDF was built before these files changed. Rebuild to see them.
+          <T>The PDF was built before these files changed. Rebuild to see them.</T>
         </span>
       ) : null}
       {message === null ? null : <span className="text-foreground">{message}</span>}
@@ -318,7 +340,7 @@ function ScriptResults(props: {
             disabled={busy !== null}
             onClick={() => act("update", () => applyUpdate(script.summary.revision, []))}
           >
-            {busy === "update" ? "Restoring…" : "Restore missing files"}
+            {busy === "update" ? gt("Restoring…") : gt("Restore missing files")}
           </Button>
         ) : null}
         {canWrite &&
@@ -334,10 +356,10 @@ function ScriptResults(props: {
             }}
           >
             {busy === "update"
-              ? "Updating…"
+              ? gt("Updating…")
               : edited.length > 0
-                ? "Replace edited files"
-                : "Update files"}
+                ? gt("Replace edited files")
+                : gt("Update files")}
           </Button>
         ) : null}
         {canRerun ? (
@@ -347,7 +369,9 @@ function ScriptResults(props: {
             disabled={busy !== null}
             onClick={() => act("rerun", runAgain)}
           >
-            {busy === "rerun" ? "Running…" : `Re-run ${fileName(scriptPath)}`}
+            {busy === "rerun"
+              ? gt("Running…")
+              : gt("Re-run {name}", { name: fileName(scriptPath) })}
           </Button>
         ) : null}
         {canWrite && script.canUndo ? (
@@ -357,7 +381,7 @@ function ScriptResults(props: {
             disabled={busy !== null}
             onClick={() => act("undo", undo)}
           >
-            {busy === "undo" ? "Undoing…" : "Undo update"}
+            {busy === "undo" ? gt("Undoing…") : gt("Undo update")}
           </Button>
         ) : null}
       </div>

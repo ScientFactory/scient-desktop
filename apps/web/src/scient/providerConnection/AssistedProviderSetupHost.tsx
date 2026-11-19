@@ -1,3 +1,4 @@
+import { msg, useGT } from "gt-react";
 import type {
   EnvironmentId,
   ProviderConnectionAccount,
@@ -32,6 +33,7 @@ import {
 } from "./providerConnectionPresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 import { useProviderEnableAction } from "./useProviderEnableAction";
+import { m } from "~/i18n/messages";
 
 export type AssistedProviderSetupSurface = "composer" | "management";
 
@@ -102,13 +104,14 @@ export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps)
 }
 
 export function ProviderProbePendingSetup(props: { readonly displayName: string }) {
+  const gt = useGT();
   return (
     <AssistedSetupFrame>
       <AssistedSetupStatus
-        body="Verifying installation and connection status."
+        body={gt("Verifying installation and connection status.")}
         icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
         role="status"
-        title={`Checking ${props.displayName}…`}
+        title={gt("Checking {provider}…", { provider: props.displayName })}
       />
     </AssistedSetupFrame>
   );
@@ -121,6 +124,7 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   });
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const gt = useGT();
   const displayName =
     props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
   const isManagement = props.surface === "management";
@@ -135,7 +139,10 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
         await controller.disconnect();
       } catch (error) {
         setDisconnectError(
-          providerLifecycleFailureMessage(error, `Scient could not sign out of ${displayName}.`),
+          providerLifecycleFailureMessage(
+            error,
+            m(msg("Scient could not sign out of {provider}.", { provider: displayName })),
+          ),
         );
       }
     } catch (cause) {
@@ -159,8 +166,8 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
       >
         {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
         {props.provider.connection.methods.includes("antigravity_credentials")
-          ? "Disconnect"
-          : "Sign out"}
+          ? gt("Disconnect")
+          : gt("Sign out")}
       </Button>
     ) : undefined;
 
@@ -341,6 +348,7 @@ export function DisabledProviderSetup(props: {
   });
   const [enabling, setEnabling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const gt = useGT();
 
   const runEnable = async () => {
     setError(null);
@@ -353,7 +361,10 @@ export function DisabledProviderSetup(props: {
     } catch (cause) {
       setEnabling(false);
       setError(
-        providerLifecycleFailureMessage(cause, `Scient could not enable ${props.displayName}.`),
+        providerLifecycleFailureMessage(
+          cause,
+          m(msg("Scient could not enable {provider}.", { provider: props.displayName })),
+        ),
       );
     }
   };
@@ -361,12 +372,14 @@ export function DisabledProviderSetup(props: {
   const body = error
     ? error
     : access === "pending"
-      ? `Checking whether this session can enable ${props.displayName}.`
+      ? gt("Checking whether this session can enable {provider}.", { provider: props.displayName })
       : access === "denied"
-        ? `This session can view ${props.displayName}, but cannot enable it.`
+        ? gt("This session can view {provider}, but cannot enable it.", {
+            provider: props.displayName,
+          })
         : canEnable
-          ? `Enable ${props.displayName} to continue.`
-          : `Open provider settings to enable ${props.displayName}.`;
+          ? gt("Enable {provider} to continue.", { provider: props.displayName })
+          : gt("Open provider settings to enable {provider}.", { provider: props.displayName });
 
   return (
     <AssistedSetupFrame>
@@ -381,7 +394,9 @@ export function DisabledProviderSetup(props: {
         }
         role={error ? "alert" : undefined}
         title={
-          error ? `${props.displayName} couldn’t be enabled` : `${props.displayName} is disabled`
+          error
+            ? gt("{provider} couldn’t be enabled", { provider: props.displayName })
+            : gt("{provider} is disabled", { provider: props.displayName })
         }
       />
       {canEnable ? (
@@ -398,7 +413,7 @@ export function DisabledProviderSetup(props: {
             ) : (
               <PowerIcon aria-hidden />
             )}
-            {enabling ? "Enabling…" : "Enable"}
+            {enabling ? gt("Enabling…") : gt("Enable")}
           </Button>
         </AssistedSetupActions>
       ) : null}

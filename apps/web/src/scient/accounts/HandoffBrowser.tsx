@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type ReactNode, useLayoutEffect, useState } from "react";
 
@@ -41,7 +42,7 @@ export function HandoffBrowser({
       {/* A streamed tab runs on the server's own browser, where nothing typed is captured. */}
       {streamed ? (
         <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">
-          What you type here isn't kept.
+          <T>What you type here isn't kept.</T>
         </p>
       ) : null}
       <div ref={setFrame} className={`relative ${className}`}>
@@ -67,7 +68,7 @@ export function HandoffBrowser({
             {/* The page is a native layer over the app, so it can't be half-hidden by scrolling. */}
             {inView ? null : (
               <div className="absolute inset-0 flex items-start justify-center bg-muted/40 pt-8 text-xs text-muted-foreground">
-                Scroll to bring the page into view
+                <T>Scroll to bring the page into view</T>
               </div>
             )}
           </>

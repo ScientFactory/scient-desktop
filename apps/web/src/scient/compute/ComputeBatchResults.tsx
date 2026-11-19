@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -42,6 +43,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { analysisEnvironment } from "~/state/analysis";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -91,7 +93,7 @@ function failureMessage(result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
 }): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "The analysis operation failed.";
+  return error instanceof Error ? error.message : m(msg("The analysis operation failed."));
 }
 
 function formatBytes(bytes: number): string {
@@ -138,26 +140,31 @@ function outputSegments(chunks: AnalysisRunSnapshot["receipt"]["output"]) {
 function statusLabel(
   run: AnalysisRunSnapshot | AnalysisRunSummary | null,
   runtimeLabel: string,
+  resolve: MessageResolver = m,
 ): string {
-  if (!run) return "No runs yet";
+  if (!run) return resolve(msg("No runs yet"));
   switch (run.receipt.status) {
     case "queued":
-      return run.queuePosition ? `Waiting · ${run.queuePosition} in queue` : "Waiting";
+      return run.queuePosition
+        ? resolve(msg("Waiting · {position} in queue", { position: run.queuePosition }))
+        : resolve(msg("Waiting"));
     case "starting":
-      return run.phase === "launching" ? `Launching ${runtimeLabel}` : `Starting ${runtimeLabel}`;
+      return run.phase === "launching"
+        ? resolve(msg("Launching {runtime}", { runtime: runtimeLabel }))
+        : resolve(msg("Starting {runtime}", { runtime: runtimeLabel }));
     case "running":
-      if (run.receipt.cancellationRequested) return "Stopping";
-      if (run.phase === "capturing") return "Capturing figures";
-      if (run.phase === "publishing") return "Publishing figures";
-      return "Running";
+      if (run.receipt.cancellationRequested) return resolve(msg("Stopping"));
+      if (run.phase === "capturing") return resolve(msg("Capturing figures"));
+      if (run.phase === "publishing") return resolve(msg("Publishing figures"));
+      return resolve(msg("Running"));
     case "succeeded":
-      return "Succeeded";
+      return resolve(msg("Succeeded"));
     case "failed":
-      return "Failed";
+      return resolve(msg("Failed", { $context: "run status" }));
     case "cancelled":
-      return "Cancelled";
+      return resolve(msg("Cancelled"));
     case "lost":
-      return "Interrupted when Scient closed";
+      return resolve(msg("Interrupted when Scient closed"));
   }
 }
 
@@ -171,6 +178,8 @@ function RunOutputView(props: {
     runId: AnalysisRunSnapshot["receipt"]["runId"],
   ) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const segments = outputSegments(props.run.receipt.output);
   const { cwd, relativePath } = props.run.source;
   const runId = props.run.receipt.runId;
@@ -217,7 +226,7 @@ function RunOutputView(props: {
             </span>
           ))
         : (props.run.receipt.failureMessage ??
-          emptyAnalysisRunOutputLabel(props.run.receipt.status))}
+          emptyAnalysisRunOutputLabel(props.run.receipt.status, messages))}
     </pre>
   );
   return (
@@ -240,7 +249,9 @@ function RunOutputView(props: {
         >
           {props.run.writtenFiles !== undefined && props.run.writtenFiles.length > 0 ? (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
-              <span className="text-muted-foreground">Wrote</span>
+              <span className="text-muted-foreground">
+                {gt("Wrote", { $context: "files the run wrote" })}
+              </span>
               {props.run.writtenFiles.map((path) => (
                 <button
                   key={path}
@@ -286,7 +297,7 @@ function RunOutputView(props: {
                   {diagnostic.frames.length > 0 ? (
                     <details className="mt-1">
                       <summary className="cursor-pointer text-[11px] text-muted-foreground">
-                        Stack frames
+                        <T>Stack frames</T>
                       </summary>
                       <div className="mt-1 flex flex-col items-start gap-0.5">
                         {withOccurrenceKeys(diagnostic.frames.slice(0, 20), diagnosticFrameKey).map(
@@ -319,7 +330,7 @@ function RunOutputView(props: {
                                 key={key}
                                 className="font-mono text-[11px] text-muted-foreground"
                               >
-                                {frame.functionName ?? "External MATLAB frame"}
+                                {frame.functionName ?? gt("External MATLAB frame")}
                                 {frame.line ? `:${frame.line}` : ""}
                               </span>
                             ),
@@ -330,8 +341,10 @@ function RunOutputView(props: {
                   {diagnostic.related.length > 0 ? (
                     <details className="mt-1">
                       <summary className="cursor-pointer text-[11px] text-muted-foreground">
-                        {diagnostic.related.length} related cause
-                        {diagnostic.related.length === 1 ? "" : "s"}
+                        {gt(
+                          "{count, plural, one {{count} related cause} other {{count} related causes}}",
+                          { count: diagnostic.related.length },
+                        )}
                       </summary>
                       <div className="mt-1 space-y-1 text-[11px] text-muted-foreground">
                         {withOccurrenceKeys(
@@ -377,7 +390,7 @@ function RunOutputView(props: {
                   variant="ghost"
                   onClick={() => props.onAskAboutDiagnostic(diagnostic, props.run.receipt.runId)}
                 >
-                  Ask agent
+                  <T>Ask agent</T>
                 </Button>
               </div>
             </div>
@@ -385,7 +398,9 @@ function RunOutputView(props: {
           {props.run.diagnostics.length > 0 ? (
             <details>
               <summary className="cursor-pointer text-[11px] text-muted-foreground">
-                Raw {props.runtimeLabel} output
+                <T>
+                  Raw <Var>{props.runtimeLabel}</Var> output
+                </T>
               </summary>
               <div className="pt-2">{output}</div>
             </details>
@@ -394,7 +409,7 @@ function RunOutputView(props: {
           )}
           {props.run.receipt.outputTruncated ? (
             <p className="text-xs text-muted-foreground">
-              Output was truncated at the run capture limit.
+              <T>Output was truncated at the run capture limit.</T>
             </p>
           ) : null}
         </div>
@@ -443,30 +458,46 @@ function PersistedRunOutput(props: {
       />
     );
   if (result._tag === "Failure") {
-    return <div className="p-3 text-xs text-destructive">Unable to load this run output.</div>;
+    return (
+      <div className="p-3 text-xs text-destructive">
+        <T>Unable to load this run output.</T>
+      </div>
+    );
   }
-  return <div className="p-3 text-xs text-muted-foreground">Loading run output…</div>;
+  return (
+    <div className="p-3 text-xs text-muted-foreground">
+      <T>Loading run output…</T>
+    </div>
+  );
 }
 
-function runtimeStatus(profile: AnalysisRuntimeProfile | null, runtimeLabel: string): string {
-  if (!profile) return `Checking ${runtimeLabel}…`;
+/** `msg()` strings. */
+const RUNTIME_VERIFICATION_LABELS = {
+  "needs-sign-in": msg("Sign-in required"),
+  "license-unavailable": msg("License unavailable"),
+  "missing-dependency": msg("Missing dependency"),
+  "startup-failed": msg("Startup failed"),
+  "timed-out": msg("Verification timed out"),
+  unknown: msg("Status unknown"),
+} as const;
+
+function runtimeStatus(
+  profile: AnalysisRuntimeProfile | null,
+  runtimeLabel: string,
+  resolve: MessageResolver = m,
+): string {
+  if (!profile) return resolve(msg("Checking {runtime}…", { runtime: runtimeLabel }));
   if (profile.availability === "available") {
     const versionLabel = profile.version ? ` ${profile.version}` : "";
-    if (profile.verification?.status === "ready") return `${runtimeLabel}${versionLabel} · Ready`;
+    if (profile.verification?.status === "ready")
+      return resolve(msg("{runtime} · Ready", { runtime: `${runtimeLabel}${versionLabel}` }));
     if (profile.verification) {
-      const statusLabel = {
-        "needs-sign-in": "Sign-in required",
-        "license-unavailable": "License unavailable",
-        "missing-dependency": "Missing dependency",
-        "startup-failed": "Startup failed",
-        "timed-out": "Verification timed out",
-        unknown: "Status unknown",
-      }[profile.verification.status];
+      const statusLabel = resolve(RUNTIME_VERIFICATION_LABELS[profile.verification.status]);
       return `${runtimeLabel}${versionLabel} · ${statusLabel}`;
     }
     return `${runtimeLabel}${versionLabel}`;
   }
-  return profile.detail ?? `${runtimeLabel} is unavailable.`;
+  return profile.detail ?? resolve(msg("{runtime} is unavailable.", { runtime: runtimeLabel }));
 }
 
 const EMPTY_RUNS: ReadonlyArray<AnalysisRunSnapshot> = [];
@@ -604,8 +635,10 @@ export function useComputeBatchRun(
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to confirm this run",
-              description: "The server returned a different run. The requested owner is retained.",
+              title: m(msg("Unable to confirm this run")),
+              description: m(
+                msg("The server returned a different run. The requested owner is retained."),
+              ),
             }),
           );
           return null;
@@ -631,7 +664,10 @@ export function useComputeBatchRun(
         ) {
           onStartRejected?.(requestedRunId);
         }
-        reportFailure(`Unable to run ${source.runtimeLabel} file`, result);
+        reportFailure(
+          m(msg("Unable to run {runtime} file", { runtime: source.runtimeLabel })),
+          result,
+        );
         refreshRuntime();
       }
       return null;
@@ -642,9 +678,10 @@ export function useComputeBatchRun(
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to confirm this run",
-            description:
-              "Check the connection before trying again. The run remains owned by this tab.",
+            title: m(msg("Unable to confirm this run")),
+            description: m(
+              msg("Check the connection before trying again. The run remains owned by this tab."),
+            ),
           }),
         );
         return null;
@@ -760,6 +797,8 @@ export function ComputeBatchResults({
   resultPicker,
   onRevealCode,
 }: ComputeBatchResultsProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const props = model.source;
   const { runtimeResult, profile, streamedRunValue, streamedRuns, activeRun } = model;
@@ -914,7 +953,10 @@ export function ComputeBatchResults({
     const retained = selectedRun.localStorage.totalBytes;
     if (
       !globalThis.confirm(
-        `Remove ${formatBytes(retained)} of local output and artifacts from this run? Its status, diagnostics, hashes, and provenance will remain in history.`,
+        gt(
+          "Remove {size} of local output and artifacts from this run? Its status, diagnostics, hashes, and provenance will remain in history.",
+          { size: formatBytes(retained) },
+        ),
       )
     ) {
       return;
@@ -931,7 +973,7 @@ export function ComputeBatchResults({
       refreshRuns();
       refreshStorage();
     } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Unable to remove local run data", result);
+      reportFailure(gt("Unable to remove local run data"), result);
       setHistoryCursor(null);
       setLoadedHistory([]);
       refreshRuns();
@@ -943,7 +985,14 @@ export function ComputeBatchResults({
     if (!storage || storage.totalBytes === 0) return;
     if (
       !globalThis.confirm(
-        `Remove ${formatBytes(storage.totalBytes)} of retained ${props.runtimeLabel} output and artifacts across ${storage.retainedRunCount} local runs? Run metadata, diagnostics, hashes, and provenance will remain.`,
+        gt(
+          "Remove {size} of retained {runtime} output and artifacts across {count} local runs? Run metadata, diagnostics, hashes, and provenance will remain.",
+          {
+            size: formatBytes(storage.totalBytes),
+            runtime: props.runtimeLabel,
+            count: storage.retainedRunCount,
+          },
+        ),
       )
     ) {
       return;
@@ -960,7 +1009,7 @@ export function ComputeBatchResults({
       refreshRuns();
       refreshStorage();
     } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Unable to clean up local analysis data", result);
+      reportFailure(gt("Unable to clean up local analysis data"), result);
       setHistoryCursor(null);
       setLoadedHistory([]);
       refreshRuns();
@@ -987,12 +1036,14 @@ export function ComputeBatchResults({
       toastManager.add(
         stackedThreadToast({
           type: "success",
-          title: result.value.reused ? "Project result already saved" : "Saved result to project",
+          title: result.value.reused
+            ? gt("Project result already saved")
+            : gt("Saved result to project"),
           description: result.value.directoryRelativePath,
         }),
       );
     } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Unable to save result to project", result);
+      reportFailure(gt("Unable to save result to project"), result);
     }
   };
 
@@ -1039,18 +1090,18 @@ export function ComputeBatchResults({
       !model.canStart;
   const runtimeStatusText =
     runtimeResult._tag === "Failure" && profile === null
-      ? `Unable to check ${props.runtimeLabel}`
-      : runtimeStatus(profile, props.runtimeLabel);
+      ? gt("Unable to check {runtime}", { runtime: props.runtimeLabel })
+      : runtimeStatus(profile, props.runtimeLabel, messages);
 
   const busy = operation !== null || model.isStarting || model.isCancelling;
   const operationStatus = model.isStarting
-    ? "Verifying source"
+    ? gt("Verifying source")
     : model.isCancelling
-      ? "Stopping"
+      ? gt("Stopping")
       : operation === "promote"
-        ? "Saving result to project…"
+        ? gt("Saving result to project…")
         : operation
-          ? "Removing local data…"
+          ? gt("Removing local data…")
           : null;
   const submittedRunId = model.runId;
   const [previousSubmittedRunId, setPreviousSubmittedRunId] = useState<string | null>(null);
@@ -1099,7 +1150,7 @@ export function ComputeBatchResults({
     <section
       ref={sectionRef}
       className="flex min-h-0 flex-1 flex-col bg-background"
-      aria-label={`${props.runtimeLabel} results`}
+      aria-label={gt("{runtime} results", { runtime: props.runtimeLabel })}
     >
       <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3 py-1">
         {resultPicker}
@@ -1111,12 +1162,12 @@ export function ComputeBatchResults({
                   size="xs"
                   variant="ghost-muted"
                   className="max-w-44"
-                  aria-label={`${props.runtimeLabel} runs of this file`}
+                  aria-label={gt("{runtime} runs of this file", { runtime: props.runtimeLabel })}
                 >
                   <span className="truncate">
                     {selectedRun
                       ? formatTimestamp(selectedRun.receipt.startedAt, timestampFormat)
-                      : "Runs"}
+                      : gt("Runs", { $context: "noun, runs of a file" })}
                   </span>
                   <ChevronDown className="size-3 shrink-0" />
                 </Button>
@@ -1129,8 +1180,10 @@ export function ComputeBatchResults({
               >
                 {runs.map((run) => (
                   <MenuRadioItem key={run.receipt.runId} value={run.receipt.runId} size="compact">
-                    {statusLabel(run, props.runtimeLabel)} ·{" "}
-                    {formatTimestamp(run.receipt.startedAt, timestampFormat)}
+                    {gt("{status} · {time}", {
+                      status: statusLabel(run, props.runtimeLabel, messages),
+                      time: formatTimestamp(run.receipt.startedAt, timestampFormat),
+                    })}
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>
@@ -1139,7 +1192,7 @@ export function ComputeBatchResults({
                   disabled={runsResult.waiting}
                   onClick={() => setHistoryCursor(historyPage.nextCursor)}
                 >
-                  Load older runs
+                  <T>Load older runs</T>
                 </MenuItem>
               ) : null}
             </MenuPopup>
@@ -1153,7 +1206,7 @@ export function ComputeBatchResults({
             onClick={() => void model.cancel()}
           >
             {model.isCancelling ? <LoaderCircle className="animate-spin" /> : <Square />}
-            Stop
+            {gt("Stop", { $context: "verb, stops a run" })}
           </Button>
         ) : showRunControls ? (
           <Button
@@ -1177,10 +1230,10 @@ export function ComputeBatchResults({
               <Play />
             )}
             {primaryActionIsSetup
-              ? `Set up ${props.runtimeLabel}`
+              ? gt("Set up {runtime}", { runtime: props.runtimeLabel })
               : props.sourcePending
-                ? "Saving…"
-                : `Run ${props.runtimeLabel}`}
+                ? gt("Saving…")
+                : gt("Run {runtime}", { runtime: props.runtimeLabel })}
           </Button>
         ) : null}
         <ScientTooltip
@@ -1197,26 +1250,26 @@ export function ComputeBatchResults({
             )}
           >
             {activeRun
-              ? statusLabel(activeRun, props.runtimeLabel)
+              ? statusLabel(activeRun, props.runtimeLabel, messages)
               : operationStatus
                 ? operationStatus
                 : projectNotInitialized
-                  ? "Add this folder to Scient to run it"
+                  ? gt("Add this folder to Scient to run it")
                   : failed || stoppedEarly
-                    ? statusLabel(selectedRun, props.runtimeLabel)
+                    ? statusLabel(selectedRun, props.runtimeLabel, messages)
                     : shownRuntimeText}
           </span>
         </ScientTooltip>
         {askableRun === null ? null : asksAgent ? (
           <Button size="xs" variant="outline" onClick={() => askAboutRun(askableRun)}>
-            Ask agent
+            <T>Ask agent</T>
           </Button>
         ) : (
-          <ScientTooltip content="Ask in chat">
+          <ScientTooltip content={gt("Ask in chat")}>
             <Button
               size="icon-xs"
               variant="ghost-muted"
-              aria-label="Ask in chat"
+              aria-label={gt("Ask in chat")}
               onClick={() => askAboutRun(askableRun)}
             >
               <MessageSquarePlus className="size-3" />
@@ -1228,7 +1281,7 @@ export function ComputeBatchResults({
           <Menu>
             <MenuTrigger
               render={
-                <Button size="icon-xs" variant="ghost-muted" aria-label="More run actions">
+                <Button size="icon-xs" variant="ghost-muted" aria-label={gt("More run actions")}>
                   {operation === null ? <Ellipsis /> : <LoaderCircle className="animate-spin" />}
                 </Button>
               }
@@ -1240,13 +1293,15 @@ export function ComputeBatchResults({
                   disabled={!model.canStart}
                   onClick={() => void model.start(candidate)}
                 >
-                  Run with {candidate.label}
+                  <T>
+                    Run with <Var>{candidate.label}</Var>
+                  </T>
                 </MenuItem>
               ))}
               {finished ? (
                 <MenuItem disabled={busy} onClick={handlePromoteRun}>
                   <FolderDown />
-                  Save to project
+                  <T>Save to project</T>
                 </MenuItem>
               ) : null}
               {removable ? (
@@ -1254,12 +1309,14 @@ export function ComputeBatchResults({
                   disabled={busy || !isTerminalAnalysisRunStatus(selectedRun.receipt.status)}
                   onClick={handleCleanupRun}
                 >
-                  Remove this run
+                  <T>Remove this run</T>
                 </MenuItem>
               ) : null}
               {storage && storage.totalBytes > 0 ? (
                 <MenuItem disabled={busy || activeRun !== null} onClick={handleCleanupProject}>
-                  Clean up project ({formatBytes(storage.totalBytes)})
+                  <T>
+                    Clean up project (<Var>{formatBytes(storage.totalBytes)}</Var>)
+                  </T>
                 </MenuItem>
               ) : null}
             </MenuPopup>
@@ -1282,24 +1339,24 @@ export function ComputeBatchResults({
           role="alert"
         >
           {selectedRun.artifactReceipt.failureMessage ??
-            "The run finished, but Scient could not collect its generated figures."}
+            gt("The run finished, but Scient could not collect its generated figures.")}
         </div>
       ) : null}
 
       {projectNotInitialized ? (
         <div className="p-3 text-xs text-muted-foreground">
-          Add this folder to Scient to run its files. Viewing and editing remain available.
+          <T>Add this folder to Scient to run its files. Viewing and editing remain available.</T>
         </div>
       ) : !runtimeReady && selectedRun === null ? (
         <div className="p-3 text-xs text-muted-foreground">
           <Link to="/settings/scientific-computing" search={{ environmentId: props.environmentId }}>
-            Open Scientific Computing
+            <T>Open Scientific Computing</T>
           </Link>
         </div>
       ) : null}
       {!projectNotInitialized && selectedRun?.localStorage.status === "metadata-only" ? (
         <div className="border-b border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
-          This run's saved output was removed.
+          <T>This run's saved output was removed.</T>
         </div>
       ) : null}
       {!projectNotInitialized && selectedLiveRun ? (
@@ -1314,10 +1371,14 @@ export function ComputeBatchResults({
         />
       ) : !projectNotInitialized && (model.isStarting || awaitingOwnedRun) ? (
         <div role="status" className="p-3 text-xs text-muted-foreground">
-          {model.isStarting ? `Starting ${props.runtimeLabel}…` : "Waiting for this run…"}
+          {model.isStarting
+            ? gt("Starting {runtime}…", { runtime: props.runtimeLabel })
+            : gt("Waiting for this run…")}
         </div>
       ) : !projectNotInitialized && runtimeReady ? (
-        <div className="p-3 text-xs text-muted-foreground">Run this file to see output here.</div>
+        <div className="p-3 text-xs text-muted-foreground">
+          <T>Run this file to see output here.</T>
+        </div>
       ) : null}
     </section>
   );

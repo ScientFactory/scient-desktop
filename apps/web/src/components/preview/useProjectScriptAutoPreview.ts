@@ -6,6 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
@@ -13,6 +14,7 @@ import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 
 import {
   captureProjectScriptPreviewWaitBaseline,
@@ -113,8 +115,8 @@ export function useProjectScriptAutoPreview<E>(input: {
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
-      title: "Unable to open preview",
-      description: error instanceof Error ? error.message : "An error occurred.",
+      title: m(msg("Unable to open preview")),
+      description: error instanceof Error ? error.message : m(msg("An error occurred.")),
     });
   };
 
@@ -167,8 +169,8 @@ export function useProjectScriptAutoPreview<E>(input: {
       if (!clearPending(pending.id)) return;
       toastManager.add({
         type: "info",
-        title: "Preview is still starting",
-        description: "It will appear under Local previews when the server is ready.",
+        title: m(msg("Preview is still starting")),
+        description: m(msg("It will appear under Local previews when the server is ready.")),
       });
     }, PROJECT_SCRIPT_PREVIEW_START_TIMEOUT_MS);
     return () => window.clearTimeout(timeout);
@@ -195,8 +197,8 @@ export function useProjectScriptAutoPreview<E>(input: {
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Unable to open preview",
-        description: error instanceof Error ? error.message : "The preview URL is invalid.",
+        title: m(msg("Unable to open preview")),
+        description: error instanceof Error ? error.message : m(msg("The preview URL is invalid.")),
       });
       return;
     }

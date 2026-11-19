@@ -1,4 +1,5 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { msg } from "gt-react";
 import { useLayoutEffect } from "react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
@@ -18,6 +19,7 @@ import {
   clearProjectFileQueryData,
   useProjectFileQuery,
 } from "~/components/files/projectFilesQueryState";
+import { m } from "~/i18n/messages";
 import { projectEnvironment } from "~/state/projects";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 
@@ -269,7 +271,7 @@ export function useWorkspaceFileRefresh(input: {
         ? error.message
         : error instanceof Error && error.message.trim().length > 0
           ? error.message
-          : "The workspace write failed.",
+          : m(msg("The workspace write failed.")),
     });
   };
 

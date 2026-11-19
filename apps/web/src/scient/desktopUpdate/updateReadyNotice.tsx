@@ -1,4 +1,5 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { msg, T } from "gt-react";
 import { ArrowRightIcon } from "lucide-react";
 
 import {
@@ -8,6 +9,7 @@ import {
 } from "~/components/desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "~/components/desktopUpdate.toast";
 import { anchoredToastManager, stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { isWindowsPlatform } from "~/lib/utils";
 
 /**
@@ -23,8 +25,9 @@ export interface ScientUpdateReadyNoticeHandle {
   readonly close: () => void;
 }
 
-const WINDOWS_INSTALL_NOTE =
-  "Scient may stay closed for a few minutes while the update installs, then reopens.";
+const WINDOWS_INSTALL_NOTE = msg(
+  "Scient may stay closed for a few minutes while the update installs, then reopens.",
+);
 
 function isWindowsHost(): boolean {
   return typeof navigator !== "undefined" && isWindowsPlatform(navigator.platform);
@@ -61,7 +64,7 @@ async function runInstall(
   reportError: ReportDesktopInstallError,
   expectedVersion: string | undefined,
 ): Promise<boolean> {
-  const title = "Could not install update";
+  const title = m(msg("Could not install update"));
   try {
     const result = await shell.installUpdate(expectedVersion);
     if (!result.accepted) {
@@ -70,9 +73,14 @@ async function runInstall(
       reportError(
         title,
         replaced
-          ? `Update ${expectedVersion} is no longer the one ready to install. Use the update button again.`
+          ? m(
+              msg(
+                "Update {version} is no longer the one ready to install. Use the update button again.",
+                { version: expectedVersion },
+              ),
+            )
           : result.state.message?.trim() ||
-              "Another update step is still running. Try again in a moment.",
+              m(msg("Another update step is still running. Try again in a moment.")),
       );
       return false;
     }
@@ -83,7 +91,10 @@ async function runInstall(
     }
     return true;
   } catch (error) {
-    reportError(title, error instanceof Error ? error.message : "An unexpected error occurred.");
+    reportError(
+      title,
+      error instanceof Error ? error.message : m(msg("An unexpected error occurred.")),
+    );
     return false;
   }
 }
@@ -114,7 +125,7 @@ function ReleaseNotesLink({ shell, releaseUrl }: { shell: UpdateNoticeShell; rel
       }}
       type="button"
     >
-      Read more
+      <T>Read more</T>
       <ArrowRightIcon
         aria-hidden
         className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"
@@ -150,7 +161,7 @@ export function showScientUpdateReadyNotice({
 }): ScientUpdateReadyNoticeHandle {
   const version = getDesktopUpdateDownloadedVersion(state);
   const releaseUrl = getDesktopUpdateReleaseUrl(version);
-  const windowsNote = isWindowsHost() ? WINDOWS_INSTALL_NOTE : null;
+  const windowsNote = isWindowsHost() ? m(WINDOWS_INSTALL_NOTE) : null;
   const description =
     windowsNote || releaseUrl ? (
       <>
@@ -170,11 +181,11 @@ export function showScientUpdateReadyNotice({
   const notice = {
     ...stackedThreadToast({
       type: "success",
-      title: version ? `Update ${version} is ready` : "Update is ready",
+      title: version ? m(msg("Update {version} is ready", { version })) : m(msg("Update is ready")),
       ...(description !== undefined ? { description } : {}),
       timeout: persistent ? 0 : SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS,
       actionProps: {
-        children: "Restart now",
+        children: m(msg("Restart now")),
         onClick: () => {
           close();
           void install(version);

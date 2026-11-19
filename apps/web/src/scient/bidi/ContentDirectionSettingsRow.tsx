@@ -1,6 +1,7 @@
 // SCIENT-OWNED: the conversation text direction row in Settings → Appearance.
 import type { ScientAnalyticsUiEvent } from "@t3tools/contracts";
 import { type ContentDirection, DEFAULT_CONTENT_DIRECTION } from "@t3tools/contracts/settings";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
 import { useSearchableSetting } from "../../components/settings/settingsSearch";
@@ -13,9 +14,9 @@ import {
 } from "../../components/ui/select";
 
 const CONTENT_DIRECTION_LABELS: Record<ContentDirection, string> = {
-  auto: "Automatic",
-  rtl: "Right to left",
-  ltr: "Left to right",
+  auto: msg("Automatic", { $context: "text direction" }),
+  rtl: msg("Right to left"),
+  ltr: msg("Left to right"),
 };
 
 /**
@@ -31,15 +32,19 @@ export function ContentDirectionSettingsRow({
   readonly updateSettings: (patch: { readonly contentDirection: ContentDirection }) => void;
   readonly recordAnalytics: (event: ScientAnalyticsUiEvent) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const setting = useSearchableSetting();
   return (
     <SettingsRow
       {...setting("conversation-text-direction")}
-      description="Control chat prose, lists, and tables without mirroring the application shell."
+      description={gt(
+        "Control chat prose, lists, and tables without mirroring the application shell.",
+      )}
       resetAction={
         contentDirection !== DEFAULT_CONTENT_DIRECTION ? (
           <SettingResetButton
-            ariaLabel="Reset conversation text direction to default"
+            ariaLabel={gt("Reset conversation text direction to default")}
             onClick={() => updateSettings({ contentDirection: DEFAULT_CONTENT_DIRECTION })}
           />
         ) : null
@@ -60,13 +65,13 @@ export function ContentDirectionSettingsRow({
             }
           }}
         >
-          <SelectTrigger className="w-full sm:w-40" aria-label="Conversation text direction">
-            <SelectValue>{CONTENT_DIRECTION_LABELS[contentDirection]}</SelectValue>
+          <SelectTrigger className="w-full sm:w-40" aria-label={gt("Conversation text direction")}>
+            <SelectValue>{m(CONTENT_DIRECTION_LABELS[contentDirection])}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {Object.entries(CONTENT_DIRECTION_LABELS).map(([value, label]) => (
               <SelectItem hideIndicator key={value} value={value}>
-                {label}
+                {m(label)}
               </SelectItem>
             ))}
           </SelectPopup>

@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import {
   type EnvironmentId,
   type ProviderConnectionMethod,
@@ -112,7 +113,9 @@ function ProbePendingProviderConnectionDialog(props: ProviderConnectionDialogPro
             </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Checking {props.displayName} installation and connection status.
+            <T>
+              Checking <Var>{props.displayName}</Var> installation and connection status.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -149,7 +152,7 @@ function ProviderConnectionDialogTitle(props: {
           className="ms-1 rounded-full bg-success/10 px-2 py-0.5 font-medium text-success text-xs"
           role="status"
         >
-          Repair successful
+          <T>Repair successful</T>
         </span>
       ) : null}
     </>
@@ -178,7 +181,9 @@ function DisabledProviderConnectionDialog(props: ProviderConnectionDialogProps) 
             </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Enable {props.displayName} before installing or connecting it.
+            <T>
+              Enable <Var>{props.displayName}</Var> before installing or connecting it.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel spacing="compact">
@@ -213,6 +218,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const isCursor = props.provider.driver === "cursor";
   const isPi = props.provider.driver === "pi";
   const assistedDisplayName = props.displayName;
+  const gt = useGT();
   const runtime = props.provider.connection?.runtime;
   const hasActionableManagedRuntime =
     runtime?.source === "scient_managed" &&
@@ -256,20 +262,22 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
           </DialogTitle>
           <DialogDescription className="sr-only">
             {isPi
-              ? "Manage Pi's runtime and model connections."
+              ? gt("Manage Pi's runtime and model connections.")
               : isAntigravity
-                ? "Install Antigravity and connect your Google subscription."
+                ? gt("Install Antigravity and connect your Google subscription.")
                 : isClaude
-                  ? "Connect and manage your Claude account."
+                  ? gt("Connect and manage your Claude account.")
                   : isGrok
-                    ? "Install Grok and connect your existing subscription."
+                    ? gt("Install Grok and connect your existing subscription.")
                     : isDroid
-                      ? "Install Droid and connect your Factory account."
+                      ? gt("Install Droid and connect your Factory account.")
                       : isCursor
-                        ? "Connect and manage your Cursor account."
+                        ? gt("Connect and manage your Cursor account.")
                         : props.provider.driver === "codex"
-                          ? "Connect and manage your existing ChatGPT subscription."
-                          : `Manage ${assistedDisplayName}'s runtime and model connections.`}
+                          ? gt("Connect and manage your existing ChatGPT subscription.")
+                          : gt("Manage {provider}''s runtime and model connections.", {
+                              provider: assistedDisplayName,
+                            })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel spacing="compact">
@@ -321,10 +329,12 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
   const [localOperation, setLocalOperation] = useState<ProviderConnectionOperation | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [authorizationCode, setAuthorizationCode] = useState("");
+  const gt = useGT();
+  const messages = useMessages();
   const [isRuntimePlanOpen, setIsRuntimePlanOpen] = useState(
     props.initialRuntimeAction !== undefined,
   );
-  const presentation = providerConnectionPresentation(props.provider);
+  const presentation = providerConnectionPresentation(props.provider, messages);
   const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
   const isConnected = isProviderAccountPresentedAsConnected(props.provider);
   const operation = isConnected
@@ -377,14 +387,17 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
 
   const openAuthorizationPage = async (url: string) => {
     if (!isSafeProviderAuthorizationUrl(url)) {
-      setLocalError("Scient refused an invalid or insecure provider sign-in link.");
+      setLocalError(gt("Scient refused an invalid or insecure provider sign-in link."));
       return;
     }
     try {
       await ensureLocalApi().shell.openExternal(url);
     } catch (error) {
       setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not open the secure sign-in page."),
+        providerLifecycleFailureMessage(
+          error,
+          gt("Scient could not open the secure sign-in page."),
+        ),
       );
     }
   };
@@ -405,7 +418,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
         setLocalError(
           providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
-            `Scient could not start ${props.displayName} sign in.`,
+            gt("Scient could not start {provider} sign in.", { provider: props.displayName }),
           ),
         );
       }
@@ -439,7 +452,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
         setLocalError(
           providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
-            "Scient could not cancel sign in.",
+            gt("Scient could not cancel sign in."),
           ),
         );
       }
@@ -467,7 +480,9 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
         setLocalError(
           providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
-            `Scient could not return the authorization code to ${props.displayName}.`,
+            gt("Scient could not return the authorization code to {provider}.", {
+              provider: props.displayName,
+            }),
           ),
         );
       }
@@ -491,7 +506,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
         setLocalError(
           providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
-            `Scient could not sign out of ${props.displayName}.`,
+            gt("Scient could not sign out of {provider}.", { provider: props.displayName }),
           ),
         );
       }
@@ -514,7 +529,9 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
             </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Manage the {props.displayName} installation and account connection.
+            <T>
+              Manage the <Var>{props.displayName}</Var> installation and account connection.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel spacing="compact">
@@ -534,9 +551,14 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   <div className="flex min-w-0 items-center gap-3">
                     <CheckCircle2Icon className="size-5 shrink-0 text-success" aria-hidden />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground">Connected</p>
+                      <p className="text-sm font-medium text-foreground">
+                        <T>Connected</T>
+                      </p>
                       <p className="mt-0.5 break-all text-xs text-muted-foreground">
-                        {accountLabel ?? `${props.displayName} reports an authenticated account.`}
+                        {accountLabel ??
+                          gt("{provider} reports an authenticated account.", {
+                            provider: props.displayName,
+                          })}
                       </p>
                     </div>
                   </div>
@@ -554,7 +576,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                       ) : (
                         <LogOutIcon />
                       )}
-                      Sign out
+                      <T>Sign out</T>
                     </Button>
                   ) : null}
                 </div>
@@ -570,8 +592,8 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-foreground">
                         {operation.status === "verifying"
-                          ? "Verifying connection"
-                          : "Finish sign in"}
+                          ? gt("Verifying connection")
+                          : gt("Finish sign in")}
                       </p>
                       <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                         {operation.message}
@@ -582,7 +604,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                     <div className="flex items-center justify-between gap-3 rounded-lg border bg-background p-3">
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Device code
+                          <T>Device code</T>
                         </p>
                         <code className="mt-1 block text-base font-semibold tracking-wider text-foreground">
                           {operation.userCode}
@@ -592,7 +614,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                         type="button"
                         size="icon-sm"
                         variant="outline"
-                        aria-label="Copy device code"
+                        aria-label={gt("Copy device code")}
                         onClick={() => copyToClipboard(operation.userCode!, undefined)}
                       >
                         <CopyIcon />
@@ -609,14 +631,14 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                     >
                       <ExternalLinkIcon />
                       {operation.authorizationUrlKind === "manual_fallback"
-                        ? "Browser didn’t open?"
-                        : "Open secure sign-in page"}
+                        ? gt("Browser didn’t open?")
+                        : gt("Open secure sign-in page")}
                     </Button>
                   ) : null}
                   {acceptsAuthorizationCode && operation.status !== "verifying" ? (
                     <div className="space-y-2 pt-1">
                       <p className="text-xs leading-relaxed text-muted-foreground">
-                        Paste the one-time authorization code shown by the provider.
+                        <T>Paste the one-time authorization code shown by the provider.</T>
                       </p>
                       <ProviderAuthorizationCodeForm
                         authorizationCode={authorizationCode}
@@ -637,10 +659,12 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                       <p className="text-sm font-medium text-foreground">{presentation.label}</p>
                       <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                         {presentation.kind === "not-required"
-                          ? "This provider is ready without account sign in."
+                          ? gt("This provider is ready without account sign in.")
                           : preferredMethod
-                            ? "Your browser is the fastest option. Device-code sign in is available when browser callbacks are inconvenient."
-                            : "This provider currently uses its own manual setup flow."}
+                            ? gt(
+                                "Your browser is the fastest option. Device-code sign in is available when browser callbacks are inconvenient.",
+                              )
+                            : gt("This provider currently uses its own manual setup flow.")}
                       </p>
                     </div>
                   </div>
@@ -678,7 +702,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                 onClick={() => void cancel()}
               >
                 {pendingAction === "cancel" ? <LoaderIcon className="animate-spin" /> : <XIcon />}
-                Cancel sign in
+                <T>Cancel sign in</T>
               </Button>
             ) : (
               <span />
@@ -697,7 +721,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                     onClick={() => void start("codex_device_code")}
                   >
                     {pendingAction === "device" ? <LoaderIcon className="animate-spin" /> : null}
-                    Use device code
+                    <T>Use device code</T>
                   </Button>
                 ) : null}
                 <Button
@@ -712,7 +736,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   ) : (
                     <ExternalLinkIcon />
                   )}
-                  Continue in browser
+                  <T>Continue in browser</T>
                 </Button>
               </div>
             ) : null}

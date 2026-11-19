@@ -7,6 +7,7 @@ import { LatexStatementTypeControl } from "./LatexStatementTypeControl";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 import { useLatexObjectContext } from "./useLatexObjectContext";
+import { T, useGT } from "gt-react";
 
 /** Statement content stays on paper; its type and reference keys belong in the footer. */
 export function LatexStatementToolbar(props: {
@@ -22,6 +23,7 @@ export function LatexStatementToolbar(props: {
   onTitle: () => void;
   onLabel: (id: string, value: string) => void;
 }) {
+  const gt = useGT();
   const { active, bar } = useLatexObjectContext(props.editor, props.root, props.selected);
   const { source, renameLabel } = useContext(LatexAuthoringContext);
   const inventory = latexLabelInventory(source);
@@ -35,7 +37,8 @@ export function LatexStatementToolbar(props: {
     <div
       ref={bar}
       role="toolbar"
-      aria-label={props.proof ? "Proof tools" : "Statement tools"}
+      aria-label={props.proof ? gt("Proof tools") : gt("Statement tools")}
+      data-context-name={props.proof ? gt("Proof") : gt("Statement")}
       data-context-presentation="inline"
       data-context-position={props.environment}
       className="scient-latex-context-toolbar"
@@ -55,16 +58,16 @@ export function LatexStatementToolbar(props: {
         className={dockButtonClass()}
         type="button"
         disabled={!props.editable}
-        aria-label={props.hasTitle ? "Edit statement title" : "Add statement title"}
+        aria-label={props.hasTitle ? gt("Edit statement title") : gt("Add statement title")}
         onClick={props.onTitle}
       >
-        Title
+        <T context="statement title button">Title</T>
       </button>
       {!props.proof &&
         props.labels.map((label) => (
           <LatexReferenceLabelControl
             key={label.id}
-            label="Statement reference label"
+            label={gt("Statement reference label")}
             allowEmpty
             value={label.value}
             draftKey={label.draftKey}

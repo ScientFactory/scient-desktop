@@ -1,3 +1,5 @@
+import { useGT } from "gt-react";
+
 /** Two values side by side: the one here, and the other's. */
 export function Sides(props: {
   readonly label: string;
@@ -7,6 +9,8 @@ export function Sides(props: {
   readonly otherName: string;
   readonly children?: React.ReactNode;
 }) {
+  const gt = useGT();
+  const none = gt("(none)", { $context: "no value on this side" });
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-2">
@@ -16,11 +20,11 @@ export function Sides(props: {
       <dl className="mt-1 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
         <div className="min-w-0">
           <dt className="text-muted-foreground">{props.hereName}</dt>
-          <dd className="break-words whitespace-pre-wrap">{props.here || "(none)"}</dd>
+          <dd className="break-words whitespace-pre-wrap">{props.here || none}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-muted-foreground">{props.otherName}</dt>
-          <dd className="break-words whitespace-pre-wrap">{props.other || "(none)"}</dd>
+          <dd className="break-words whitespace-pre-wrap">{props.other || none}</dd>
         </div>
       </dl>
     </div>

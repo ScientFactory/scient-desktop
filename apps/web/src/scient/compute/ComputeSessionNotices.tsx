@@ -1,6 +1,7 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ComputeOutputProjection } from "@t3tools/client-runtime/state/compute";
 import type { ComputeSessionRecord, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { T } from "gt-react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -47,12 +48,14 @@ export function ComputeSessionNotices(props: {
         aria-expanded={expanded}
       >
         {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        Session messages
+        <T>Session messages</T>
       </button>
       {expanded ? (
         <div className="mt-2">
           {persisted.error ? (
-            <p className="text-xs text-destructive">Couldn&apos;t load these messages</p>
+            <p className="text-xs text-destructive">
+              <T>Couldn&apos;t load these messages</T>
+            </p>
           ) : (
             <ComputeOutputView
               cwd={props.cwd}

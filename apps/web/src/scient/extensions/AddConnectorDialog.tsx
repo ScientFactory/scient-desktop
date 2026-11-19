@@ -9,6 +9,7 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -26,6 +27,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { NativeSelect } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
@@ -46,10 +48,11 @@ import { openAuthorizationPage } from "./openAuthorizationPage";
 
 type AuthMode = "automatic" | "api-key";
 
+/** `msg()` strings: resolve them where they are shown. */
 const STRATEGY_LABELS: Readonly<Record<CredentialStrategy, string>> = {
-  bearer: "Bearer token",
-  header: "Custom header",
-  basic: "Basic auth",
+  bearer: msg("Bearer token"),
+  header: msg("Custom header"),
+  basic: msg("Basic auth"),
 };
 
 interface AddConnectorErrors {
@@ -95,38 +98,41 @@ function validateAddConnectorDraft(
   draft: Draft,
   entry: DiscoverEntry | null,
   accounts: ReadonlyArray<AccountSummary>,
+  resolve: MessageResolver = m,
 ): AddConnectorErrors {
   const errors: AddConnectorErrors = {};
   if (entry === null) {
-    const url = validateConnectorUrl(draft.url);
+    const url = validateConnectorUrl(draft.url, resolve);
     if (url !== null) errors.url = url;
   } else if (entry.address) {
-    const error = validateCuratedAddress(draft.remoteUrl, entry.address.urlTemplate);
+    const error = validateCuratedAddress(draft.remoteUrl, entry.address.urlTemplate, resolve);
     if (error) errors.remote = error;
   } else if (!installableRemotes(entry).some((remote) => remote.url === draft.remoteUrl)) {
-    errors.remote = "Choose an endpoint.";
+    errors.remote = resolve(msg("Choose an endpoint."));
   }
   if (draft.authMode === "automatic") {
     if (
       (entry?.oauthClientRequired || draft.clientSecret.trim().length > 0) &&
       draft.clientId.trim().length === 0
     ) {
-      errors.clientId = entry?.oauthClientRequired
-        ? "Enter the registered client ID."
-        : "Enter the client ID to use a client secret.";
+      errors.clientId = resolve(
+        entry?.oauthClientRequired
+          ? msg("Enter the registered client ID.")
+          : msg("Enter the client ID to use a client secret."),
+      );
     }
   } else {
     if (draft.strategy === "header") {
-      const headerName = validateHeaderName(draft.headerName);
+      const headerName = validateHeaderName(draft.headerName, resolve);
       if (headerName !== null) errors.headerName = headerName;
     }
     const value = draft.value.trim();
     if (draft.accountId) {
       if (!accounts.some((account) => account.accountId === draft.accountId))
-        errors.accountId = "Choose an account.";
-    } else if (value.length === 0) errors.value = "Enter the key.";
+        errors.accountId = resolve(msg("Choose an account."));
+    } else if (value.length === 0) errors.value = resolve(msg("Enter the key."));
     else if (!draft.accountId && draft.strategy === "basic" && !value.includes(":")) {
-      errors.value = "Use user:password.";
+      errors.value = resolve(msg("Use user:password."));
     }
   }
   return errors;
@@ -254,6 +260,8 @@ function RemoteConnectorDialog({
   onBack,
   agents,
 }: AddConnectorDialogProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const github = entryNeedsToken(entry) === true;
   const [githubToken, setGithubToken] = useState(false);
   const add = useAtomCommand(addConnector, { reportFailure: false });
@@ -283,7 +291,7 @@ function RemoteConnectorDialog({
         ? [{ login: row.name, via: row.via }]
         : [],
     ) ?? [];
-  const errors = validateAddConnectorDraft(draft, entry, matchingAccounts);
+  const errors = validateAddConnectorDraft(draft, entry, matchingAccounts, messages);
   const shownErrors = attempted ? errors : {};
   const remotes = entry ? installableRemotes(entry) : [];
 
@@ -308,7 +316,10 @@ function RemoteConnectorDialog({
     }
     toastManager.add({
       type: "success",
-      title: `${result.value.connector.displayName} connected as ${account}`,
+      title: gt("{name} connected as {account}", {
+        name: result.value.connector.displayName,
+        account,
+      }),
     });
     close();
   };
@@ -333,14 +344,19 @@ function RemoteConnectorDialog({
     if (result._tag === "Failure") {
       const message = commandFailureMessage(result);
       if (message === null) return;
-      setServerError(sentSecret ? `${message} Enter the key again to retry.` : message);
+      setServerError(
+        sentSecret ? gt("{message} Enter the key again to retry.", { message }) : message,
+      );
       return;
     }
     if (result.value.nextStep === "sign-in-required") {
       setNeedsSignIn(result.value.connector);
       return;
     }
-    toastManager.add({ type: "success", title: `${result.value.connector.displayName} connected` });
+    toastManager.add({
+      type: "success",
+      title: gt("{name} connected", { name: result.value.connector.displayName }),
+    });
     close();
   };
 
@@ -373,9 +389,13 @@ function RemoteConnectorDialog({
         {needsSignIn ? (
           <>
             <DialogHeader>
-              <DialogTitle>Sign in to {needsSignIn.displayName}</DialogTitle>
+              <DialogTitle>
+                <T>
+                  Sign in to <Var>{needsSignIn.displayName}</Var>
+                </T>
+              </DialogTitle>
               <DialogDescription>
-                Added. Sign in to finish connecting. Agents receive it after you sign in.
+                <T>Added. Sign in to finish connecting. Agents receive it after you sign in.</T>
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -386,22 +406,24 @@ function RemoteConnectorDialog({
             </DialogPanel>
             <DialogFooter variant="bare">
               <Button variant="outline" onClick={close}>
-                Later
+                <T>Later</T>
               </Button>
               <Button
                 disabled={callbackOrigin === null || signingIn}
                 onClick={() => void signIn(needsSignIn)}
               >
-                Sign in
+                <T>Sign in</T>
               </Button>
             </DialogFooter>
           </>
         ) : github && !githubToken ? (
           <>
             <DialogHeader>
-              <DialogTitle>Add GitHub</DialogTitle>
+              <DialogTitle>
+                <T>Add GitHub</T>
+              </DialogTitle>
               <DialogDescription>
-                Connect GitHub to work with your repositories, issues and pull requests.
+                <T>Connect GitHub to work with your repositories, issues and pull requests.</T>
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -421,7 +443,7 @@ function RemoteConnectorDialog({
             </DialogPanel>
             <DialogFooter variant="bare">
               <Button variant="outline" onClick={close}>
-                Cancel
+                <T>Cancel</T>
               </Button>
             </DialogFooter>
           </>
@@ -429,12 +451,14 @@ function RemoteConnectorDialog({
           <>
             <DialogHeader>
               <DialogTitle>
-                {entry ? `Add ${entry.title ?? entry.name}` : "Add from a web address"}
+                {entry
+                  ? gt("Add {name}", { name: entry.title ?? entry.name })
+                  : gt("Add from a web address")}
               </DialogTitle>
               <DialogDescription>
                 {github
-                  ? "Connect GitHub to work with your repositories, issues and pull requests."
-                  : "A remote MCP server. Scient keeps its sign-in; agents never receive it."}
+                  ? gt("Connect GitHub to work with your repositories, issues and pull requests.")
+                  : gt("A remote MCP server. Scient keeps its sign-in; agents never receive it.")}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -460,7 +484,9 @@ function RemoteConnectorDialog({
                   </div>
                 ) : github ? null : entry ? (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="connector-remote">Endpoint</Label>
+                    <Label htmlFor="connector-remote">
+                      <T>Endpoint</T>
+                    </Label>
                     <NativeSelect
                       id="connector-remote"
                       value={draft.remoteUrl}
@@ -477,7 +503,9 @@ function RemoteConnectorDialog({
                   </div>
                 ) : (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="connector-url">Server URL</Label>
+                    <Label htmlFor="connector-url">
+                      <T>Server URL</T>
+                    </Label>
                     <Input
                       id="connector-url"
                       placeholder="https://mcp.example.com/mcp"
@@ -491,10 +519,12 @@ function RemoteConnectorDialog({
                 )}
                 {!github ? (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="connector-name">Name (optional)</Label>
+                    <Label htmlFor="connector-name">
+                      <T>Name (optional)</T>
+                    </Label>
                     <Input
                       id="connector-name"
-                      placeholder="Defaults to the server's name"
+                      placeholder={gt("Defaults to the server's name")}
                       value={draft.displayName}
                       onChange={(event) => patch({ displayName: event.target.value })}
                     />
@@ -502,21 +532,25 @@ function RemoteConnectorDialog({
                 ) : null}
                 {github ? (
                   <p className="text-sm text-muted-foreground">
-                    Use a{" "}
-                    <a
-                      className="underline"
-                      href="https://github.com/settings/personal-access-tokens/new"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      GitHub personal access token
-                    </a>{" "}
-                    with access to the repositories you need.
+                    <T>
+                      Use a{" "}
+                      <a
+                        className="underline"
+                        href="https://github.com/settings/personal-access-tokens/new"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        GitHub personal access token
+                      </a>{" "}
+                      with access to the repositories you need.
+                    </T>
                   </p>
                 ) : null}
                 {!github && !entry?.apiKey ? (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="connector-auth">Authentication</Label>
+                    <Label htmlFor="connector-auth">
+                      <T>Authentication</T>
+                    </Label>
                     <NativeSelect
                       id="connector-auth"
                       disabled={github}
@@ -530,8 +564,8 @@ function RemoteConnectorDialog({
                         })
                       }
                     >
-                      <option value="automatic">Sign in if the server asks</option>
-                      <option value="api-key">API key</option>
+                      <option value="automatic">{gt("Sign in if the server asks")}</option>
+                      <option value="api-key">{gt("API key")}</option>
                     </NativeSelect>
                   </div>
                 ) : null}
@@ -556,18 +590,22 @@ function RemoteConnectorDialog({
                           )
                         }
                       >
-                        Advanced
+                        <T>Advanced</T>
                       </Button>
                     ) : null}
                     {draft.showAdvanced ? (
                       <>
                         <p className="text-xs text-muted-foreground">
                           {entry?.oauthClientRequired
-                            ? "Use an OAuth client you registered with the service."
-                            : "Use an OAuth client you registered with the service. Leave empty to register automatically."}
+                            ? gt("Use an OAuth client you registered with the service.")
+                            : gt(
+                                "Use an OAuth client you registered with the service. Leave empty to register automatically.",
+                              )}
                         </p>
                         <div className="grid gap-1.5">
-                          <Label htmlFor="connector-client-id">Client ID</Label>
+                          <Label htmlFor="connector-client-id">
+                            <T>Client ID</T>
+                          </Label>
                           <Input
                             id="connector-client-id"
                             value={draft.clientId}
@@ -580,7 +618,9 @@ function RemoteConnectorDialog({
                           />
                         </div>
                         <div className="grid gap-1.5">
-                          <Label htmlFor="connector-client-secret">Client secret (optional)</Label>
+                          <Label htmlFor="connector-client-secret">
+                            <T>Client secret (optional)</T>
+                          </Label>
                           <SecretInput
                             id="connector-client-secret"
                             value={draft.clientSecret}
@@ -594,7 +634,9 @@ function RemoteConnectorDialog({
                   <div className="grid gap-3">
                     {!github && !entry?.apiKey ? (
                       <div className="grid gap-1.5">
-                        <Label htmlFor="connector-strategy">Send as</Label>
+                        <Label htmlFor="connector-strategy">
+                          <T>Send as</T>
+                        </Label>
                         <NativeSelect
                           id="connector-strategy"
                           disabled={github}
@@ -606,7 +648,7 @@ function RemoteConnectorDialog({
                           {(Object.keys(STRATEGY_LABELS) as CredentialStrategy[]).map(
                             (strategy) => (
                               <option key={strategy} value={strategy}>
-                                {STRATEGY_LABELS[strategy]}
+                                {messages(STRATEGY_LABELS[strategy])}
                               </option>
                             ),
                           )}
@@ -615,9 +657,12 @@ function RemoteConnectorDialog({
                     ) : null}
                     {draft.strategy === "header" && !entry?.apiKey ? (
                       <div className="grid gap-1.5">
-                        <Label htmlFor="connector-header-name">Header name</Label>
+                        <Label htmlFor="connector-header-name">
+                          <T>Header name</T>
+                        </Label>
                         <Input
                           id="connector-header-name"
+                          // oxlint-disable-next-line t3code/no-untranslated-copy -- an HTTP header name
                           placeholder="X-API-Key"
                           value={draft.headerName}
                           {...invalidProps("connector-header-name", shownErrors.headerName)}
@@ -631,11 +676,13 @@ function RemoteConnectorDialog({
                     ) : null}
                     {matchingAccounts.length > 0 || draft.accountId ? (
                       <div className="grid gap-1.5">
-                        <Label htmlFor="connector-account">Key</Label>
+                        <Label htmlFor="connector-account">
+                          <T>Key</T>
+                        </Label>
                         <ApiKeyAccountPicker
                           id="connector-account"
                           value={draft.accountId}
-                          emptyLabel="Enter a key"
+                          emptyLabel={gt("Enter a key")}
                           options={matchingAccounts.map((account) => ({
                             value: account.accountId,
                             name: account.name,
@@ -651,10 +698,10 @@ function RemoteConnectorDialog({
                         <Label htmlFor="connector-key">
                           {entry?.apiKey?.fieldLabel ??
                             (github
-                              ? "Use a token"
+                              ? gt("Use a token")
                               : draft.strategy === "basic"
-                                ? "User and password"
-                                : "Key")}
+                                ? gt("User and password")
+                                : gt("Key", { $context: "an API key" }))}
                         </Label>
                         {entry?.apiKey ? (
                           <a
@@ -663,14 +710,14 @@ function RemoteConnectorDialog({
                             target="_blank"
                             rel="noreferrer"
                           >
-                            Get a key
+                            <T>Get a key</T>
                           </a>
                         ) : null}
                         <SecretInput
                           id="connector-key"
                           placeholder={
                             github
-                              ? "Paste your GitHub token"
+                              ? gt("Paste your GitHub token")
                               : draft.strategy === "basic"
                                 ? "user:password"
                                 : undefined
@@ -681,7 +728,7 @@ function RemoteConnectorDialog({
                         />
                         <FieldError id="connector-key-error" message={shownErrors.value} />
                         <p className="text-xs text-muted-foreground">
-                          Sent once and stored on the server. It is never shown again.
+                          <T>Sent once and stored on the server. It is never shown again.</T>
                         </p>
                       </div>
                     ) : null}
@@ -694,7 +741,7 @@ function RemoteConnectorDialog({
                 ) : null}
                 {slow ? (
                   <p role="status" className="text-xs text-muted-foreground">
-                    Still connecting. A hosted server can take up to 30 seconds to wake up.
+                    <T>Still connecting. A hosted server can take up to 30 seconds to wake up.</T>
                   </p>
                 ) : null}
                 <button type="submit" hidden />
@@ -707,10 +754,10 @@ function RemoteConnectorDialog({
                 disabled={onBack !== undefined && submitting}
                 onClick={onBack ?? close}
               >
-                {onBack ? "Back" : "Cancel"}
+                {onBack ? gt("Back") : gt("Cancel")}
               </Button>
               <Button disabled={submitting} onClick={() => void submit()}>
-                {submitting ? "Adding…" : "Add"}
+                {submitting ? gt("Adding…") : gt("Add", { $context: "verb, adds an extension" })}
               </Button>
             </DialogFooter>
           </>

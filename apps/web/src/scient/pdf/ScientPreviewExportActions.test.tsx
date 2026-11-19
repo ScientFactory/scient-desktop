@@ -3,6 +3,10 @@ import type { ButtonHTMLAttributes, MouseEventHandler, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const mocks = vi.hoisted(() => ({
   menuClicks: {} as Record<string, MouseEventHandler<HTMLButtonElement> | undefined>,
   announceSave: vi.fn(),

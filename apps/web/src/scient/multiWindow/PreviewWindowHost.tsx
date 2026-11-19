@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { T } from "gt-react";
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -132,9 +133,11 @@ function PreviewHostedElsewhere(props: {
       }}
       data-preview-hosted-elsewhere={props.runtimeTabId}
     >
-      <p>This browser tab is open in another window.</p>
+      <p>
+        <T>This browser tab is open in another window.</T>
+      </p>
       <Button variant="outline" size="sm" onClick={props.onShowHere}>
-        Show here
+        <T>Show here</T>
       </Button>
     </div>
   );

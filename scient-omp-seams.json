@@ -8,6 +8,7 @@
     "apps/server/src/provider/scient"
   ],
   "ownedFiles": [
+    "apps/web/src/scient/providerConnection/providerStatusMessageCopy.ts",
     "packages/contracts/src/scient/nativeSubagentControl.ts",
     "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.subagent-stop.scient.test.ts",
     "apps/web/src/testUtils/shardWeights.json",

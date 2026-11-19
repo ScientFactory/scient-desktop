@@ -1,4 +1,5 @@
 import { ROOM_MESSAGE_MAX_LENGTH } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
 import { type ClipboardEvent, type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
@@ -15,6 +16,7 @@ export function RoomComposeBox({
   readonly onSubmit: (text: string, files: ReadonlyArray<File>) => Promise<string | null>;
   readonly agentSwitch?: ReactNode;
 }) {
+  const gt = useGT();
   const [text, setText] = useState("");
   const [files, setFiles] = useState<ReadonlyArray<{ readonly key: number; readonly file: File }>>(
     [],
@@ -84,7 +86,7 @@ export function RoomComposeBox({
       }}
     >
       {files.length > 0 ? (
-        <ul className="flex flex-wrap gap-1 px-1" aria-label="Attached files">
+        <ul className="flex flex-wrap gap-1 px-1" aria-label={gt("Attached files")}>
           {files.map(({ key, file }) => (
             <li
               key={key}
@@ -94,7 +96,7 @@ export function RoomComposeBox({
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`Remove ${file.name}`}
+                aria-label={gt("Remove {name}", { name: file.name })}
                 onClick={() => setFiles((current) => current.filter((entry) => entry.key !== key))}
               >
                 <XIcon />
@@ -109,7 +111,7 @@ export function RoomComposeBox({
           type="file"
           multiple
           hidden
-          aria-label="Files to attach"
+          aria-label={gt("Files to attach")}
           onChange={(event) => {
             addFiles(Array.from(event.target.files ?? []));
             event.target.value = "";
@@ -118,7 +120,7 @@ export function RoomComposeBox({
         <Button
           size="icon-xs"
           variant="ghost-muted"
-          aria-label="Attach files"
+          aria-label={gt("Attach files")}
           onClick={() => inputRef.current?.click()}
         >
           <PaperclipIcon />
@@ -135,7 +137,12 @@ export function RoomComposeBox({
           className="max-h-40 min-h-6 min-w-0 flex-1 resize-none bg-transparent py-0.5 text-sm outline-none field-sizing-content placeholder:text-placeholder"
         />
         {agentSwitch}
-        <Button type="submit" size="icon-xs" aria-label="Send" disabled={sending || empty}>
+        <Button
+          type="submit"
+          size="icon-xs"
+          aria-label={gt("Send", { $context: "verb, sends the message" })}
+          disabled={sending || empty}
+        >
           <ArrowUpIcon />
         </Button>
       </div>

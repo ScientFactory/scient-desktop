@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "~/components/ui/number-field";
 import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
@@ -15,6 +16,7 @@ export function PdfMovePagesPopover(props: {
   readonly pages: readonly string[];
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const snapshot = useSyncExternalStore(props.session.subscribe, props.session.getSnapshot);
   const inputRef = useRef<HTMLInputElement>(null);
   const destinations = pdfMoveDestinations(snapshot.frame, props.pages);
@@ -31,7 +33,7 @@ export function PdfMovePagesPopover(props: {
     if (to === null || snapshot.busy) return;
     const currentPages = new Set(snapshot.frame.pages.map((entry) => entry.id));
     if (!props.pages.every((id) => currentPages.has(id))) {
-      setError("The pages changed. Close this and choose them again.");
+      setError(gt("The pages changed. Close this and choose them again."));
       return;
     }
     setError(null);
@@ -44,10 +46,10 @@ export function PdfMovePagesPopover(props: {
   };
   // Up and down keep the card open so they can be pressed again.
   const steps = [
-    { label: "To start", to: destinations.start, close: true },
-    { label: "Up one page", to: destinations.up, close: false },
-    { label: "Down one page", to: destinations.down, close: false },
-    { label: "To end", to: destinations.end, close: true },
+    { label: gt("To start"), to: destinations.start, close: true },
+    { label: gt("Up one page"), to: destinations.up, close: false },
+    { label: gt("Down one page"), to: destinations.down, close: false },
+    { label: gt("To end"), to: destinations.end, close: true },
   ];
 
   return (
@@ -71,8 +73,8 @@ export function PdfMovePagesPopover(props: {
         <div className="scient-pdf-move-form">
           <PopoverTitle size="compact">
             {props.pages.length === 1
-              ? `Move page ${destinations.page}`
-              : `Move ${props.pages.length} pages`}
+              ? gt("Move page {page}", { page: destinations.page })
+              : gt("Move {count} pages", { count: props.pages.length })}
           </PopoverTitle>
           {steps.map((step) => (
             <button
@@ -96,7 +98,9 @@ export function PdfMovePagesPopover(props: {
               inputRef.current?.select();
             }}
           >
-            <label htmlFor={fieldId}>To page</label>
+            <label htmlFor={fieldId}>
+              <T>To page</T>
+            </label>
             <NumberField
               id={fieldId}
               size="sm"

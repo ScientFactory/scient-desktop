@@ -6,9 +6,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { SplitIcon } from "lucide-react";
 import { type FormEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
+import { m, type MessageResolver } from "../../../i18n/messages";
 import { useEnvironmentThreadShells } from "../../../state/entities";
 import { useArchivedThreadSnapshots } from "../../../lib/archivedThreadsState";
 import { Button } from "../../ui/button";
@@ -35,22 +37,25 @@ export type ScientForkSource =
   | "running-turn";
 
 /** One title for every fork; a one-line subtitle says where it starts. */
-export function scientForkDialogCopy(source: ScientForkSource): {
+export function scientForkDialogCopy(
+  source: ScientForkSource,
+  resolve: MessageResolver = m,
+): {
   readonly title: string;
   readonly description: string;
 } {
-  const title = "Fork this chat";
+  const title = resolve(msg("Fork this chat"));
   switch (source) {
     case "latest-response":
-      return { title, description: "Fork from the latest response" };
+      return { title, description: resolve(msg("Fork from the latest response")) };
     case "this-response":
-      return { title, description: "Fork from this response" };
+      return { title, description: resolve(msg("Fork from this response")) };
     case "this-message":
-      return { title, description: "Fork and edit this message" };
+      return { title, description: resolve(msg("Fork and edit this message")) };
     case "new-chat":
-      return { title, description: "Continue in a new chat" };
+      return { title, description: resolve(msg("Continue in a new chat")) };
     case "running-turn":
-      return { title, description: "Fork with work in progress" };
+      return { title, description: resolve(msg("Fork with work in progress")) };
   }
 }
 
@@ -63,16 +68,20 @@ export type ForkWorktreeAvailability =
   | { readonly available: false; readonly reason: ForkWorktreeUnavailableReason };
 
 const forkWorktreeUnavailableCopy: Record<ForkWorktreeUnavailableReason, string> = {
-  "no-git-repository": "Requires a Git repository",
-  "no-checkpoint": "No saved checkpoint for this response",
-  "worktree-removed": "The original worktree was removed",
+  "no-git-repository": msg("Requires a Git repository"),
+  "no-checkpoint": msg("No saved checkpoint for this response"),
+  "worktree-removed": msg("The original worktree was removed"),
 };
 
-function unavailableCopy(source: ScientForkSource, reason: ForkWorktreeUnavailableReason): string {
+function unavailableCopy(
+  source: ScientForkSource,
+  reason: ForkWorktreeUnavailableReason,
+  resolve: MessageResolver,
+): string {
   if (source === "this-message" && reason === "no-checkpoint") {
-    return "No saved checkpoint before this message";
+    return resolve(msg("No saved checkpoint before this message"));
   }
-  return forkWorktreeUnavailableCopy[reason];
+  return resolve(forkWorktreeUnavailableCopy[reason]);
 }
 
 export interface ScientForkConfirmation {
@@ -198,7 +207,9 @@ export function ScientForkWorkspaceModeDialog({
 }: ScientForkDialogProps & {
   readonly proposedTitle: string;
 }) {
-  const copy = scientForkDialogCopy(source);
+  const gt = useGT();
+  const messages = useMessages();
+  const copy = scientForkDialogCopy(source, messages);
   const formId = useId();
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [titleDraft, setTitleDraft] = useState(proposedTitle);
@@ -332,8 +343,8 @@ export function ScientForkWorkspaceModeDialog({
       if (outcome === "not-accepted" && !openSinceSubmit.current && !declinedImages.current) {
         toastManager.add({
           type: "error",
-          title: "The fork did not finish",
-          description: "Fork from the same message again to resume it.",
+          title: gt("The fork did not finish"),
+          description: gt("Fork from the same message again to resume it."),
         });
       }
     } catch (error) {
@@ -368,7 +379,7 @@ export function ScientForkWorkspaceModeDialog({
               <Input
                 id={`${formId}-title`}
                 ref={titleInputRef}
-                aria-label="Thread title"
+                aria-label={gt("Thread title")}
                 size="default"
                 value={displayedTitle}
                 disabled={disabled || locked || !titleOverrideSupported}
@@ -380,25 +391,31 @@ export function ScientForkWorkspaceModeDialog({
               />
               {!titleOverrideSupported ? (
                 <p className="text-muted-foreground text-xs">
-                  This server names new forks automatically. Update the server to choose a title
-                  here.
+                  <T>
+                    This server names new forks automatically. Update the server to choose a title
+                    here.
+                  </T>
                 </p>
               ) : displayedTitle.trim().length === 0 ? (
-                <p className="text-destructive text-xs">A title is required.</p>
+                <p className="text-destructive text-xs">
+                  <T>A title is required.</T>
+                </p>
               ) : null}
             </div>
             <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
               <span className="min-w-0">
-                <span className="block">New worktree</span>
+                <span className="block">
+                  <T>New worktree</T>
+                </span>
                 {/* Only a disabled switch needs a reason. */}
                 {worktreeAvailability.available ? null : (
                   <span className="mt-0.5 block text-muted-foreground text-xs">
-                    {unavailableCopy(source, worktreeAvailability.reason)}
+                    {unavailableCopy(source, worktreeAvailability.reason, messages)}
                   </span>
                 )}
               </span>
               <Switch
-                aria-label="New worktree"
+                aria-label={gt("New worktree")}
                 checked={selectedNewWorktree}
                 disabled={disabled || locked || checking || !worktreeAvailability.available}
                 onCheckedChange={(checked) => setNewWorktree(Boolean(checked))}
@@ -409,8 +426,10 @@ export function ScientForkWorkspaceModeDialog({
             ) : null}
             {skippedImages ? (
               <p role="alert" className="text-xs leading-relaxed">
-                These images could not be read: {skippedImages.join(", ")}. Continue with the
-                message text and readable images, or cancel.
+                <T>
+                  These images could not be read: <Var>{skippedImages.join(", ")}</Var>. Continue
+                  with the message text and readable images, or cancel.
+                </T>
               </p>
             ) : error ? (
               <p role="alert" className="text-destructive text-xs leading-relaxed">
@@ -421,7 +440,7 @@ export function ScientForkWorkspaceModeDialog({
         </DialogPanel>
         <DialogFooter variant="bare" padding="compact">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            {disabled && skippedImages === null ? "Close" : "Cancel"}
+            {disabled && skippedImages === null ? gt("Close") : gt("Cancel")}
           </Button>
           <Button
             form={formId}
@@ -438,14 +457,14 @@ export function ScientForkWorkspaceModeDialog({
             disabled={!skippedImages && (disabled || checking || !submission.ok)}
           >
             {skippedImages
-              ? "Fork without these images"
+              ? gt("Fork without these images")
               : disabled
-                ? "Forking…"
+                ? gt("Forking…")
                 : checking
-                  ? "Checking…"
+                  ? gt("Checking…")
                   : locked || error
-                    ? "Retry"
-                    : "Fork"}
+                    ? gt("Retry")
+                    : gt("Fork", { $context: "verb, button that forks the chat" })}
           </Button>
         </DialogFooter>
       </DialogPopup>

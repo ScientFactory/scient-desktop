@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import {
@@ -96,6 +97,7 @@ function useSourceNoteState(input: {
   readonly storage?: "source" | "pin";
   readonly onSave: SourceNoteSave;
 }) {
+  const gt = useGT();
   const field = input.field;
   const [draft, setDraft] = useState(() => noteText(input.record, field));
   const [confirmed, setConfirmed] = useState(() => noteText(input.record, field));
@@ -174,7 +176,7 @@ function useSourceNoteState(input: {
         if (mountedRef.current) {
           setStatus("conflict");
           setSavedElsewhere(remote);
-          setError("This note changed elsewhere. Your text is preserved here.");
+          setError(gt("This note changed elsewhere. Your text is preserved here."));
         }
         return;
       }
@@ -192,7 +194,7 @@ function useSourceNoteState(input: {
       .catch(async () => {
         if (mountedRef.current) {
           setStatus("error");
-          setError("Note could not be saved. Keep typing or leave and return to retry.");
+          setError(gt("Note could not be saved. Keep typing or leave and return to retry."));
         }
       })
       .finally(() => {
@@ -276,18 +278,22 @@ function NoteConflict(props: { readonly note: ReturnType<typeof useSourceNoteSta
   if (props.note.status !== "conflict" || props.note.savedElsewhere === null) return null;
   return (
     <div className="space-y-1.5 rounded-md border border-border p-2">
-      <p className="text-xs text-muted-foreground">Saved elsewhere</p>
+      <p className="text-xs text-muted-foreground">
+        <T>Saved elsewhere</T>
+      </p>
       {props.note.savedElsewhere.trim() ? (
         <NotePreview value={props.note.savedElsewhere} />
       ) : (
-        <p className="px-2 text-sm text-muted-foreground">No note</p>
+        <p className="px-2 text-sm text-muted-foreground">
+          <T>No note</T>
+        </p>
       )}
       <div className="flex gap-1.5">
         <Button size="xs" variant="outline" onClick={props.note.keepMine}>
-          Keep mine
+          <T>Keep mine</T>
         </Button>
         <Button size="xs" variant="ghost" onClick={props.note.takeSaved}>
-          Use saved
+          <T>Use saved</T>
         </Button>
       </div>
     </div>
@@ -428,6 +434,7 @@ function SourceNoteEditor(props: {
   readonly onFormatChange?: (formats: SourceNoteFormats) => void;
   readonly onBlur: () => void;
 }) {
+  const gt = useGT();
   const initialConfig: InitialConfigType = {
     namespace: "ScientSourceNote",
     editorState: () => {
@@ -461,15 +468,15 @@ function SourceNoteEditor(props: {
           contentEditable={
             <ContentEditable
               className="h-full w-full overflow-y-auto whitespace-pre-wrap break-words outline-none"
-              aria-label={props.label ?? "Source note"}
-              aria-placeholder="Add a note…"
+              aria-label={props.label ?? gt("Source note")}
+              aria-placeholder={gt("Add a note…")}
               placeholder={<span />}
               onBlur={props.onBlur}
             />
           }
           placeholder={
             <div className="pointer-events-none absolute start-2 top-1.5 text-muted-foreground">
-              Add a note…
+              <T>Add a note…</T>
             </div>
           }
           ErrorBoundary={LexicalErrorBoundary}
@@ -492,6 +499,7 @@ function NotePreview(props: {
   readonly onEdit?: () => void;
   readonly editLabel?: string;
 }) {
+  const gt = useGT();
   const text = (
     <ChatMarkdown
       text={props.value}
@@ -509,7 +517,7 @@ function NotePreview(props: {
       <button
         type="button"
         className="absolute inset-0 cursor-text rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        aria-label={props.editLabel ?? "Edit source note"}
+        aria-label={props.editLabel ?? gt("Edit source note")}
         onClick={props.onEdit}
       />
       <div className="pointer-events-none relative px-2 py-1.5 text-start [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
@@ -523,6 +531,7 @@ function InlineNoteEditor(props: {
   readonly note: ReturnType<typeof useSourceNoteState>;
   readonly label?: string;
 }) {
+  const gt = useGT();
   const [editing, setEditing] = useState(() => props.note.draft.length === 0);
   const editorRef = useRef<SourceNoteEditorHandle>(null);
 
@@ -536,7 +545,13 @@ function InlineNoteEditor(props: {
       <NotePreview
         value={props.note.draft}
         onEdit={() => setEditing(true)}
-        {...(props.label ? { editLabel: `Edit ${props.label.toLocaleLowerCase()}` } : {})}
+        {...(props.label
+          ? {
+              editLabel: gt("Edit {toLocaleLowerCase}", {
+                toLocaleLowerCase: props.label.toLocaleLowerCase(),
+              }),
+            }
+          : {})}
       />
     );
   }
@@ -616,6 +631,7 @@ function restoreQuickNoteResizeSession(session: QuickNoteResizeSession): void {
 }
 
 function QuickNoteResizeHandle() {
+  const gt = useGT();
   const sessionRef = useRef<QuickNoteResizeSession | null>(null);
 
   const popupFromTarget = (target: HTMLElement) =>
@@ -635,7 +651,7 @@ function QuickNoteResizeHandle() {
   return (
     <div
       role="button"
-      aria-label="Resize quick note"
+      aria-label={gt("Resize quick note")}
       tabIndex={0}
       className="absolute end-0 bottom-0 z-10 size-8 cursor-nwse-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       onPointerDown={(event) => {
@@ -706,6 +722,7 @@ export function useSourceNoteControls(props: {
   /** Earlier versions of a project note, restorable from the section. */
   readonly history?: ScientSourceDetailResult["projectNoteHistory"];
 }) {
+  const gt = useGT();
   const note = useSourceNoteState({ ...props, field: props.field ?? "note" });
   const headingId =
     props.field === "personalNote" ? "source-my-note-heading" : "source-note-heading";
@@ -730,7 +747,7 @@ export function useSourceNoteControls(props: {
       <Popover open={quickNoteOpen} onOpenChange={setQuickNoteOpen}>
         <PopoverTrigger render={<Button size="xs" variant="ghost" disabled={props.readOnly} />}>
           <StickyNote />
-          Note
+          <T context="noun, a note on a source">Note</T>
         </PopoverTrigger>
         <PopoverPopup
           side="bottom"
@@ -742,13 +759,15 @@ export function useSourceNoteControls(props: {
         >
           <div className="flex h-full min-h-0 flex-col gap-2">
             <div className="grid grid-cols-[1fr_auto_1fr] items-center px-1">
-              <p className="text-sm font-medium">Quick note</p>
+              <p className="text-sm font-medium">
+                <T>Quick note</T>
+              </p>
               <div className="flex items-center gap-px">
                 <ScientTooltip content="Bold">
                   <Button
                     size="icon-micro"
                     variant={activeFormats.bold ? "selected" : "ghost"}
-                    aria-label="Bold"
+                    aria-label={gt("Bold", { $context: "text formatting" })}
                     aria-pressed={activeFormats.bold}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => applyFormat("bold")}
@@ -762,7 +781,7 @@ export function useSourceNoteControls(props: {
                   <Button
                     size="icon-micro"
                     variant={activeFormats.italic ? "selected" : "ghost"}
-                    aria-label="Italic"
+                    aria-label={gt("Italic", { $context: "text formatting" })}
                     aria-pressed={activeFormats.italic}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => applyFormat("italic")}
@@ -776,7 +795,9 @@ export function useSourceNoteControls(props: {
               <ScientTooltip content="Close quick note">
                 <PopoverClose
                   className="justify-self-end"
-                  render={<Button size="icon-xs" variant="ghost" aria-label="Close quick note" />}
+                  render={
+                    <Button size="icon-xs" variant="ghost" aria-label={gt("Close quick note")} />
+                  }
                 >
                   <X />
                 </PopoverClose>

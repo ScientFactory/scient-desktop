@@ -1,11 +1,13 @@
 import type { ChatAttachment, ScopedThreadRef } from "@t3tools/contracts";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { type ReactNode, useRef, useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -21,6 +23,8 @@ export function ThreadRoomMessage(props: {
   readonly renderAttachments: (attachments: ReadonlyArray<ChatAttachment>) => ReactNode;
 }) {
   const { threadRef, item } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const send = useAtomCommand(threadEnvironment.sendRoomMessage, { reportFailure: false });
   const action = useAtomCommand(threadEnvironment.roomAction, { reportFailure: false });
@@ -44,7 +48,10 @@ export function ThreadRoomMessage(props: {
       roomCommandSucceeded(result);
     };
     await perform().catch((error: unknown) => {
-      Dialog.alert("Room action failed", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(
+        m(msg("Room action failed")),
+        error instanceof Error ? error.message : m(msg("Try again.")),
+      );
     });
     inFlight.current = false;
     setBusy(false);
@@ -52,7 +59,9 @@ export function ThreadRoomMessage(props: {
   // Like a queued message: dashed and unfilled until someone sends it to the agent.
   return (
     <View className="items-end gap-1 pb-5">
-      <Text className="text-xs text-foreground-muted">{roomAuthorLabel(item.author)}</Text>
+      <Text className="text-xs text-foreground-muted">
+        {roomAuthorLabel(item.author, messages)}
+      </Text>
       <View
         className="min-w-0 gap-2 rounded-[20px] border border-dashed border-border px-3.5 py-2.5"
         style={{ maxWidth: props.bubbleMaxWidth }}
@@ -68,21 +77,21 @@ export function ThreadRoomMessage(props: {
         <View className="flex-row gap-1">
           <Button
             size="compact"
-            label="Send to agent"
+            label={gt("Send to agent")}
             tone="text"
             disabled={busy}
             onPress={() => void run("send")}
           />
           <Button
             size="compact"
-            label="Delete"
+            label={gt("Delete", { $context: "verb, deletes the message" })}
             tone="text"
             disabled={busy}
             onPress={() =>
               Dialog.confirm({
-                title: "Delete this message?",
-                message: "The message text and files will be removed for everyone.",
-                confirmText: "Delete",
+                title: m(msg("Delete this message?")),
+                message: m(msg("The message text and files will be removed for everyone.")),
+                confirmText: m(msg("Delete", { $context: "verb, deletes the message" })),
                 destructive: true,
                 onConfirm: () => void run("delete"),
               })

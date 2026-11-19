@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   DEFAULT_PROVIDER_STARTING_MESSAGE,
   type ProviderRuntimeOperation,
@@ -51,6 +52,7 @@ import {
 } from "./providerConnectionPresentation";
 import { browserSignInWaitingView, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type PendingAction =
   | "install"
@@ -64,22 +66,25 @@ type PendingAction =
   | "check"
   | null;
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): string {
+function runtimeStage(
+  operation: ProviderRuntimeOperation | null,
+  resolve: MessageResolver = m,
+): string {
   switch (operation?.status) {
     case "preparing":
-      return "Preparing the verified download…";
+      return resolve(msg("Preparing the verified download…"));
     case "downloading":
-      return "Downloading Codex…";
+      return resolve(msg("Downloading Codex…"));
     case "verifying":
-      return "Verifying the download…";
+      return resolve(msg("Verifying the download…"));
     case "installing":
-      return "Installing Codex privately…";
+      return resolve(msg("Installing Codex privately…"));
     case "testing":
-      return "Checking the installation…";
+      return resolve(msg("Checking the installation…"));
     case "activating":
-      return "Finishing setup…";
+      return resolve(msg("Finishing setup…"));
     default:
-      return "Preparing Codex…";
+      return resolve(msg("Preparing Codex…"));
   }
 }
 
@@ -93,6 +98,8 @@ export function CodexInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
 
   const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
   if (previousInstanceId !== props.provider.instanceId) {
@@ -116,7 +123,7 @@ export function CodexInlineSetup(props: {
     props.displayName,
   );
   // Only this window opens the Codex page; others offer it.
-  const page = browserSignInWaitingView(browser, activeConnectionOperation);
+  const page = browserSignInWaitingView(browser, activeConnectionOperation, messages);
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("codex_browser") ?? false;
@@ -155,7 +162,9 @@ export function CodexInlineSetup(props: {
       try {
         await startReviewedCodexRuntimeAction(props.controller, "install");
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Codex."));
+        setLocalError(
+          providerLifecycleFailureMessage(error, gt("Scient could not install Codex.")),
+        );
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -172,7 +181,7 @@ export function CodexInlineSetup(props: {
       try {
         await updateCodexRuntime(props.controller, props.provider);
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Codex."));
+        setLocalError(providerLifecycleFailureMessage(error, gt("Scient could not update Codex.")));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -195,7 +204,7 @@ export function CodexInlineSetup(props: {
           props.onRepairSucceeded?.();
         }
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Codex."));
+        setLocalError(providerLifecycleFailureMessage(error, gt("Scient could not repair Codex.")));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -214,7 +223,7 @@ export function CodexInlineSetup(props: {
         await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not cancel Codex setup."),
+          providerLifecycleFailureMessage(error, gt("Scient could not cancel Codex setup.")),
         );
       }
     } catch (cause) {
@@ -238,7 +247,7 @@ export function CodexInlineSetup(props: {
         }
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
+          providerLifecycleFailureMessage(error, gt("Scient could not start Codex sign in.")),
         );
       }
     } catch (cause) {
@@ -256,7 +265,7 @@ export function CodexInlineSetup(props: {
       try {
         await props.controller.refresh();
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not check Codex."));
+        setLocalError(providerLifecycleFailureMessage(error, gt("Scient could not check Codex.")));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -275,7 +284,7 @@ export function CodexInlineSetup(props: {
         await props.controller.cancelConnection(activeConnectionOperation.operationId);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not cancel Codex sign in."),
+          providerLifecycleFailureMessage(error, gt("Scient could not cancel Codex sign in.")),
         );
       }
     } catch (cause) {
@@ -298,7 +307,7 @@ export function CodexInlineSetup(props: {
     pendingAction === "repair" ||
     pendingAction === "update"
   ) {
-    const stage = runtimeStage(activeRuntimeOperation);
+    const stage = runtimeStage(activeRuntimeOperation, messages);
     const updating = pendingAction === "update" || activeRuntimeOperation?.action === "update";
     const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
     return (
@@ -306,12 +315,22 @@ export function CodexInlineSetup(props: {
         <AssistedSetupStatus
           body={stage}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={updating ? "Updating Codex" : repairing ? "Repairing Codex" : "Installing Codex"}
+          title={
+            updating
+              ? gt("Updating Codex")
+              : repairing
+                ? gt("Repairing Codex")
+                : gt("Installing Codex")
+          }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label={cancelRuntimeActionLabel("Codex", activeRuntimeOperation.action)}
+              aria-label={cancelRuntimeActionLabel(
+                "Codex",
+                activeRuntimeOperation.action,
+                messages,
+              )}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -323,7 +342,7 @@ export function CodexInlineSetup(props: {
               ) : (
                 <XIcon aria-hidden />
               )}
-              Cancel
+              <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -346,18 +365,19 @@ export function CodexInlineSetup(props: {
   }
 
   if (needsRuntimeRepair) {
-    const error = localError ?? managedRuntimeRepairMessage(props.provider, "Codex");
+    const error =
+      localError ?? managedRuntimeRepairMessage(props.provider, "Codex", undefined, messages);
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Codex needs repair"
+          title={gt("Codex needs repair")}
         />
         <AssistedSetupActions>
           <Button onClick={() => void repair()} size="sm" type="button" variant="ghost-primary">
-            <RefreshCwIcon aria-hidden /> Repair Codex
+            <RefreshCwIcon aria-hidden /> <T>Repair Codex</T>
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -374,8 +394,13 @@ export function CodexInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Codex is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Codex installation.`)
+              ? gt("Codex is not installed on {computer}.", {
+                  computer: providerRuntimeComputerLabel(props.provider, messages),
+                })
+              : gt(
+                  "Assisted installation is not available for {computer}. You can use an existing Codex installation.",
+                  { computer: providerRuntimeComputerLabel(props.provider, messages) },
+                ))
           }
           icon={
             error ? (
@@ -385,19 +410,19 @@ export function CodexInlineSetup(props: {
             )
           }
           role={error ? "alert" : undefined}
-          title={error ? "Codex installation couldn’t finish" : "Install Codex"}
+          title={error ? gt("Codex installation couldn’t finish") : gt("Install Codex")}
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry installation of Codex" : "Install Codex"}
+              aria-label={error ? gt("Retry installation of Codex") : gt("Install Codex")}
               onClick={() => void install()}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {error ? "Retry installation" : "Install"}
+              {error ? gt("Retry installation") : gt("Install")}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -422,9 +447,9 @@ export function CodexInlineSetup(props: {
             starting
               ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
               : verifying
-                ? "Confirming sign-in with Codex…"
+                ? gt("Confirming sign-in with Codex…")
                 : usingDeviceCode && !openFailure
-                  ? "Enter this code on Codex’s secure sign-in page."
+                  ? gt("Enter this code on Codex’s secure sign-in page.")
                   : page.body
           }
           icon={
@@ -439,10 +464,10 @@ export function CodexInlineSetup(props: {
           role={openFailure ? "alert" : undefined}
           title={
             verifying
-              ? "Checking your account"
+              ? gt("Checking your account")
               : page.blocked && !starting
-                ? "Sign-in page blocked"
-                : "Finish signing in"
+                ? gt("Sign-in page blocked")
+                : gt("Finish signing in")
           }
         />
         {usingDeviceCode && activeConnectionOperation?.userCode ? (
@@ -458,32 +483,34 @@ export function CodexInlineSetup(props: {
               variant={page.userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
               <ExternalLinkIcon aria-hidden />{" "}
-              {page.notOpenedHere || page.blocked ? "Open sign-in page" : "Reopen sign-in page"}
+              {page.notOpenedHere || page.blocked
+                ? gt("Open sign-in page")
+                : gt("Reopen sign-in page")}
             </Button>
             {activeConnectionOperation ? (
               <Button
-                aria-label="Cancel Codex sign-in"
+                aria-label={gt("Cancel Codex sign-in")}
                 disabled={pendingAction === "cancel-sign-in"}
                 onClick={() => void cancelSignIn()}
                 size="sm"
                 type="button"
                 variant="ghost-destructive-action"
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
             ) : null}
           </AssistedSetupActions>
         ) : activeConnectionOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label="Cancel Codex sign-in"
+              aria-label={gt("Cancel Codex sign-in")}
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
               type="button"
               variant="ghost-destructive-action"
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -517,14 +544,16 @@ export function CodexInlineSetup(props: {
     return (
       <AssistedSetupStatusFrame
         accountAction={props.accountAction}
-        title="Codex is ready"
+        title={gt("Codex is ready")}
         body={
           <>
-            Your{" "}
-            <ProviderAccountManagementLink provider="codex">
-              ChatGPT subscription
-            </ProviderAccountManagementLink>{" "}
-            is connected.
+            <T>
+              Your{" "}
+              <ProviderAccountManagementLink provider="codex">
+                ChatGPT subscription
+              </ProviderAccountManagementLink>{" "}
+              is connected.
+            </T>
           </>
         }
       />
@@ -541,10 +570,10 @@ export function CodexInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? "Check your internet connection or VPN, then try again."}
+          body={localError ?? gt("Check your internet connection or VPN, then try again.")}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Codex can’t check your account"
+          title={gt("Codex can’t check your account")}
         />
         <AssistedSetupActions>
           {signInMethod ? (
@@ -555,11 +584,11 @@ export function CodexInlineSetup(props: {
               type="button"
               variant="ghost-muted"
             >
-              Sign in again
+              <T>Sign in again</T>
             </Button>
           ) : null}
           <Button
-            aria-label="Check Codex again"
+            aria-label={gt("Check Codex again")}
             disabled={pendingAction !== null}
             onClick={() => void checkAgain()}
             size="sm"
@@ -571,7 +600,7 @@ export function CodexInlineSetup(props: {
             ) : (
               <RefreshCwIcon aria-hidden />
             )}
-            Try again
+            <T>Try again</T>
           </Button>
         </AssistedSetupActions>
       </AssistedSetupFrame>
@@ -591,7 +620,7 @@ export function CodexInlineSetup(props: {
         await startReviewedCodexRuntimeAction(props.controller, "install");
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not switch to managed Codex."),
+          providerLifecycleFailureMessage(error, gt("Scient could not switch to managed Codex.")),
         );
       }
     } catch (cause) {
@@ -605,7 +634,7 @@ export function CodexInlineSetup(props: {
       <AssistedSetupStatus
         body={
           signInError ??
-          "Sign in with your existing ChatGPT subscription. Scient never sees your password."
+          gt("Sign in with your existing ChatGPT subscription. Scient never sees your password.")
         }
         icon={
           signInError ? (
@@ -615,7 +644,7 @@ export function CodexInlineSetup(props: {
           )
         }
         role={signInError ? "alert" : undefined}
-        title={signInError ? "Codex sign-in didn’t finish" : "Sign in required"}
+        title={signInError ? gt("Codex sign-in didn’t finish") : gt("Sign in required")}
       />
       <AssistedSetupActions>
         {alternateSignInMethod ? (
@@ -626,12 +655,12 @@ export function CodexInlineSetup(props: {
             variant="ghost-muted"
           >
             {alternateSignInMethod === "codex_device_code"
-              ? "Use device code"
-              : "Use browser sign-in"}
+              ? gt("Use device code")
+              : gt("Use browser sign-in")}
           </Button>
         ) : null}
         <Button
-          aria-label={signInError ? "Try again to sign in to Codex" : undefined}
+          aria-label={signInError ? gt("Try again to sign in to Codex") : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"
@@ -639,10 +668,10 @@ export function CodexInlineSetup(props: {
         >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
-            ? "Try again"
+            ? gt("Try again")
             : signInMethod === "codex_device_code"
-              ? "Sign in with device code"
-              : "Sign in with ChatGPT"}
+              ? gt("Sign in with device code")
+              : gt("Sign in with ChatGPT")}
         </Button>
       </AssistedSetupActions>
       {signInError && !props.managedRuntimePresentedExternally ? (

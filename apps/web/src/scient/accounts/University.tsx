@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
@@ -72,6 +73,7 @@ export function UniversityPicker({
   const [link, setLink] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const searchId = useRef(0);
+  const gt = useGT();
 
   const find = (text: string) => {
     setQuery(text);
@@ -131,8 +133,8 @@ export function UniversityPicker({
       <Input
         autoFocus={autoFocus}
         type="search"
-        aria-label="Find your university"
-        placeholder="University name or email domain"
+        aria-label={gt("Find your university")}
+        placeholder={gt("University name or email domain")}
         disabled={!canWrite}
         value={query}
         onChange={(event) => find(event.target.value)}
@@ -167,8 +169,8 @@ export function UniversityPicker({
           <Input
             autoFocus
             type="url"
-            aria-label="Your library's link"
-            placeholder="Paste a link from your library's website"
+            aria-label={gt("Your library's link")}
+            placeholder={gt("Paste a link from your library's website")}
             value={link}
             onChange={(event) => setLink(event.target.value)}
           />
@@ -180,7 +182,7 @@ export function UniversityPicker({
           className="justify-self-start"
           onClick={() => setShowLink(true)}
         >
-          My university isn't listed
+          <T>My university isn't listed</T>
         </Button>
       )}
     </div>
@@ -225,6 +227,7 @@ export function UniversityCrest({
     }
   });
   const [connecting, setConnecting] = useState(false);
+  const gt = useGT();
   const first = universities[0];
   if (!data) return null;
   if (!first) {
@@ -232,10 +235,14 @@ export function UniversityCrest({
     return (
       <Popover open={connecting} onOpenChange={setConnecting}>
         <PopoverTrigger
-          render={<Button size="xs" variant="ghost-muted" aria-label="Connect your university" />}
+          render={
+            <Button size="xs" variant="ghost-muted" aria-label={gt("Connect your university")} />
+          }
         >
           <GraduationCapIcon />
-          <span className="@max-[30rem]:hidden">Connect your university</span>
+          <span className="@max-[30rem]:hidden">
+            <T>Connect your university</T>
+          </span>
         </PopoverTrigger>
         <PopoverPopup align="end" width="md">
           <UniversityPicker
@@ -265,7 +272,9 @@ export function UniversityCrest({
             size="xs"
             variant="ghost"
             aria-label={
-              waiting ? `University: ${first.name}, sign in needed` : `University: ${first.name}`
+              waiting
+                ? gt("University: {name}, sign in needed", { name: first.name })
+                : gt("University: {name}", { name: first.name })
             }
           />
         }
@@ -279,7 +288,11 @@ export function UniversityCrest({
             />
           ) : null}
         </span>
-        {waiting && canWrite ? <span className="@max-[22rem]:hidden">Sign in</span> : null}
+        {waiting && canWrite ? (
+          <span className="@max-[22rem]:hidden">
+            <T>Sign in</T>
+          </span>
+        ) : null}
         <ChevronDownIcon className="size-3 text-muted-foreground" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="max-w-72 min-w-56">
@@ -287,12 +300,12 @@ export function UniversityCrest({
           const signedIn = signedIntoUniversity(account);
           const underWay = !signedIn && signingIn.has(account.accountId);
           const status = signedIn
-            ? "Signed in"
+            ? gt("Signed in")
             : underWay
-              ? "Signing in…"
+              ? gt("Signing in…")
               : checking.has(account.accountId)
-                ? "Checking…"
-                : "Sign in needed";
+                ? gt("Checking…")
+                : gt("Sign in needed");
           return (
             <div key={account.accountId}>
               <div className="px-2 py-1.5">
@@ -301,7 +314,7 @@ export function UniversityCrest({
               </div>
               {signedIn ? null : (
                 <MenuItem disabled={!canWrite} onClick={() => signIn(account.accountId)}>
-                  Sign in
+                  <T>Sign in</T>
                 </MenuItem>
               )}
             </div>
@@ -309,7 +322,7 @@ export function UniversityCrest({
         })}
         <MenuSeparator />
         <MenuItem onClick={() => void navigate({ to: "/settings/accounts" })}>
-          Accounts & secrets
+          <T>Accounts & secrets</T>
         </MenuItem>
       </MenuPopup>
     </Menu>

@@ -1,5 +1,8 @@
 import type { ContextMenuItem, EnvironmentId, ProjectDirectoryEntry } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useRef, type RefObject } from "react";
+
+import { m } from "~/i18n/messages";
 
 import type { OpenFileOptions } from "~/rightPanelStore";
 import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
@@ -77,7 +80,7 @@ export function useScientFolderActions(input: {
       return [
         {
           id: "new-document",
-          label: "New document here",
+          label: m(msg("New document here")),
           children: [
             { id: "new-document:markdown", label: "Markdown" },
             { id: "new-document:latex", label: "LaTeX" },
@@ -85,7 +88,8 @@ export function useScientFolderActions(input: {
         },
         {
           id: "connect",
-          label: "Connect to",
+          label: m(msg("Connect to")),
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
           children: [{ id: "connect:overleaf", label: "Overleaf…" }],
         },
       ];

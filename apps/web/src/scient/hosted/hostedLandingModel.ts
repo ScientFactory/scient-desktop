@@ -1,4 +1,5 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { msg } from "gt-react";
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 
 /** How one of the person's computers looks from the hosted page. */
@@ -30,13 +31,14 @@ export type HostedLandingModel =
   | { readonly kind: "cant-list"; readonly account: string | null; readonly offline: boolean }
   | { readonly kind: "local-off" };
 
+/** `msg()` strings: resolve them where they show. */
 export const HOSTED_COMPUTER_STATUS_LABEL: Record<HostedComputerStatus, string> = {
-  checking: "Checking…",
-  opening: "Opening…",
-  off: "Off or asleep",
-  unreachable: "Unreachable",
-  "needs-update": "Needs an update",
-  open: "Open",
+  checking: msg("Checking…"),
+  opening: msg("Opening…"),
+  off: msg("Off or asleep"),
+  unreachable: msg("Unreachable"),
+  "needs-update": msg("Needs an update"),
+  open: msg("Open", { $context: "the computer is open in Scient" }),
 };
 
 /** A discovered computer's relay availability, as the hosted page words it. */
@@ -129,7 +131,9 @@ export const HOSTED_LANDING_PREVIEWS: Record<string, HostedLandingModel> = {
     account: "yaacov@example.com",
     computers: [
       { id: "mac", label: laptop, machineKind: "laptop", status: "opening" },
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- sample computer name in a design preview state
       { id: "lab", label: "Lab workstation", machineKind: "desktop", status: "checking" },
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- sample computer name in a design preview state
       { id: "home", label: "Home iMac", machineKind: "desktop", status: "off" },
     ],
   },

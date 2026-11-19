@@ -27,6 +27,10 @@ import {
   ProviderOnboardingPicker,
 } from "./ProviderOnboardingPicker";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 it.each([
   ["grok", "Grok", "grok_account", "Grok inline lifecycle"],
   ["droid", "Droid", "droid_device_pairing", "Droid inline lifecycle"],

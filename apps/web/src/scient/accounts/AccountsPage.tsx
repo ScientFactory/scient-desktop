@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import {
@@ -116,6 +117,7 @@ import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
 import { useWebsiteSessions } from "./useWebsiteSessions";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** Provider rows last read per environment, so a refresh doesn't empty "Apps and connectors". */
 const providerRowsCache: ProviderRowsCache = new Map();
@@ -161,11 +163,17 @@ export function AccountRow({
   const remove = useAccountCommand(accountsState.remove, environmentId);
   const activity = useAccountCommand(accountsState.activity, environmentId);
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
   const site = details.kind === "website" ? details.sites[0] : undefined;
   const check = useAccountCommand(accountsState.check, environmentId);
-  const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
+  const statusLabel = accountStatusLabel(
+    account,
+    (iso) => formatRelativeTimeLabel(iso, undefined, messages),
+    messages,
+  );
   const university = universityDetails(details);
   const signIn = useSignIn(environmentId);
   const signInAnyRow =
@@ -181,7 +189,7 @@ export function AccountRow({
   return (
     <SettingsRow
       {...clickableAccountRow(onEdit)}
-      aria-label={`Edit ${account.name}`}
+      aria-label={gt("Edit {name}", { name: account.name })}
       title={
         <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
@@ -203,7 +211,7 @@ export function AccountRow({
                   ? [
                       university
                         ? (university.institution?.domain ?? details.username ?? details.sites[0])
-                        : (details.username ?? "Browser sign-in"),
+                        : (details.username ?? gt("Browser sign-in")),
                       profiles.find(
                         (profile) =>
                           profile.id ===
@@ -219,9 +227,9 @@ export function AccountRow({
                         account.name === site ? undefined : details.sites.join(", "),
                       ]
                         .filter(Boolean)
-                        .join(" · ") || KIND_LABELS.website
+                        .join(" · ") || messages(KIND_LABELS.website)
                     : [
-                        KIND_LABELS[details.kind],
+                        messages(KIND_LABELS[details.kind]),
                         "sites" in details
                           ? details.sites.join(", ")
                           : details.kind === "database"
@@ -246,12 +254,12 @@ export function AccountRow({
                 render={
                   <span
                     role="img"
-                    aria-label="Needs attention"
+                    aria-label={gt("Needs attention")}
                     className="size-1.5 shrink-0 self-center rounded-full bg-amber-500"
                   />
                 }
               />
-              <TooltipPopup>{account.statusMessage ?? "Needs attention"}</TooltipPopup>
+              <TooltipPopup>{account.statusMessage ?? gt("Needs attention")}</TooltipPopup>
             </Tooltip>
           ) : null}
         </span>
@@ -269,7 +277,7 @@ export function AccountRow({
                 void signIn(account.accountId);
               }}
             >
-              Sign in
+              <T>Sign in</T>
             </Button>
           ) : null}
           {aside}
@@ -281,12 +289,18 @@ export function AccountRow({
           />
           <ControlsMenu disabled={!canWrite || busy}>
             {university ? (
-              <MenuItem onClick={() => void signIn(account.accountId)}>Sign in</MenuItem>
+              <MenuItem onClick={() => void signIn(account.accountId)}>
+                <T>Sign in</T>
+              </MenuItem>
             ) : signInAgain && details.kind === "website" ? (
               signInAnyRow ? (
-                <MenuItem onClick={() => void signIn(account.accountId)}>Sign in again</MenuItem>
+                <MenuItem onClick={() => void signIn(account.accountId)}>
+                  <T>Sign in again</T>
+                </MenuItem>
               ) : (
-                <MenuItem disabled>Update Scient on this computer to sign in from here</MenuItem>
+                <MenuItem disabled>
+                  <T>Update Scient on this computer to sign in from here</T>
+                </MenuItem>
               )
             ) : null}
             {details.kind === "website" ? (
@@ -298,24 +312,31 @@ export function AccountRow({
                   setBusy(false);
                 }}
               >
-                Check sign-in
+                <T>Check sign-in</T>
               </MenuItem>
             ) : null}
             {site && !university ? (
-              <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem>
+              <MenuItem onClick={() => void openSite()}>
+                <T>
+                  Open <Var>{site}</Var>
+                </T>
+              </MenuItem>
             ) : null}
             {menu}
             <AccountStoreMenuItems account={account} />
-            <MenuItem onClick={onEdit}>Edit</MenuItem>
+            <MenuItem onClick={onEdit}>
+              <T>Edit</T>
+            </MenuItem>
             <MenuItem
               onClick={async () => {
                 setBusy(true);
                 const result = await test({ accountId: account.accountId });
                 setBusy(false);
-                if (result.ok) toastManager.add({ type: "success", title: "Account tested" });
+                if (result.ok)
+                  toastManager.add({ type: "success", title: m(msg("Account tested")) });
               }}
             >
-              Test
+              <T>Test</T>
             </MenuItem>
             <MenuItem
               onClick={async () => {
@@ -323,7 +344,7 @@ export function AccountRow({
                 if (result.ok) onActivity(result.value);
               }}
             >
-              Activity
+              <T>Activity</T>
             </MenuItem>
             {managePage ? (
               <MenuItem
@@ -333,7 +354,9 @@ export function AccountRow({
                     .catch(() => undefined)
                 }
               >
-                Manage on {managePage.domain}
+                <T>
+                  Manage on <Var>{managePage.domain}</Var>
+                </T>
               </MenuItem>
             ) : null}
             <MenuCheckboxItem
@@ -343,7 +366,7 @@ export function AccountRow({
                 void controls({ target, visibility: readable ? "readable" : "hidden" })
               }
             >
-              Agents can read it
+              <T>Agents can read it</T>
             </MenuCheckboxItem>
             {details.kind !== "website" ? (
               <MenuItem
@@ -354,7 +377,9 @@ export function AccountRow({
                   })
                 }
               >
-                Permission: {account.controls.permission === "full" ? "Full" : "Read only"}
+                {account.controls.permission === "full"
+                  ? gt("Permission: Full")
+                  : gt("Permission: Read only")}
               </MenuItem>
             ) : null}
             <ScopeSubmenu
@@ -369,7 +394,7 @@ export function AccountRow({
                 setBusy(false);
               }}
             >
-              Remove
+              <T>Remove</T>
             </MenuItem>
           </ControlsMenu>
         </div>
@@ -391,6 +416,7 @@ function ManagedAccountRow({
   };
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const domain = managedHost(row.detail) ?? (row.kind === "claude" ? "claude.ai" : undefined);
   // Our own logos first: the extension catalogue has no GitHub or Claude sign-in entries.
   const logo = accountIconUrl(
@@ -414,7 +440,9 @@ function ManagedAccountRow({
         <span className="truncate text-sm font-medium">{row.name}</span>
         {domain ? <span className="truncate text-xs text-muted-foreground">{domain}</span> : null}
       </span>
-      <span className="shrink-0 text-xs text-muted-foreground">{MANAGED_IN[row.kind]} ›</span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {row.kind === "extension" ? gt("Extensions") : MANAGED_IN[row.kind]} ›
+      </span>
     </>
   );
   const className =
@@ -434,13 +462,19 @@ function ManagedAccountRow({
   );
 }
 
-const SOURCE_CONTROL_VIA = { gh: "GitHub CLI", app: "Scient for GitHub", token: "Token" } as const;
+const SOURCE_CONTROL_VIA = {
+  gh: "GitHub CLI",
+  app: "Scient for GitHub",
+  token: msg("Token", { $context: "GitHub sign-in method, a personal access token" }),
+} as const;
 
 /** One GitHub login with a chip per use; each chip shows that use's own state. */
 function GitHubIdentityRow({ identity }: { identity: GitHubIdentity }) {
   const logo = accountIconUrl(["github.com"], identity.login);
   const via = identity.sourceControl?.via;
   const connector = identity.connector;
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <div className="flex min-h-15 items-center gap-3 rounded-lg px-4 py-2 text-foreground">
       {logo ? <AccountLogo src={logo} className="size-10 shrink-0 rounded-[25%]" /> : null}
@@ -449,7 +483,9 @@ function GitHubIdentityRow({ identity }: { identity: GitHubIdentity }) {
         <span className="flex flex-wrap gap-1">
           {identity.sourceControl ? (
             <Badge variant="success" render={<Link to="/settings/source-control" />}>
-              {via ? `Source Control · ${SOURCE_CONTROL_VIA[via]}` : "Source Control"}
+              {via
+                ? gt("Source Control · {via}", { via: messages(SOURCE_CONTROL_VIA[via]) })
+                : gt("Source Control")}
             </Badge>
           ) : null}
           {connector ? (
@@ -463,8 +499,10 @@ function GitHubIdentityRow({ identity }: { identity: GitHubIdentity }) {
               }
             >
               {connector.status === "connected"
-                ? "Connector"
-                : `Connector · ${connector.status === "needs-auth" ? "Needs sign-in" : "Account missing"}`}
+                ? gt("Connector")
+                : connector.status === "needs-auth"
+                  ? gt("Connector · Needs sign-in")
+                  : gt("Connector · Account missing")}
             </Badge>
           ) : null}
         </span>
@@ -498,6 +536,7 @@ function SavedPasswordsDialog({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const gt = useGT();
   const text = query.trim().toLowerCase();
   const shown = accounts
     .filter((account) =>
@@ -512,14 +551,18 @@ function SavedPasswordsDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogPopup data-accounts-dialog className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Saved passwords</DialogTitle>
+          <DialogTitle>
+            <T>Saved passwords</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-3">
             <Input
               type="search"
-              aria-label="Find a saved password"
-              placeholder={`Search ${accounts.length} sites`}
+              aria-label={gt("Find a saved password")}
+              placeholder={gt("Search {count, plural, one {{count} site} other {{count} sites}}", {
+                count: accounts.length,
+              })}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -536,7 +579,7 @@ function SavedPasswordsDialog({
               ))}
               {shown.length === 0 ? (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No saved passwords match
+                  <T>No saved passwords match</T>
                 </div>
               ) : null}
             </div>
@@ -575,6 +618,8 @@ export function MainSiteChoice({
   onChromeWindow?: (() => void) | undefined;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   const site = "sites" in account.details ? account.details.sites[0] : undefined;
   const key = siteKey(account);
   const group = accounts.filter((row) => isBrowserSignIn(row) && siteKey(row) === key);
@@ -592,25 +637,34 @@ export function MainSiteChoice({
   const copyIntoMain = async (row: AccountSummary, from: string) => {
     const outcome = await copySignInIntoMain(environmentId, row);
     if (outcome === "copied" || outcome === "same")
-      toastManager.add({ type: "success", title: `Copied ${from}'s Google sign-in into Main` });
+      toastManager.add({
+        type: "success",
+        title: m(msg("Copied {from}''s Google sign-in into Main", { from })),
+      });
     else if (outcome === "conflict")
       toastManager.add({
         type: "info",
-        title: "Main already holds a Google sign-in",
-        description: "Sign out of Google in Main, then copy again.",
+        title: m(msg("Main already holds a Google sign-in")),
+        description: m(msg("Sign out of Google in Main, then copy again.")),
       });
-    else toastManager.add({ type: "error", title: "Couldn't copy the sign-in into Main" });
+    else toastManager.add({ type: "error", title: m(msg("Couldn't copy the sign-in into Main")) });
   };
   return (
     <span className="flex items-center gap-1">
-      {using ? <span className="text-xs text-muted-foreground">Using {using.name}</span> : null}
+      {using ? (
+        <span className="text-xs text-muted-foreground">
+          <T>
+            Using <Var>{using.name}</Var>
+          </T>
+        </span>
+      ) : null}
       <Menu>
         <MenuTrigger
           render={
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label={`Who Main uses on ${account.name}`}
+              aria-label={gt("Who Main uses on {site}", { site: account.name })}
               onClick={(event) => event.stopPropagation()}
             />
           }
@@ -620,19 +674,25 @@ export function MainSiteChoice({
         <MenuPopup align="end">
           {googleMissing && onImport ? (
             <MenuGroup>
-              <MenuGroupLabel className="max-w-64">{GOOGLE_SIGNED_OUT}</MenuGroupLabel>
+              <MenuGroupLabel className="max-w-64">{messages(GOOGLE_SIGNED_OUT)}</MenuGroupLabel>
               {onChromeWindow ? (
-                <MenuItem onClick={onChromeWindow}>{CHROME_WINDOW_ACTION}</MenuItem>
+                <MenuItem onClick={onChromeWindow}>{messages(CHROME_WINDOW_ACTION)}</MenuItem>
               ) : null}
-              <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
+              <MenuItem onClick={onImport}>
+                <T>Import from a browser…</T>
+              </MenuItem>
             </MenuGroup>
           ) : google && using && usingRow ? (
             <MenuItem onClick={() => void copyIntoMain(usingRow, using.name)}>
-              Copy from {using.name}
+              <T>
+                Copy from <Var>{using.name}</Var>
+              </T>
             </MenuItem>
           ) : using && pageUrl ? (
             <MenuItem onClick={() => void openBrowser(pageUrl, using.id)}>
-              Open in {using.name}
+              <T>
+                Open in <Var>{using.name}</Var>
+              </T>
             </MenuItem>
           ) : null}
         </MenuPopup>
@@ -645,12 +705,15 @@ export function MainSiteChoice({
 function ListRow({
   icon,
   title,
+  openLabel,
   detail,
   description,
   onOpen,
 }: {
   icon: ReactNode;
   title: string;
+  /** The row's accessible name, for example "Show saved passwords". */
+  openLabel: string;
   detail: string;
   description?: string;
   onOpen: () => void;
@@ -658,7 +721,7 @@ function ListRow({
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
-      aria-label={`Show ${title.toLowerCase()}`}
+      aria-label={openLabel}
       description={description}
       descriptionSize="compact"
       title={
@@ -731,6 +794,8 @@ function ApiKeysDialog({
   const link = useAccountCommand(accountsState.linkKey, environmentId);
   const unlink = useAccountCommand(accountsState.unlinkKey, environmentId);
   const keepPlainKey = useAccountCommand(accountsState.keepPlainKey, environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   const savedKeys = rows.flatMap((row) =>
     row.stored === "accounts" && row.account.secrets.token
       ? [{ value: row.account.accountId, name: row.name }]
@@ -740,8 +805,10 @@ function ApiKeysDialog({
     onClose();
     void navigate({ to: href });
   };
-  const openLabel = (label: string) =>
-    label === "Custom models" ? "Open Custom models" : `Open ${label} settings`;
+  const openLabel = (label: string, href: ApiKeyRow["uses"][number]["href"]) =>
+    href === "/settings/custom-models"
+      ? gt("Open Custom models")
+      : gt("Open {label} settings", { label });
   const keep = async (row: ApiKeyRow) => {
     if (keeping.current.has(row.id)) return;
     keeping.current.add(row.id);
@@ -754,10 +821,13 @@ function ApiKeysDialog({
     keeping.current.delete(row.id);
     if (!result?.ok) return;
     if (row.stored === "files") onKept(row.file, row.name);
-    toastManager.add({ type: "success", title: `Kept ${row.name} in Accounts` });
+    toastManager.add({
+      type: "success",
+      title: m(msg("Kept {name} in Accounts", { name: row.name })),
+    });
   };
   return (
-    <ListDialog title="API keys" onClose={onClose}>
+    <ListDialog title={gt("API keys")} onClose={onClose}>
       {rows.map((row) =>
         row.stored === "accounts" ? (
           <AccountRow
@@ -767,13 +837,13 @@ function ApiKeysDialog({
             canWrite={canWrite}
             onEdit={() => onEdit(row.account)}
             onActivity={onActivity}
-            detail={keyDetail(row) || KIND_LABELS["api-key"]}
+            detail={keyDetail(row) || messages(KIND_LABELS["api-key"])}
             menu={
               <>
                 {[...new Map(row.uses.map((use) => [use.label, use.href])).entries()].map(
                   ([label, href]) => (
                     <MenuItem key={label} onClick={() => open(href)}>
-                      {openLabel(label)}
+                      {openLabel(label, href)}
                     </MenuItem>
                   ),
                 )}
@@ -784,7 +854,9 @@ function ApiKeysDialog({
                           key={`${target.instanceId}:${target.variable}`}
                           onClick={() => void unlink(target)}
                         >
-                          Stop using in {label}
+                          <T>
+                            Stop using in <Var>{label}</Var>
+                          </T>
                         </MenuItem>,
                       ]
                     : [],
@@ -796,7 +868,9 @@ function ApiKeysDialog({
           <SettingsRow
             key={row.id}
             {...(row.uses[0] ? clickableAccountRow(() => open(row.uses[0]!.href)) : {})}
-            aria-label={row.uses[0] ? `Open where ${row.name} is used` : undefined}
+            aria-label={
+              row.uses[0] ? gt("Open where {name} is used", { name: row.name }) : undefined
+            }
             title={
               <span className="flex min-w-0 items-center gap-3">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
@@ -805,7 +879,7 @@ function ApiKeysDialog({
                 <span className="grid min-w-0 gap-1">
                   <span className="truncate text-left">{row.name}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {onlyIn(row) ?? keyDetail(row)}
+                    {onlyIn(row, messages) ?? keyDetail(row)}
                   </span>
                 </span>
               </span>
@@ -815,8 +889,8 @@ function ApiKeysDialog({
                 {row.stored === "agent" && savedKeys.length ? (
                   <span className="w-36 shrink-0">
                     <ApiKeyAccountPicker
-                      aria-label={`Key in Accounts for ${row.name}`}
-                      emptyLabel="Its own key"
+                      aria-label={gt("Key in Accounts for {name}", { name: row.name })}
+                      emptyLabel={gt("Its own key")}
                       options={savedKeys}
                       size="xs"
                       value=""
@@ -840,7 +914,7 @@ function ApiKeysDialog({
                     disabled={!canWrite}
                     onClick={() => void keep(row)}
                   >
-                    Keep in Accounts
+                    <T>Keep in Accounts</T>
                   </Button>
                 ) : null}
               </span>
@@ -867,6 +941,7 @@ function SignInCodesDialog({
   const set = useAccountCommand(accountsState.setCodeSources, environmentId);
   const [chosen, setChosen] = useState(sources);
   const [needsAccess, setNeedsAccess] = useState(false);
+  const gt = useGT();
   const change = async (next: AccountCodeSources) => {
     setChosen(next);
     const result = await set(next);
@@ -874,13 +949,15 @@ function SignInCodesDialog({
     else setChosen(sources);
   };
   return (
-    <ListDialog title="Sign-in codes" onClose={onClose}>
+    <ListDialog title={gt("Sign-in codes")} onClose={onClose}>
       <SettingsRow
-        title="Codes from Messages"
-        description="Texts forwarded to this Mac. Needs Full Disk Access, which also lets Scient read your other files."
+        title={gt("Codes from Messages")}
+        description={gt(
+          "Texts forwarded to this Mac. Needs Full Disk Access, which also lets Scient read your other files.",
+        )}
         control={
           <Switch
-            aria-label="Codes from Messages"
+            aria-label={gt("Codes from Messages")}
             checked={chosen.messages}
             disabled={!canWrite}
             onCheckedChange={(messages) => void change({ messages })}
@@ -889,7 +966,7 @@ function SignInCodesDialog({
       />
       {needsAccess ? (
         <SettingsRow
-          title="macOS hasn't given Scient access"
+          title={gt("macOS hasn't given Scient access")}
           control={
             <Button
               size="xs"
@@ -900,7 +977,7 @@ function SignInCodesDialog({
                   .catch(() => undefined)
               }
             >
-              Open Full Disk Access
+              <T>Open Full Disk Access</T>
             </Button>
           }
         />
@@ -919,6 +996,8 @@ function AccountsContent({
   canWrite: boolean;
 }) {
   const chromeSignIn = useChromeSignIn(environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   const [dialog, setDialog] = useState<
     "add" | "import" | "1password" | "passwords" | "apps" | "sign-in-codes" | "api-keys" | null
   >(null);
@@ -951,8 +1030,9 @@ function AccountsContent({
     plainKeys,
     driverName: (driver) =>
       PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
+    resolve: messages,
   });
-  const keysToKeep = keys.filter((row) => onlyIn(row) !== undefined).length;
+  const keysToKeep = keys.filter((row) => onlyIn(row, messages) !== undefined).length;
   const checkAll = useAccountCommand(accountsState.check, environmentId);
   const profiles = mergeProfiles(
     useClientSettings((settings) => settings.browserProfiles),
@@ -1005,7 +1085,7 @@ function AccountsContent({
       ) : null}
       <SettingsSection
         id="accounts-list"
-        title="Accounts"
+        title={gt("Accounts")}
         headerAction={
           <Button
             size="xs"
@@ -1020,29 +1100,41 @@ function AccountsContent({
                 toastManager.add({
                   type: "success",
                   title: result.value.alreadyRunning
-                    ? "Already checking your accounts"
+                    ? m(msg("Already checking your accounts"))
                     : result.value.checked
-                      ? `Checked ${result.value.checked} sign-in${result.value.checked === 1 ? "" : "s"}`
-                      : "No sign-ins to check yet",
+                      ? m(
+                          msg(
+                            "{count, plural, one {Checked {count} sign-in} other {Checked {count} sign-ins}}",
+                            { count: result.value.checked },
+                          ),
+                        )
+                      : m(msg("No sign-ins to check yet")),
                 });
             }}
           >
-            {checking ? "Checking…" : "Check my accounts"}
+            {checking ? gt("Checking…") : gt("Check my accounts")}
           </Button>
         }
         titleAction={
           <Menu>
             <MenuTrigger
               render={
-                <Button size="icon-xs" variant="ghost" aria-label="Add" disabled={!canWrite} />
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={gt("Add", { $context: "verb, adds an account" })}
+                  disabled={!canWrite}
+                />
               }
             >
               <PlusIcon />
             </MenuTrigger>
             <MenuPopup align="end">
-              <MenuItem onClick={() => setDialog("add")}>Add an account…</MenuItem>
+              <MenuItem onClick={() => setDialog("add")}>
+                <T>Add an account…</T>
+              </MenuItem>
               <MenuItem onClick={() => passwordFileRef.current?.click()}>
-                Import passwords…
+                <T>Import passwords…</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -1050,10 +1142,10 @@ function AccountsContent({
       >
         <SettingsRow
           id="accounts-agent-access"
-          title="Let agents use your accounts"
+          title={gt("Let agents use your accounts")}
           control={
             <Switch
-              aria-label="Let agents use your accounts"
+              aria-label={gt("Let agents use your accounts")}
               checked={snapshot.agentAccess}
               disabled={!canWrite}
               onCheckedChange={(enabled) => void setAccess({ enabled })}
@@ -1062,7 +1154,7 @@ function AccountsContent({
         />
         {!snapshot.accounts.length ? (
           <SettingsRow
-            title="No accounts"
+            title={gt("No accounts")}
             control={
               <Button
                 size="xs"
@@ -1070,7 +1162,7 @@ function AccountsContent({
                 disabled={!canWrite}
                 onClick={() => setDialog("add")}
               >
-                Add an account
+                <T>Add an account</T>
               </Button>
             }
           />
@@ -1095,18 +1187,28 @@ function AccountsContent({
         {savedPasswords.length || importingPasswords ? (
           <ListRow
             icon={<KeyRoundIcon />}
-            title="Saved passwords"
-            detail={`${importingPasswords ? "Importing… " : ""}${savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}`}
+            title={gt("Saved passwords")}
+            openLabel={gt("Show saved passwords")}
+            detail={
+              importingPasswords
+                ? gt("Importing… {count, plural, one {{count} site} other {{count} sites}}", {
+                    count: savedPasswords.length,
+                  })
+                : gt("{count, plural, one {{count} site} other {{count} sites}}", {
+                    count: savedPasswords.length,
+                  })
+            }
             onOpen={() => setDialog("passwords")}
           />
         ) : null}
         {keys.length ? (
           <ListRow
             icon={<KeyRoundIcon />}
-            title="API keys"
+            title={gt("API keys")}
+            openLabel={gt("Show api keys")}
             detail={[
-              keys.length === 1 ? "1 key" : `${keys.length} keys`,
-              keysToKeep ? `${keysToKeep} not in Accounts` : undefined,
+              gt("{count, plural, one {{count} key} other {{count} keys}}", { count: keys.length }),
+              keysToKeep ? gt("{count} not in Accounts", { count: keysToKeep }) : undefined,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -1116,15 +1218,21 @@ function AccountsContent({
         {isMacPlatform(navigator.platform) ? (
           <ListRow
             icon={<MessageSquareIcon />}
-            title="Sign-in codes"
-            detail={snapshot.codeSources?.messages ? "Messages" : "You type them in"}
+            title={gt("Sign-in codes")}
+            openLabel={gt("Show sign-in codes")}
+            detail={
+              snapshot.codeSources?.messages
+                ? gt("Messages", { $context: "the macOS Messages app" })
+                : gt("You type them in")
+            }
             onOpen={() => setDialog("sign-in-codes")}
           />
         ) : null}
         {managedRows.length || githubRows.length ? (
           <ListRow
             icon={<LinkIcon />}
-            title="Apps and connectors"
+            title={gt("Apps and connectors")}
+            openLabel={gt("Show apps and connectors")}
             detail={[
               ...githubRows.map((row) => row.login),
               ...managedRows.map((row) => row.name),
@@ -1239,7 +1347,7 @@ function AccountsContent({
         />
       ) : null}
       {dialog === "apps" ? (
-        <ListDialog title="Apps and connectors" onClose={() => setDialog(null)}>
+        <ListDialog title={gt("Apps and connectors")} onClose={() => setDialog(null)}>
           {githubRows.map((identity) => (
             <GitHubIdentityRow key={identity.id} identity={identity} />
           ))}
@@ -1268,7 +1376,9 @@ function AccountsContent({
         >
           <DialogPopup>
             <DialogHeader>
-              <DialogTitle>Activity</DialogTitle>
+              <DialogTitle>
+                <T>Activity</T>
+              </DialogTitle>
             </DialogHeader>
             <DialogPanel>
               {activity.map((entry) => (
@@ -1276,7 +1386,12 @@ function AccountsContent({
                   <time className="text-muted-foreground">
                     {new Date(entry.at).toLocaleString()}
                   </time>{" "}
-                  · {activityLine(entry, activityConversation(entry, environmentId))}
+                  ·{" "}
+                  {activityLine(
+                    entry,
+                    activityConversation(entry, environmentId, messages),
+                    messages,
+                  )}
                 </div>
               ))}
             </DialogPanel>
@@ -1288,10 +1403,15 @@ function AccountsContent({
 }
 
 /** The conversation behind an activity entry; the user's own check has none. */
-function activityConversation(entry: AccountActivityEntry, environmentId: EnvironmentId) {
+function activityConversation(
+  entry: AccountActivityEntry,
+  environmentId: EnvironmentId,
+  resolve: MessageResolver = m,
+) {
   if (!entry.threadId) return undefined;
-  if (entry.threadId === ThreadId.make("scient-accounts-check")) return "Check my accounts";
-  if (entry.threadId === ThreadId.make("scient-paper-get")) return "Get PDF";
+  if (entry.threadId === ThreadId.make("scient-accounts-check"))
+    return resolve(msg("Check my accounts"));
+  if (entry.threadId === ThreadId.make("scient-paper-get")) return resolve(msg("Get PDF"));
   return appAtomRegistry.get(
     environmentThreadShells.threadShellAtom({ environmentId, threadId: entry.threadId }),
   )?.title;

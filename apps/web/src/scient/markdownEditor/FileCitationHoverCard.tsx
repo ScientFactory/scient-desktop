@@ -1,4 +1,5 @@
 import type { FileCitation } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { Fragment, type ReactElement } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -16,6 +17,7 @@ export function FileCitationHoverCard({
   citation: FileCitation;
   trigger: ReactElement;
 }) {
+  const gt = useGT();
   const separatorIndex = Math.max(citation.path.lastIndexOf("/"), citation.path.lastIndexOf("\\"));
   const fileName = citation.path.slice(separatorIndex + 1);
   const directory = separatorIndex > 0 ? citation.path.slice(0, separatorIndex + 1) : "";
@@ -40,8 +42,12 @@ export function FileCitationHoverCard({
             </span>
           ) : null}
           <span className="text-muted-foreground">
-            Lines {citation.startLine}–{citation.endLine}
-            {citation.origin === "draft" ? " · unsaved at capture" : ""}
+            {citation.origin === "draft"
+              ? gt("Lines {start}–{end} · unsaved at capture", {
+                  start: citation.startLine,
+                  end: citation.endLine,
+                })
+              : gt("Lines {start}–{end}", { start: citation.startLine, end: citation.endLine })}
           </span>
           {excerpt ? (
             <span className="mt-0.5 line-clamp-2 border-l-2 border-border pl-1.5 text-muted-foreground">

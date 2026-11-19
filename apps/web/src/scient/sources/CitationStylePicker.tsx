@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { ScientCitationStyleSummary } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -33,6 +34,7 @@ export function CitationStylePicker(props: {
   readonly project: CitationStyleProject;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const { environmentId, root } = props.project;
   const current = useProjectCitationStyle(props.project);
   const canChange = useCanChangeLibrary(environmentId);
@@ -91,9 +93,16 @@ export function CitationStylePicker(props: {
   return (
     <Dialog open onOpenChange={(open) => (!open && !pending ? props.onClose() : undefined)}>
       <DialogPopup className="max-w-md" showCloseButton={false}>
-        <DialogTitle className="sr-only">Citation style</DialogTitle>
-        <Command mode="none" value={query} onValueChange={setQuery} aria-label="Citation style">
-          <CommandInput placeholder="Search by journal or style name" />
+        <DialogTitle className="sr-only">
+          <T>Citation style</T>
+        </DialogTitle>
+        <Command
+          mode="none"
+          value={query}
+          onValueChange={setQuery}
+          aria-label={gt("Citation style")}
+        >
+          <CommandInput placeholder={gt("Search by journal or style name")} />
           {message ? <p className="px-4 pb-2 text-xs text-muted-foreground">{message}</p> : null}
           <CommandList className="h-80 overflow-y-auto">
             {chosen ? (
@@ -101,7 +110,7 @@ export function CitationStylePicker(props: {
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{chosen.title}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {chosen._tag === "unavailable" ? chosen.message : "This project's style"}
+                    {chosen._tag === "unavailable" ? chosen.message : gt("This project's style")}
                   </span>
                 </span>
                 <CheckIcon aria-hidden className="size-3.5 shrink-0" />
@@ -126,15 +135,17 @@ export function CitationStylePicker(props: {
             ))}
             {search !== null && search.query === query && results.length === 0 && !chosen ? (
               <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No styles found.
+                <T>No styles found.</T>
               </div>
             ) : null}
           </CommandList>
           {chosen && canChange ? (
             <CommandFooter>
-              <span>Used for references and Word export</span>
+              <span>
+                <T>Used for references and Word export</T>
+              </span>
               <CommandFooterAction disabled={pending} onClick={() => void choose(null)}>
-                Remove
+                <T context="verb, button">Remove</T>
               </CommandFooterAction>
             </CommandFooter>
           ) : null}

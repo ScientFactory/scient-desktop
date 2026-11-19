@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import type { SnapShotSource } from "@t3tools/contracts";
 import { SnapShotAttachmentDetails } from "~/components/chat/SnapShotAttachmentDetails";
@@ -16,6 +17,7 @@ function ScientChatImageTile(props: {
   readonly onExpand: (imageId: string) => void;
   readonly onCopySnapshot?: ((imageId: string) => Promise<void>) | undefined;
 }) {
+  const gt = useGT();
   const onCopySnapshot = props.onCopySnapshot;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const previewAvailable =
@@ -25,7 +27,7 @@ function ScientChatImageTile(props: {
     <div className="relative min-w-0 overflow-hidden rounded-lg border border-border/80 bg-background/70">
       {previewAvailable ? (
         <button
-          aria-label={`Preview ${props.image.name}`}
+          aria-label={gt("Preview {name}", { name: props.image.name })}
           className="block h-full min-h-20 w-full cursor-zoom-in"
           onClick={() => props.onExpand(props.image.id)}
           type="button"
@@ -46,7 +48,9 @@ function ScientChatImageTile(props: {
           <span className="max-w-full truncate text-secondary-label text-xs">
             {props.image.name}
           </span>
-          <span className="text-muted-foreground text-[11px]">Preview unavailable</span>
+          <span className="text-muted-foreground text-[11px]">
+            <T>Preview unavailable</T>
+          </span>
         </div>
       )}
       {previewAvailable && props.image.source?.kind === "snap-shot" ? (
@@ -65,10 +69,11 @@ export function ScientChatImageGallery(props: {
   readonly onExpand: (imageId: string) => void;
   readonly onCopySnapshot?: ((imageId: string) => Promise<void>) | undefined;
 }) {
+  const gt = useGT();
   if (props.images.length === 0) return null;
   return (
     <div
-      aria-label={props.images.length === 1 ? "Image attachment" : "Image attachments"}
+      aria-label={props.images.length === 1 ? gt("Image attachment") : gt("Image attachments")}
       className={cn(
         "grid w-full min-w-0 max-w-[720px] gap-2",
         props.images.length === 1 ? "grid-cols-1" : "grid-cols-2",

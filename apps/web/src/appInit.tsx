@@ -56,6 +56,7 @@ import {
   getClientSettings,
   startModelPreferencesMigration,
   subscribeClientSettings,
+  updateClientSettings,
 } from "./hooks/useSettings";
 import { syncBrowserChromeTheme } from "./hooks/useTheme";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
@@ -73,7 +74,7 @@ import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
 import { m } from "./i18n/messages";
-import { startI18n, subscribeI18n } from "./i18n/runtime";
+import { setI18nLanguage, startI18n, subscribeI18n } from "./i18n/runtime";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
@@ -291,7 +292,10 @@ export function startAppServices(): AppRouter {
   installDesktopPasteAsText(window.desktopBridge, window);
 
   startClientAppearance();
-  startI18n();
+  startI18n((language) => void updateClientSettings({ language }));
+  const applyLanguageSetting = () => void setI18nLanguage(getClientSettings().language);
+  subscribeClientSettings(applyLanguageSetting);
+  applyLanguageSetting();
   startDocumentTitle(router);
   startHostEnvironmentLookup();
   startEnvironmentThemeRepaint();

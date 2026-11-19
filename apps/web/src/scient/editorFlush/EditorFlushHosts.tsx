@@ -1,4 +1,5 @@
 import { useAtomMount, useAtomRefresh } from "@effect/atom-react";
+import { msg } from "gt-react";
 import { subscribe, type EnvironmentRpcInput } from "@t3tools/client-runtime/rpc";
 import {
   createEnvironmentRpcCommand,
@@ -16,6 +17,7 @@ import { useState } from "react";
 import { workspaceFileSessionFlush } from "~/components/files/useFileSaveCoordinator";
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useEnvironments } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -74,7 +76,7 @@ async function answer(
         {
           path: request.folder,
           reason: "save-failed",
-          message: "This window could not save its editors.",
+          message: m(msg("This window could not save its editors.")),
         },
       ],
     };

@@ -1,10 +1,13 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
   type RankedSearchResult,
 } from "@t3tools/shared/searchRanking";
+
+import { m } from "~/i18n/messages";
 
 /** One Library source a document can cite by its key. */
 export interface LibraryCitationCandidate {
@@ -104,8 +107,10 @@ export function filterLibraryCitations(
 }
 
 /** Said where a Library source is offered to a document that does not load the managed file. */
-export const LIBRARY_BIBLIOGRAPHY_HINT =
-  "Add \\bibliography{references} to this document so LaTeX finds Library sources.";
+export const LIBRARY_BIBLIOGRAPHY_HINT = msg(
+  "Add {command} to this document so LaTeX finds Library sources.",
+  { command: "\\bibliography{references}" },
+);
 
 /** Library sources for the LaTeX citation dialog, after the document's own .bib entries. */
 export function libraryLatexCitationChoices(
@@ -124,7 +129,7 @@ export function libraryLatexCitationChoices(
           {
             key: candidate.citationKey,
             title: candidate.title ?? candidate.label,
-            detail: `${candidate.label} · Library`,
+            detail: m(msg("{label} · Library", { label: candidate.label })),
             command: "cite" as const,
           },
         ],

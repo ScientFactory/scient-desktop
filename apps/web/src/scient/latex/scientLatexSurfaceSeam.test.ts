@@ -64,7 +64,7 @@ describe("Scient LaTeX file-preview seam", () => {
     );
     expect(surfaceSource).toContain("resolvedRootRelativePath === null");
     expect(surfaceSource).toContain('resolution.result?._tag === "unresolved"');
-    expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
+    expect(surfaceSource).toContain('aria-label={gt("Choose LaTeX document to compile")}');
   });
 
   it("consumes an automatic Split presentation without changing the saved user preference", () => {

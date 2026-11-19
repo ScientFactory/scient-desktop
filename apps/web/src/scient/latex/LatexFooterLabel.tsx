@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
+import { useGT } from "gt-react";
 
 export function LatexFooterLabel(props: {
   value: string;
@@ -12,11 +13,12 @@ export function LatexFooterLabel(props: {
   allowEmpty?: boolean;
   onCommit: (value: string) => void;
 }) {
+  const gt = useGT();
   const { source, renameLabel } = useContext(LatexAuthoringContext);
   const inventory = latexLabelInventory(source);
   return (
     <LatexReferenceLabelControl
-      label={props.label ?? "Reference label"}
+      label={props.label ?? gt("Reference label")}
       allowEmpty={props.allowEmpty ?? true}
       value={props.value}
       draftKey={props.draftKey}

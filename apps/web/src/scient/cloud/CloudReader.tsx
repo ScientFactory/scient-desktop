@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type {
   CloudConversation,
   ComputerRecord,
@@ -23,6 +24,7 @@ const isCloudApiError = Schema.is(CloudApiError);
 import { SnapshotConversationView } from "./SnapshotConversationView";
 import { CLOUD_COPY_NEEDED, useContinueHere } from "./useContinueHere";
 import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 function ReaderFrame({
   title,
@@ -35,15 +37,16 @@ function ReaderFrame({
   actions?: ReactNode;
   children: ReactNode;
 }) {
+  const gt = useGT();
   return (
-    <AppRouteModal label="Cloud conversations">
+    <AppRouteModal label={gt("Cloud conversations")}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-2 border-b ps-3 pe-2 sm:ps-5">
           {back ? (
             <Button
               variant="ghost-muted"
               size="icon-xs"
-              aria-label="All cloud conversations"
+              aria-label={gt("All cloud conversations")}
               render={<Link to="/cloud" />}
             >
               <ChevronLeftIcon />
@@ -83,7 +86,9 @@ function SignedIn({
   if (!hasCloudAccount()) {
     return (
       <ReaderFrame title={title} back={back}>
-        <Notice>Sync needs Scient Connect, which this build doesn't include.</Notice>
+        <Notice>
+          <T>Sync needs Scient Connect, which this build doesn't include.</T>
+        </Notice>
       </ReaderFrame>
     );
   }
@@ -113,11 +118,11 @@ function SignedInAccount({
         <Notice
           action={
             <Button size="sm" onClick={account.openSignIn}>
-              Sign in
+              <T>Sign in</T>
             </Button>
           }
         >
-          Sign in to read the conversations your computers synced.
+          <T>Sign in to read the conversations your computers synced.</T>
         </Notice>
       </ReaderFrame>
     );
@@ -153,7 +158,9 @@ function useLoaded<T>(load: () => Promise<T>, key: string): [Loaded<T>, () => vo
             key,
             loaded: {
               status: "failed",
-              message: isCloudApiError(error) ? error.message : "Scient Cloud couldn't be read.",
+              message: isCloudApiError(error)
+                ? error.message
+                : m(msg("Scient Cloud couldn't be read.")),
             },
           });
         }
@@ -180,17 +187,22 @@ function formatWhen(iso: string): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function computerLabel(computers: ReadonlyArray<ComputerRecord>, environmentId: string): string {
+function computerLabel(
+  computers: ReadonlyArray<ComputerRecord>,
+  environmentId: string,
+  resolve: MessageResolver = m,
+): string {
   return (
     computers.find((computer) => computer.environmentId === environmentId)?.label ??
-    "Another computer"
+    resolve(msg("Another computer"))
   );
 }
 
 /** `/cloud`: every conversation the person's computers copied, by computer and project. */
 export function CloudConversationsPage() {
+  const gt = useGT();
   return (
-    <SignedIn title="Cloud conversations">
+    <SignedIn title={gt("Cloud conversations")}>
       {({ api }) => <CloudConversationsList api={api} />}
     </SignedIn>
   );
@@ -202,15 +214,21 @@ function CloudConversationsList({ api }: { api: CloudApi }) {
     "index",
   );
   const thisComputer = usePrimaryEnvironmentId();
+  const gt = useGT();
+  const messages = useMessages();
   let body: ReactNode;
   if (loaded.status === "loading") {
-    body = <Notice>Loading your conversations…</Notice>;
+    body = (
+      <Notice>
+        <T>Loading your conversations…</T>
+      </Notice>
+    );
   } else if (loaded.status === "failed") {
     body = (
       <Notice
         action={
           <Button size="sm" variant="outline" onClick={retry}>
-            Try again
+            <T>Try again</T>
           </Button>
         }
       >
@@ -223,17 +241,21 @@ function CloudConversationsList({ api }: { api: CloudApi }) {
     body =
       visible.length === 0 ? (
         <Notice>
-          Nothing synced yet. Turn on Sync conversations in Settings → Sharing & access on a
-          computer, and its conversations show up here.
+          <T>
+            Nothing synced yet. Turn on Sync conversations in Settings → Sharing & access on a
+            computer, and its conversations show up here.
+          </T>
         </Notice>
       ) : (
         <div className="flex flex-col gap-8">
           {groupByComputer(visible).map(([environmentId, rows]) => (
             <section key={environmentId} className="flex flex-col gap-4">
               <h2 className="text-sm font-medium">
-                {computerLabel(computers, environmentId)}
+                {computerLabel(computers, environmentId, messages)}
                 {environmentId === thisComputer ? (
-                  <span className="ms-2 font-normal text-muted-foreground">This computer</span>
+                  <span className="ms-2 font-normal text-muted-foreground">
+                    <T>This computer</T>
+                  </span>
                 ) : null}
               </h2>
               {groupByProject(rows).map(([projectLabel, projectRows]) => (
@@ -253,7 +275,7 @@ function CloudConversationsList({ api }: { api: CloudApi }) {
         </div>
       );
   }
-  return <ReaderFrame title="Cloud conversations">{body}</ReaderFrame>;
+  return <ReaderFrame title={gt("Cloud conversations")}>{body}</ReaderFrame>;
 }
 
 function ThreadLink({
@@ -263,6 +285,7 @@ function ThreadLink({
   row: ThreadIndexRow;
   computers: ReadonlyArray<ComputerRecord>;
 }) {
+  const messages = useMessages();
   return (
     <Link
       to="/cloud/$computerId/$conversationId"
@@ -272,7 +295,9 @@ function ThreadLink({
       <span className="min-w-0 flex-1 truncate">{row.title}</span>
       {row.movedTo !== null ? (
         <span className="shrink-0 text-xs text-muted-foreground">
-          Continued on {computerLabel(computers, row.movedTo)}
+          <T>
+            Continued on <Var>{computerLabel(computers, row.movedTo, messages)}</Var>
+          </T>
         </span>
       ) : null}
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -305,8 +330,9 @@ export function CloudConversationPage({
   environmentId: string;
   threadId: string;
 }) {
+  const gt = useGT();
   return (
-    <SignedIn title="Cloud conversation" back>
+    <SignedIn title={gt("Cloud conversation")} back>
       {(account) => (
         <CloudConversationReader
           account={account}
@@ -330,6 +356,8 @@ function CloudConversationReader({
   const { api } = account;
   const thisComputer = usePrimaryEnvironmentId();
   const continueHere = useContinueHere(account);
+  const gt = useGT();
+  const messages = useMessages();
   const [loaded, retry] = useLoaded(async () => {
     const [conversation, threads, computers] = await Promise.all([
       api.thread(environmentId, threadId),
@@ -343,14 +371,16 @@ function CloudConversationReader({
   }, `${environmentId}/${threadId}`);
   if (loaded.status !== "ready") {
     return (
-      <ReaderFrame title="Cloud conversation" back>
+      <ReaderFrame title={gt("Cloud conversation")} back>
         {loaded.status === "loading" ? (
-          <Notice>Opening the conversation…</Notice>
+          <Notice>
+            <T>Opening the conversation…</T>
+          </Notice>
         ) : (
           <Notice
             action={
               <Button size="sm" variant="outline" onClick={retry}>
-                Try again
+                <T>Try again</T>
               </Button>
             }
           >
@@ -361,7 +391,7 @@ function CloudConversationReader({
     );
   }
   const { conversation, row, computers } = loaded.value;
-  const source = computerLabel(computers, environmentId);
+  const source = computerLabel(computers, environmentId, messages);
   // The hosted app has no "this computer"; the desktop app and a computer's own web page do.
   const continuable =
     row !== null &&
@@ -387,11 +417,15 @@ function CloudConversationReader({
       <CopyFacts conversation={conversation} row={row} source={source} computers={computers} />
       {continuable === null ? null : (
         <div className="-mt-4 mb-6 flex flex-col items-start gap-2 text-xs text-muted-foreground">
-          <p>Continues here as a new conversation. The one on {source} stays as it was.</p>
+          <p>
+            <T>
+              Continues here as a new conversation. The one on <Var>{source}</Var> stays as it was.
+            </T>
+          </p>
           {continueHere.problem ? (
             <p className="text-destructive-foreground">{continueHere.problem}</p>
           ) : continueHere.needsCloudCopy ? (
-            <p className="text-foreground">{CLOUD_COPY_NEEDED}</p>
+            <p className="text-foreground">{messages(CLOUD_COPY_NEEDED)}</p>
           ) : null}
           {continueHere.chooser}
         </div>
@@ -412,10 +446,12 @@ function CopyFacts({
   source: string;
   computers: ReadonlyArray<ComputerRecord>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const facts = [
-    `From ${source}`,
-    `synced ${formatWhen(conversation.snapshot.captured.capturedAt)}`,
-    row?.branch ? `branch ${row.branch}` : null,
+    gt("From {computer}", { computer: source }),
+    gt("synced {time}", { time: formatWhen(conversation.snapshot.captured.capturedAt) }),
+    row?.branch ? gt("branch {branch}", { branch: row.branch }) : null,
   ].filter((fact): fact is string => fact !== null);
   return (
     <div className="mb-6 flex flex-col gap-1 text-xs text-muted-foreground">
@@ -424,9 +460,20 @@ function CopyFacts({
         {facts.join(" · ")}
       </p>
       {conversation.snapshot.omittedRunningTurn !== null && row?.movedTo == null ? (
-        <p>Still running on {source} when it went offline. This shows the last finished reply.</p>
+        <p>
+          <T>
+            Still running on <Var>{source}</Var> when it went offline. This shows the last finished
+            reply.
+          </T>
+        </p>
       ) : null}
-      {row?.movedTo != null ? <p>Continued on {computerLabel(computers, row.movedTo)}.</p> : null}
+      {row?.movedTo != null ? (
+        <p>
+          <T>
+            Continued on <Var>{computerLabel(computers, row.movedTo, messages)}</Var>.
+          </T>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -441,6 +488,7 @@ function ContinueHereButton({
   thisComputer: string;
 }) {
   const navigate = useNavigate();
+  const gt = useGT();
   return (
     <Button
       size="sm"
@@ -458,10 +506,10 @@ function ContinueHereButton({
       }}
     >
       {continueHere.running
-        ? "Continuing…"
+        ? gt("Continuing…")
         : continueHere.needsCloudCopy
-          ? "Turn on sync and continue"
-          : "Continue on this computer"}
+          ? gt("Turn on sync and continue")
+          : gt("Continue on this computer")}
     </Button>
   );
 }

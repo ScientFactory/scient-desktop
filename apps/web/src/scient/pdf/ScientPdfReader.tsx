@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react";
 import type {
   PdfSourceActions,
   PdfSourceDescriptor,
@@ -19,6 +20,7 @@ import {
   type SetStateAction,
 } from "react";
 
+import { m as resolveMessage } from "~/i18n/messages";
 import { DropdownMenuItem, DropdownMenuSeparator } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -83,6 +85,7 @@ function PdfPasswordPrompt(props: {
   readonly incorrect: boolean;
   readonly onSubmit: (password: string) => boolean;
 }) {
+  const gt = useGT();
   const [password, setPassword] = useState("");
   return (
     <form
@@ -93,11 +96,13 @@ function PdfPasswordPrompt(props: {
       }}
     >
       <FileText className="size-6 text-muted-foreground" aria-hidden="true" />
-      <h2>Password protected PDF</h2>
+      <h2>
+        <T>Password protected PDF</T>
+      </h2>
       <p>
         {props.incorrect
-          ? "That password is incorrect. Try again."
-          : "Enter the password to open this PDF."}
+          ? gt("That password is incorrect. Try again.")
+          : gt("Enter the password to open this PDF.")}
       </p>
       <div className="flex w-full max-w-72 gap-2">
         <input
@@ -106,10 +111,10 @@ function PdfPasswordPrompt(props: {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           className="scient-pdf-password-input"
-          aria-label="PDF password"
+          aria-label={gt("PDF password")}
         />
         <button type="submit" className="scient-pdf-primary-button" disabled={!password}>
-          Open
+          <T context="verb, button">Open</T>
         </button>
       </div>
     </form>
@@ -128,6 +133,7 @@ export function ScientPdfReader(props: {
   /** The conversation "Ask in chat" quotes into; absent means no Ask in chat. */
   readonly citeThread?: ScopedThreadRef | undefined;
 }) {
+  const gt = useGT();
   const resolver = props.resolver ?? webPdfSourceResolver;
   const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
@@ -184,8 +190,12 @@ export function ScientPdfReader(props: {
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card" role="alert">
           <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
-          <h2>Couldn't open this PDF</h2>
-          <p>Scient could not create an authorized preview for this file.</p>
+          <h2>
+            <T>Couldn't open this PDF</T>
+          </h2>
+          <p>
+            <T>Scient could not create an authorized preview for this file.</T>
+          </p>
           <Button
             type="button"
             size="xs"
@@ -195,7 +205,7 @@ export function ScientPdfReader(props: {
             onClick={retryLoad}
           >
             <RefreshIcon size="xs" refreshing={asset.waiting === true} />
-            Try again
+            <T>Try again</T>
           </Button>
         </div>
       </div>
@@ -206,7 +216,9 @@ export function ScientPdfReader(props: {
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card">
           <LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-hidden="true" />
-          <p>Preparing PDF…</p>
+          <p>
+            <T>Preparing PDF…</T>
+          </p>
         </div>
       </div>
     );
@@ -238,9 +250,10 @@ export function ScientPdfReader(props: {
         if (!durable)
           toastManager.add({
             type: "error",
-            title: "Keep a local copy",
-            description:
+            title: gt("Keep a local copy"),
+            description: gt(
               "The PDF was saved, but its location could not be remembered. Use Save copy before closing Scient.",
+            ),
           });
       }}
       sourceAsset={
@@ -303,6 +316,7 @@ function LoadedScientPdfReader(props: {
   readonly citeThread?: ScopedThreadRef | undefined;
   readonly revealOwner: object;
 }) {
+  const gt = useGT();
   const editSession = pdfEditSession(props.editSessionKey);
   const edit = useSyncExternalStore(editSession.subscribe, editSession.getSnapshot);
   const isEditedDocument = props.copyView === "edited" || edit.url !== null;
@@ -398,8 +412,8 @@ function LoadedScientPdfReader(props: {
     copiedNotice.current = edit.copiedPath;
     toastManager.add({
       type: "success",
-      title: "Edited PDF saved separately",
-      description: "Use Save copy to export the edited document.",
+      title: resolveMessage(msg("Edited PDF saved separately")),
+      description: resolveMessage(msg("Use Save copy to export the edited document.")),
     });
   }, [edit.copiedPath]);
   const ensureEdits = async () => {
@@ -455,23 +469,41 @@ function LoadedScientPdfReader(props: {
     const keepsPages = editSession.getSnapshot().tagged;
     const moving = target ?? frame.selection;
     // Several checked pages: say how many each action affects.
-    const pages = moving.length > 1 ? ` ${moving.length} pages` : "";
+    const several = moving.length > 1 ? "yes" : "no";
+    const count = moving.length;
     const items: readonly ContextMenuItem<
       "rotate" | "left" | "right" | "move" | "duplicate" | "delete"
     >[] = [
       {
         id: "rotate",
-        label: `Rotate${pages}`,
+        label: gt("{several, select, yes {Rotate {count} pages} other {Rotate}}", {
+          several,
+          count,
+        }),
         children: [
-          { id: "left", label: "Left 90°" },
-          { id: "right", label: "Right 90°" },
+          { id: "left", label: gt("Left 90°") },
+          { id: "right", label: gt("Right 90°") },
         ],
       },
-      { id: "move", label: `Move${pages}`, disabled: moving.length === frame.pages.length },
-      { id: "duplicate", label: `Duplicate${pages}`, disabled: keepsPages },
+      {
+        id: "move",
+        label: gt("{several, select, yes {Move {count} pages} other {Move}}", { several, count }),
+        disabled: moving.length === frame.pages.length,
+      },
+      {
+        id: "duplicate",
+        label: gt("{several, select, yes {Duplicate {count} pages} other {Duplicate}}", {
+          several,
+          count,
+        }),
+        disabled: keepsPages,
+      },
       {
         id: "delete",
-        label: `Delete${pages}`,
+        label: gt("{several, select, yes {Delete {count} pages} other {Delete}}", {
+          several,
+          count,
+        }),
         destructive: true,
         separatorBefore: true,
         disabled: keepsPages || (target ?? frame.selection).length === frame.pages.length,
@@ -635,7 +667,7 @@ function LoadedScientPdfReader(props: {
     <div
       ref={rootRef}
       className="scient-pdf-reader"
-      aria-label={`PDF reader: ${props.source.fileName}`}
+      aria-label={gt("PDF reader: {fileName}", { fileName: props.source.fileName })}
       onKeyDown={onReaderKeyDown}
     >
       {moveRequest?.sessionKey === props.editSessionKey ? (
@@ -694,7 +726,7 @@ function LoadedScientPdfReader(props: {
                 onClick={() => void saveCopy()}
               >
                 {savingCopy ? <LoaderCircle className="animate-spin" /> : <Download />}
-                {savingCopy ? "Saving copy…" : "Save a copy"}
+                {savingCopy ? gt("Saving copy…") : gt("Save a copy")}
               </DropdownMenuItem>
             ) : null}
             {canRevealSource ? (
@@ -707,7 +739,7 @@ function LoadedScientPdfReader(props: {
                   })
                 }
               >
-                <FolderSearch /> Reveal source
+                <FolderSearch /> <T>Reveal source</T>
               </DropdownMenuItem>
             ) : null}
           </>
@@ -715,9 +747,9 @@ function LoadedScientPdfReader(props: {
       />
       {props.copyView ? (
         <div className="scient-pdf-copy-notice">
-          <span>{props.copyView === "edited" ? "Edited copy" : "Original PDF"}</span>
+          <span>{props.copyView === "edited" ? gt("Edited copy") : gt("Original PDF")}</span>
           <Button variant="ghost" size="xs" disabled={edit.busy} onClick={props.onSwitchCopy}>
-            {props.copyView === "edited" ? "Show original" : "Open edited copy"}
+            {props.copyView === "edited" ? gt("Show original") : gt("Open edited copy")}
           </Button>
         </div>
       ) : null}
@@ -731,12 +763,12 @@ function LoadedScientPdfReader(props: {
               void editSession.reset().then(props.onRetryLoad);
             }}
           >
-            Reload PDF
+            <T>Reload PDF</T>
           </Button>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Dismiss PDF editing error"
+            aria-label={gt("Dismiss PDF editing error")}
             onClick={editSession.dismissError}
           >
             <X />
@@ -745,13 +777,13 @@ function LoadedScientPdfReader(props: {
       ) : null}
       <div className="scient-pdf-body">
         {sidebar !== "closed" && state.phase === "ready" && reader.runtimeRef.current ? (
-          <aside className="scient-pdf-sidebar" aria-label="PDF navigation" tabIndex={0}>
+          <aside className="scient-pdf-sidebar" aria-label={gt("PDF navigation")} tabIndex={0}>
             <div className="scient-pdf-sidebar-tabs">
               {canEditPages ? (
                 <input
                   type="checkbox"
                   className="scient-pdf-select-all"
-                  aria-label="Select all pages"
+                  aria-label={gt("Select all pages")}
                   disabled={edit.busy || !currentPresentation}
                   checked={
                     edit.frame.pages.length > 0 &&
@@ -774,7 +806,7 @@ function LoadedScientPdfReader(props: {
               <ScientTooltip content="Pages">
                 <button
                   type="button"
-                  aria-label="Pages"
+                  aria-label={gt("Pages", { $context: "a page range" })}
                   aria-pressed={sidebar === "thumbnails"}
                   data-active={sidebar === "thumbnails" || undefined}
                   onClick={() => setSidebar("thumbnails")}
@@ -785,7 +817,7 @@ function LoadedScientPdfReader(props: {
               <ScientTooltip content="Outline">
                 <button
                   type="button"
-                  aria-label="Outline"
+                  aria-label={gt("Outline")}
                   aria-pressed={sidebar === "outline"}
                   data-active={sidebar === "outline" || undefined}
                   onClick={() => setSidebar("outline")}
@@ -946,7 +978,7 @@ function LoadedScientPdfReader(props: {
                   onClick={props.onRetryLoad}
                 >
                   <RefreshIcon size="xs" refreshing={props.authorizationPending} />
-                  Try again
+                  <T>Try again</T>
                 </Button>
               ) : null}
             </div>
@@ -958,7 +990,9 @@ function LoadedScientPdfReader(props: {
                   className="size-6 animate-spin text-muted-foreground"
                   aria-hidden="true"
                 />
-                <p>Loading PDF…</p>
+                <p>
+                  <T>Loading PDF…</T>
+                </p>
                 {state.progress !== null && state.progress < 1 ? (
                   <div
                     className="scient-pdf-progress"
@@ -981,7 +1015,9 @@ function LoadedScientPdfReader(props: {
             <div className="scient-pdf-state-overlay">
               <div className="scient-pdf-state-card" role="alert">
                 <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
-                <h2>Couldn't open this PDF</h2>
+                <h2>
+                  <T>Couldn't open this PDF</T>
+                </h2>
                 <p>{state.error}</p>
                 <Button
                   type="button"
@@ -992,7 +1028,7 @@ function LoadedScientPdfReader(props: {
                   onClick={props.onRetryLoad}
                 >
                   <RefreshIcon size="xs" refreshing={props.authorizationPending} />
-                  Try again
+                  <T>Try again</T>
                 </Button>
               </div>
             </div>
@@ -1043,11 +1079,11 @@ function createReaderSaveCopy({
     } catch {
       toastManager.add(
         editedCopy
-          ? { type: "error", title: "The PDF copy could not be saved" }
+          ? { type: "error", title: resolveMessage(msg("The PDF copy could not be saved")) }
           : {
               type: "error",
-              title: "The PDF could not be saved",
-              description: "Try again or choose another location.",
+              title: resolveMessage(msg("The PDF could not be saved")),
+              description: resolveMessage(msg("Try again or choose another location.")),
             },
       );
     } finally {

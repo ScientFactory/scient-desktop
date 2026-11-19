@@ -1,8 +1,12 @@
 import { projectComputeOutputs, type ComputeOutput } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { ComputeTable } from "./ComputeRichOutput";
 import { computeDisplays, parseComputeTable } from "./computeRichRepresentation";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const tableSource = (
   data: unknown = [{ name: "<script>alert(1)</script>", value: 42 }],

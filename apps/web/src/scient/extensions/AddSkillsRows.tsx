@@ -1,4 +1,5 @@
 import type { ImportableSkill, PersonalSkillCandidate } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 
 import { Button } from "../../components/ui/button";
 
@@ -28,10 +29,11 @@ export function SkillCandidateRows({
   /** Absent when this connection cannot start chats. */
   readonly onFinish: ((candidate: PersonalSkillCandidate) => void) | undefined;
 }) {
+  const gt = useGT();
   return (
     <ul className="divide-y divide-border rounded-lg border border-border">
       {candidates.map((candidate) => {
-        const title = candidate.name ? displayName(candidate.name) : "Untitled notes";
+        const title = candidate.name ? displayName(candidate.name) : gt("Untitled notes");
         return (
           <li key={candidate.key} className="flex items-start gap-3 px-3 py-2">
             <div className="grid min-w-0 flex-1 gap-0.5">
@@ -42,7 +44,9 @@ export function SkillCandidateRows({
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Not a complete skill yet. {candidate.reason}
+                  <T>
+                    Not a complete skill yet. <Var>{candidate.reason}</Var>
+                  </T>
                 </p>
               )}
               {candidate.notes.map((note) => (
@@ -52,7 +56,10 @@ export function SkillCandidateRows({
               ))}
               {candidate.conflict ? (
                 <p className="text-xs text-destructive-foreground">
-                  {candidate.conflict} Rename it, or finish it with an agent under another name.
+                  <T>
+                    <Var>{candidate.conflict}</Var> Rename it, or finish it with an agent under
+                    another name.
+                  </T>
                 </p>
               ) : null}
             </div>
@@ -60,11 +67,19 @@ export function SkillCandidateRows({
               <Button
                 size="xs"
                 variant="outline"
-                aria-label={`${candidate.exists ? "Replace" : "Add"} ${title}`}
+                aria-label={
+                  candidate.exists
+                    ? gt("Replace {name}", { name: title })
+                    : gt("Add {name}", { name: title })
+                }
                 disabled={busy !== null}
                 onClick={() => onAdd(candidate)}
               >
-                {busy === candidate.key ? "Adding…" : candidate.exists ? "Replace" : "Add"}
+                {busy === candidate.key
+                  ? gt("Adding…")
+                  : candidate.exists
+                    ? gt("Replace")
+                    : gt("Add", { $context: "verb, adds an extension" })}
               </Button>
             ) : onFinish ? (
               <Button
@@ -73,7 +88,7 @@ export function SkillCandidateRows({
                 disabled={busy !== null}
                 onClick={() => onFinish(candidate)}
               >
-                Finish with an agent
+                <T>Finish with an agent</T>
               </Button>
             ) : null}
           </li>
@@ -93,6 +108,7 @@ export function ImportableSkillRows({
   readonly busy: string | null;
   readonly onAdd: (skill: ImportableSkill) => void;
 }) {
+  const gt = useGT();
   return (
     <ul className="divide-y divide-border rounded-lg border border-border">
       {skills.map((skill) => {
@@ -107,16 +123,18 @@ export function ImportableSkillRows({
               </p>
             </div>
             {skill.added ? (
-              <span className="text-xs text-muted-foreground">Added</span>
+              <span className="text-xs text-muted-foreground">
+                <T>Added</T>
+              </span>
             ) : (
               <Button
                 size="xs"
                 variant="outline"
-                aria-label={`Add ${skill.name} from ${skill.appLabel}`}
+                aria-label={gt("Add {name} from {app}", { name: skill.name, app: skill.appLabel })}
                 disabled={busy !== null}
                 onClick={() => onAdd(skill)}
               >
-                {busy === key ? "Adding…" : "Add"}
+                {busy === key ? gt("Adding…") : gt("Add", { $context: "verb, adds an extension" })}
               </Button>
             )}
           </li>

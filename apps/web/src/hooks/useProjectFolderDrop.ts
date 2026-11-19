@@ -1,7 +1,9 @@
+import { msg } from "gt-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
 import { resolveDroppedProjectFolder } from "../lib/projectEntry";
 import { toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 
 export function useProjectFolderDrop(input: {
   readonly enabled: boolean;
@@ -57,7 +59,7 @@ export function useProjectFolderDrop(input: {
     if ("error" in dropped) {
       toastManager.add({
         type: "warning",
-        title: "Unable to add folder",
+        title: m(msg("Unable to add folder")),
         description: dropped.error,
       });
       return;

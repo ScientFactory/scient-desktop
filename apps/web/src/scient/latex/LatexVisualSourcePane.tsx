@@ -9,6 +9,8 @@ import { useMarkdownPersistenceLease } from "../markdownEditor/persistence/useMa
 import { resolveLatexCitationSource } from "./latexVisualSelection";
 import { sourcePositionFromPointerEvent } from "./latexSourceNavigation";
 import { useLatexSourceCitationOpen, type LatexCitationOpener } from "./useLatexCitationOpener";
+import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 
 export interface LatexVisualSourceReveal {
   readonly path: string;
@@ -44,6 +46,7 @@ export function LatexVisualSourcePane(
     citationOpener: LatexCitationOpener | null;
   },
 ) {
+  const gt = useGT();
   const { citationOpener, ...surfaceProps } = props;
   const { environmentId, cwd, reveal } = props;
   const query = useProjectFileQuery(environmentId, cwd, reveal.path);
@@ -127,9 +130,12 @@ export function LatexVisualSourcePane(
     warned.current = reveal.requestId;
     toastManager.add({
       type: "warning",
-      title: "The quoted source has changed",
-      description:
-        "Showing its recorded source line. The saved quote is unchanged; its exact location could not be verified.",
+      title: m(msg("The quoted source has changed")),
+      description: m(
+        msg(
+          "Showing its recorded source line. The saved quote is unchanged; its exact location could not be verified.",
+        ),
+      ),
     });
   }, [source, reveal, range]);
   return (
@@ -180,7 +186,8 @@ export function LatexVisualSourcePane(
         />
       ) : (
         <div role="status" className="p-3 text-sm text-muted-foreground">
-          {query.error ?? (admissionError ? "Could not open the source file." : "Opening source…")}
+          {query.error ??
+            (admissionError ? gt("Could not open the source file.") : gt("Opening source…"))}
         </div>
       )}
     </div>

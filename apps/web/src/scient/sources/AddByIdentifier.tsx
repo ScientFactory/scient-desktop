@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   MAX_SOURCE_IDENTIFIER_BATCH,
   parseSourceIdentifierList,
@@ -25,34 +28,35 @@ import { scientSourcesErrorMessage } from "./errorMessage";
 import { settleAfter } from "./settleAfter";
 import type { SourcesResultContent } from "./sourcesFeedback";
 
-function reason(item: ScientSourceIdentifierAddItem): string {
+function reason(item: ScientSourceIdentifierAddItem, resolve: MessageResolver): string {
   const registry = item.identifier ? sourceIdentifierRegistryName(item.identifier) : null;
   switch (item.outcome) {
     case "duplicate":
-      return "Already in the Library";
+      return resolve(msg("Already in the Library"));
     case "identifier-not-found":
-      return `Not found at ${registry}`;
+      return resolve(msg("Not found at {registry}", { registry: String(registry) }));
     case "unavailable":
-      return `Couldn't reach ${registry}. Try again later.`;
+      return resolve(
+        msg("Couldn't reach {registry}. Try again later.", { registry: String(registry) }),
+      );
     case "unrecognized":
-      return "Not a DOI, PMID, arXiv ID or ISBN";
+      return resolve(msg("Not a DOI, PMID, arXiv ID or ISBN"));
     case "imported":
-      return "Added";
+      return resolve(msg("Added", { $context: "a source was added to the Library" }));
   }
-}
-
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
 /** What an addition did, for the result slot; null when nothing was added. */
 export function identifierAddResult(
   results: ReadonlyArray<ScientSourceIdentifierAddItem>,
   options: { readonly detail?: string; readonly actions?: ReactNode } = {},
+  resolve: MessageResolver = m,
 ): SourcesResultContent | null {
   const added = results.filter((item) => item.outcome === "imported").length;
   if (added === 0) return null;
-  const title = added === 1 ? "Added 1 source" : `Added ${added} sources`;
+  const title = resolve(
+    msg("{count, plural, =1 {Added 1 source} other {Added {count} sources}}", { count: added }),
+  );
   return {
     tone: "success",
     summary: options.detail ? `${title}. ${options.detail}` : `${title}.`,
@@ -74,6 +78,8 @@ export function AddByIdentifier(props: {
   /** False from the Library view: the sources come in without being pinned here. */
   readonly pin?: false;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
   const [results, setResults] = useState<ReadonlyArray<ScientSourceIdentifierAddItem> | null>(null);
@@ -85,13 +91,18 @@ export function AddByIdentifier(props: {
   const canChange = useCanChangeLibrary(props.environmentId);
   const canAdd = canChange && readable > 0 && !tooMany && !adding;
   const hint = tooMany
-    ? `Up to ${MAX_SOURCE_IDENTIFIER_BATCH} at a time`
+    ? gt("Up to {count} at a time", { count: MAX_SOURCE_IDENTIFIER_BATCH })
     : readable > 0
-      ? [plural(readable, "identifier"), unreadable > 0 ? `${unreadable} not recognized` : null]
+      ? [
+          gt("{count, plural, one {{count} identifier} other {{count} identifiers}}", {
+            count: readable,
+          }),
+          unreadable > 0 ? gt("{count} not recognized", { count: unreadable }) : null,
+        ]
           .filter(Boolean)
           .join(", ")
       : text.trim()
-        ? "No identifiers found"
+        ? gt("No identifiers found")
         : null;
 
   const add = async () => {
@@ -138,14 +149,16 @@ export function AddByIdentifier(props: {
     >
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add by identifier</DialogTitle>
+          <DialogTitle>
+            <T>Add by identifier</T>
+          </DialogTitle>
           <DialogDescription>
-            Paste DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Each becomes one source.
+            <T>Paste DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Each becomes one source.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <Textarea
-            aria-label="Identifiers to add"
+            aria-label={gt("Identifiers to add")}
             placeholder="10.1038/nature14539"
             rows={4}
             size="sm"
@@ -169,7 +182,9 @@ export function AddByIdentifier(props: {
           {results ? (
             <div aria-live="polite">
               <div className="text-sm font-medium">
-                {added > 0 ? `Added ${added} of ${results.length}` : "Nothing added"}
+                {added > 0
+                  ? gt("Added {added} of {count}", { added, count: results.length })
+                  : gt("Nothing added")}
               </div>
               <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                 {results
@@ -179,7 +194,7 @@ export function AddByIdentifier(props: {
                       <span className="min-w-0 flex-1 truncate">
                         <span className="text-foreground">{item.input}</span>
                         {" · "}
-                        {reason(item)}
+                        {reason(item, resolve)}
                       </span>
                       {item.outcome === "duplicate" && item.sourceId ? (
                         <Button
@@ -191,7 +206,7 @@ export function AddByIdentifier(props: {
                             props.onClose();
                           }}
                         >
-                          View
+                          <T context="verb, opens the source">View</T>
                         </Button>
                       ) : null}
                     </li>
@@ -202,11 +217,15 @@ export function AddByIdentifier(props: {
         </DialogPanel>
         <DialogFooter>
           <Button variant="ghost" disabled={adding} onClick={props.onClose}>
-            {results ? "Close" : "Cancel"}
+            {results ? gt("Close") : gt("Cancel")}
           </Button>
           <Button disabled={!canAdd} onClick={() => void add()}>
             {adding ? <LoaderCircle className="animate-spin" /> : null}
-            {adding ? "Adding…" : readable > 1 ? `Add ${readable}` : "Add"}
+            {adding
+              ? gt("Adding…")
+              : readable > 1
+                ? gt("Add {count}", { count: readable, $context: "adds sources by identifier" })
+                : gt("Add", { $context: "adds sources by identifier" })}
           </Button>
         </DialogFooter>
       </DialogPopup>

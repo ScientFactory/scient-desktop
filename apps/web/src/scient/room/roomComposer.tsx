@@ -7,11 +7,13 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import type { RefObject } from "react";
 
 import { prepareTurnAttachments } from "~/components/chat/chatViewSend";
 import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
 import { useNowMinute } from "~/hooks/useNowMinute";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { useEnvironmentScope } from "~/state/session";
@@ -89,7 +91,11 @@ export function useRoomComposerPost(input: {
     ) {
       input.onError(
         threadId,
-        "Added context only goes to the agent. Turn on Send straight to the agent, or remove it.",
+        m(
+          msg(
+            "Added context only goes to the agent. Turn on Send straight to the agent, or remove it.",
+          ),
+        ),
       );
       return;
     }

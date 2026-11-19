@@ -8,6 +8,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEffect, useRef, useState } from "react";
+import { msg, T, useGT } from "gt-react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
@@ -15,6 +16,7 @@ import {
   useProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
 import { anchoredToastManager, toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { assetEnvironment } from "~/state/assets";
@@ -111,6 +113,7 @@ export interface ScientMarkdownFileSurfaceProps {
 }
 
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
+  const gt = useGT();
   const [wordExportOpen, setWordExportOpen] = useState(false);
   const [referenceCheckOpen, setReferenceCheckOpen] = useState(false);
   const onOpenFile = props.onOpenFile;
@@ -301,12 +304,14 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         return;
       case "none":
       case "incomplete":
-        showLinkFeedback(anchor, "Linked file isn't available.");
+        showLinkFeedback(anchor, m(msg("Linked file isn't available.")));
         return;
       case undefined:
         showLinkFeedback(
           anchor,
-          input.knownMissing ? "Linked file isn't available." : "Couldn't check this link.",
+          input.knownMissing
+            ? m(msg("Linked file isn't available."))
+            : m(msg("Couldn't check this link.")),
         );
     }
   };
@@ -331,7 +336,8 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
             (candidate) => candidate.name === name && candidate.relativePath === relativePath,
           );
     if (entry) {
-      if (entry.kind === "directory") showLinkFeedback(anchor, "Linked file isn't available.");
+      if (entry.kind === "directory")
+        showLinkFeedback(anchor, m(msg("Linked file isn't available.")));
       else onOpenFile(relativePath);
       return;
     }
@@ -362,15 +368,16 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         .catch((error: unknown) => {
           toastManager.add({
             type: "error",
-            title: "Unable to open link",
-            description: error instanceof Error ? error.message : "The link could not open.",
+            title: m(msg("Unable to open link")),
+            description:
+              error instanceof Error ? error.message : m(msg("The link could not open.")),
           });
         });
       return;
     }
     if (target.startsWith("#")) {
       beginLinkOpen();
-      showLinkFeedback(anchor, "Linked section wasn't found.");
+      showLinkFeedback(anchor, m(msg("Linked section wasn't found.")));
       return;
     }
     if (isHomeRelativeLink(target)) {
@@ -380,7 +387,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       const homeRelativePath = decodedLinkPath(target);
       if (homeRelativePath === null) {
         beginLinkOpen();
-        showLinkFeedback(anchor, "This link isn't available.");
+        showLinkFeedback(anchor, m(msg("This link isn't available.")));
         return;
       }
       return openHomeRelativeFile(homeRelativePath, anchor);
@@ -400,7 +407,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         onOpenFile(hostPath);
         return;
       }
-      showLinkFeedback(anchor, "This link isn't available.");
+      showLinkFeedback(anchor, m(msg("This link isn't available.")));
       return;
     }
     return openWorkspaceFile(path.relativePath, anchor);
@@ -409,7 +416,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     const path = resolveWikiLinkPath(props.relativePath, target);
     if (!path) {
       beginLinkOpen();
-      showLinkFeedback(anchor, "This link isn't available.");
+      showLinkFeedback(anchor, m(msg("This link isn't available.")));
       return;
     }
     void openWorkspaceFile(path, anchor);
@@ -432,13 +439,14 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     ).then(
       (copied) => {
         if (requestId !== linkOpenRequestRef.current) return;
-        if (copied) showLinkFeedback(anchor, fullPath ? "Full path copied." : "Link copied.");
+        if (copied)
+          showLinkFeedback(anchor, fullPath ? m(msg("Full path copied.")) : m(msg("Link copied.")));
       },
       () => {
         if (requestId !== linkOpenRequestRef.current) return;
         showLinkFeedback(
           anchor,
-          fullPath ? "Couldn't copy the full path." : "Couldn't copy the link.",
+          fullPath ? m(msg("Couldn't copy the full path.")) : m(msg("Couldn't copy the link.")),
         );
       },
     );
@@ -452,11 +460,15 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       });
       const copyText = async (value: string) => {
         if (!(await writeTextToClipboard(value, namedClipboardTarget("image source")))) {
-          throw new Error("The image source could not be copied.");
+          throw new Error(m(msg("The image source could not be copied.")));
         }
       };
       const actions: ScientImageAction[] = [
-        { id: "copy-source", label: "Copy image source", run: () => copyText(authoredSource) },
+        {
+          id: "copy-source",
+          label: m(msg("Copy image source")),
+          run: () => copyText(authoredSource),
+        },
       ];
       if (!source) return actions;
       const location =
@@ -469,12 +481,12 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       actions.unshift(
         {
           id: "copy-image",
-          label: "Copy image",
+          label: m(msg("Copy image")),
           run: () => copyStaticImage(resolveImageActionUrl(location)),
         },
         {
           id: "download",
-          label: "Download original",
+          label: m(msg("Download original")),
           run: async () =>
             downloadStaticImage(await resolveImageActionUrl(location), source.fileName),
         },
@@ -483,17 +495,17 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         actions.push(
           {
             id: "copy-relative-path",
-            label: "Copy relative path",
+            label: m(msg("Copy relative path")),
             run: () => copyText(source.relativePath),
           },
           {
             id: "copy-full-path",
-            label: "Copy full path",
+            label: m(msg("Copy full path")),
             run: () => copyText(source.absolutePath),
           },
           {
             id: "open-file",
-            label: "Open image file",
+            label: m(msg("Open image file")),
             closeViewer: true,
             run: async () => {
               const request = beginLinkOpen();
@@ -513,7 +525,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
                     entry.kind !== "directory",
                 )
               ) {
-                throw new Error("The image file is no longer available.");
+                throw new Error(m(msg("The image file is no longer available.")));
               }
               onOpenFile(source.relativePath);
             },
@@ -525,8 +537,9 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     onImageError: (error: unknown) => {
       toastManager.add({
         type: "error",
-        title: "Image action failed",
-        description: error instanceof Error ? error.message : "The image action could not finish.",
+        title: m(msg("Image action failed")),
+        description:
+          error instanceof Error ? error.message : m(msg("The image action could not finish.")),
       });
     },
   };
@@ -540,7 +553,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         {...(props.onCite ? { onCite: props.onCite } : {})}
         citationReveal={props.citationReveal}
         citationRevealId={props.citationRevealId}
-        ariaLabel={`${props.relativePath} Markdown document`}
+        ariaLabel={gt("{path} Markdown document", { path: props.relativePath })}
         resolvedTheme={props.resolvedTheme}
         workspaceResourceIndexKey={workspaceResourceIndexKey}
         onLocalHeadingOpened={() => {
@@ -584,7 +597,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
               onWordExport={() => setWordExportOpen(true)}
             />
             <DockCommandItem onClick={() => setReferenceCheckOpen(true)}>
-              Check references
+              <T>Check references</T>
             </DockCommandItem>
           </>
         }
@@ -592,8 +605,9 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         onImageUploadFailure={(error) => {
           toastManager.add({
             type: "error",
-            title: "Unable to add image",
-            description: error instanceof Error ? error.message : "The image upload failed.",
+            title: m(msg("Unable to add image")),
+            description:
+              error instanceof Error ? error.message : m(msg("The image upload failed.")),
           });
         }}
       />

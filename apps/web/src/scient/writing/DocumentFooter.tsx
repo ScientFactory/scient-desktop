@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -22,6 +23,7 @@ export function DocumentFooter(props: {
   readonly words: DocumentWordCount | null;
   readonly dataRecovery?: boolean | undefined;
 }) {
+  const messages = useMessages();
   return (
     <footer
       className={cn("scient-document-footer", props.className)}
@@ -35,7 +37,9 @@ export function DocumentFooter(props: {
           <span className="scient-document-footer-position">{props.position}</span>
         ) : null}
         {props.words ? (
-          <span className="scient-document-footer-count">{formatWordCount(props.words)}</span>
+          <span className="scient-document-footer-count">
+            {formatWordCount(props.words, messages)}
+          </span>
         ) : null}
       </div>
     </footer>

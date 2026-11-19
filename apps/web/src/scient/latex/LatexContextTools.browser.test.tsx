@@ -17,7 +17,11 @@ it("keeps object options open through footer interactions and closes explicitly 
             <main>Document text</main>
             <footer className="scient-latex-reader-footer">
               <LatexContextTools>
-                <div role="toolbar" aria-label="Object options">
+                <div
+                  role="toolbar"
+                  aria-label="Werkzeuge für Lab tools"
+                  data-context-name="Lab tools"
+                >
                   <input aria-label="Object title" />
                 </div>
               </LatexContextTools>
@@ -28,6 +32,7 @@ it("keeps object options open through footer interactions and closes explicitly 
     );
     const context = host.querySelector<HTMLElement>(".scient-latex-context-tools")!;
     const trigger = context.querySelector<HTMLButtonElement>("button")!;
+    expect(trigger.textContent).toBe("Lab tools");
     const footer = host.querySelector("footer")!;
     const count = footer.querySelector(".scient-document-footer-count")!;
     await act(() => trigger.click());

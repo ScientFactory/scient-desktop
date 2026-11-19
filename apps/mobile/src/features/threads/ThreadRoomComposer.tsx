@@ -1,10 +1,12 @@
 import { RoomMessageId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { msg, useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { prepareTurnAttachments } from "../../lib/attachmentUpload";
 import { uploadComposerAttachmentShared } from "../../state/composer-attachment-uploads";
 import { useNowMinuteMs } from "../../lib/clock";
@@ -23,18 +25,19 @@ import { readRoomDirect, setRoomDirect, useRoomDirect, useThreadRoom } from "./t
 /** In a shared thread with people in it: send straight to the agent instead of to everyone. */
 export function RoomAgentSwitch(props: { readonly threadKey: string; readonly disabled: boolean }) {
   const direct = useRoomDirect(props.threadKey);
+  const gt = useGT();
   return (
     <View className="flex-row px-2 pb-2">
       <Button
-        label="Straight to agent"
+        label={gt("Straight to agent")}
         size="compact"
         tone={direct ? "primary" : "secondary"}
         disabled={props.disabled}
         onPress={() => setRoomDirect(props.threadKey, !direct)}
         accessibilityLabel={
           direct
-            ? "Straight to agent, on"
-            : "Straight to agent, off. Messages go to everyone first."
+            ? gt("Straight to agent, on")
+            : gt("Straight to agent, off. Messages go to everyone first.")
         }
       />
     </View>
@@ -66,7 +69,7 @@ export function useRoomPost(
     const draft = getComposerDraftSnapshot(draftKey);
     const error = roomPostError(draft);
     if (error) {
-      Dialog.alert("Could not post to people", error);
+      Dialog.alert(m(msg("Could not post to people")), error);
       return;
     }
     const signature = JSON.stringify({
@@ -126,8 +129,8 @@ export function useRoomPost(
     };
     await attemptPost().catch((error: unknown) => {
       Dialog.alert(
-        "Could not post to people",
-        error instanceof Error ? error.message : "Try again.",
+        m(msg("Could not post to people")),
+        error instanceof Error ? error.message : m(msg("Try again.")),
       );
     });
     inFlight.current = false;

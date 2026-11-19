@@ -17,6 +17,7 @@ import { closeHistory } from "@tiptap/pm/history";
 import { Selection, TextSelection } from "@tiptap/pm/state";
 import { preserveLatexCaret } from "./latexObjectCaret";
 import { LatexTextField } from "./LatexTextField";
+import { useGT } from "gt-react";
 
 type Props = Pick<NodeViewProps, "node" | "editor" | "updateAttributes" | "selected" | "getPos"> & {
   editable: boolean;
@@ -32,6 +33,7 @@ export function LatexTitleView({
   getPos,
   draftKey,
 }: Props) {
+  const gt = useGT();
   const root = useRef<HTMLDivElement>(null);
   const id = useId();
   const [active, setActive] = useState(false);
@@ -201,8 +203,9 @@ export function LatexTitleView({
       onPointerDown={activate}
     >
       <LatexTextField
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- identifies the field: latexVisualObjectSourceRange.ts and documents/focusNewDocument.ts match this English label
         aria-label="Document title"
-        placeholder="Title"
+        placeholder={gt("Title", { $context: "document title placeholder" })}
         rows={1}
         disabled={!editable || sourceMeta?.titleEditable === false}
         draftKey={draftKey ? `${draftKey}:title` : undefined}
@@ -212,6 +215,7 @@ export function LatexTitleView({
       />
       {showAuthor ? (
         <LatexTextField
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- identifies the field: latexVisualObjectSourceRange.ts and documents/focusNewDocument.ts match this English label
           aria-label="Document author"
           rows={1}
           disabled={!editable || sourceMeta?.authorEditable === false}
@@ -225,6 +229,7 @@ export function LatexTitleView({
       ) : null}
       {dateMode !== "hidden" || addingDate ? (
         <LatexTextField
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- identifies the field: latexVisualObjectSourceRange.ts and documents/focusNewDocument.ts match this English label
           aria-label="Document date"
           rows={1}
           disabled={!editable || sourceMeta?.dateEditable === false}

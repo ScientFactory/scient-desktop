@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { EllipsisIcon, PaletteIcon, RefreshCwIcon } from "lucide-react";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "~/components/ui/button";
@@ -37,6 +38,7 @@ export function ScientImageActionMenu({
 }) {
   const pendingAction = useRef<ScientImageAction | null>(null);
   const menuOpen = useRef(false);
+  const gt = useGT();
   const [handingOffFocus, setHandingOffFocus] = useState(false);
   const completeToolbarMove = useVisualCardToolbarMenuClose();
   return (
@@ -67,7 +69,7 @@ export function ScientImageActionMenu({
             <MenuTrigger
               render={
                 <Button
-                  aria-label="More image actions"
+                  aria-label={gt("More image actions")}
                   size={triggerSize}
                   type="button"
                   variant={triggerVariant}
@@ -78,7 +80,9 @@ export function ScientImageActionMenu({
         >
           <EllipsisIcon className="size-3" />
         </TooltipTrigger>
-        <TooltipPopup>More image actions</TooltipPopup>
+        <TooltipPopup>
+          <T>More image actions</T>
+        </TooltipPopup>
       </Tooltip>
       <VisualCardMenuPopup
         align="end"

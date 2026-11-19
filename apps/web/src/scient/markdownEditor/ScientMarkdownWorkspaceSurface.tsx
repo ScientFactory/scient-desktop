@@ -1,5 +1,6 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffectEvent } from "react";
+import { T, useGT, Var } from "gt-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -115,6 +116,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 }
 
 function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
+  const gt = useGT();
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bindingsRef = useRef(props);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps bindingsRef holding the latest props for imperative callbacks
@@ -514,7 +516,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
           className="hidden"
           type="file"
           accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
-          aria-label="Choose image for Markdown document"
+          aria-label={gt("Choose image for Markdown document")}
           multiple
           onChange={(event) => {
             [...(event.currentTarget.files ?? [])].forEach((file) =>
@@ -549,22 +551,26 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         />
         {retainedInput && !canEditPendingInput ? (
           <div role="status" className="px-3 py-2 text-sm">
-            This document has unfinished input in another open editor. Return there to correct or
-            undo it before editing here.
+            <T>
+              This document has unfinished input in another open editor. Return there to correct or
+              undo it before editing here.
+            </T>
           </div>
         ) : null}
         {pendingWriteback && canEditPendingInput ? (
           <div role="status" className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
             <span>
-              {pendingWriteback.message} Your input remains open here. Correct it or undo the
-              change. It is not saved or protected against an app restart.
+              <T>
+                <Var>{pendingWriteback.message}</Var> Your input remains open here. Correct it or
+                undo the change. It is not saved or protected against an app restart.
+              </T>
             </span>
             <Button
               size="xs"
               variant="ghost"
               onClick={() => controller.executeKeyboardCommand("markdown.undo")}
             >
-              Undo
+              <T context="button, undoes the last change">Undo</T>
             </Button>
             <Button
               size="xs"
@@ -576,7 +582,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
                 )
               }
             >
-              Copy recovery data
+              <T>Copy recovery data</T>
             </Button>
           </div>
         ) : null}

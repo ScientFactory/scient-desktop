@@ -2,6 +2,7 @@ import type {
   ScientSystematicReviewCombineReport,
   ScientSystematicReviewConflictsResult,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -21,7 +22,6 @@ import {
   STAGE_WORDS,
   decisionText,
   differenceCounts,
-  plural,
   reviewDate,
   rowHeading,
   searchText,
@@ -35,6 +35,7 @@ type Pick = "keep" | "use-other" | "combine";
 
 function VersionSummary(props: { readonly heading: string; readonly version: Version | null }) {
   const { version } = props;
+  const gt = useGT();
   return (
     <div className="min-w-0 space-y-1 rounded-md bg-muted/40 p-3 text-sm">
       <p className="text-xs text-muted-foreground">{props.heading}</p>
@@ -42,27 +43,38 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
         <>
           <p className="break-words font-medium">{version.title}</p>
           <p className="text-xs text-muted-foreground tabular-nums">
-            Changed {reviewDate(version.updatedAt)}{" "}
-            {version.updatedBy === "agent" ? "by an agent" : "by you"}
+            {version.updatedBy === "agent"
+              ? gt("Changed {date} by an agent", { date: reviewDate(version.updatedAt) })
+              : gt("Changed {date} by you", { date: reviewDate(version.updatedAt) })}
           </p>
           {version.deletedAt ? (
             <p className="text-xs text-muted-foreground tabular-nums">
-              Deleted {reviewDate(version.deletedAt)}
+              {gt("Deleted {date}", { date: reviewDate(version.deletedAt) })}
             </p>
           ) : null}
           <p className="text-xs text-muted-foreground tabular-nums">
-            {plural(version.searches, "search", "searches")} ·{" "}
-            {plural(version.records, "record", "records")} ·{" "}
-            {plural(version.decisions, "decision", "decisions")}
+            {gt(
+              "{searches, plural, one {{searchesShown} search} other {{searchesShown} searches}} · {records, plural, one {{recordsShown} record} other {{recordsShown} records}} · {decisions, plural, one {{decisionsShown} decision} other {{decisionsShown} decisions}}",
+              {
+                searches: version.searches,
+                searchesShown: version.searches.toLocaleString(),
+                records: version.records,
+                recordsShown: version.records.toLocaleString(),
+                decisions: version.decisions,
+                decisionsShown: version.decisions.toLocaleString(),
+              },
+            )}
           </p>
           <p className="text-xs text-muted-foreground tabular-nums">
             {version.lastDecidedAt
-              ? `Last decision ${reviewDate(version.lastDecidedAt)}`
-              : "No decisions yet"}
+              ? gt("Last decision {date}", { date: reviewDate(version.lastDecidedAt) })
+              : gt("No decisions yet")}
           </p>
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">This version could not be read.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>This version could not be read.</T>
+        </p>
       )}
     </div>
   );
@@ -75,32 +87,34 @@ function DifferenceRows(props: {
   readonly onMore: () => void;
 }) {
   const { rows, nextOffset } = props.differences;
+  const gt = useGT();
+  const m = useMessages();
   const names = {
-    hereName: REVIEW_VERSION_LABELS.here,
-    otherName: REVIEW_VERSION_LABELS.other,
+    hereName: m(REVIEW_VERSION_LABELS.here),
+    otherName: m(REVIEW_VERSION_LABELS.other),
   };
   return (
     <>
       {rows.length > 0 ? (
         <ul className="divide-y divide-border text-sm">
           {rows.map((row) => {
-            const heading = rowHeading(row);
+            const heading = rowHeading(row, m);
             return (
               <li key={heading.key} className="py-3">
                 <p className="font-medium break-words">{heading.title}</p>
                 <p className="text-xs text-muted-foreground">{heading.standing}</p>
                 {row.kind === "decision" ? (
                   <Sides
-                    label="Decision"
-                    here={decisionText(row.here)}
-                    other={decisionText(row.other)}
+                    label={gt("Decision", { $context: "screening decision on a record" })}
+                    here={decisionText(row.here, m)}
+                    other={decisionText(row.other, m)}
                     {...names}
                   />
                 ) : row.kind === "search" ? (
                   <Sides
-                    label="Search"
-                    here={searchText(row.here, row.other ? "only in this version" : null)}
-                    other={searchText(row.other, row.here ? "only in the other version" : null)}
+                    label={gt("Search", { $context: "a logged literature search" })}
+                    here={searchText(row.here, row.other ? "here" : null, m)}
+                    other={searchText(row.other, row.here ? "other" : null, m)}
                     {...names}
                   />
                 ) : null}
@@ -111,7 +125,7 @@ function DifferenceRows(props: {
       ) : null}
       {nextOffset !== null ? (
         <Button size="xs" variant="ghost" disabled={props.disabled} onClick={props.onMore}>
-          {REVIEW_VERSION_LABELS.more}
+          {m(REVIEW_VERSION_LABELS.more)}
         </Button>
       ) : null}
     </>
@@ -132,14 +146,19 @@ function ReviewVersionsDialog(props: {
   readonly onClose: () => void;
 }) {
   const { disabled, onChoose: choose } = props;
+  const m = useMessages();
   return (
     <Dialog open onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Versions of this review</DialogTitle>
+          <DialogTitle>
+            <T>Versions of this review</T>
+          </DialogTitle>
           <DialogDescription>
-            A copy of this project brought another version. The version not kept is stored aside,
-            not deleted.
+            <T>
+              A copy of this project brought another version. The version not kept is stored aside,
+              not deleted.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -153,16 +172,16 @@ function ReviewVersionsDialog(props: {
                   <section key={version.conflictId} className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <VersionSummary
-                        heading={REVIEW_VERSION_LABELS.here}
+                        heading={m(REVIEW_VERSION_LABELS.here)}
                         version={props.versions!.current}
                       />
-                      <VersionSummary heading={REVIEW_VERSION_LABELS.other} version={version} />
+                      <VersionSummary heading={m(REVIEW_VERSION_LABELS.other)} version={version} />
                     </div>
                     {differences === undefined ? null : (
                       <p className="text-sm tabular-nums">
                         {differences
-                          ? differenceCounts(differences)
-                          : REVIEW_VERSION_LABELS.unreadable}
+                          ? differenceCounts(differences, m)
+                          : m(REVIEW_VERSION_LABELS.unreadable)}
                       </p>
                     )}
                     <div className="flex flex-wrap gap-1">
@@ -172,7 +191,7 @@ function ReviewVersionsDialog(props: {
                         disabled={disabled}
                         onClick={() => choose(version.conflictId!, "keep")}
                       >
-                        Keep this version
+                        <T>Keep this version</T>
                       </Button>
                       <Button
                         size="compact"
@@ -180,7 +199,7 @@ function ReviewVersionsDialog(props: {
                         disabled={disabled}
                         onClick={() => choose(version.conflictId!, "use-other")}
                       >
-                        Use the other
+                        <T>Use the other</T>
                       </Button>
                       <Button
                         size="compact"
@@ -188,12 +207,14 @@ function ReviewVersionsDialog(props: {
                         disabled={disabled}
                         onClick={() => choose(version.conflictId!, "combine")}
                       >
-                        Combine
+                        <T context="verb, combines two versions">Combine</T>
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Combine keeps the searches and records of both versions, and reopens any
-                      record the two decided differently.
+                      <T>
+                        Combine keeps the searches and records of both versions, and reopens any
+                        record the two decided differently.
+                      </T>
                     </p>
                     {differences ? (
                       <DifferenceRows
@@ -218,6 +239,7 @@ export function ReviewVersionsLine(props: {
   readonly reviews: SystematicReviews;
   readonly reviewId: string;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<ScientSystematicReviewConflictsResult | null>(null);
   const [differences, setDifferences] = useState<
@@ -288,14 +310,15 @@ export function ReviewVersionsLine(props: {
         pick,
         ...(currentRevision ? { currentRevision } : {}),
       },
-      "The version was not chosen",
+      gt("The version was not chosen"),
     );
     if (changed && changed.outcome !== "resolved") {
       toastManager.add({
         type: "warning",
-        title: "The version was not chosen",
-        description:
+        title: gt("The version was not chosen"),
+        description: gt(
           "This review changed somewhere else after these versions were read. Look at them again.",
+        ),
       });
     }
     await load();
@@ -313,10 +336,12 @@ export function ReviewVersionsLine(props: {
           void load();
         }}
       >
-        This review has another version from a copy of this project.{" "}
-        <span className="text-foreground underline underline-offset-2 group-hover:decoration-2 group-focus-visible:decoration-2">
-          Show versions
-        </span>
+        <T>
+          This review has another version from a copy of this project.{" "}
+          <span className="text-foreground underline underline-offset-2 group-hover:decoration-2 group-focus-visible:decoration-2">
+            Show versions
+          </span>
+        </T>
       </button>
       {open ? (
         <ReviewVersionsDialog
@@ -343,15 +368,27 @@ export function CombineReportNotice(props: {
   readonly searchName: (searchId: string) => string;
 }) {
   const { report } = props;
+  const gt = useGT();
+  const m = useMessages();
+  const counted = (count: number) => ({ count, shown: count.toLocaleString() });
   const counts = [
     report.undecidedPairs.length > 0
-      ? `${plural(report.undecidedPairs.length, "duplicate pair", "duplicate pairs")} left undecided`
+      ? gt(
+          "{count, plural, one {{shown} duplicate pair left undecided} other {{shown} duplicate pairs left undecided}}",
+          counted(report.undecidedPairs.length),
+        )
       : null,
     report.differingSearches.length > 0
-      ? `${plural(report.differingSearches.length, "search", "searches")} with different details`
+      ? gt(
+          "{count, plural, one {{shown} search with different details} other {{shown} searches with different details}}",
+          counted(report.differingSearches.length),
+        )
       : null,
     report.reopened.length > 0
-      ? `${plural(report.reopened.length, "record", "records")} reopened`
+      ? gt(
+          "{count, plural, one {{shown} record reopened} other {{shown} records reopened}}",
+          counted(report.reopened.length),
+        )
       : null,
   ].filter((part): part is string => part !== null);
   return (
@@ -359,8 +396,8 @@ export function CombineReportNotice(props: {
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 tabular-nums">
           {counts.length > 0
-            ? `Combined with the other version: ${counts.join(", ")}.`
-            : "Combined with the other version. Nothing was left to decide."}
+            ? gt("Combined with the other version: {counts}.", { counts: counts.join(", ") })
+            : gt("Combined with the other version. Nothing was left to decide.")}
         </span>
         {props.reviews.canResolve ? (
           <Button
@@ -371,35 +408,44 @@ export function CombineReportNotice(props: {
               void props.reviews.changeConflict(
                 props.reviewId,
                 { action: "dismiss-report" },
-                "The report was not dismissed",
+                gt("The report was not dismissed"),
               )
             }
           >
-            Dismiss
+            <T>Dismiss</T>
           </Button>
         ) : null}
       </div>
       {counts.length > 0 ? (
         <Collapsible>
           <CollapsibleTrigger className="outline-none hover:underline focus-visible:underline">
-            Details
+            <T context="noun, more information">Details</T>
           </CollapsibleTrigger>
           <CollapsiblePanel>
             <ul className="mt-1 space-y-0.5">
               {report.undecidedPairs.map(([first, second]) => (
                 <li key={`${first}:${second}`} className="break-words">
-                  Undecided: {props.title(first)} and {props.title(second)}
+                  {gt("Undecided: {first} and {second}", {
+                    first: props.title(first),
+                    second: props.title(second),
+                  })}
                 </li>
               ))}
               {report.differingSearches.map((search) => (
                 <li key={search.searchId} className="break-words">
-                  Search {props.searchName(search.searchId)}: the other version has{" "}
-                  {search.incoming.database}, {search.incoming.searchedOn}
+                  {gt("Search {name}: the other version has {database}, {searchedOn}", {
+                    name: props.searchName(search.searchId),
+                    database: search.incoming.database,
+                    searchedOn: search.incoming.searchedOn,
+                  })}
                 </li>
               ))}
               {report.reopened.map((entry) => (
                 <li key={`${entry.sourceId}:${entry.stage}`} className="break-words">
-                  Reopened: {props.title(entry.sourceId)} ({STAGE_WORDS[entry.stage]})
+                  {gt("Reopened: {title} ({stage})", {
+                    title: props.title(entry.sourceId),
+                    stage: m(STAGE_WORDS[entry.stage]),
+                  })}
                 </li>
               ))}
             </ul>

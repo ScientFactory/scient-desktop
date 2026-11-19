@@ -6,6 +6,7 @@ import { DockCommandRadioItem, MenuRow } from "../writing/dockChrome";
 import { WritingDirectionIcon } from "../writing/WritingDirectionIcon";
 import { latexDocumentLanguage } from "./latexLanguage";
 import { latexParagraphDirection, setLatexParagraphDirection } from "./latexParagraphDirection";
+import { useGT } from "gt-react";
 
 export function LatexDirectionMenuItems({
   editor,
@@ -18,6 +19,7 @@ export function LatexDirectionMenuItems({
   setup: string;
   getSource: () => string;
 }) {
+  const gt = useGT();
   const language = latexDocumentLanguage(setup);
   const selected = useEditorState({
     editor,
@@ -30,7 +32,7 @@ export function LatexDirectionMenuItems({
         <DockCommandRadioItem
           key={direction}
           value={direction}
-          aria-label={direction === "ltr" ? "Left to right" : "Right to left"}
+          aria-label={direction === "ltr" ? gt("Left to right") : gt("Right to left")}
           disabled={disabled || !editor?.isEditable || !selected}
           onClick={() => {
             if (!editor || disabled || !editor.isEditable) return;

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { CheckIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -64,6 +65,7 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
   const { catalogFor } = useThreadSectionCatalogs();
   const threads = useQuietThreadShells();
   const loadedKey = useAtomValue(loadedThreadEnvironmentsKeyAtom);
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -155,13 +157,21 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
         onClick={() => choose(entry)}
       >
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {entry.id === current ? <CheckIcon aria-label="Current section" /> : null}
+        {entry.id === current ? <CheckIcon aria-label={gt("Current section")} /> : null}
       </AutocompleteItem>
     ));
   const groups = [
-    { label: "Recent", entries: list.recent },
-    { label: list.recent.length > 0 ? "All sections" : null, entries: list.sections },
-    { label: "Other projects", entries: list.otherProjects },
+    {
+      key: "recent",
+      label: gt("Recent", { $context: "recently used sections" }),
+      entries: list.recent,
+    },
+    {
+      key: "sections",
+      label: list.recent.length > 0 ? gt("All sections") : null,
+      entries: list.sections,
+    },
+    { key: "other-projects", label: gt("Other projects"), entries: list.otherProjects },
   ].filter((group) => group.entries.length > 0);
 
   return (
@@ -169,8 +179,8 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
       <div className="sr-only">
         <PopoverTitle size="compact">
           {props.threadRefs.length > 1
-            ? `Move ${props.threadRefs.length} threads to a section`
-            : "Move to section"}
+            ? gt("Move {count} threads to a section", { count: props.threadRefs.length })
+            : gt("Move to section")}
         </PopoverTitle>
       </div>
       <Autocomplete
@@ -186,8 +196,8 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
         }}
       >
         <AutocompleteInput
-          aria-label="Search sections"
-          placeholder="Search or create a section"
+          aria-label={gt("Search sections")}
+          placeholder={gt("Search or create a section")}
           size="sm"
           autoFocus
           maxLength={80}
@@ -195,7 +205,7 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
         />
         <AutocompleteList className="max-h-72">
           {groups.map((group) => (
-            <AutocompleteGroup key={group.label ?? "sections"}>
+            <AutocompleteGroup key={group.key}>
               {group.label ? <AutocompleteGroupLabel>{group.label}</AutocompleteGroupLabel> : null}
               {renderEntries(group.entries)}
             </AutocompleteGroup>
@@ -208,13 +218,19 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
               onClick={() => void create(list.createName!)}
             >
               <PlusIcon />
-              <span className="min-w-0 flex-1 truncate">Create “{list.createName}”</span>
+              <span className="min-w-0 flex-1 truncate">
+                <T>
+                  Create “<Var>{list.createName}</Var>”
+                </T>
+              </span>
             </AutocompleteItem>
           ) : null}
         </AutocompleteList>
       </Autocomplete>
       {failed ? (
-        <p className="px-2 text-xs text-destructive">The section could not be saved. Try again.</p>
+        <p className="px-2 text-xs text-destructive">
+          <T>The section could not be saved. Try again.</T>
+        </p>
       ) : null}
     </div>
   );

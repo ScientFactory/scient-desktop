@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { XIcon } from "lucide-react";
 import { useState } from "react";
 import type {
@@ -49,6 +50,7 @@ export function AccountHandoffs({
 }) {
   const show = useAccountCommand(accountsState.showHandoff, environmentId);
   const cancel = useAccountCommand(accountsState.cancelHandoff, environmentId);
+  const gt = useGT();
   return (
     <div className="grid gap-2">
       {handoffs.map((handoff) => (
@@ -69,13 +71,15 @@ export function AccountHandoffs({
             </span>
             {handoff.kind === "push" && handoff.number ? (
               <span className="shrink-0 rounded bg-muted px-1.5 text-sm font-semibold tabular-nums text-foreground">
-                Tap {handoff.number}
+                <T>
+                  Tap <Var>{handoff.number}</Var>
+                </T>
               </span>
             ) : null}
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label="Cancel sign-in"
+              aria-label={gt("Cancel sign-in")}
               disabled={!canWrite}
               onClick={() => void cancel({ handoffId: handoff.handoffId })}
             >
@@ -99,7 +103,7 @@ export function AccountHandoffs({
                     disabled={!canWrite}
                     onClick={() => void show({ handoffId: handoff.handoffId })}
                   >
-                    Open browser
+                    <T>Open browser</T>
                   </Button>
                 </div>
               }
@@ -112,11 +116,11 @@ export function AccountHandoffs({
 }
 
 const ACTION_LABELS: Readonly<Record<AccountApproval["action"], string>> = {
-  "sign-in": "Sign in",
-  credentials: "Read its credentials",
-  request: "Make a request",
-  "browser-session": "Use its sign-in in a script",
-  "open-profile": "Open a browser tab",
+  "sign-in": msg("Sign in"),
+  credentials: msg("Read its credentials"),
+  request: msg("Make a request"),
+  "browser-session": msg("Use its sign-in in a script"),
+  "open-profile": msg("Open a browser tab"),
 };
 
 export function AccountApprovals({
@@ -129,6 +133,7 @@ export function AccountApprovals({
   canWrite: boolean;
 }) {
   const respond = useAccountCommand(accountsState.respondApproval, environmentId);
+  const messages = useMessages();
   const profiles = resolveBrowserProfiles(
     useClientSettings((settings) => settings.browserProfiles),
   );
@@ -153,15 +158,18 @@ export function AccountApprovals({
         <div key={approval.approvalId} className="rounded-lg border bg-card p-3">
           <div className="mb-2 text-sm">
             <span className="font-medium">{targetName(approval)}</span>
-            <span className="text-muted-foreground"> · {ACTION_LABELS[approval.action]}</span>
+            <span className="text-muted-foreground">
+              {" "}
+              · {messages(ACTION_LABELS[approval.action])}
+            </span>
           </div>
           <div className="flex flex-wrap gap-2">
             {(
               [
-                ["once", "Allow in this conversation"],
-                ["project", "Always in this project"],
-                ["always", "Always"],
-                ["deny", "Deny"],
+                ["once", msg("Allow in this conversation")],
+                ["project", msg("Always in this project")],
+                ["always", msg("Always", { $context: "approval decision, allow always" })],
+                ["deny", msg("Deny")],
               ] as const
             )
               .filter(([decision]) => decision !== "project" || approval.projectId)
@@ -173,7 +181,7 @@ export function AccountApprovals({
                   disabled={!canWrite || busy.has(approval.approvalId)}
                   onClick={() => void run(approval.approvalId, decision)}
                 >
-                  {label}
+                  {messages(label)}
                 </Button>
               ))}
           </div>

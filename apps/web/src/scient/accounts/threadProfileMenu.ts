@@ -6,8 +6,11 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { accountsState } from "./accountsState";
@@ -34,12 +37,14 @@ export function browserProfileMenu(input: {
   const own = named(input.threadProfileId);
   return {
     id: "browser-profile",
-    label: "Browser profile",
+    label: m(msg("Browser profile")),
     icon: "globe",
     children: [
       {
         id: "browser-profile:inherit",
-        label: `${project ? "Project's" : "Default"} (${inherited?.name ?? "Main"})`,
+        label: project
+          ? m(msg("Project's ({name})", { name: inherited?.name ?? "Main" }))
+          : m(msg("Default ({name})", { name: inherited?.name ?? "Main" })),
         checked: own === undefined,
       },
       ...input.profiles.map((profile, index) => ({
@@ -81,6 +86,6 @@ export async function handleBrowserProfileMenuAction(action: string, threadRef: 
     input: { threadId: threadRef.threadId, profileId: chosen },
   });
   if (result._tag !== "Success")
-    toastManager.add({ type: "error", title: "Could not change the browser profile" });
+    toastManager.add({ type: "error", title: m(msg("Could not change the browser profile")) });
   return true;
 }

@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   CheckIcon,
@@ -21,6 +22,7 @@ import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
@@ -83,6 +85,7 @@ function fallbackManagedRuntimeFailure(
   languageId: string,
   detail: string,
   retryAction: ComputeManagedRuntimeAction | null,
+  resolve: MessageResolver = m,
 ): ComputeManagedRuntimeFailureView {
   return {
     // A refused removal already says what to do, and nothing was being set up.
@@ -90,10 +93,10 @@ function fallbackManagedRuntimeFailure(
       retryAction === "remove"
         ? detail
         : languageId === "matlab"
-          ? "MATLAB connection failed"
+          ? resolve(msg("MATLAB connection failed"))
           : usesManagedPython(languageId)
-            ? "Python setup failed"
-            : "Kernel setup failed",
+            ? resolve(msg("Python setup failed"))
+            : resolve(msg("Kernel setup failed")),
     detail,
     retryAction,
   };
@@ -102,37 +105,54 @@ function fallbackManagedRuntimeFailure(
 export function managedRuntimeOperationLabel(
   status: ComputeManagedRuntimeStatus,
   languageId?: ComputeLanguageId,
+  resolve: MessageResolver = m,
 ): string | null {
   const operation = status.operation;
   if (!operation) return null;
   if (languageId === "matlab") {
-    return operation.phase === "removing"
-      ? "Removing MATLAB connection…"
-      : "Preparing MATLAB connection…";
+    return resolve(
+      operation.phase === "removing"
+        ? msg("Removing MATLAB connection…")
+        : msg("Preparing MATLAB connection…"),
+    );
   }
   if (languageId !== undefined && !usesManagedPython(languageId)) {
-    return `${operation.phase === "removing" ? "Removing" : "Installing"} ${status.displayName ?? "kernel"}…`;
+    const name = status.displayName;
+    if (operation.phase === "removing")
+      return resolve(name ? msg("Removing {name}…", { name }) : msg("Removing kernel…"));
+    return resolve(name ? msg("Installing {name}…", { name }) : msg("Installing kernel…"));
   }
   switch (operation.phase) {
     case "downloading": {
       if (operation.downloadedBytes === null || operation.totalBytes === null)
-        return "Downloading the verified installer…";
+        return resolve(msg("Downloading the verified installer…"));
       const downloaded = Math.max(0.1, operation.downloadedBytes / (1024 * 1024)).toFixed(1);
       const total = Math.max(0.1, operation.totalBytes / (1024 * 1024)).toFixed(1);
-      return `Downloading the verified installer · ${downloaded} of ${total} MB`;
+      return resolve(
+        msg("Downloading the verified installer · {downloaded} of {total} MB", {
+          downloaded,
+          total,
+        }),
+      );
     }
     case "installing-python":
-      return "Installing private Python…";
+      return resolve(msg("Installing private Python…"));
     case "installing-packages":
-      return status.displayName
-        ? "Preparing the connection helper…"
-        : "Installing the locked scientific packages…";
+      return resolve(
+        status.displayName
+          ? msg("Preparing the connection helper…")
+          : msg("Installing the locked scientific packages…"),
+      );
     case "verifying":
-      return status.displayName
-        ? "Checking the connection helper…"
-        : "Verifying Python, Jupyter, data, and figures…";
+      return resolve(
+        status.displayName
+          ? msg("Checking the connection helper…")
+          : msg("Verifying Python, Jupyter, data, and figures…"),
+      );
     case "removing":
-      return `Removing ${status.displayName ?? "Scient-managed Python"}…`;
+      return status.displayName
+        ? resolve(msg("Removing {name}…", { name: status.displayName }))
+        : resolve(msg("Removing Scient-managed Python…"));
   }
 }
 
@@ -141,6 +161,7 @@ export function useComputeManagedRuntime(input: {
   languageId: ComputeLanguageId;
   initialStatus: ComputeManagedRuntimeStatus | null;
 }) {
+  const messages = useMessages();
   const manage = useAtomCommand(computeEnvironment.manageRuntime, { reportFailure: false });
   const cancelCommand = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
     reportFailure: false,
@@ -266,10 +287,12 @@ export function useComputeManagedRuntime(input: {
           setCancellationKey((current) => (current === cancelledBuild ? null : current));
         }
         const detail =
-          cause instanceof Error ? cause.message : "The installation could not be managed.";
+          cause instanceof Error
+            ? cause.message
+            : messages(msg("The installation could not be managed."));
         setLocalFailureState({
           scopeKey,
-          failure: fallbackManagedRuntimeFailure(input.languageId, detail, action),
+          failure: fallbackManagedRuntimeFailure(input.languageId, detail, action, messages),
         });
         return false;
       })
@@ -298,10 +321,11 @@ export function useComputeManagedRuntime(input: {
     })().catch(async (cause) => {
       if (cancellationRequest.current === operationKey) cancellationRequest.current = null;
       setCancellationKey((current) => (current === operationKey ? null : current));
-      const detail = cause instanceof Error ? cause.message : "Setup could not be cancelled.";
+      const detail =
+        cause instanceof Error ? cause.message : messages(msg("Setup could not be cancelled."));
       setLocalFailureState({
         scopeKey,
-        failure: { summary: "Cancellation failed", detail, retryAction: null },
+        failure: { summary: messages(msg("Cancellation failed")), detail, retryAction: null },
       });
     });
   };
@@ -312,6 +336,7 @@ export function useComputeManagedRuntime(input: {
             input.languageId,
             status.failureMessage,
             status.installed ? "repair" : "install",
+            messages,
           )
         : null
       : {
@@ -325,10 +350,10 @@ export function useComputeManagedRuntime(input: {
       : {
           summary:
             input.languageId === "matlab"
-              ? "MATLAB status unavailable"
+              ? messages(msg("MATLAB status unavailable"))
               : usesManagedPython(input.languageId)
-                ? "Python status unavailable"
-                : "Kernel status unavailable",
+                ? messages(msg("Python status unavailable"))
+                : messages(msg("Kernel status unavailable")),
           detail: queried.error,
           retryAction: null,
         };
@@ -360,12 +385,14 @@ export function ManagedRuntimeNotice({
   showProgress?: boolean;
   onRetry?: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const progress =
     showProgress &&
     runtime.status &&
     (runtime.cancelling
-      ? "Cancelling…"
-      : managedRuntimeOperationLabel(runtime.status, runtime.languageId));
+      ? gt("Cancelling…")
+      : managedRuntimeOperationLabel(runtime.status, runtime.languageId, messages));
   // While something is being done about a failure, it is no longer the news.
   const failure = showFailure && !progress ? runtime.failure : null;
   // Removal always stays behind its confirmation dialog, including retries.
@@ -401,7 +428,7 @@ export function ManagedRuntimeNotice({
                 disabled={runtime.cancelling}
                 onClick={() => void runtime.cancel()}
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
             ) : null}
           </div>
@@ -420,9 +447,9 @@ export function ManagedRuntimeNotice({
                 }
               >
                 {retryAction === "repair"
-                  ? "Repair"
+                  ? gt("Repair", { $context: "verb" })
                   : retryAction === "install"
-                    ? "Install"
+                    ? gt("Install")
                     : headline}
               </TooltipTrigger>
               <TooltipPopup>{failure.detail}</TooltipPopup>
@@ -435,7 +462,7 @@ export function ManagedRuntimeNotice({
                       size="icon-xs"
                       variant="ghost"
                       className="size-5 shrink-0"
-                      aria-label="Copy error"
+                      aria-label={gt("Copy error")}
                       onClick={() => copyToClipboard(failure.detail, undefined)}
                     />
                   }
@@ -446,14 +473,16 @@ export function ManagedRuntimeNotice({
                     <CopyIcon aria-hidden className="size-3" />
                   )}
                 </TooltipTrigger>
-                <TooltipPopup>Copy the full error</TooltipPopup>
+                <TooltipPopup>
+                  <T>Copy the full error</T>
+                </TooltipPopup>
               </Tooltip>
             ) : null}
             {retry !== undefined || failure.detail === failure.summary ? null : (
               <Popover>
                 <PopoverTrigger
                   render={
-                    <Button size="icon-xs" variant="ghost-muted" aria-label="Error details" />
+                    <Button size="icon-xs" variant="ghost-muted" aria-label={gt("Error details")} />
                   }
                 >
                   <ChevronDown className="size-3" aria-hidden />
@@ -483,7 +512,7 @@ export function ManagedRuntimeNotice({
               disabled={runtime.cancelling}
               onClick={() => void runtime.cancel()}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           ) : null}
         </div>
@@ -498,7 +527,7 @@ export function ManagedRuntimeNotice({
                   size="icon-xs"
                   variant="ghost"
                   className="size-5 shrink-0"
-                  aria-label="Copy error"
+                  aria-label={gt("Copy error")}
                   onClick={() => copyToClipboard(failure.detail, undefined)}
                 />
               }
@@ -509,12 +538,14 @@ export function ManagedRuntimeNotice({
                 <CopyIcon aria-hidden className="size-3" />
               )}
             </TooltipTrigger>
-            <TooltipPopup>Copy the full error</TooltipPopup>
+            <TooltipPopup>
+              <T>Copy the full error</T>
+            </TooltipPopup>
           </Tooltip>
           {failure.detail === failure.summary ? null : (
             <details className="min-w-0">
               <summary className="w-fit cursor-pointer list-none text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-                Details
+                <T>Details</T>
               </summary>
               <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
                 {failure.detail}
@@ -549,11 +580,14 @@ export function ManagedRuntimeMaintenanceMenu({
   installationActions?: ReactNode;
   className?: string;
 }) {
+  const gt = useGT();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const status = runtime.status;
   if (!status?.installed) return null;
-  const displayName = connection ? "MATLAB connection helper" : (kernel ?? "Scient-managed Python");
+  const displayName = connection
+    ? gt("MATLAB connection helper")
+    : (kernel ?? gt("Scient-managed Python"));
   const busy = disabled || runtime.busy;
   const connectionAction =
     status.selection === "managed"
@@ -563,10 +597,10 @@ export function ManagedRuntimeMaintenanceMenu({
         : "use-managed";
   const connectionLabel =
     status.selection === "managed"
-      ? "Use existing MATLAB Engine setup"
+      ? gt("Use existing MATLAB Engine setup")
       : connectionNeedsRetarget
-        ? "Set up Scient connection"
-        : "Use Scient connection";
+        ? gt("Set up Scient connection")
+        : gt("Use Scient connection");
   const showRepair = omitAction !== "repair";
   const hasNonDestructiveAction = connection || showRepair;
 
@@ -581,7 +615,13 @@ export function ManagedRuntimeMaintenanceMenu({
               size="icon-xs"
               variant="ghost-muted"
               disabled={busy}
-              aria-label={`More ${connection ? "MATLAB connection" : (kernel ?? "Python runtime")} actions`}
+              aria-label={
+                connection
+                  ? gt("More MATLAB connection actions")
+                  : kernel
+                    ? gt("More {name} actions", { name: kernel })
+                    : gt("More Python runtime actions")
+              }
             />
           }
         >
@@ -601,26 +641,32 @@ export function ManagedRuntimeMaintenanceMenu({
           {showRepair ? (
             <MenuItem
               aria-label={
-                connection ? "Rebuild MATLAB connection" : `Rebuild ${kernel ?? "managed Python"}`
+                connection
+                  ? gt("Rebuild MATLAB connection")
+                  : kernel
+                    ? gt("Rebuild {name}", { name: kernel })
+                    : gt("Rebuild managed Python")
               }
               disabled={busy || !canProvision}
               onClick={() => void runtime.act("repair")}
             >
-              <Wrench /> Rebuild
+              <Wrench /> <T>Rebuild</T>
             </MenuItem>
           ) : null}
           {hasNonDestructiveAction ? <MenuSeparator /> : null}
           <MenuItem
             aria-label={
               connection
-                ? "Remove MATLAB connection helper"
-                : `Remove ${kernel ?? "managed Python"}`
+                ? gt("Remove MATLAB connection helper")
+                : kernel
+                  ? gt("Remove {name}", { name: kernel })
+                  : gt("Remove managed Python")
             }
             variant="destructive"
             disabled={busy}
             onClick={() => setConfirmRemove(true)}
           >
-            <Trash2 /> Remove
+            <Trash2 /> <T>Remove</T>
           </MenuItem>
         </MenuPopup>
       </Menu>
@@ -628,15 +674,22 @@ export function ManagedRuntimeMaintenanceMenu({
         open={confirmRemove}
         onOpenChange={setConfirmRemove}
         anchor={menuAnchor}
-        title={`Remove ${displayName}?`}
+        title={gt("Remove {name}?", { name: displayName })}
         description={
           connection
-            ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
+            ? gt(
+                "This removes Scient’s connection helper. Your MATLAB installation and license are untouched.",
+              )
             : kernel
-              ? `This removes Scient’s private ${kernel}. Your installation and its packages are untouched.`
-              : "This removes Scient’s private Python environment. System installations and project environments are untouched."
+              ? gt(
+                  "This removes Scient’s private {name}. Your installation and its packages are untouched.",
+                  { name: kernel },
+                )
+              : gt(
+                  "This removes Scient’s private Python environment. System installations and project environments are untouched.",
+                )
         }
-        confirmLabel="Remove"
+        confirmLabel={gt("Remove")}
         destructive
         busy={busy}
         onConfirm={() => void runtime.act("remove")}

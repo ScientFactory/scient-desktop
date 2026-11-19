@@ -3,6 +3,7 @@
 // Sync now, the last sync, Undo last send, Open in Overleaf and Overleaf settings.
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   AlertTriangle,
   ExternalLink,
@@ -26,6 +27,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -47,16 +49,27 @@ import { useOverleafAgentRunWatch } from "./useOverleafAgentRunWatch";
 const STATUS_FRESH_MS = 5_000;
 
 /** When the link last synced: this window's last sync, or the link's own record. */
-export function lastSyncLabel(input: {
-  readonly lastSyncAt: number | null;
-  readonly completedSyncCount: number;
-  readonly updatedAt: string;
-}): string {
+export function lastSyncLabel(
+  input: {
+    readonly lastSyncAt: number | null;
+    readonly completedSyncCount: number;
+    readonly updatedAt: string;
+  },
+  resolve: MessageResolver = m,
+): string {
   if (input.lastSyncAt !== null) {
-    return `Last synced ${formatRelativeTimeLabel(new Date(input.lastSyncAt).toISOString())}`;
+    return resolve(
+      msg("Last synced {time}", {
+        time: formatRelativeTimeLabel(new Date(input.lastSyncAt).toISOString(), undefined, resolve),
+      }),
+    );
   }
-  if (input.completedSyncCount === 0) return "Not synced yet";
-  return `Last synced ${formatRelativeTimeLabel(input.updatedAt)}`;
+  if (input.completedSyncCount === 0) return resolve(msg("Not synced yet"));
+  return resolve(
+    msg("Last synced {time}", {
+      time: formatRelativeTimeLabel(input.updatedAt, undefined, resolve),
+    }),
+  );
 }
 
 export function OverleafFileChip(props: {
@@ -66,6 +79,8 @@ export function OverleafFileChip(props: {
   readonly threadRef: ScopedThreadRef | null;
 }) {
   const { environmentId, cwd, relativePath, threadRef } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const workspace = useOverleafWorkspace(environmentId, cwd);
   const navigate = useNavigate();
   const connection = connectionForPath(workspace.connections, relativePath);
@@ -90,6 +105,7 @@ export function OverleafFileChip(props: {
     syncing,
     workspace.lastSync.get(connection.connectionId)?.result ?? null,
     workspace.remoteStates.get(connection.connectionId) ?? null,
+    messages,
   );
   const linkedElsewhere = !connection.linkedHere;
   const reviewInput = {
@@ -113,7 +129,7 @@ export function OverleafFileChip(props: {
               size="xs"
               variant={attention ? "ghost-warning" : "ghost"}
               className="shrink-0"
-              aria-label={`Overleaf: ${view.label}`}
+              aria-label={gt("Overleaf: {status}", { status: view.label })}
               data-overleaf-chip={view.state}
             />
           }
@@ -132,10 +148,18 @@ export function OverleafFileChip(props: {
           <MenuGroup>
             <MenuGroupLabel>
               <span className="block text-foreground">
-                Overleaf · {connection.folder === "" ? "this project" : connection.folder}
+                {connection.folder === "" ? (
+                  <T>Overleaf · this project</T>
+                ) : (
+                  <T>
+                    Overleaf · <Var>{connection.folder}</Var>
+                  </T>
+                )}
               </span>
               {linkedElsewhere ? (
-                <span className="block font-normal">This link belongs to the main copy.</span>
+                <span className="block font-normal">
+                  <T>This link belongs to the main copy.</T>
+                </span>
               ) : view.detail ? (
                 <span className="block font-normal">{view.detail}</span>
               ) : null}
@@ -147,51 +171,54 @@ export function OverleafFileChip(props: {
               onClick={() => void cancelOverleafRun(environmentId, cwd, connection.connectionId)}
             >
               <X aria-hidden className="size-4 text-muted-foreground" />
-              Cancel sync
+              <T>Cancel sync</T>
             </MenuItem>
           ) : (
             <MenuItem onClick={syncNow}>
               <RefreshCw aria-hidden className="size-4 text-muted-foreground" />
-              {linkedElsewhere ? "Sync the main copy" : "Sync now"}
+              {linkedElsewhere ? gt("Sync the main copy") : gt("Sync now")}
             </MenuItem>
           )}
           {seeChanges ? (
             <MenuItem onClick={seeChanges}>
               <FileDiff aria-hidden className="size-4 text-muted-foreground" />
-              See changes
+              <T>See changes</T>
             </MenuItem>
           ) : null}
           {view.state === "syncing" || connection.completedSyncCount === 0 ? null : (
             <MenuItem onClick={() => setUndoing(true)}>
               <Undo2 aria-hidden className="size-4 text-muted-foreground" />
-              Undo last send…
+              <T>Undo last send…</T>
             </MenuItem>
           )}
           <MenuItem disabled>
             <span className="ps-6 text-xs text-muted-foreground">
-              {lastSyncLabel({
-                lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
-                completedSyncCount: connection.completedSyncCount,
-                updatedAt: connection.updatedAt,
-              })}
+              {lastSyncLabel(
+                {
+                  lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
+                  completedSyncCount: connection.completedSyncCount,
+                  updatedAt: connection.updatedAt,
+                },
+                messages,
+              )}
             </span>
           </MenuItem>
           <MenuSeparator />
           <MenuItem onClick={() => openOverleafProject(connection.projectId)}>
             <ExternalLink aria-hidden className="size-4 text-muted-foreground" />
-            Open in Overleaf
+            <T>Open in Overleaf</T>
           </MenuItem>
           {view.state === "syncing" ? null : (
             <MenuItem
               onClick={() => void unlinkOverleaf(environmentId, cwd, connection.connectionId)}
             >
               <Unlink aria-hidden className="size-4 text-muted-foreground" />
-              Unlink from Overleaf
+              <T>Unlink from Overleaf</T>
             </MenuItem>
           )}
           <MenuItem onClick={() => void navigate({ to: "/settings/synced-folders" })}>
             <Settings aria-hidden className="size-4 text-muted-foreground" />
-            Overleaf settings…
+            <T>Overleaf settings…</T>
           </MenuItem>
         </MenuPopup>
       </Menu>
@@ -203,7 +230,7 @@ export function OverleafFileChip(props: {
                 size="icon-xs"
                 variant="ghost-muted"
                 aria-label={
-                  view.state === "syncing" ? "Syncing with Overleaf…" : "Sync with Overleaf"
+                  view.state === "syncing" ? gt("Syncing with Overleaf…") : gt("Sync with Overleaf")
                 }
                 disabled={view.state === "syncing"}
                 onClick={syncNow}
@@ -220,7 +247,7 @@ export function OverleafFileChip(props: {
             />
           </TooltipTrigger>
           <TooltipPopup>
-            {view.state === "syncing" ? "Syncing…" : "Sync with Overleaf"}
+            {view.state === "syncing" ? gt("Syncing…") : gt("Sync with Overleaf")}
           </TooltipPopup>
         </Tooltip>
       ) : null}

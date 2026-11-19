@@ -1,5 +1,8 @@
 import type { ContextMenuItem, ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import { readLocalApi } from "../../localApi";
 import { LIBRARY_LABELS } from "./libraryLabels";
@@ -51,8 +54,8 @@ export async function showSourceRowMenu(input: {
     listed && input.canSetReading && record.readingStatus !== undefined
       ? [
           record.readingStatus === "unread"
-            ? { id: "mark-read", label: LIBRARY_LABELS.markRead }
-            : { id: "mark-unread", label: LIBRARY_LABELS.markUnread },
+            ? { id: "mark-read", label: m(LIBRARY_LABELS.markRead) }
+            : { id: "mark-unread", label: m(LIBRARY_LABELS.markUnread) },
         ]
       : [];
   const addItems: Item[] =
@@ -60,7 +63,7 @@ export async function showSourceRowMenu(input: {
       ? [
           {
             id: "add-to-project",
-            label: LIBRARY_LABELS.addToProject,
+            label: m(LIBRARY_LABELS.addToProject),
             disabled: input.busy || !input.canChangeProject,
           },
         ]
@@ -71,7 +74,7 @@ export async function showSourceRowMenu(input: {
       ? [
           {
             id: "remove-from-project",
-            label: LIBRARY_LABELS.removeFromProject,
+            label: m(LIBRARY_LABELS.removeFromProject),
             disabled: input.busy || !input.canChangeProject,
           },
         ]
@@ -82,17 +85,27 @@ export async function showSourceRowMenu(input: {
     : [
         {
           id: "remove",
-          label: "Move to Trash",
+          label: m(msg("Move to Trash")),
           destructive: true,
           disabled: input.busy || !input.canChange,
           icon: "trash",
         },
       ];
   const items: Item[] = [
-    { id: "view", label: "View source details" },
-    { id: "edit", label: "Edit source details", icon: "pencil", disabled: !input.canChange },
-    ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
-    { id: "select", label: input.selected ? "Deselect" : "Select" },
+    { id: "view", label: m(msg("View source details")) },
+    {
+      id: "edit",
+      label: m(msg("Edit source details")),
+      icon: "pencil",
+      disabled: !input.canChange,
+    },
+    ...(pdf ? [{ id: "open-pdf" as const, label: m(msg("Open PDF")) }] : []),
+    {
+      id: "select",
+      label: input.selected
+        ? m(msg("Deselect", { $context: "verb, removes a source from the selection" }))
+        : m(msg("Select", { $context: "verb, adds a source to the selection" })),
+    },
     ...readingItems,
     ...addItems,
     ...removeFromProjectItems,

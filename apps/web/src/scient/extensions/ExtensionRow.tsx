@@ -5,9 +5,11 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { PlugIcon, type LucideIcon } from "lucide-react";
+import { msg, T, useMessages } from "gt-react";
 import { createContext, useContext, useState, type ReactNode } from "react";
 
 import { extensionMarkLayout } from "./extensionIconLayout";
+import { type MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { useOptionalExtensionsEnvironment } from "./ExtensionsPage";
@@ -21,20 +23,20 @@ const RowLayout = createContext<"grid" | "table">("grid");
  * What kind of thing a row is, for the table's Type column. One name per kind: Works with says
  * which agent a plugin, app or server belongs to.
  */
-function rowType(target: ExtensionTarget): string {
+function rowType(target: ExtensionTarget, resolve: MessageResolver): string {
   switch (target.kind) {
     case "connector":
     case "server":
-      return "Connector";
+      return resolve(msg("Connector"));
     case "plugin":
-      return "Built in";
+      return resolve(msg("Built in", { $context: "extension type" }));
     case "account":
-      return "App";
+      return resolve(msg("App", { $context: "a ChatGPT app" }));
     case "provider-plugin":
     case "provider-store":
-      return "Plugin";
+      return resolve(msg("Plugin"));
     case "provider-server":
-      return "MCP server";
+      return resolve(msg("MCP server"));
   }
 }
 
@@ -326,6 +328,7 @@ export function ExtensionRow({
   /** Errors and notices from this row's last action. */
   readonly feedback?: ReactNode;
 }) {
+  const messages = useMessages();
   const layout = useContext(RowLayout);
   if (layout === "table")
     return (
@@ -362,7 +365,7 @@ export function ExtensionRow({
             </div>
           </div>
           <span className="hidden truncate text-sm text-muted-foreground @min-[720px]/extensions:block">
-            {type ?? rowType(target)}
+            {type ?? rowType(target, messages)}
           </span>
           <div className="relative z-10 hidden min-w-0 overflow-hidden @min-[720px]/extensions:block">
             <WorksWithAgents audience={audience} />
@@ -419,9 +422,15 @@ export function ExtensionTable({
           aria-hidden
           className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 px-2 pb-2 text-xs text-muted-foreground @min-[720px]/extensions:grid"
         >
-          <span>Name</span>
-          <span>Type</span>
-          <span>Works with</span>
+          <span>
+            <T>Name</T>
+          </span>
+          <span>
+            <T>Type</T>
+          </span>
+          <span>
+            <T>Works with</T>
+          </span>
           <span />
         </div>
         <ul aria-label={label}>{children}</ul>

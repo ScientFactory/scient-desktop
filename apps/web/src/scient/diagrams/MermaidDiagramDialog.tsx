@@ -9,6 +9,7 @@ import {
   PlusIcon,
   ScanIcon,
 } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -27,6 +28,7 @@ type DiagramAction = "copy-source" | "copy-recovered-source" | "copy-png" | "dow
 
 interface MermaidDiagramDialogProps {
   readonly actionMessage: string | null;
+  readonly copiedKind: string | null;
   readonly activeAction: DiagramAction;
   readonly onCopyPng: () => void;
   readonly onCopySource: () => void;
@@ -50,6 +52,7 @@ function intrinsicSvgWidth(svg: string): number {
 export function MermaidDiagramDialog({
   actionMessage,
   activeAction,
+  copiedKind,
   onCopyPng,
   onCopySource,
   onCopyRecoveredSource,
@@ -60,6 +63,7 @@ export function MermaidDiagramDialog({
   svg,
   title,
 }: MermaidDiagramDialogProps) {
+  const gt = useGT();
   const [zoom, setZoom] = useState<DiagramZoom>("fit");
   const naturalWidth = intrinsicSvgWidth(svg);
   const numericZoom = zoom === "fit" ? 100 : zoom;
@@ -81,15 +85,15 @@ export function MermaidDiagramDialog({
               <span className="block truncate">{title}</span>
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Expanded view of the Mermaid diagram with zoom and export controls.
+              <T>Expanded view of the Mermaid diagram with zoom and export controls.</T>
             </DialogDescription>
           </div>
-          <div className="flex items-center gap-1" role="toolbar" aria-label="Diagram zoom">
+          <div className="flex items-center gap-1" role="toolbar" aria-label={gt("Diagram zoom")}>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Zoom out"
+                    aria-label={gt("Zoom out")}
                     disabled={numericZoom <= 25}
                     onClick={() => changeZoom(-25)}
                     size="icon-sm"
@@ -99,16 +103,20 @@ export function MermaidDiagramDialog({
               >
                 <MinusIcon />
               </TooltipTrigger>
-              <TooltipPopup side="bottom">Zoom out</TooltipPopup>
+              <TooltipPopup side="bottom">
+                <T>Zoom out</T>
+              </TooltipPopup>
             </Tooltip>
             <span className="w-12 text-center text-muted-foreground text-xs tabular-nums">
-              {zoom === "fit" ? "Fit" : `${zoom}%`}
+              {zoom === "fit"
+                ? gt("Fit", { $context: "diagram zoom level, fits the window" })
+                : gt("{zoom}%", { zoom })}
             </span>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Zoom in"
+                    aria-label={gt("Zoom in")}
                     disabled={numericZoom >= 400}
                     onClick={() => changeZoom(25)}
                     size="icon-sm"
@@ -118,13 +126,15 @@ export function MermaidDiagramDialog({
               >
                 <PlusIcon />
               </TooltipTrigger>
-              <TooltipPopup side="bottom">Zoom in</TooltipPopup>
+              <TooltipPopup side="bottom">
+                <T>Zoom in</T>
+              </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Fit diagram to window"
+                    aria-label={gt("Fit diagram to window")}
                     onClick={() => setZoom("fit")}
                     size="icon-sm"
                     variant="ghost"
@@ -133,10 +143,12 @@ export function MermaidDiagramDialog({
               >
                 <ScanIcon />
               </TooltipTrigger>
-              <TooltipPopup side="bottom">Fit to window</TooltipPopup>
+              <TooltipPopup side="bottom">
+                <T>Fit to window</T>
+              </TooltipPopup>
             </Tooltip>
             <Button onClick={() => setZoom(100)} size="sm" variant="ghost">
-              Actual size
+              <T>Actual size</T>
             </Button>
             <Menu>
               <Tooltip>
@@ -145,7 +157,7 @@ export function MermaidDiagramDialog({
                     <MenuTrigger
                       render={
                         <Button
-                          aria-label="More diagram actions"
+                          aria-label={gt("More diagram actions")}
                           disabled={activeAction != null}
                           size="icon-sm"
                           type="button"
@@ -157,34 +169,36 @@ export function MermaidDiagramDialog({
                 >
                   <EllipsisIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="bottom">More diagram actions</TooltipPopup>
+                <TooltipPopup side="bottom">
+                  <T>More diagram actions</T>
+                </TooltipPopup>
               </Tooltip>
               <MenuPopup align="end" className="min-w-48">
                 {onCopyRecoveredSource ? (
                   <MenuItem disabled={activeAction != null} onClick={onCopyRecoveredSource}>
-                    {actionMessage === "Recovered source copied" ? <CheckIcon /> : <CopyIcon />}
-                    Copy recovered source
+                    {copiedKind === "recovered-source" ? <CheckIcon /> : <CopyIcon />}
+                    <T>Copy recovered source</T>
                   </MenuItem>
                 ) : null}
                 <MenuItem disabled={activeAction != null} onClick={onCopySource}>
-                  {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
+                  {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                   {activeAction === "copy-source"
-                    ? "Copying source…"
+                    ? gt("Copying source…")
                     : onCopyRecoveredSource
-                      ? "Copy original source"
-                      : "Copy source"}
+                      ? gt("Copy original source")
+                      : gt("Copy source")}
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onDownloadSvg}>
                   <DownloadIcon />
-                  Download SVG
+                  <T>Download SVG</T>
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onCopyPng}>
-                  {actionMessage === "Image copied" ? <CheckIcon /> : <ImageIcon />}
-                  {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
+                  {copiedKind === "image" ? <CheckIcon /> : <ImageIcon />}
+                  {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy image")}
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onDownloadPng}>
                   <FileImageIcon />
-                  {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
+                  {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download PNG")}
                 </MenuItem>
               </MenuPopup>
             </Menu>
@@ -194,7 +208,7 @@ export function MermaidDiagramDialog({
           {actionMessage}
         </span>
         <div
-          aria-label="Scrollable diagram canvas"
+          aria-label={gt("Scrollable diagram canvas")}
           className="scrollbar-gutter-both scient-mermaid-dialog-stage min-h-0 flex-1 overflow-auto bg-secondary/30 p-6"
           tabIndex={0}
         >

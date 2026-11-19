@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react";
 import type {
   EnvironmentId,
   ProviderConnectionAccount,
@@ -39,6 +40,7 @@ import {
   scientAgentAnswerFor,
   scientAgentAnswerInput,
 } from "./scientAgentAccountList";
+import { m } from "~/i18n/messages";
 
 const ACCOUNT_METHOD = "scient_agent_account";
 
@@ -87,6 +89,7 @@ export function ScientAgentAccounts(props: {
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
   const { copyToClipboard } = useCopyToClipboard();
+  const gt = useGT();
 
   const listed = scientAgentAccounts(props.provider);
   const operation = scientAgentAccountOperation(props.provider);
@@ -106,7 +109,7 @@ export function ScientAgentAccounts(props: {
 
   const instanceId = props.provider.instanceId;
   const nameOf = (id: string | undefined) =>
-    accounts.find((account) => account.id === id)?.name ?? "the account";
+    accounts.find((account) => account.id === id)?.name ?? gt("the account");
   const busy = pending !== null || props.disabled === true;
 
   const fail = (failure: unknown, fallback: string) =>
@@ -142,7 +145,10 @@ export function ScientAgentAccounts(props: {
     );
     setPending(null);
     if (failure !== null && !isSignInInterrupted(failure)) {
-      fail(failure, `Scient could not start the ${account.name} sign-in.`);
+      fail(
+        failure,
+        m(msg("Scient could not start the {account} sign-in.", { account: account.name })),
+      );
     }
   };
 
@@ -155,7 +161,10 @@ export function ScientAgentAccounts(props: {
     });
     setPending(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      fail(squashAtomCommandFailure(result), `Scient could not sign out of ${account.name}.`);
+      fail(
+        squashAtomCommandFailure(result),
+        m(msg("Scient could not sign out of {account}.", { account: account.name })),
+      );
     }
   };
 
@@ -172,7 +181,7 @@ export function ScientAgentAccounts(props: {
       if (!isAtomCommandInterrupted(result)) {
         fail(
           squashAtomCommandFailure(result),
-          "Scient could not hand your answer to Scient Agent.",
+          m(msg("Scient could not hand your answer to Scient Agent.")),
         );
       }
       return;
@@ -189,7 +198,7 @@ export function ScientAgentAccounts(props: {
     });
     setPending(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      fail(squashAtomCommandFailure(result), "Scient could not cancel the sign-in.");
+      fail(squashAtomCommandFailure(result), m(msg("Scient could not cancel the sign-in.")));
     }
   };
 
@@ -199,8 +208,12 @@ export function ScientAgentAccounts(props: {
     sections.yours.length + sections.accounts.length + sections.keys.length === 0;
 
   return (
-    <section aria-label="Model accounts" className="space-y-3">
-      {props.only ? null : <p className="text-sm font-medium text-foreground">Model accounts</p>}
+    <section aria-label={gt("Model accounts")} className="space-y-3">
+      {props.only ? null : (
+        <p className="text-sm font-medium text-foreground">
+          <T>Model accounts</T>
+        </p>
+      )}
       {active ? (
         <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
           <div className="flex items-start gap-3">
@@ -208,8 +221,8 @@ export function ScientAgentAccounts(props: {
             <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">
                 {active.status === "verifying"
-                  ? `Verifying ${nameOf(active.account)}`
-                  : `Signing in to ${nameOf(active.account)}`}
+                  ? gt("Verifying {account}", { account: nameOf(active.account) })
+                  : gt("Signing in to {account}", { account: nameOf(active.account) })}
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {active.instructions ?? active.message}
@@ -220,7 +233,7 @@ export function ScientAgentAccounts(props: {
             <div className="flex items-center justify-between gap-3 rounded-lg border bg-background p-3">
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Device code
+                  <T>Device code</T>
                 </p>
                 <code className="mt-1 block text-base font-semibold tracking-wider text-foreground">
                   {active.userCode}
@@ -230,7 +243,7 @@ export function ScientAgentAccounts(props: {
                 type="button"
                 size="icon-sm"
                 variant="outline"
-                aria-label="Copy device code"
+                aria-label={gt("Copy device code")}
                 onClick={() => copyToClipboard(active.userCode!, undefined)}
               >
                 <CopyIcon />
@@ -241,10 +254,15 @@ export function ScientAgentAccounts(props: {
             <ProviderAuthorizationCodeForm
               authorizationCode={answer}
               disabled={busy}
-              inputLabel={active.instructions ?? `Answer for ${nameOf(active.account)}`}
+              inputLabel={
+                active.instructions ??
+                gt("Answer for {account}", { account: nameOf(active.account) })
+              }
               onAuthorizationCodeChange={setAnswer}
               onSubmit={() => void sendAnswer(active)}
-              placeholder={activeKind === "key" ? "Paste the API key" : "Paste the code or URL"}
+              placeholder={
+                activeKind === "key" ? gt("Paste the API key") : gt("Paste the code or URL")
+              }
               providerName={nameOf(active.account)}
               // Always hidden: a key, a code and a redirect URL are all
               // credentials, and the list that says which this is can be missing.
@@ -261,7 +279,7 @@ export function ScientAgentAccounts(props: {
                 onClick={() => void browser.reopen()}
               >
                 <ExternalLinkIcon />
-                Open the sign-in page
+                <T>Open the sign-in page</T>
               </Button>
             ) : (
               <span />
@@ -274,7 +292,7 @@ export function ScientAgentAccounts(props: {
               onClick={() => void cancel(active)}
             >
               {pending?.kind === "cancel" ? <LoaderIcon className="animate-spin" /> : <XIcon />}
-              Cancel
+              <T>Cancel</T>
             </Button>
           </div>
         </div>
@@ -282,12 +300,12 @@ export function ScientAgentAccounts(props: {
         <>
           {props.only ? null : (
             <input
-              aria-label="Search model accounts"
+              aria-label={gt("Search model accounts")}
               autoCapitalize="none"
               autoComplete="off"
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring"
               onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="Search accounts and keys"
+              placeholder={gt("Search accounts and keys")}
               spellCheck={false}
               type="search"
               value={query}
@@ -297,7 +315,7 @@ export function ScientAgentAccounts(props: {
             <AccountGroup
               accounts={sections.yours}
               busy={busy}
-              label="Your accounts"
+              label={gt("Your accounts")}
               pending={pending}
               onSignIn={signIn}
               onSignOut={signOut}
@@ -305,7 +323,7 @@ export function ScientAgentAccounts(props: {
             <AccountGroup
               accounts={sections.accounts}
               busy={busy}
-              label="Sign in with an account"
+              label={gt("Sign in with an account")}
               pending={pending}
               onSignIn={signIn}
               onSignOut={signOut}
@@ -313,13 +331,15 @@ export function ScientAgentAccounts(props: {
             <AccountGroup
               accounts={sections.keys}
               busy={busy}
-              label="Add an API key"
+              label={gt("Add an API key")}
               pending={pending}
               onSignIn={signIn}
               onSignOut={signOut}
             />
             {nothingMatches ? (
-              <p className="p-3 text-xs text-muted-foreground">No account matches that search.</p>
+              <p className="p-3 text-xs text-muted-foreground">
+                <T>No account matches that search.</T>
+              </p>
             ) : null}
           </div>
         </>
@@ -350,6 +370,7 @@ function AccountGroup(props: {
   readonly onSignIn: (account: ProviderConnectionAccount) => Promise<void>;
   readonly onSignOut: (account: ProviderConnectionAccount) => Promise<void>;
 }) {
+  const gt = useGT();
   if (props.accounts.length === 0) return null;
   const working = (account: ProviderConnectionAccount, kind: "sign-in" | "sign-out") =>
     props.pending?.kind === kind && props.pending.account === account.id;
@@ -377,7 +398,7 @@ function AccountGroup(props: {
                   onClick={() => void props.onSignIn(account)}
                 >
                   {working(account, "sign-in") ? <LoaderIcon className="animate-spin" /> : null}
-                  {account.kind === "key" ? "Add key" : "Sign in"}
+                  {account.kind === "key" ? gt("Add key") : gt("Sign in")}
                 </Button>
               )}
               {/* A stored sign-in can be removed whether or not it still works. */}
@@ -394,10 +415,12 @@ function AccountGroup(props: {
                   ) : (
                     <LogOutIcon />
                   )}
-                  Sign out
+                  <T>Sign out</T>
                 </Button>
               ) : account.connected ? (
-                <span className="text-xs text-muted-foreground">From environment</span>
+                <span className="text-xs text-muted-foreground">
+                  <T>From environment</T>
+                </span>
               ) : null}
             </span>
           </li>

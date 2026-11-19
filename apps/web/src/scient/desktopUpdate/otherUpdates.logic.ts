@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   PROVIDER_DISPLAY_NAMES,
@@ -26,6 +27,7 @@ import {
   type ManagedRuntimeUpdateTarget,
 } from "~/scient/providerConnection/ManagedRuntimeUpdateNotification.logic";
 import { resolveServerSelfUpdateCapability } from "~/versionSkew";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /**
  * An SSH remote this app launches from its own pinned server package. It cannot update itself;
@@ -562,8 +564,13 @@ export function otherUpdateVersionLabel(item: OtherUpdateItem): string | null {
   return item.toVersion ?? item.fromVersion;
 }
 
-export function stopsThreadsLabel(count: number): string {
-  return `Stops ${count} running thread${count === 1 ? "" : "s"}`;
+export function stopsThreadsLabel(count: number, resolve: MessageResolver = m): string {
+  return resolve(
+    msg(
+      "{count, plural, one {Stops {count} running thread} other {Stops {count} running threads}}",
+      { count },
+    ),
+  );
 }
 
 /** A provider whose CLI or managed runtime update is starting or running there. */

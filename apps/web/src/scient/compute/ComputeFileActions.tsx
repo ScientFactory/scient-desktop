@@ -10,8 +10,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ChevronDown, LoaderCircle, Play, XIcon } from "lucide-react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { m } from "~/i18n/messages";
 import { Link } from "@tanstack/react-router";
 import {
   forwardRef,
@@ -151,13 +153,15 @@ function reportFailure(
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "The compute operation failed.",
+      description: error instanceof Error ? error.message : m(msg("The compute operation failed.")),
     }),
   );
 }
 
 export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFileActionsProps>(
   function ComputeFileActions(props, ref) {
+    const gt = useGT();
+    const messages = useMessages();
     const onRunRequested = props.onRunRequested;
     const [operation, setOperation] = useState<ComputeRunKind | "fresh" | null>(null);
     const [refreshing, setRefreshing] = useState(false);
@@ -339,32 +343,35 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const setupProgress =
       managedRuntime.status === null
         ? null
-        : managedRuntimeOperationLabel(managedRuntime.status, props.language.languageId);
-    const runtimeToolbar = resolveComputeRuntimeToolbarState({
-      languageId: props.language.languageId,
-      languageName: languageName,
-      runtimeVersion:
-        liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
-      liveSession,
-      runtimeInspectionPending: runtimes.isPending || refreshing,
-      readyRuntimeAvailable: readyRuntime !== null,
-      preferredRuntimeExecutable: readyRuntime?.profile.executable ?? null,
-      scientificPackagesMissing: missingScientificPackages.length > 0,
-      runtimeCheckFailure: runtimes.isPending
-        ? null
-        : (runtimes.error ??
-          (runtimes.data !== undefined &&
-          languageInspection === null &&
-          computeScientPart(props.language.languageId) !== null
-            ? ""
-            : (languageInspection?.failure ?? null))),
-      runtimeBlocker: computeRuntimeBlocker(languageInspection),
-      capacityRecoveryAvailable: capacityBlocked,
-      startingRetryAvailable: canRetryStart,
-      ...(contextBinding?.lifecycle === undefined
-        ? {}
-        : { contextLifecycle: contextBinding.lifecycle }),
-    });
+        : managedRuntimeOperationLabel(managedRuntime.status, props.language.languageId, messages);
+    const runtimeToolbar = resolveComputeRuntimeToolbarState(
+      {
+        languageId: props.language.languageId,
+        languageName: languageName,
+        runtimeVersion:
+          liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
+        liveSession,
+        runtimeInspectionPending: runtimes.isPending || refreshing,
+        readyRuntimeAvailable: readyRuntime !== null,
+        preferredRuntimeExecutable: readyRuntime?.profile.executable ?? null,
+        scientificPackagesMissing: missingScientificPackages.length > 0,
+        runtimeCheckFailure: runtimes.isPending
+          ? null
+          : (runtimes.error ??
+            (runtimes.data !== undefined &&
+            languageInspection === null &&
+            computeScientPart(props.language.languageId) !== null
+              ? ""
+              : (languageInspection?.failure ?? null))),
+        runtimeBlocker: computeRuntimeBlocker(languageInspection),
+        capacityRecoveryAvailable: capacityBlocked,
+        startingRetryAvailable: canRetryStart,
+        ...(contextBinding?.lifecycle === undefined
+          ? {}
+          : { contextLifecycle: contextBinding.lifecycle }),
+      },
+      messages,
+    );
     const matlabFileCapability =
       props.language.languageId === "matlab"
         ? classifyMatlabSource({ path: props.relativePath, code: props.contents })
@@ -375,7 +382,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           environmentId: props.environmentId,
           contextId: props.contextId,
           executable: readyRuntime.profile.executable,
-          label: computeRuntimeDisplayLabel(readyRuntime.profile, languageName),
+          label: computeRuntimeDisplayLabel(readyRuntime.profile, languageName, messages),
           session: liveSession,
         });
       }
@@ -398,8 +405,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         setStoppingUnusedSession(null);
         toastManager.add({
           type: "error",
-          title: `Unable to stop ${session.label}`,
-          description: error instanceof Error ? error.message : "The stop request failed.",
+          title: gt("Unable to stop {name}", { name: session.label }),
+          description: error instanceof Error ? error.message : gt("The stop request failed."),
         });
         return;
       }
@@ -425,7 +432,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         return;
       }
       if (!isAtomCommandInterrupted(result)) {
-        reportFailure(`Unable to stop ${session.label}`, result);
+        reportFailure(gt("Unable to stop {name}", { name: session.label }), result);
       }
     };
 
@@ -439,7 +446,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       setRefreshing(false);
       if (result._tag !== "Success") {
         if (!isAtomCommandInterrupted(result))
-          reportFailure(`Unable to refresh ${languageName}`, result);
+          reportFailure(gt("Unable to refresh {language}", { language: languageName }), result);
         return;
       }
       refreshSessions();
@@ -486,7 +493,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 : undefined;
             if (runtime === undefined)
               throw new Error(
-                "The selected environment is no longer ready. Refresh environments and try again.",
+                gt(
+                  "The selected environment is no longer ready. Refresh environments and try again.",
+                ),
               );
             return { languageId: runtime.profile.languageId, executable: target.executable };
           },
@@ -494,7 +503,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         if (result.kind === "failed") {
           toastManager.add({
             type: "error",
-            title: "Unable to switch environment",
+            title: gt("Unable to switch environment"),
             description: result.error,
           });
           return;
@@ -530,10 +539,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       if (kind === "file" && matlabFileCapability?.runnableAsFile === false) {
         toastManager.add({
           type: "info",
-          title: "This MATLAB file is a definition",
+          title: gt("This MATLAB file is a definition"),
           description:
             matlabFileCapability.reason ??
-            "Run a MATLAB script that calls this definition, or run a selection instead.",
+            gt("Run a MATLAB script that calls this definition, or run a selection instead."),
         });
         return;
       }
@@ -586,17 +595,17 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         toastManager.add({
           type: "info",
           title: capacityBlocked
-            ? "Compute capacity reached"
+            ? gt("Compute capacity reached")
             : currentBinding.lifecycle === "starting"
-              ? "Compute is starting"
-              : "Compute is closing",
+              ? gt("Compute is starting")
+              : gt("Compute is closing"),
           description: capacityBlocked
-            ? "Stop an unused session above, then retry with this same tab-owned session."
+            ? gt("Stop an unused session above, then retry with this same tab-owned session.")
             : currentBinding.lifecycle === "starting"
               ? startRetryAvailable
-                ? "Retry with the same tab-owned session ID."
-                : "This tab already owns a start in progress."
-              : "Retry closing this tab before running it again.",
+                ? gt("Retry with the same tab-owned session ID.")
+                : gt("This tab already owns a start in progress.")
+              : gt("Retry closing this tab before running it again."),
         });
         setOperation(null);
         return;
@@ -609,9 +618,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       ) {
         toastManager.add({
           type: "info",
-          title: "Refreshing this compute tab",
-          description:
+          title: gt("Refreshing this compute tab"),
+          description: gt(
             "The owned session is not in the current snapshot yet. Try Run again shortly.",
+          ),
         });
         setOperation(null);
         return;
@@ -620,8 +630,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `${languageName} is not ready`,
-            description: `Use ${computeRuntimeSetupActionLabel(languageName)} on this file, or choose another runtime in Scientific Computing settings.`,
+            title: gt("{language} is not ready", { language: languageName }),
+            description: gt(
+              "Use {action} on this file, or choose another runtime in Scientific Computing settings.",
+              { action: computeRuntimeSetupActionLabel(languageName, messages) },
+            ),
           }),
         );
         setOperation(null);
@@ -694,7 +707,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             void confirmFailedStart(sessionId, requestedGeneration);
           }
           if (!isAtomCommandInterrupted(started))
-            reportFailure(`Unable to start ${languageName}`, started);
+            reportFailure(gt("Unable to start {language}", { language: languageName }), started);
           refreshSessions();
           refreshRuntimeInspection();
           return;
@@ -735,7 +748,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       }
 
       const report = (failure: Parameters<typeof reportFailure>[1]) => {
-        reportFailure(`Unable to run ${languageName}`, failure);
+        reportFailure(gt("Unable to run {language}", { language: languageName }), failure);
         refreshSessions();
       };
       if (slice.cells !== undefined) {
@@ -834,6 +847,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       props.selection,
       props.editorSelection,
       props.language.cellMarker,
+      messages,
     );
     const selectionSlice = primary.kind === "selection" ? primary.slice : lineSelectionSlice;
     const caretLine = props.editorSelection?.end.line;
@@ -920,16 +934,17 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           ) {
             useComputeContextStore.getState().removeContext(childId);
           }
-          if (!isAtomCommandInterrupted(started)) reportFailure("Unable to run fresh", started);
+          if (!isAtomCommandInterrupted(started)) reportFailure(gt("Unable to run fresh"), started);
           return;
         }
         if (started.value.sessionId !== sessionId) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to confirm fresh run",
-              description:
+              title: gt("Unable to confirm fresh run"),
+              description: gt(
                 "The server returned a different session. The requested owner is retained.",
+              ),
             }),
           );
           return;
@@ -953,11 +968,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to confirm fresh run",
+              title: gt("Unable to confirm fresh run"),
               description:
                 error instanceof Error
                   ? error.message
-                  : "The connection failed. Stop the owned run before closing this tab.",
+                  : gt("The connection failed. Stop the owned run before closing this tab."),
             }),
           );
         })
@@ -1004,11 +1019,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         });
         if (result._tag !== "Success") {
           if (!isAtomCommandInterrupted(result))
-            reportFailure("Unable to stop this session", result);
+            reportFailure(gt("Unable to stop this session"), result);
           return;
         }
         if (!isExactTerminalComputeSession(result.value, target.session))
-          throw new Error("The session has not confirmed shutdown. Run fresh was not started.");
+          throw new Error(gt("The session has not confirmed shutdown. Run fresh was not started."));
         const current = getComputeContext(target.contextId);
         if (
           current?.sessionId !== target.session.sessionId ||
@@ -1027,9 +1042,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         .catch(async (error) => {
           toastManager.add({
             type: "error",
-            title: "Unable to run fresh",
+            title: gt("Unable to run fresh"),
             description:
-              error instanceof Error ? error.message : "Shutdown could not be confirmed.",
+              error instanceof Error ? error.message : gt("Shutdown could not be confirmed."),
           });
         })
         .finally(() => {
@@ -1085,13 +1100,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         .filter(Boolean)
         .join(" · ") || undefined;
     const primaryRunTooltip = primaryRunBlocked
-      ? (matlabFileCapability?.reason ?? "This definition is called from a script.")
+      ? (matlabFileCapability?.reason ?? gt("This definition is called from a script."))
       : primary.slice === null
-        ? "Nothing to run"
+        ? gt("Nothing to run")
         : !runtimeToolbar.canRun
           ? runtimeToolbar.label
           : busy
-            ? "Another compute action is finishing"
+            ? gt("Another compute action is finishing")
             : primary.label;
 
     useImperativeHandle(
@@ -1104,6 +1119,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             props.selection,
             selection === undefined ? props.editorSelection : selection,
             props.language.cellMarker,
+            messages,
           );
           void run(target.kind, target.slice);
         },
@@ -1137,7 +1153,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 className="min-w-0 max-w-full"
                 onClick={() => setProjectEnvironmentNoted(true)}
               >
-                <span className="truncate">Now runs in this project's environment</span>
+                <span className="truncate">
+                  <T>Now runs in this project's environment</T>
+                </span>
                 <XIcon />
               </Button>
             ) : capacityBlocked ? (
@@ -1149,12 +1167,14 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       variant="ghost-muted"
                       className="min-w-0 max-w-full"
                       disabled={stoppingUnusedSession !== null}
-                      aria-label="Choose a compute session to stop"
+                      aria-label={gt("Choose a compute session to stop")}
                       ref={capacityAnchor}
                     />
                   }
                 >
-                  <span className="truncate">Stop a session…</span>
+                  <span className="truncate">
+                    <T>Stop a session…</T>
+                  </span>
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" className="min-w-64">
                   {freshCapacityBlocked &&
@@ -1167,11 +1187,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         setFreshStopTarget({ contextId: props.contextId!, session: liveSession })
                       }
                     >
-                      Stop this session and run fresh…
+                      <T>Stop this session and run fresh…</T>
                     </MenuItem>
                   ) : null}
                   {capacitySessions.length === 0 ? (
-                    <MenuItem disabled>No other sessions</MenuItem>
+                    <MenuItem disabled>{gt("No other sessions")}</MenuItem>
                   ) : (
                     capacitySessions.map((session) => (
                       <MenuItem
@@ -1179,23 +1199,30 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         disabled={stoppingUnusedSession !== null}
                         onClick={() => void stopUnusedSession(session)}
                       >
-                        Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)}
+                        <T>
+                          Stop{" "}
+                          <Var>
+                            {computeSessionOwnerLabel(session, props.environmentId, props.cwd)}
+                          </Var>
+                        </T>
                       </MenuItem>
                     ))
                   )}
                 </MenuPopup>
               </Menu>
             ) : runtimeToolbar.kind === "retry" ? (
-              <ScientTooltip content={runtimeNote ?? "Retry the check"}>
+              <ScientTooltip content={runtimeNote ?? gt("Retry the check")}>
                 <Button
                   size="xs"
                   variant="ghost-muted"
                   className="min-w-0 max-w-full"
-                  aria-label={`${runtimeToolbar.label}. Retry the check`}
+                  aria-label={gt("{status}. Retry the check", { status: runtimeToolbar.label })}
                   disabled={refreshing}
                   onClick={() => void refreshRuntime()}
                 >
-                  <span className="truncate font-normal">{runtimeToolbar.label} · Retry</span>
+                  <span className="truncate font-normal">
+                    {gt("{status} · Retry", { status: runtimeToolbar.label })}
+                  </span>
                 </Button>
               </ScientTooltip>
             ) : runtimeToolbar.kind === "switch" ? (
@@ -1204,19 +1231,21 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 variant="ghost-muted"
                 className="min-w-0 max-w-full"
                 title={runtimeNote}
-                aria-label={`Switch ${languageName} environment`}
+                aria-label={gt("Switch {language} environment", { language: languageName })}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}
               >
                 <span className="truncate font-normal">{runtimeToolbar.label}</span>
               </Button>
             ) : (
-              <ScientTooltip content={runtimeNote ?? "Open Scientific Computing"}>
+              <ScientTooltip content={runtimeNote ?? gt("Open Scientific Computing")}>
                 <Button
                   size="xs"
                   variant="ghost-muted"
                   className="min-w-0 max-w-full shrink"
-                  aria-label={`${runtimeToolbar.label}. Open Scientific Computing`}
+                  aria-label={gt("{status}. Open Scientific Computing", {
+                    status: runtimeToolbar.label,
+                  })}
                   render={
                     <Link
                       to="/settings/scientific-computing/$languageId"
@@ -1244,9 +1273,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   shape="group-start"
                   aria-label={
                     props.runAll
-                      ? "Run all"
+                      ? gt("Run all")
                       : primaryRunBlocked
-                        ? "MATLAB definition file"
+                        ? gt("MATLAB definition file")
                         : primary.label
                   }
                   disabled={
@@ -1264,7 +1293,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     <Play />
                   )}
                   <span className="hidden @[15rem]/python-file-actions:inline">
-                    {props.runAll ? "Run all" : primaryRunBlocked ? "Definition" : primary.label}
+                    {props.runAll
+                      ? gt("Run all")
+                      : primaryRunBlocked
+                        ? gt("Definition", { $context: "a MATLAB function definition file" })
+                        : primary.label}
                   </span>
                 </Button>
               </span>
@@ -1277,7 +1310,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     variant="outline"
                     shape="group-end"
                     disabled={runMenuDisabled}
-                    aria-label={`Choose ${languageName} code to run`}
+                    aria-label={gt("Choose {language} code to run", { language: languageName })}
                   />
                 }
               >
@@ -1292,13 +1325,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}
                       onClick={() => void run("selection", selectionSlice)}
                     >
-                      Run selection
+                      <T>Run selection</T>
                     </MenuItem>
                     <MenuItem
                       disabled={busy || !runtimeToolbar.canRun || cellSlice === null}
                       onClick={() => void run("cell", cellSlice)}
                     >
-                      Run cell
+                      <T>Run cell</T>
                     </MenuItem>
                     <MenuItem
                       disabled={
@@ -1309,7 +1342,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       }
                       onClick={() => void run("file", fileSlice)}
                     >
-                      Run file
+                      <T>Run file</T>
                     </MenuItem>
                     {props.contextId !== undefined ? (
                       <MenuItem
@@ -1318,7 +1351,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         }
                         onClick={() => void runFresh()}
                       >
-                        Run fresh
+                        <T>Run fresh</T>
                       </MenuItem>
                     ) : null}
                   </>
@@ -1327,7 +1360,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   <>
                     <MenuSeparator />
                     <MenuItem onClick={requestRuntimeSwitch}>
-                      Switch {languageName} environment…
+                      <T>
+                        Switch <Var>{languageName}</Var> environment…
+                      </T>
                     </MenuItem>
                   </>
                 ) : null}
@@ -1341,7 +1376,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       }
                       onClick={props.onShowMatlabOneShot}
                     >
-                      Run MATLAB batch
+                      <T>Run MATLAB batch</T>
                     </MenuItem>
                   </>
                 ) : null}
@@ -1356,11 +1391,17 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               if (!open) setPendingRuntimeChoice(null);
             }}
             anchor={primaryRunAnchor}
-            title="Use Scient-managed Python?"
-            description={`${computeRuntimeDisplayLabel(preRunRuntimeChoice.current.profile, languageName)} is missing scientific packages.`}
-            confirmLabel="Use managed"
+            title={gt("Use Scient-managed Python?")}
+            description={gt("{runtime} is missing scientific packages.", {
+              runtime: computeRuntimeDisplayLabel(
+                preRunRuntimeChoice.current.profile,
+                languageName,
+                messages,
+              ),
+            })}
+            confirmLabel={gt("Use managed")}
             secondaryAction={{
-              label: "Use current",
+              label: gt("Use current"),
               onSelect: () => runWithChosenRuntime(preRunRuntimeChoice.current.profile.executable),
             }}
             onConfirm={() => {
@@ -1379,9 +1420,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             if (!open) setFreshStopTarget(null);
           }}
           anchor={capacityAnchor}
-          title="Stop this session and run fresh?"
-          description="Current variables will be lost. Run history is kept."
-          confirmLabel="Stop and run fresh"
+          title={gt("Stop this session and run fresh?")}
+          description={gt("Current variables will be lost. Run history is kept.")}
+          confirmLabel={gt("Stop and run fresh")}
           destructive
           busy={switching}
           onConfirm={() => void stopAndRunFresh()}
@@ -1394,19 +1435,25 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         >
           <AlertDialogPopup>
             <AlertDialogHeader>
-              <AlertDialogTitle>Switch {languageName} environment?</AlertDialogTitle>
+              <AlertDialogTitle>
+                <T>
+                  Switch <Var>{languageName}</Var> environment?
+                </T>
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                Use {switchTarget?.label}? Current variables will be cleared. Run history is kept;
-                no code is rerun.
+                <T>
+                  Use <Var>{switchTarget?.label}</Var>? Current variables will be cleared. Run
+                  history is kept; no code is rerun.
+                </T>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogClose render={<Button variant="outline" disabled={switching} />}>
-                Cancel
+                <T>Cancel</T>
               </AlertDialogClose>
               <Button disabled={switching} onClick={() => void switchRuntime()}>
                 {switching ? <LoaderCircle className="animate-spin" /> : null}
-                Switch
+                {gt("Switch", { $context: "verb, switches the environment" })}
               </Button>
             </AlertDialogFooter>
           </AlertDialogPopup>

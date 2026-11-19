@@ -3,10 +3,12 @@ import type {
   ScientSourcesMoveStatus,
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
+import { msg, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { organizeScientSources, readLibraryMoveStatus } from "./client";
 import { isLostAnswerError, scientSourcesErrorMessage } from "./errorMessage";
 import { libraryMoveCanGoBack, libraryMoveLine, libraryMoveRunning } from "./libraryMoveStatus";
@@ -46,6 +48,7 @@ export function useLibraryMoveStatus(input: {
   /** The project's store changed under the panel: a move or a move back finished. */
   readonly onStoreChanged: () => void;
 }) {
+  const resolve = useMessages();
   const tracked =
     input.overview?.projectState === "initialized" && input.overview.libraryBackend === true;
   const context = `${input.environmentId}\0${input.root}`;
@@ -135,7 +138,7 @@ export function useLibraryMoveStatus(input: {
     }).catch((cause: unknown) => {
       toastManager.add({
         type: "error",
-        title: "The summary was not dismissed",
+        title: m(msg("The summary was not dismissed")),
         description: message(cause),
       });
     });
@@ -177,15 +180,18 @@ export function useLibraryMoveStatus(input: {
             setAsks((value) => value + 1);
             toastManager.add({
               type: "warning",
-              title: "Moving back could not be confirmed",
-              description:
-                "No answer came back. If the move back starts, the Library shows it; this is checked for the next two minutes.",
+              title: m(msg("Moving back could not be confirmed")),
+              description: m(
+                msg(
+                  "No answer came back. If the move back starts, the Library shows it; this is checked for the next two minutes.",
+                ),
+              ),
             });
             return;
           }
           toastManager.add({
             type: "error",
-            title: "The Library was not moved back",
+            title: m(msg("The Library was not moved back")),
             description: message(cause),
           });
         });
@@ -196,7 +202,7 @@ export function useLibraryMoveStatus(input: {
   };
 
   return {
-    line: libraryMoveLine(status, { movingBack }),
+    line: libraryMoveLine(status, { movingBack }, resolve),
     /** Dismiss and Move back need the Library grant; a read-only session sees the line only. */
     canChange,
     canMoveBack: canChange && !movingBack && !backUnconfirmed && libraryMoveCanGoBack(status),

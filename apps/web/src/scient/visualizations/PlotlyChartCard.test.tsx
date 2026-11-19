@@ -1,8 +1,12 @@
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PlotlyChartCard, plotlySlotStatus } from "./PlotlyChartCard";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 describe("PlotlyChartCard server fallback", () => {
   it("keeps valid source canonical before the lazy browser render starts", () => {

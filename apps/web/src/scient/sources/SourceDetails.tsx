@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import type { MessageResolver } from "~/i18n/messages";
 import type {
   ScientSourceDetailResult,
   ScientSourceNoteUpdateResult,
@@ -89,29 +92,32 @@ type SourceDiagnostic =
   ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 
 const SOURCE_TYPE_LABELS: Readonly<Record<SourceRecord["type"], string>> = {
-  article: "Article",
-  preprint: "Preprint",
-  book: "Book",
-  "book-chapter": "Book chapter",
-  "conference-paper": "Conference paper",
-  thesis: "Thesis",
-  report: "Report",
-  dataset: "Dataset",
-  web: "Web source",
-  software: "Software",
-  presentation: "Presentation",
-  manuscript: "Manuscript",
-  other: "Other source",
+  article: msg("Article"),
+  preprint: msg("Preprint"),
+  book: msg("Book"),
+  "book-chapter": msg("Book chapter"),
+  "conference-paper": msg("Conference paper"),
+  thesis: msg("Thesis"),
+  report: msg("Report"),
+  dataset: msg("Dataset"),
+  web: msg("Web source"),
+  software: msg("Software"),
+  presentation: msg("Presentation"),
+  manuscript: msg("Manuscript"),
+  other: msg("Other source"),
 };
 
-function creatorName(creator: SourceRecord["creators"][number]): string {
+function creatorName(creator: SourceRecord["creators"][number], resolve: MessageResolver): string {
   if (creator.literalName) return creator.literalName;
-  return [creator.givenName, creator.familyName].filter(Boolean).join(" ") || "Unknown creator";
+  return (
+    [creator.givenName, creator.familyName].filter(Boolean).join(" ") ||
+    resolve(msg("Unknown creator"))
+  );
 }
 
-function creatorsLabel(record: SourceRecord): string {
-  if (record.creators.length === 0) return "Unknown creator";
-  return record.creators.map(creatorName).join(", ");
+function creatorsLabel(record: SourceRecord, resolve: MessageResolver): string {
+  if (record.creators.length === 0) return resolve(msg("Unknown creator"));
+  return record.creators.map((creator) => creatorName(creator, resolve)).join(", ");
 }
 
 function publicationLocation(record: SourceRecord): string | null {
@@ -125,18 +131,19 @@ function publicationLocation(record: SourceRecord): string | null {
   return result || null;
 }
 
-function publicationContainerLabel(type: SourceRecord["type"]): string {
-  if (type === "article") return "Journal";
-  if (type === "book-chapter") return "Book";
-  if (type === "conference-paper") return "Proceedings";
-  if (type === "preprint") return "Repository";
-  return "Publication";
+function publicationContainerLabel(type: SourceRecord["type"], resolve: MessageResolver): string {
+  const context = { $context: "where a source was published" };
+  if (type === "article") return resolve(msg("Journal", context));
+  if (type === "book-chapter") return resolve(msg("Book", context));
+  if (type === "conference-paper") return resolve(msg("Proceedings", context));
+  if (type === "preprint") return resolve(msg("Repository", context));
+  return resolve(msg("Publication", context));
 }
 
-function sourceTypeLabel(record: SourceRecord): string {
+function sourceTypeLabel(record: SourceRecord, resolve: MessageResolver): string {
   return record.type === "other" && record.customType?.trim()
     ? record.customType.trim()
-    : SOURCE_TYPE_LABELS[record.type];
+    : resolve(SOURCE_TYPE_LABELS[record.type]);
 }
 
 function languageDisplayName(value: string): string {
@@ -166,7 +173,7 @@ function doiUrl(value: string): string {
   return `https://doi.org/${path}`;
 }
 
-function importedLabel(record: SourceRecord): string {
+function importedLabel(record: SourceRecord, resolve: MessageResolver): string {
   const fromZotero = record.externalReferences.some((reference) => reference.system === "zotero");
   const date = new Date(record.importedAt);
   const formattedDate = Number.isNaN(date.getTime())
@@ -174,12 +181,12 @@ function importedLabel(record: SourceRecord): string {
     : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
   const sourceLabel =
     record.origin?.actor === "agent"
-      ? "Added by agent"
+      ? resolve(msg("Added by agent"))
       : fromZotero
-        ? "Imported from Zotero"
-        : "Added to Scient";
-  const editedLabel = record.updatedBy === "agent" ? " · Edited by agent" : "";
-  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${verificationProblemLabel(record.verification)}${editedLabel}${pdfVersionLabel(record.attachments)}`;
+        ? resolve(msg("Imported from Zotero"))
+        : resolve(msg("Added to Scient"));
+  const editedLabel = record.updatedBy === "agent" ? ` · ${resolve(msg("Edited by agent"))}` : "";
+  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record, resolve)}${verificationProblemLabel(record.verification, resolve)}${editedLabel}${pdfVersionLabel(record.attachments, resolve)}`;
 }
 
 function openExternal(url: string): void {
@@ -187,6 +194,7 @@ function openExternal(url: string): void {
 }
 
 function DoiRow(props: { readonly value: string }) {
+  const gt = useGT();
   const url = doiUrl(props.value);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget("DOI link"),
@@ -199,9 +207,9 @@ function DoiRow(props: { readonly value: string }) {
     void api.contextMenu
       .show(
         [
-          { id: "view", label: "View on doi.org", icon: "external-link" },
-          { id: "copy-doi", label: "Copy DOI", icon: "copy" },
-          { id: "copy-link", label: "Copy DOI link", icon: "copy" },
+          { id: "view", label: gt("View on doi.org"), icon: "external-link" },
+          { id: "copy-doi", label: gt("Copy DOI"), icon: "copy" },
+          { id: "copy-link", label: gt("Copy DOI link"), icon: "copy" },
         ] as const,
         { x: event.clientX, y: event.clientY },
       )
@@ -228,14 +236,16 @@ function DoiRow(props: { readonly value: string }) {
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label="View DOI on doi.org"
+                aria-label={gt("View DOI on doi.org")}
                 onClick={() => openExternal(url)}
               >
                 <ExternalLink />
               </Button>
             }
           />
-          <TooltipPopup side="top">View on doi.org</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>View on doi.org</T>
+          </TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -243,14 +253,16 @@ function DoiRow(props: { readonly value: string }) {
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={isCopied ? "DOI link copied" : "Copy DOI link"}
+                aria-label={isCopied ? gt("DOI link copied") : gt("Copy DOI link")}
                 onClick={() => copyToClipboard(url)}
               >
                 {isCopied ? <Check /> : <Copy />}
               </Button>
             }
           />
-          <TooltipPopup side="top">{isCopied ? "Copied" : "Copy DOI link"}</TooltipPopup>
+          <TooltipPopup side="top">
+            {isCopied ? gt("Copied", { $context: "state, after copying" }) : gt("Copy DOI link")}
+          </TooltipPopup>
         </Tooltip>
       </div>
     </div>
@@ -258,6 +270,7 @@ function DoiRow(props: { readonly value: string }) {
 }
 
 function SourceUrlRow(props: { readonly url: string }) {
+  const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget("source link"),
   });
@@ -269,8 +282,8 @@ function SourceUrlRow(props: { readonly url: string }) {
     void api.contextMenu
       .show(
         [
-          { id: "view", label: "Open source link", icon: "external-link" },
-          { id: "copy", label: "Copy source link", icon: "copy" },
+          { id: "view", label: gt("Open source link"), icon: "external-link" },
+          { id: "copy", label: gt("Copy source link"), icon: "copy" },
         ] as const,
         { x: event.clientX, y: event.clientY },
       )
@@ -282,7 +295,9 @@ function SourceUrlRow(props: { readonly url: string }) {
 
   return (
     <div className="group/source-link flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-      <div className="shrink-0 text-muted-foreground">Link</div>
+      <div className="shrink-0 text-muted-foreground">
+        <T context="verb, links two copies">Link</T>
+      </div>
       <div
         className="min-w-0 cursor-pointer break-all"
         onDoubleClick={showActions}
@@ -297,14 +312,16 @@ function SourceUrlRow(props: { readonly url: string }) {
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label="Open source link"
+                aria-label={gt("Open source link")}
                 onClick={() => openExternal(props.url)}
               >
                 <ExternalLink />
               </Button>
             }
           />
-          <TooltipPopup side="top">Open source link</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>Open source link</T>
+          </TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -312,14 +329,16 @@ function SourceUrlRow(props: { readonly url: string }) {
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={isCopied ? "Source link copied" : "Copy source link"}
+                aria-label={isCopied ? gt("Source link copied") : gt("Copy source link")}
                 onClick={() => copyToClipboard(props.url)}
               >
                 {isCopied ? <Check /> : <Copy />}
               </Button>
             }
           />
-          <TooltipPopup side="top">{isCopied ? "Copied" : "Copy source link"}</TooltipPopup>
+          <TooltipPopup side="top">
+            {isCopied ? gt("Copied", { $context: "state, after copying" }) : gt("Copy source link")}
+          </TooltipPopup>
         </Tooltip>
       </div>
     </div>
@@ -360,6 +379,7 @@ function AbstractPreview(props: {
   readonly text: string;
   readonly sections?: SourceRecord["abstractSections"];
 }) {
+  const gt = useGT();
   const contentRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"compact" | "more" | "full">("compact");
   const [canExpand, setCanExpand] = useState(false);
@@ -475,7 +495,7 @@ function AbstractPreview(props: {
               aria-expanded
               onClick={() => setMode("compact")}
             >
-              Show less
+              <T>Show less</T>
             </Button>
           ) : null}
           {mode !== "full" ? (
@@ -488,7 +508,7 @@ function AbstractPreview(props: {
                 setMode(mode === "compact" && hasIntermediatePreview ? "more" : "full")
               }
             >
-              {mode === "compact" ? "Show more" : "Show full abstract"}
+              {mode === "compact" ? gt("Show more") : gt("Show full abstract")}
             </Button>
           ) : null}
         </div>
@@ -502,6 +522,7 @@ function MetadataRefreshConfirmation(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => Promise<void>;
 }) {
+  const gt = useGT();
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const anchor = {
@@ -537,11 +558,15 @@ function MetadataRefreshConfirmation(props: {
         <div className="p-3">
           <div className="flex items-center gap-2">
             <AlertTriangle className="size-4 shrink-0 text-amber-600" />
-            <PopoverTitle>Refresh metadata?</PopoverTitle>
+            <PopoverTitle>
+              <T>Refresh metadata?</T>
+            </PopoverTitle>
           </div>
           <PopoverDescription className="mt-1.5" size="compact">
-            Scient will replace matching metadata fields using this source’s PDF and identifiers.
-            Manual edits to those fields may be lost. The PDF stays unchanged.
+            <T>
+              Scient will replace matching metadata fields using this source’s PDF and identifiers.
+              Manual edits to those fields may be lost. The PDF stays unchanged.
+            </T>
           </PopoverDescription>
           {error ? (
             <p className="mt-2 text-xs text-destructive" role="alert">
@@ -555,7 +580,7 @@ function MetadataRefreshConfirmation(props: {
               disabled={refreshing}
               onClick={() => props.onOpenChange(false)}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               size="xs"
@@ -570,14 +595,16 @@ function MetadataRefreshConfirmation(props: {
                     setError(
                       cause instanceof Error
                         ? cause.message
-                        : "Metadata could not be refreshed. Please try again.",
+                        : gt("Metadata could not be refreshed. Please try again."),
                     );
                     setRefreshing(false);
                   });
               }}
             >
               {refreshing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-              {refreshing ? "Refreshing…" : "Refresh"}
+              {refreshing
+                ? gt("Refreshing…")
+                : gt("Refresh", { $context: "verb, refreshes a source's details" })}
             </Button>
           </div>
         </div>
@@ -622,10 +649,11 @@ function KeyProjectNote(props: {
     context: SourceNoteSaveContext,
   ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
 }) {
+  const m = useMessages();
   return useSourceNoteControls({
     record: props.record,
     readOnly: props.readOnly,
-    heading: `${LIBRARY_LABELS.projectNote} (${props.citationKey})`,
+    heading: `${m(LIBRARY_LABELS.projectNote)} (${props.citationKey})`,
     history: props.record.projectNoteHistory,
     storage: "pin",
     onSave: props.onSave,
@@ -636,6 +664,8 @@ function LibraryCopySection(props: {
   readonly match: NonNullable<SourceRecord["libraryMatch"]>;
   readonly library: SourceDetailsLibrary | undefined;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const [pending, setPending] = useState(false);
   const { match, library } = props;
   const act = (run: (() => Promise<void>) | undefined) =>
@@ -648,9 +678,9 @@ function LibraryCopySection(props: {
   const keep = library?.onKeepSeparate;
   const toggleSeparate = act(keep ? () => keep(!match.keptSeparate) : undefined);
   return (
-    <DetailsSection title={LIBRARY_LABELS.libraryCopy}>
+    <DetailsSection title={m(LIBRARY_LABELS.libraryCopy)}>
       <p className="text-xs text-muted-foreground">
-        {match.keptSeparate ? LIBRARY_LABELS.keptSeparate : libraryCopyLabel(match)}
+        {match.keptSeparate ? m(LIBRARY_LABELS.keptSeparate) : libraryCopyLabel(match, m)}
       </p>
       <ul className="space-y-2">
         {match.candidates.map((candidate) => {
@@ -661,19 +691,19 @@ function LibraryCopySection(props: {
             <li key={candidate.sourceId} className="flex items-start gap-2 text-xs">
               <div className="min-w-0 flex-1">
                 <p className="break-words text-sm">
-                  {candidate.title ?? "Untitled"}
+                  {candidate.title ?? gt("Untitled", { $context: "a source with no title" })}
                   {candidate.issuedYear ? ` (${candidate.issuedYear})` : ""}
                 </p>
                 {candidate.containerTitle ? (
                   <p className="break-words text-muted-foreground">{candidate.containerTitle}</p>
                 ) : null}
                 <p className="text-muted-foreground">
-                  {libraryCopyProblemLabel(candidate.problem)}
+                  {libraryCopyProblemLabel(candidate.problem, m)}
                 </p>
               </div>
               {link ? (
                 <Button size="xs" variant="ghost" disabled={pending} onClick={link}>
-                  {LIBRARY_LABELS.linkToCopy}
+                  {m(LIBRARY_LABELS.linkToCopy)}
                 </Button>
               ) : null}
             </li>
@@ -682,7 +712,7 @@ function LibraryCopySection(props: {
       </ul>
       {toggleSeparate ? (
         <Button size="xs" variant="ghost" disabled={pending} onClick={toggleSeparate}>
-          {match.keptSeparate ? LIBRARY_LABELS.askAgain : LIBRARY_LABELS.keepSeparate}
+          {match.keptSeparate ? m(LIBRARY_LABELS.askAgain) : m(LIBRARY_LABELS.keepSeparate)}
         </Button>
       ) : null}
     </DetailsSection>
@@ -693,6 +723,7 @@ function ReadingControls(props: {
   readonly record: SourceRecord;
   readonly onSetReadingState: SourceDetailsLibrary["onSetReadingState"];
 }) {
+  const m = useMessages();
   const [pending, setPending] = useState(false);
   const { readingStatus, starred } = props.record;
   if (readingStatus === undefined) return null;
@@ -700,11 +731,11 @@ function ReadingControls(props: {
   if (!onSet) {
     return readingStatus === "unread" || starred ? (
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        {readingStatus === "unread" ? <span>{LIBRARY_LABELS.unread}</span> : null}
+        {readingStatus === "unread" ? <span>{m(LIBRARY_LABELS.unread)}</span> : null}
         {starred ? (
           <span className="inline-flex items-center gap-1">
             <Star className="size-3 fill-current" aria-hidden />
-            {LIBRARY_LABELS.starred}
+            {m(LIBRARY_LABELS.starred)}
           </span>
         ) : null}
       </p>
@@ -722,14 +753,14 @@ function ReadingControls(props: {
         disabled={pending}
         onClick={() => set({ readingStatus: readingStatus === "unread" ? "read" : "unread" })}
       >
-        {readingStatus === "unread" ? LIBRARY_LABELS.markRead : LIBRARY_LABELS.markUnread}
+        {readingStatus === "unread" ? m(LIBRARY_LABELS.markRead) : m(LIBRARY_LABELS.markUnread)}
       </Button>
-      <ScientTooltip content={starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star}>
+      <ScientTooltip content={starred ? m(LIBRARY_LABELS.removeStar) : m(LIBRARY_LABELS.star)}>
         <Button
           size="icon-xs"
           variant="ghost"
           disabled={pending}
-          aria-label={starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star}
+          aria-label={starred ? m(LIBRARY_LABELS.removeStar) : m(LIBRARY_LABELS.star)}
           aria-pressed={starred === true}
           onClick={() => set({ starred: !starred })}
         >
@@ -788,6 +819,8 @@ export function SourceDetails(props: {
   /** Where this project's documents cite the Source, shown after its highlights. */
   readonly uses?: ReactNode;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
@@ -801,7 +834,7 @@ export function SourceDetails(props: {
     onSave: props.onSaveNote,
     ...(library
       ? {
-          heading: LIBRARY_LABELS.projectNote,
+          heading: m(LIBRARY_LABELS.projectNote),
           history: record.projectNoteHistory,
           storage: "pin" as const,
         }
@@ -811,14 +844,14 @@ export function SourceDetails(props: {
     record,
     field: "personalNote",
     readOnly: readOnly || !library?.canSavePersonalNote,
-    heading: LIBRARY_LABELS.myNote,
-    help: LIBRARY_LABELS.myNoteHelp,
+    heading: m(LIBRARY_LABELS.myNote),
+    help: m(LIBRARY_LABELS.myNoteHelp),
     onSave: library?.onSavePersonalNote ?? props.onSaveNote,
   });
   // A session without the Library write grant never gets the key, so it never sees "My note".
   const showsPersonalNote = library !== undefined && "personalNote" in record;
   const publication = publicationLocation(record);
-  const fileNameTitle = fileNameTitleLabel(record);
+  const fileNameTitle = fileNameTitleLabel(record, m);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
@@ -852,10 +885,10 @@ export function SourceDetails(props: {
       <div className="space-y-2">
         <div
           role="group"
-          aria-label={LIBRARY_LABELS.noteForKey}
+          aria-label={m(LIBRARY_LABELS.noteForKey)}
           className="flex flex-wrap items-center gap-1 text-xs"
         >
-          <span className="text-muted-foreground">{LIBRARY_LABELS.noteForKey}</span>
+          <span className="text-muted-foreground">{m(LIBRARY_LABELS.noteForKey)}</span>
           {[primaryKey, ...otherKeys].map((citationKey) => {
             const selected = (shownKeyNote?.citationKey ?? primaryKey) === citationKey;
             return (
@@ -907,16 +940,16 @@ export function SourceDetails(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border p-3">
-        <Button variant="ghost" size="xs" onClick={props.onBack} aria-label="Back to Library">
+        <Button variant="ghost" size="xs" onClick={props.onBack} aria-label={gt("Back to Library")}>
           <ChevronLeft />
-          Library
+          <T context="the personal Library of sources">Library</T>
         </Button>
         <div className="min-w-0 flex-1" />
         {library && !inProject ? (
           library.onAddToProject ? (
             <Button size="xs" variant="ghost" onClick={() => void library.onAddToProject?.()}>
               <FolderPlus />
-              {LIBRARY_LABELS.addToProject}
+              {m(LIBRARY_LABELS.addToProject)}
             </Button>
           ) : null
         ) : (
@@ -924,7 +957,7 @@ export function SourceDetails(props: {
         )}
         <Button size="xs" variant="ghost" disabled={readOnly} onClick={props.onEdit}>
           <Pencil />
-          Edit
+          <T context="verb, button">Edit</T>
         </Button>
         {pdfSelection._tag === "Selected" ? (
           <Button
@@ -939,15 +972,15 @@ export function SourceDetails(props: {
             }
           >
             <FileText />
-            Open PDF
+            <T>Open PDF</T>
           </Button>
         ) : pdfSelection._tag === "SeveralMaterials" ? (
           <Menu>
             <MenuTrigger
               render={
-                <Button size="xs" variant="ghost" aria-label="Choose a PDF to open">
+                <Button size="xs" variant="ghost" aria-label={gt("Choose a PDF to open")}>
                   <FileText />
-                  Open PDF
+                  <T>Open PDF</T>
                   <ChevronDown />
                 </Button>
               }
@@ -981,7 +1014,7 @@ export function SourceDetails(props: {
             }}
           >
             {gettingPdf ? <LoaderCircle className="animate-spin" /> : <Download />}
-            Get PDF
+            <T>Get PDF</T>
           </Button>
         ) : null}
         <Menu
@@ -992,7 +1025,7 @@ export function SourceDetails(props: {
           <ScientTooltip content="More source actions">
             <MenuTrigger
               render={
-                <Button size="icon-xs" variant="ghost" aria-label="More source actions">
+                <Button size="icon-xs" variant="ghost" aria-label={gt("More source actions")}>
                   <MoreHorizontal />
                 </Button>
               }
@@ -1010,12 +1043,12 @@ export function SourceDetails(props: {
               }}
             >
               <RefreshCw />
-              Refresh metadata
+              <T>Refresh metadata</T>
             </MenuItem>
             {props.onOpenHistory ? (
               <MenuItem onClick={props.onOpenHistory}>
                 <History />
-                History
+                <T context="a source's earlier versions">History</T>
               </MenuItem>
             ) : null}
             {props.onSendToZotero &&
@@ -1024,10 +1057,12 @@ export function SourceDetails(props: {
               <MenuSub>
                 <MenuSubTrigger disabled={readOnly}>
                   <Upload />
-                  Send to Zotero
+                  <T>Send to Zotero</T>
                 </MenuSubTrigger>
                 <MenuSubPopup className="max-h-80 overflow-y-auto">
-                  <MenuItem onClick={() => props.onSendToZotero?.(null)}>My Library</MenuItem>
+                  <MenuItem onClick={() => props.onSendToZotero?.(null)}>
+                    <T>My Library</T>
+                  </MenuItem>
                   {(props.zoteroWritableGroups ?? []).map((group) => (
                     <MenuItem
                       key={group.groupId}
@@ -1044,7 +1079,7 @@ export function SourceDetails(props: {
                         checked={props.zoteroSendPdfs.include}
                         onCheckedChange={props.zoteroSendPdfs.change}
                       >
-                        {record.attachments.length === 1 ? "Include PDF" : "Include PDFs"}
+                        {record.attachments.length === 1 ? gt("Include PDF") : gt("Include PDFs")}
                       </MenuCheckboxItem>
                     </>
                   ) : null}
@@ -1053,14 +1088,14 @@ export function SourceDetails(props: {
             ) : props.onSendToZotero ? (
               <MenuItem disabled={readOnly} onClick={() => props.onSendToZotero?.(null)}>
                 <Upload />
-                Send to Zotero
+                <T>Send to Zotero</T>
               </MenuItem>
             ) : null}
             <MenuSeparator />
             {library?.onRemoveFromProject && inProject ? (
               <MenuItem onClick={() => void library.onRemoveFromProject?.()}>
                 <FolderMinus />
-                {LIBRARY_LABELS.removeFromProject}
+                {m(LIBRARY_LABELS.removeFromProject)}
               </MenuItem>
             ) : null}
             {/* A pin's snapshot is not in this Library, so there is nothing to move to Trash. */}
@@ -1072,14 +1107,14 @@ export function SourceDetails(props: {
                   void props.onRemove().catch((cause: unknown) => {
                     toastManager.add({
                       type: "error",
-                      title: "Source could not be moved to Trash",
+                      title: gt("Source could not be moved to Trash"),
                       description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
                     });
                   });
                 }}
               >
                 <Trash2 />
-                Move to Trash
+                <T>Move to Trash</T>
               </MenuItem>
             )}
           </MenuPopup>
@@ -1090,7 +1125,7 @@ export function SourceDetails(props: {
         <article className={`${SOURCES_COLUMN} space-y-6 p-4`}>
           <header className="space-y-2">
             <div className="relative w-fit">
-              <Badge variant="secondary">{sourceTypeLabel(record)}</Badge>
+              <Badge variant="secondary">{sourceTypeLabel(record, m)}</Badge>
               {props.diagnostics.length > 0 ? (
                 <Popover>
                   <ScientTooltip
@@ -1102,7 +1137,7 @@ export function SourceDetails(props: {
                         <button
                           type="button"
                           className="absolute -end-6 top-1/2 -translate-y-1/2 rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
-                          aria-label="Metadata needs review"
+                          aria-label={gt("Metadata needs review")}
                         >
                           <AlertCircle className="size-4" aria-hidden />
                         </button>
@@ -1110,7 +1145,9 @@ export function SourceDetails(props: {
                     />
                   </ScientTooltip>
                   <PopoverPopup side="bottom" align="start" className="max-w-72">
-                    <PopoverTitle>Metadata needs review</PopoverTitle>
+                    <PopoverTitle>
+                      <T>Metadata needs review</T>
+                    </PopoverTitle>
                     <PopoverDescription>
                       {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
                     </PopoverDescription>
@@ -1119,9 +1156,9 @@ export function SourceDetails(props: {
               ) : null}
             </div>
             <h2 className="text-lg font-semibold leading-snug">
-              {record.title ?? "Untitled source"}
+              {record.title ?? gt("Untitled source")}
             </h2>
-            <p className="text-sm text-muted-foreground">{creatorsLabel(record)}</p>
+            <p className="text-sm text-muted-foreground">{creatorsLabel(record, m)}</p>
             {fileNameTitle ? (
               <p className="text-xs text-muted-foreground">{fileNameTitle}</p>
             ) : null}
@@ -1147,7 +1184,7 @@ export function SourceDetails(props: {
               {hasLead ? (
                 <div className="min-w-0 space-y-6 @[48rem]/source-body:col-start-1 @[48rem]/source-body:row-start-1">
                   {record.abstract ? (
-                    <DetailsSection title="Abstract">
+                    <DetailsSection title={gt("Abstract", { $context: "a source field" })}>
                       <AbstractPreview text={record.abstract} sections={record.abstractSections} />
                     </DetailsSection>
                   ) : null}
@@ -1157,32 +1194,40 @@ export function SourceDetails(props: {
               <aside className="scient-source-facts grid min-w-0 content-start gap-x-10 gap-y-6 empty:hidden @[30rem]/source-body:grid-cols-2 @[48rem]/source-body:col-start-2 @[48rem]/source-body:row-span-2 @[48rem]/source-body:row-start-1 @[48rem]/source-body:grid-cols-1">
                 {hasPublicationDetails ? (
                   <section className="space-y-2">
-                    <h3 className="text-sm font-medium text-foreground">Publication details</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      <T>Publication details</T>
+                    </h3>
                     <dl className="space-y-2">
                       {publication ? (
                         <div className="space-y-0.5 text-sm">
                           <dt className="text-muted-foreground">
-                            {publicationContainerLabel(record.type)}:
+                            {publicationContainerLabel(record.type, m)}:
                           </dt>
                           <dd className="min-w-0 break-words">{publication}</dd>
                         </div>
                       ) : null}
                       {record.publisher ? (
                         <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
-                          <dt className="text-muted-foreground">Publisher</dt>
+                          <dt className="text-muted-foreground">
+                            <T context="a source field">Publisher</T>
+                          </dt>
                           <dd className="min-w-0 break-words">{record.publisher}</dd>
                         </div>
                       ) : null}
                       <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
                         {record.issuedRaw || record.issuedYear ? (
                           <div className="flex items-baseline gap-2">
-                            <dt className="text-muted-foreground">Date:</dt>
+                            <dt className="text-muted-foreground">
+                              <T>Date:</T>
+                            </dt>
                             <dd>{record.issuedRaw ?? record.issuedYear}</dd>
                           </div>
                         ) : null}
                         {record.language ? (
                           <div className="flex items-baseline gap-2">
-                            <dt className="text-muted-foreground">Language:</dt>
+                            <dt className="text-muted-foreground">
+                              <T>Language:</T>
+                            </dt>
                             <dd>{languageDisplayName(record.language)}</dd>
                           </div>
                         ) : null}
@@ -1192,7 +1237,7 @@ export function SourceDetails(props: {
                 ) : null}
 
                 {moreDetails.length > 0 ? (
-                  <DetailsSection title="More details">
+                  <DetailsSection title={gt("More details")}>
                     <div className="space-y-2">
                       {moreDetails.map(({ name, label }) => (
                         <DetailRow key={name} label={label}>
@@ -1204,12 +1249,14 @@ export function SourceDetails(props: {
                 ) : null}
 
                 {identifiers.length > 0 || (externalUrl && !hasDoi) || otherKeys.length > 0 ? (
-                  <DetailsSection title="Identifiers and links">
+                  <DetailsSection title={gt("Identifiers and links")}>
                     <div className="space-y-2">
                       {otherKeys.length > 0 && record.citationKey ? (
                         <>
-                          <DetailRow label={LIBRARY_LABELS.citedAs}>{record.citationKey}</DetailRow>
-                          <DetailRow label={LIBRARY_LABELS.alsoCitedAs}>
+                          <DetailRow label={m(LIBRARY_LABELS.citedAs)}>
+                            {record.citationKey}
+                          </DetailRow>
+                          <DetailRow label={m(LIBRARY_LABELS.alsoCitedAs)}>
                             {otherKeys.join(", ")}
                           </DetailRow>
                         </>
@@ -1276,7 +1323,7 @@ export function SourceDetails(props: {
           </div>
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">
-            {importedLabel(record)}
+            {importedLabel(record, m)}
           </p>
         </article>
       </ScrollArea>

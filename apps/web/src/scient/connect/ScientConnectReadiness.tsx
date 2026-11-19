@@ -3,6 +3,7 @@
  * one step that gets it there (sign in, turn on, try again, or free a computer slot). Shows nothing
  * on other computers or once setup is done; the server still checks reachability on create.
  */
+import { T, useGT, useMessages } from "gt-react";
 import { useAuth } from "@clerk/react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -51,6 +52,8 @@ function Notice({
   // Only the Scient app on that computer can set it up; elsewhere, just say what is happening.
   const actsHere = useT3ConnectTurnOn(environmentId).kind === "here";
   const [turningOn, setTurningOn] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   if (status === null) return null;
 
   const signedIn = isSignedIn === true;
@@ -71,15 +74,15 @@ function Notice({
 
   const action = !actsHere ? null : !signedIn ? (
     <Button size="xs" variant="outline" onClick={openAuthPrompt}>
-      Sign in
+      <T>Sign in</T>
     </Button>
   ) : busy ? null : status.phase === "blocked" && status.block?.reason === "limit" ? (
     <Button size="xs" variant="outline" onClick={openSettings}>
-      Open Sharing & access
+      <T>Open Sharing & access</T>
     </Button>
   ) : status.phase === "blocked" && status.block?.reason === "policy" ? null : (
     <Button size="xs" variant="outline" onClick={() => void turnOn()}>
-      {status.off || status.block?.reason === "revoked" ? "Turn on" : "Try again"}
+      {status.off || status.block?.reason === "revoked" ? gt("Turn on") : gt("Try again")}
     </Button>
   );
 
@@ -87,9 +90,9 @@ function Notice({
     <div role="status" className="flex items-start gap-3 rounded-md border px-3 py-2 text-xs">
       {busy ? <Spinner className="mt-0.5 size-3.5 shrink-0" /> : null}
       <p className="min-w-0 flex-1 text-muted-foreground">
-        {describeScientConnectHost(status, signedIn) ??
-          "Scient Connect is setting up this computer…"}{" "}
-        {status.off || !signedIn ? "People you invite reach this computer through it." : null}
+        {describeScientConnectHost(status, signedIn, messages) ??
+          gt("Scient Connect is setting up this computer…")}{" "}
+        {status.off || !signedIn ? gt("People you invite reach this computer through it.") : null}
       </p>
       {action}
     </div>

@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import type { ScientSourcesPreflightResult } from "@t3tools/contracts";
 import { AlertCircle, CheckCircle2, Download, FileText, LoaderCircle } from "lucide-react";
 import { useState } from "react";
@@ -43,6 +44,7 @@ export function ImportReview(props: {
     possibleMetadataMatchOverrides: ReadonlyArray<string>,
   ) => void;
 }) {
+  const gt = useGT();
   const [possibleMatchOverrides, setPossibleMatchOverrides] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -84,9 +86,9 @@ export function ImportReview(props: {
         title={
           localFiles
             ? selectedCount === 1
-              ? "Review PDF"
-              : `Review ${selectedCount} PDFs`
-            : "Review import"
+              ? gt("Review PDF")
+              : gt("Review {selectedCount} PDFs", { selectedCount })
+            : gt("Review import")
         }
         onBack={props.onBack}
         action={
@@ -98,7 +100,9 @@ export function ImportReview(props: {
               onClick={() => props.onImport(itemKeys, overrideKeys)}
             >
               <Download />
-              Import {itemKeys.length}
+              <T>
+                Import <Var>{itemKeys.length}</Var>
+              </T>
             </Button>
           ) : null
         }
@@ -113,11 +117,16 @@ export function ImportReview(props: {
           <span>
             {itemKeys.length > 0
               ? localFiles
-                ? `${itemKeys.length} PDF${itemKeys.length === 1 ? "" : "s"} ready`
-                : `${itemKeys.length} of ${selectedCount} selected ${selectedCount === 1 ? "reference is" : "references are"} ready to import`
+                ? gt("{count, plural, one {{count} PDF ready} other {{count} PDFs ready}}", {
+                    count: itemKeys.length,
+                  })
+                : gt(
+                    "{selected, plural, one {{count} of {selected} selected reference is ready to import} other {{count} of {selected} selected references are ready to import}}",
+                    { count: itemKeys.length, selected: selectedCount },
+                  )
               : localFiles
-                ? "Nothing new to add"
-                : "Nothing new to import"}
+                ? gt("Nothing new to add")
+                : gt("Nothing new to import")}
           </span>
           {localFiles && itemKeys.length + alreadyHereKeys.length > 0 ? (
             <Button
@@ -160,7 +169,7 @@ export function ImportReview(props: {
                 <div className="flex min-w-0 items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium">
-                      {item.candidate.title ?? "Untitled source"}
+                      {item.candidate.title ?? gt("Untitled source")}
                     </div>
                     {localFiles && item.duplicate.kind === "new" ? (
                       metadataSummary ? (
@@ -180,9 +189,9 @@ export function ImportReview(props: {
                         )}
                         <span>
                           {item.duplicate.kind === "new"
-                            ? "Ready to import"
+                            ? gt("Ready to import")
                             : importingPossibleMatch
-                              ? "Will import as a separate source"
+                              ? gt("Will import as a separate source")
                               : status}
                         </span>
                       </div>
@@ -202,7 +211,7 @@ export function ImportReview(props: {
                           });
                         }}
                       />
-                      Import separately
+                      <T>Import separately</T>
                     </label>
                   ) : null}
                 </div>
@@ -212,8 +221,10 @@ export function ImportReview(props: {
                   <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
                     <FileText className="mt-px size-3.5 shrink-0" aria-hidden="true" />
                     <span>
-                      {item.candidate.pdfAttachmentCount} PDFs in Zotero · importing{" "}
-                      {item.candidate.pdfFileName ?? "one PDF"}
+                      <T>
+                        <Var>{item.candidate.pdfAttachmentCount}</Var> PDFs in Zotero · importing{" "}
+                        <Var>{item.candidate.pdfFileName ?? gt("one PDF")}</Var>
+                      </T>
                     </span>
                   </div>
                 ) : null}

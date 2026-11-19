@@ -1,3 +1,5 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "~/i18n/messages";
 import { PdfTarget } from "@scientfactory/document-artifacts";
 import {
   scientAnnotationQuote,
@@ -147,6 +149,8 @@ function AttachmentAnnotations(props: {
   }) => void;
   readonly onChanged: (next: ScientUnplacedAnnotation) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const { attachment, environmentId, root, sourceId } = props;
   const pdf: AnnotatedPdf = {
     environmentId,
@@ -196,7 +200,9 @@ function AttachmentAnnotations(props: {
   return (
     <section className="space-y-2">
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {props.titled ? `Highlights and notes · ${attachment.fileName}` : "Highlights and notes"}
+        {props.titled
+          ? gt("Highlights and notes · {fileName}", { fileName: attachment.fileName })
+          : gt("Highlights and notes")}
       </h3>
       <ul className="space-y-1">
         {annotations.map((annotation) => (
@@ -218,7 +224,7 @@ function AttachmentAnnotations(props: {
                 </span>
               ) : null}
               <span className="mt-1 block text-xs text-muted-foreground">
-                {annotationMeta(annotation)}
+                {annotationMeta(annotation, m)}
               </span>
             </button>
             <ScientTooltip content="Quote in my document">
@@ -226,7 +232,7 @@ function AttachmentAnnotations(props: {
                 type="button"
                 size="icon-xs"
                 variant="ghost-muted-row"
-                aria-label="Quote in my document"
+                aria-label={gt("Quote in my document")}
                 onClick={() => {
                   const pages = annotation.anchor.selector.pages.map((page) => page.page);
                   // The PDF is not open here: it is read briefly for its printed page labels.
@@ -250,7 +256,7 @@ function AttachmentAnnotations(props: {
                 type="button"
                 size="icon-xs"
                 variant="ghost-muted-row"
-                aria-label="Remove"
+                aria-label={gt("Remove", { $context: "verb, button" })}
                 disabled={!canChange}
                 onClick={() => void removeAnnotation(pdf, annotation)}
               >
@@ -262,7 +268,9 @@ function AttachmentAnnotations(props: {
       </ul>
       {props.unplaced.length > 0 ? (
         <>
-          <h4 className="text-xs text-muted-foreground">From Zotero, not placed on the page</h4>
+          <h4 className="text-xs text-muted-foreground">
+            <T>From Zotero, not placed on the page</T>
+          </h4>
           <ul className="space-y-1">
             {props.unplaced.map((entry) => (
               <li key={entry.annotationId} className="group/row flex items-start gap-1">
@@ -285,7 +293,7 @@ function AttachmentAnnotations(props: {
                     </span>
                   ) : null}
                   <span className="mt-1 block text-xs text-muted-foreground">
-                    {unplacedMeta(entry)}
+                    {unplacedMeta(entry, m)}
                   </span>
                 </button>
                 <ScientTooltip content="Remove">
@@ -293,7 +301,7 @@ function AttachmentAnnotations(props: {
                     type="button"
                     size="icon-xs"
                     variant="ghost-muted-row"
-                    aria-label="Remove"
+                    aria-label={gt("Remove", { $context: "verb, button" })}
                     disabled={!canChange}
                     onClick={() => void removeUnplacedAnnotation(pdf, entry, props.onChanged)}
                   >
@@ -309,23 +317,29 @@ function AttachmentAnnotations(props: {
   );
 }
 
-function annotationMeta(annotation: ScientPdfAnnotation): string {
+function annotationMeta(annotation: ScientPdfAnnotation, resolve: MessageResolver): string {
   const pages = annotation.anchor.selector.pages.map((page) => page.page);
-  const where = pages.length === 1 ? `Page ${pages[0]}` : `Pages ${pages[0]}–${pages.at(-1)}`;
-  return annotation.createdBy === "agent" ? `${where} · Added by an agent` : where;
+  const where =
+    pages.length === 1
+      ? resolve(msg("Page {page}", { page: pages[0]! }))
+      : resolve(msg("Pages {first}–{last}", { first: pages[0]!, last: pages.at(-1)! }));
+  return annotation.createdBy === "agent"
+    ? resolve(msg("{where} · Added by an agent", { where }))
+    : where;
 }
 
 const UNPLACED_KINDS: Readonly<Record<ScientUnplacedAnnotation["kind"], string | null>> = {
   highlight: null,
-  underline: "Underline",
-  note: "Note on the page",
-  text: "Text on the page",
-  image: "Marked area",
-  ink: "Drawing",
+  underline: msg("Underline", { $context: "a kind of PDF annotation" }),
+  note: msg("Note on the page"),
+  text: msg("Text on the page"),
+  image: msg("Marked area"),
+  ink: msg("Drawing", { $context: "a kind of PDF annotation" }),
 };
 
-function unplacedMeta(entry: ScientUnplacedAnnotation): string {
-  const kind = UNPLACED_KINDS[entry.kind];
-  const where = entry.page === null ? null : `Page ${entry.page}`;
+function unplacedMeta(entry: ScientUnplacedAnnotation, resolve: MessageResolver): string {
+  const words = UNPLACED_KINDS[entry.kind];
+  const kind = words === null ? null : resolve(words);
+  const where = entry.page === null ? null : resolve(msg("Page {page}", { page: entry.page }));
   return [where, kind].filter(Boolean).join(" · ");
 }

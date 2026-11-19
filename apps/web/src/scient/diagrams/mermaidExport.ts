@@ -1,3 +1,7 @@
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
+
 import type { MermaidTheme } from "./mermaidRuntime";
 import {
   downloadPresentationBlob,
@@ -109,27 +113,27 @@ export function svgRasterizationRefusal(svgElement: Element): string | null {
   for (const element of [svgElement, ...svgElement.querySelectorAll("*")]) {
     const name = element.localName.toLowerCase();
     if (FETCHING_ELEMENTS.has(name)) {
-      return "The diagram contains an external image and cannot be exported.";
+      return m(msg("The diagram contains an external image and cannot be exported."));
     }
     for (const attribute of element.attributes) {
       const attributeName = attribute.localName.toLowerCase();
       const value = attribute.value.trim();
       if (attributeName.startsWith("on")) {
-        return "The diagram contains active content and cannot be exported.";
+        return m(msg("The diagram contains active content and cannot be exported."));
       }
       const external = value.length > 0 && !value.startsWith("#");
       if (attributeName === "href" && name !== "a" && external) {
-        return "The diagram contains an external resource and cannot be exported.";
+        return m(msg("The diagram contains an external resource and cannot be exported."));
       }
       if (RESOURCE_ATTRIBUTES.has(attributeName) && external) {
-        return "The diagram contains an external resource and cannot be exported.";
+        return m(msg("The diagram contains an external resource and cannot be exported."));
       }
       if (EXTERNAL_CSS_REFERENCE.test(value)) {
-        return "The diagram contains an external resource and cannot be exported.";
+        return m(msg("The diagram contains an external resource and cannot be exported."));
       }
     }
     if (name === "style" && EXTERNAL_CSS_REFERENCE.test(element.textContent ?? "")) {
-      return "The diagram contains an external stylesheet and cannot be exported.";
+      return m(msg("The diagram contains an external stylesheet and cannot be exported."));
     }
   }
   return null;

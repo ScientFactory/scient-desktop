@@ -3,6 +3,7 @@ import {
   sessionGrantsScope,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { ArrowRightIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
@@ -21,6 +22,7 @@ const ProjectImportStep = lazy(() =>
 );
 
 export function ScientProjectImportAction({ onImported }: { readonly onImported?: () => void }) {
+  const gt = useGT();
   const environment = usePrimaryEnvironment();
   const session = useEnvironmentSessionState(environment?.environmentId ?? null);
   const openNewThread = useNewThreadHandler();
@@ -47,8 +49,8 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
       } catch {
         toastManager.add({
           type: "error",
-          title: "Could not open the imported project",
-          description: "Your imported projects are still available in the sidebar.",
+          title: gt("Could not open the imported project"),
+          description: gt("Your imported projects are still available in the sidebar."),
         });
         return false;
       }
@@ -57,14 +59,17 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
     if (importWarning) {
       toastManager.add({
         type: "warning",
-        title: "Some history was not imported",
+        title: gt("Some history was not imported"),
         description: importWarning,
         timeout: 0,
       });
     } else if (importedThreadCount > 0) {
       toastManager.add({
         type: "success",
-        title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
+        title: gt(
+          "{count, plural, one {Imported {count} thread} other {Imported {count} threads}}",
+          { count: importedThreadCount },
+        ),
       });
     }
     return true;
@@ -79,7 +84,7 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
         type="button"
         variant="ghost-muted"
       >
-        Import projects and conversations
+        <T>Import projects and conversations</T>
         <ArrowRightIcon aria-hidden className="size-3.5 text-muted-foreground" />
       </Button>
       {open ? (
@@ -90,10 +95,18 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
           }}
         >
           <DialogPopup className="max-w-xl" showCloseButton={!busy}>
-            <DialogTitle className="sr-only">Import projects and conversations</DialogTitle>
+            <DialogTitle className="sr-only">
+              <T>Import projects and conversations</T>
+            </DialogTitle>
             <DialogPanel aria-busy={busy}>
               {canImport ? (
-                <Suspense fallback={<p role="status">Loading import…</p>}>
+                <Suspense
+                  fallback={
+                    <p role="status">
+                      <T>Loading import…</T>
+                    </p>
+                  }
+                >
                   <ProjectImportStep
                     key={environment.environmentId}
                     environmentId={environment.environmentId}
@@ -104,7 +117,9 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
                   />
                 </Suspense>
               ) : (
-                <p role="status">Connect to a machine with permission to import projects.</p>
+                <p role="status">
+                  <T>Connect to a machine with permission to import projects.</T>
+                </p>
               )}
             </DialogPanel>
           </DialogPopup>

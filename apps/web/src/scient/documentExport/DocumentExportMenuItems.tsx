@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { FileDown } from "lucide-react";
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
 import { DockCommandItem } from "../writing/dockChrome";
@@ -17,7 +18,9 @@ export function DocumentExportMenuItems(props: {
     <MenuSub>
       <MenuSubTrigger>
         {props.plain ? null : <FileDown />}
-        <span>Export</span>
+        <span>
+          <T context="submenu of document export formats">Export</T>
+        </span>
       </MenuSubTrigger>
       {/* Narrow: "PDF" and "Word" with a little room after them (the menu's
           default minimum is 10rem). The reason a format is unavailable wraps. */}
@@ -31,6 +34,7 @@ export function DocumentExportMenuItems(props: {
           </span>
         </DockCommandItem>
         <DockCommandItem disabled={props.wordDisabled} onClick={props.onWordExport}>
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Microsoft Word, a product name */}
           Word
         </DockCommandItem>
       </MenuSubPopup>

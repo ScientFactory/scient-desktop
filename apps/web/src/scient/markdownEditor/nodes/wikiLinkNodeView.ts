@@ -1,5 +1,8 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import type { ScientMarkdownLinkOpenHandler } from "../linkOpen";
 import type { ScientMarkdownExternalPresentationRegistrar } from "./externalPresentation";
@@ -155,11 +158,14 @@ class ScientWikiLinkNodeView implements NodeView {
     );
     this.dom.setAttribute(
       "aria-label",
-      exists === false ? `Open missing wiki link ${target}` : `Open wiki link ${target}`,
+      exists === false
+        ? m(msg("Open missing wiki link {target}", { target }))
+        : m(msg("Open wiki link {target}", { target })),
     );
     if (exists === false) this.dom.setAttribute("aria-invalid", "true");
     else this.dom.removeAttribute("aria-invalid");
-    this.dom.title = exists === false ? `Missing Markdown target: ${target}` : target;
+    this.dom.title =
+      exists === false ? m(msg("Missing Markdown target: {target}", { target })) : target;
   }
 }
 

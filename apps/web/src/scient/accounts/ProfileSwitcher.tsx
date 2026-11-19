@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { INCOGNITO_BROWSER_PROFILE_ID, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   pageSite,
@@ -31,6 +32,7 @@ import { addBrowserProfile } from "./addBrowserProfile";
 import { mergeProfiles } from "./accountsView";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 // The import wizard is the Accounts page's; the browser only loads it when asked.
 const BrowserImportDialog = lazy(() =>
@@ -38,19 +40,21 @@ const BrowserImportDialog = lazy(() =>
 );
 
 /** Why the tab is in its profile, in the words the switcher shows. */
-function pickReason({ reason }: ProfilePick, url: string) {
+function pickReason({ reason }: ProfilePick, url: string, resolve: MessageResolver = m) {
   const site = pageSite(url)?.hostname.replace(/^www\./, "");
   switch (reason) {
     case "site":
-      return site ? `for ${site}` : undefined;
+      return site
+        ? resolve(msg("for {site}", { site, $context: "why the browser profile was picked" }))
+        : undefined;
     case "conversation":
-      return "this conversation";
+      return resolve(msg("this conversation", { $context: "why the browser profile was picked" }));
     case "project":
-      return "this project";
+      return resolve(msg("this project", { $context: "why the browser profile was picked" }));
     case "main":
-      return "has your sign-ins";
+      return resolve(msg("has your sign-ins", { $context: "why the browser profile was picked" }));
     case "default":
-      return "default";
+      return resolve(msg("default", { $context: "why the browser profile was picked" }));
   }
 }
 
@@ -77,6 +81,8 @@ export function ProfileSwitcher({
   const choose = useAccountCommand(accountsState.chooseProfile, environmentId);
   const projectId = useQuietThreadShell(threadRef)?.projectId;
   const [importing, setImporting] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   const profiles = mergeProfiles(userProfiles, data?.profiles ?? []);
   const active = profiles.find((profile) => profile.id === activeProfileId);
   if (!active) return null;
@@ -89,7 +95,7 @@ export function ProfileSwitcher({
       .then((profileId) => {
         if (profileId) openIn(profileId);
       })
-      .catch(() => toastManager.add({ type: "error", title: "Could not add a profile" }));
+      .catch(() => toastManager.add({ type: "error", title: m(msg("Could not add a profile")) }));
   const holders = siteIdentities(data?.accounts ?? [], url).map((signIn) => signIn.profileId);
   const projectProfileId = projectId ? data?.profileChoices?.projects[projectId] : undefined;
   const pick = data
@@ -103,7 +109,7 @@ export function ProfileSwitcher({
         defaultProfileId,
       })
     : undefined;
-  const reason = pick?.profileId === active.id ? pickReason(pick, url) : undefined;
+  const reason = pick?.profileId === active.id ? pickReason(pick, url, messages) : undefined;
   const label = reason ? `${active.name} · ${reason}` : active.name;
   return (
     <>
@@ -113,7 +119,11 @@ export function ProfileSwitcher({
             render={
               <MenuTrigger
                 render={
-                  <Button size="icon-xs" variant="ghost" aria-label={`Profile: ${active.name}`} />
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={gt("Profile: {name}", { name: active.name })}
+                  />
                 }
               >
                 <ProfilePicture
@@ -127,14 +137,18 @@ export function ProfileSwitcher({
               </MenuTrigger>
             }
           />
-          <TooltipPopup>Browser profile: {label}</TooltipPopup>
+          <TooltipPopup>
+            <T>
+              Browser profile: <Var>{label}</Var>
+            </T>
+          </TooltipPopup>
         </Tooltip>
         <MenuPopup align="start">
           <MenuGroup>
             <MenuGroupLabel>{label}</MenuGroupLabel>
             {profiles.map((profile) => {
               const detail = holders.includes(profile.id)
-                ? `Signed in to ${new URL(url).hostname}`
+                ? gt("Signed in to {site}", { site: new URL(url).hostname })
                 : profile.record.source?.email;
               return (
                 <MenuItem
@@ -171,17 +185,23 @@ export function ProfileSwitcher({
                   void choose({ projectId, profileId: checked ? activeProfileId : null })
                 }
               >
-                Use {active.name} in this project
+                <T>
+                  Use <Var>{active.name}</Var> in this project
+                </T>
               </MenuCheckboxItem>
             </>
           ) : null}
           <MenuSeparator />
           <MenuItem onClick={() => onOpenInProfile(INCOGNITO_BROWSER_PROFILE_ID)}>
-            New incognito tab
+            <T>New incognito tab</T>
           </MenuItem>
-          <MenuItem onClick={() => void addProfile()}>New profile</MenuItem>
+          <MenuItem onClick={() => void addProfile()}>
+            <T>New profile</T>
+          </MenuItem>
           {previewBridge ? (
-            <MenuItem onClick={() => setImporting(true)}>Import from a browser…</MenuItem>
+            <MenuItem onClick={() => setImporting(true)}>
+              <T>Import from a browser…</T>
+            </MenuItem>
           ) : null}
         </MenuPopup>
       </Menu>

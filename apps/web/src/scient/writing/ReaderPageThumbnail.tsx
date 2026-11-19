@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { forwardRef, type ReactNode, type ButtonHTMLAttributes } from "react";
 import "./readerPageThumbnail.css";
 
@@ -11,6 +12,7 @@ export const ReaderPageThumbnail = forwardRef<
     readonly onSelect: (page: number) => void;
   } & Pick<ButtonHTMLAttributes<HTMLButtonElement>, "draggable" | "onDragStart" | "onDragEnd">
 >(function ReaderPageThumbnail({ pageNumber, active, children, onSelect, ...buttonProps }, ref) {
+  const gt = useGT();
   return (
     <button
       {...buttonProps}
@@ -18,7 +20,7 @@ export const ReaderPageThumbnail = forwardRef<
       type="button"
       className="scient-reader-page-thumbnail"
       data-active={active || undefined}
-      aria-label={`Go to page ${pageNumber}`}
+      aria-label={gt("Go to page {pageNumber}", { pageNumber })}
       aria-current={active ? "page" : undefined}
       onClick={() => onSelect(pageNumber)}
     >

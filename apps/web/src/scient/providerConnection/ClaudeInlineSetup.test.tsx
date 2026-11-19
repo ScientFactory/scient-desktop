@@ -10,6 +10,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({

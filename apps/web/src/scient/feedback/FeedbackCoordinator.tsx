@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { LightbulbIcon } from "lucide-react";
 import { useEffect } from "react";
 
@@ -7,6 +8,7 @@ import {
   type CommandPaletteActionItem,
 } from "../../components/CommandPalette.logic";
 import { toastManager } from "../../components/ui/toast";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { registerMenuAction } from "../../shortcuts/dispatcher";
 import { FeedbackDialogHost, feedbackAvailable } from "./FeedbackDialog";
 import { requestFeedback } from "./feedbackStore";
@@ -27,8 +29,8 @@ function showFixedNotices() {
           type: "success",
           // Shown once ever, so it waits for the person instead of timing out.
           timeout: 0,
-          title: `Fixed in Scient ${notice.fixedIn}`,
-          description: `"${notice.excerpt}" Thanks for reporting it.${notice.note ? `\n${notice.note}` : ""}`,
+          title: m(msg("Fixed in Scient {version}", { version: notice.fixedIn })),
+          description: `${m(msg('"{excerpt}" Thanks for reporting it.', { excerpt: notice.excerpt }))}${notice.note ? `\n${notice.note}` : ""}`,
         });
       }
     },
@@ -64,6 +66,7 @@ export function FeedbackCoordinator() {
 /** "Send feedback to Scient" in the command palette. */
 export function feedbackPaletteItems(
   threadRef: ScopedThreadRef | null,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<CommandPaletteActionItem> {
   if (!feedbackAvailable()) return [];
   return [
@@ -71,7 +74,7 @@ export function feedbackPaletteItems(
       kind: "action",
       value: "action:send-feedback",
       searchTerms: ["feedback", "report", "problem", "bug", "idea", "feature", "request", "help"],
-      title: "Send feedback to Scient",
+      title: resolve(msg("Send feedback to Scient")),
       icon: <FeedbackIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         requestFeedback({

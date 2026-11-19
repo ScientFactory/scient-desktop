@@ -4,6 +4,9 @@ import type {
   ProjectDirectoryView,
   ProjectListDirectoryResult,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 type BranchStatus = "idle" | "loading" | "loaded" | "failed";
 
@@ -48,7 +51,9 @@ function parentDirectory(relativePath: string): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Workspace directory could not be loaded.";
+  return error instanceof Error
+    ? error.message
+    : m(msg("Workspace directory could not be loaded."));
 }
 
 /**

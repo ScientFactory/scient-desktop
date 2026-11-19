@@ -15,6 +15,7 @@ import { latexEquationReferencesKey } from "./latexEquationReferences";
 import { LatexAlgorithmControls } from "./LatexAlgorithmControls";
 import { enterLatexObjectBody } from "./latexObjectCaret";
 import { deleteEmptyAlgorithmStructure } from "./latexAlgorithmCommands";
+import { T, useGT, Var } from "gt-react";
 
 export function LatexAlgorithmView({
   node,
@@ -28,6 +29,7 @@ export function LatexAlgorithmView({
   NodeViewProps,
   "node" | "editor" | "selected" | "getPos" | "updateAttributes" | "deleteNode"
 > & { editable: boolean; draftKey?: string | undefined }) {
+  const gt = useGT();
   const root = useRef<HTMLDivElement>(null);
   const [captionEditing, setCaptionEditing] = useState(false);
   const floating = node.attrs.layout.floating !== false;
@@ -59,9 +61,19 @@ export function LatexAlgorithmView({
     >
       {floating && (captioned || captionEditing) && (
         <div className="scient-latex-algorithm-caption" contentEditable={false}>
-          {captioned && <strong>Algorithm{number ? ` ${number}` : ""}</strong>}
+          {captioned && (
+            <strong>
+              {number ? (
+                <T>
+                  Algorithm <Var>{number}</Var>
+                </T>
+              ) : (
+                <T>Algorithm</T>
+              )}
+            </strong>
+          )}
           <LatexTextField
-            aria-label="Algorithm caption"
+            aria-label={gt("Algorithm caption")}
             rows={1}
             value={String(node.attrs.title)}
             draftKey={draftKey && `${draftKey}:caption`}
@@ -80,14 +92,15 @@ export function LatexAlgorithmView({
       )}
       <NodeViewContent
         className="scient-latex-algorithm-body"
-        aria-label="Pseudocode"
+        aria-label={gt("Pseudocode")}
         data-latex-text-style={node.attrs.layout.fontSize ?? undefined}
       />
       <LatexObjectToolbar
         editor={editor}
         root={root}
         selected={selected}
-        label="Algorithm tools"
+        label={gt("Algorithm tools")}
+        name={gt("Algorithm")}
         inline
       >
         <LatexAlgorithmControls
@@ -101,7 +114,7 @@ export function LatexAlgorithmView({
             setCaptionEditing(true);
             requestAnimationFrame(() =>
               root.current
-                ?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Algorithm caption"]')
+                ?.querySelector<HTMLTextAreaElement>(".scient-latex-algorithm-caption textarea")
                 ?.focus({ preventScroll: true }),
             );
           }}

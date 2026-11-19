@@ -14,6 +14,7 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
   { value: ProviderDriverKind.make("pi"), label: "Pi", available: true, pickerSidebarBadge: "new" },
   {
     value: ProviderDriverKind.make("omp"),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- provider name
     label: "Oh My Pi",
     available: true,
     pickerSidebarBadge: "new",
@@ -44,6 +45,7 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
   },
   {
     value: ProviderDriverKind.make("droid"),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- provider name
     label: "Droid",
     available: true,
     pickerSidebarBadge: "new",

@@ -2,6 +2,7 @@ import acmUrl from "../../assets/journals/acm.png";
 import ieeeUrl from "../../assets/journals/ieee.png";
 import nejmEvidenceUrl from "../../assets/journals/nejm-evidence.png";
 import pubmedUrl from "../../assets/journals/pubmed.png";
+import { msg } from "gt-react";
 
 type JournalIcon = {
   readonly url: string;
@@ -25,34 +26,38 @@ type Journal = {
 
 const ieeePublisher: JournalIcon = {
   url: ieeeUrl,
-  journalTitle: "IEEE (publisher)",
+  journalTitle: msg("IEEE (publisher)"),
   source: "site",
 };
 const acmPublisher: JournalIcon = {
   url: acmUrl,
-  journalTitle: "ACM (publisher)",
+  journalTitle: msg("ACM (publisher)"),
   source: "site",
 };
 const pubmedPlatform: JournalIcon = {
   url: pubmedUrl,
-  journalTitle: "PubMed (platform)",
+  journalTitle: msg("PubMed (platform)"),
   source: "site",
 };
 
 const journals: ReadonlyArray<Journal> = [
   {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- a journal's name
     title: "NEJM Evidence",
     aliases: ["NEJM Evid"],
     issns: ["2766-5526"],
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- a journal's name
     icon: { url: nejmEvidenceUrl, journalTitle: "NEJM Evidence", source: "journal" },
   },
   {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- a journal's name
     title: "IEEE Access",
     aliases: [],
     issns: ["2169-3536"],
     icon: ieeePublisher,
   },
   {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- a journal's name
     title: "ACM Computing Surveys",
     aliases: ["ACM Comput Surv"],
     issns: ["0360-0300", "1557-7341"],

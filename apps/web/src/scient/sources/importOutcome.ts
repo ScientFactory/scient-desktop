@@ -3,8 +3,11 @@ import type {
   ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
-import { countOf, referenceFileNotes } from "./referenceFileSummary";
+import { m, type MessageResolver } from "~/i18n/messages";
+
+import { referenceFileNotes } from "./referenceFileSummary";
 
 type ScientSourceDuplicateKind = ScientSourcesPreflightResult["items"][number]["duplicate"]["kind"];
 
@@ -150,10 +153,157 @@ export interface ImportReceipt {
   readonly detailsToCheckSourceIds: ReadonlyArray<string>;
 }
 
-const were = (count: number) => (count === 1 ? "was" : "were");
+/** A count for a plural message: `count` picks the form, `shown` is what it prints. */
+const amount = (count: number) => ({ count, shown: count.toLocaleString() });
+
+type Noun = "pdf" | "reference";
+type Place = "project" | "library";
+
+const IMPORT_LABELS = {
+  itemFailed: msg("It could not be imported."),
+  noReferences: msg("No references found in {name}"),
+  stoppedBeforeAnything: msg("The import was stopped before anything was imported"),
+  nothingFrom: msg("Nothing was imported from {name}"),
+  nothing: msg("Nothing was imported"),
+  toCheck: msg(
+    "{count, plural, one {{shown} has details Scient could not find: check it} other {{shown} have details Scient could not find: check them}}",
+  ),
+  versions: msg(
+    "{count, plural, one {{shown} may be another version of a source already here (a preprint and its published paper): see Possible duplicates} other {{shown} may be another version of a source already here (a preprint and its published paper): see Possible duplicates}}",
+  ),
+  failed: msg(
+    "{count, plural, one {{shown} could not be imported} other {{shown} could not be imported}}",
+  ),
+  unprocessed: msg(
+    "{count, plural, one {The import was stopped; {shown} was not imported} other {The import was stopped; {shown} were not imported}}",
+  ),
+} as const;
+
+const ADDED_HEADLINES = {
+  library: {
+    pdf: msg(
+      "{count, plural, one {{shown} PDF imported and added to My Library} other {{shown} PDFs imported and added to My Library}}",
+    ),
+    reference: msg(
+      "{count, plural, one {{shown} reference imported and added to My Library} other {{shown} references imported and added to My Library}}",
+    ),
+  },
+  project: {
+    pdf: msg(
+      "{count, plural, one {{shown} PDF imported and added to this project} other {{shown} PDFs imported and added to this project}}",
+    ),
+    reference: msg(
+      "{count, plural, one {{shown} reference imported and added to this project} other {{shown} references imported and added to this project}}",
+    ),
+  },
+  fromLibrary: {
+    pdf: msg(
+      "{count, plural, one {{shown} PDF added to this project from My Library} other {{shown} PDFs added to this project from My Library}}",
+    ),
+    reference: msg(
+      "{count, plural, one {{shown} reference added to this project from My Library} other {{shown} references added to this project from My Library}}",
+    ),
+  },
+  mixed: {
+    pdf: msg(
+      "{count, plural, one {{shown} PDF added to this project: {fresh} imported, {fromLibrary} already in My Library} other {{shown} PDFs added to this project: {fresh} imported, {fromLibrary} already in My Library}}",
+    ),
+    reference: msg(
+      "{count, plural, one {{shown} reference added to this project: {fresh} imported, {fromLibrary} already in My Library} other {{shown} references added to this project: {fresh} imported, {fromLibrary} already in My Library}}",
+    ),
+  },
+} as const satisfies Record<string, Record<Noun, string>>;
+
+/** A PDF added to a source already present: the headline names what, a note only counts. */
+const ATTACHED = {
+  headline: {
+    project: {
+      pdf: msg(
+        "{count, plural, one {{shown} PDF added to its source, already in this project} other {{shown} PDFs added to their sources, already in this project}}",
+      ),
+      reference: msg(
+        "{count, plural, one {{shown} reference added to its source, already in this project} other {{shown} references added to their sources, already in this project}}",
+      ),
+    },
+    library: {
+      pdf: msg(
+        "{count, plural, one {{shown} PDF added to its source, already in My Library} other {{shown} PDFs added to their sources, already in My Library}}",
+      ),
+      reference: msg(
+        "{count, plural, one {{shown} reference added to its source, already in My Library} other {{shown} references added to their sources, already in My Library}}",
+      ),
+    },
+  },
+  note: {
+    project: msg(
+      "{count, plural, one {{shown} was added to its source, already in this project} other {{shown} were added to their sources, already in this project}}",
+    ),
+    library: msg(
+      "{count, plural, one {{shown} was added to its source, already in My Library} other {{shown} were added to their sources, already in My Library}}",
+    ),
+  },
+} as const satisfies {
+  headline: Record<Place, Record<Noun, string>>;
+  note: Record<Place, string>;
+};
+
+/** Sources the import found already present, by where they were. */
+const PRESENT = {
+  here: {
+    headline: {
+      pdf: msg(
+        "{count, plural, one {{shown} PDF was already in this project} other {{shown} PDFs were already in this project}}",
+      ),
+      reference: msg(
+        "{count, plural, one {{shown} reference was already in this project} other {{shown} references were already in this project}}",
+      ),
+    },
+    note: msg(
+      "{count, plural, one {{shown} was already in this project} other {{shown} were already in this project}}",
+    ),
+  },
+  pinned: {
+    headline: {
+      pdf: msg(
+        "{count, plural, one {{shown} PDF was already in My Library and is in this project now} other {{shown} PDFs were already in My Library and are in this project now}}",
+      ),
+      reference: msg(
+        "{count, plural, one {{shown} reference was already in My Library and is in this project now} other {{shown} references were already in My Library and are in this project now}}",
+      ),
+    },
+    note: msg(
+      "{count, plural, one {{shown} was already in My Library and is in this project now} other {{shown} were already in My Library and are in this project now}}",
+    ),
+  },
+  inLibrary: {
+    headline: {
+      pdf: msg(
+        "{count, plural, one {{shown} PDF was already in My Library} other {{shown} PDFs were already in My Library}}",
+      ),
+      reference: msg(
+        "{count, plural, one {{shown} reference was already in My Library} other {{shown} references were already in My Library}}",
+      ),
+    },
+    note: msg(
+      "{count, plural, one {{shown} was already in My Library} other {{shown} were already in My Library}}",
+    ),
+  },
+} as const satisfies Record<string, { headline: Record<Noun, string>; note: string }>;
+
+const REVIEW_NOTES = {
+  project: msg(
+    "{count, plural, one {{shown} may already be in this project and was not imported} other {{shown} may already be in this project and were not imported}}",
+  ),
+  library: msg(
+    "{count, plural, one {{shown} may already be in My Library and was not imported} other {{shown} may already be in My Library and were not imported}}",
+  ),
+} as const satisfies Record<Place, string>;
 
 /** What a finished import did, counted from its items, with the reference file's exceptions. */
-export function describeImport(input: ImportReceiptInput): ImportReceipt {
+export function describeImport(
+  input: ImportReceiptInput,
+  resolve: MessageResolver = m,
+): ImportReceipt {
   const { operation, outcome, referenceFile } = input;
   const target: ImportTarget = !operation
     ? input.target
@@ -162,9 +312,9 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
       : operation.pinInstanceId
         ? "project"
         : "library";
-  const pdfs = (operation?.intake ?? input.intake) === "local-pdf";
-  const noun = (count: number) =>
-    countOf(count, pdfs ? "PDF" : "reference", pdfs ? "PDFs" : "references");
+  const noun: Noun = (operation?.intake ?? input.intake) === "local-pdf" ? "pdf" : "reference";
+  const pdfs = noun === "pdf";
+  const place: Place = target === "project-folder" ? "project" : "library";
   const items = operation?.items ?? [];
   let fresh = 0;
   let fromLibrary = 0;
@@ -184,7 +334,7 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
       if (item.sourceId) freshIds.push(item.sourceId);
     } else if (item.state === "failed") {
       failed += 1;
-      failures.push(item.message ?? "It could not be imported.");
+      failures.push(item.message ?? resolve(IMPORT_LABELS.itemFailed));
     } else if (item.state === "pending") {
       unprocessed += 1;
     } else if (!item.duplicateKind || !isExactSourceDuplicate(item.duplicateKind)) {
@@ -214,85 +364,70 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
   else inLibrary += priorPresent;
 
   const present = [
-    { count: here, place: (count: number) => `${were(count)} already in this project` },
-    {
-      count: pinned,
-      place: (count: number) =>
-        count === 1
-          ? "was already in My Library and is in this project now"
-          : "were already in My Library and are in this project now",
-    },
-    { count: inLibrary, place: (count: number) => `${were(count)} already in My Library` },
+    { count: here, copy: PRESENT.here },
+    { count: pinned, copy: PRESENT.pinned },
+    { count: inLibrary, copy: PRESENT.inLibrary },
   ].filter((entry) => entry.count > 0);
 
   const notes: string[] = [];
   let headline: string;
   const added = fresh + fromLibrary;
-  const attachedTo = (count: number) =>
-    `added to ${count === 1 ? "its source" : "their sources"}, already in ${target === "project-folder" ? "this project" : "My Library"}`;
   if (referenceFile && referenceFile.report.entryCount === 0) {
-    headline = `No references found in ${referenceFile.name}`;
+    headline = resolve(IMPORT_LABELS.noReferences, { name: referenceFile.name });
   } else if (added > 0) {
     headline =
       target === "library"
-        ? `${noun(fresh)} imported and added to My Library`
+        ? resolve(ADDED_HEADLINES.library[noun], amount(fresh))
         : fromLibrary === 0
-          ? `${noun(fresh)} imported and added to this project`
+          ? resolve(ADDED_HEADLINES.project[noun], amount(fresh))
           : fresh === 0
-            ? `${noun(fromLibrary)} added to this project from My Library`
-            : `${noun(added)} added to this project: ${fresh.toLocaleString()} imported, ${fromLibrary.toLocaleString()} already in My Library`;
+            ? resolve(ADDED_HEADLINES.fromLibrary[noun], amount(fromLibrary))
+            : resolve(ADDED_HEADLINES.mixed[noun], {
+                ...amount(added),
+                fresh: fresh.toLocaleString(),
+                fromLibrary: fromLibrary.toLocaleString(),
+              });
   } else if (attached > 0) {
-    headline = `${noun(attached)} ${attachedTo(attached)}`;
+    headline = resolve(ATTACHED.headline[place][noun], amount(attached));
   } else if (present.length > 0) {
     const [first] = present.splice(0, 1);
-    headline = `${noun(first!.count)} ${first!.place(first!.count)}`;
+    headline = resolve(first!.copy.headline[noun], amount(first!.count));
   } else if (operation?.state === "cancelled") {
-    headline = "The import was stopped before anything was imported";
+    headline = resolve(IMPORT_LABELS.stoppedBeforeAnything);
   } else {
     headline = referenceFile
-      ? `Nothing was imported from ${referenceFile.name}`
-      : "Nothing was imported";
+      ? resolve(IMPORT_LABELS.nothingFrom, { name: referenceFile.name })
+      : resolve(IMPORT_LABELS.nothing);
   }
   if (added > 0 && attached > 0) {
-    notes.push(`${attached.toLocaleString()} ${were(attached)} ${attachedTo(attached)}`);
+    notes.push(resolve(ATTACHED.note[place], amount(attached)));
   }
-  notes.push(
-    ...present.map((entry) => `${entry.count.toLocaleString()} ${entry.place(entry.count)}`),
-  );
+  notes.push(...present.map((entry) => resolve(entry.copy.note, amount(entry.count))));
   // What a PDF import could not find is said here, not left for the person to come across.
   const toCheck = pdfs && input.detailsMissing ? freshIds.filter(input.detailsMissing) : [];
   if (toCheck.length > 0) {
-    notes.push(
-      `${toCheck.length.toLocaleString()} ${toCheck.length === 1 ? "has" : "have"} details Scient could not find: check ${toCheck.length === 1 ? "it" : "them"}`,
-    );
+    notes.push(resolve(IMPORT_LABELS.toCheck, amount(toCheck.length)));
   }
   // Kept as its own source; Possible duplicates offers the merge.
   const versions = input.hasOtherVersion ? freshIds.filter(input.hasOtherVersion).length : 0;
   if (versions > 0) {
-    notes.push(
-      `${versions.toLocaleString()} may be another version of a source already here (a preprint and its published paper): see Possible duplicates`,
-    );
+    notes.push(resolve(IMPORT_LABELS.versions, amount(versions)));
   }
   const file =
     referenceFile && referenceFile.report.entryCount > 0
-      ? referenceFileNotes({
-          report: referenceFile.report,
-          items,
-          sourceTitle: input.sourceTitle,
-        })
+      ? referenceFileNotes(
+          {
+            report: referenceFile.report,
+            items,
+            sourceTitle: input.sourceTitle,
+          },
+          resolve,
+        )
       : { notes: [], details: [] };
   notes.push(...file.notes);
-  if (review > 0) {
-    notes.push(
-      `${review.toLocaleString()} may already be in ${target === "project-folder" ? "this project" : "My Library"} and ${were(review)} not imported`,
-    );
-  }
-  if (failed > 0) notes.push(`${failed.toLocaleString()} could not be imported`);
-  if (unprocessed > 0) {
-    notes.push(
-      `The import was stopped; ${unprocessed.toLocaleString()} ${were(unprocessed)} not imported`,
-    );
-  }
+  if (review > 0) notes.push(resolve(REVIEW_NOTES[place], amount(review)));
+  if (failed > 0) notes.push(resolve(IMPORT_LABELS.failed, amount(failed)));
+  if (unprocessed > 0) notes.push(resolve(IMPORT_LABELS.unprocessed, amount(unprocessed)));
   return {
     tone: failed > 0 ? "error" : added > 0 ? "success" : "info",
     headline,

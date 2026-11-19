@@ -1,3 +1,7 @@
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
+
 export interface DroppedProjectFolderData {
   readonly files: Iterable<File>;
   readonly items: Iterable<{
@@ -39,7 +43,7 @@ export function resolveDroppedProjectFolder(
 ): DroppedProjectFolderResult {
   const items = Array.from(data.items).filter((item) => item.kind === "file");
   const files = Array.from(data.files);
-  if (items.length > 1 || files.length > 1) return { error: "Drop one folder at a time." };
+  if (items.length > 1 || files.length > 1) return { error: m(msg("Drop one folder at a time.")) };
   const item = items[0];
   let entry: { readonly isDirectory: boolean; readonly isFile: boolean } | null = null;
   try {
@@ -47,10 +51,10 @@ export function resolveDroppedProjectFolder(
   } catch {
     entry = null;
   }
-  if (entry?.isFile) return { error: "Drop a folder, not a file." };
+  if (entry?.isFile) return { error: m(msg("Drop a folder, not a file.")) };
   const file = item?.getAsFile() ?? files[0] ?? null;
-  if (!file) return { error: "Could not read the dropped folder. Use browse instead." };
+  if (!file) return { error: m(msg("Could not read the dropped folder. Use browse instead.")) };
   const resolved = getPathForFile(file);
-  if (!resolved) return { error: "Could not read the folder path. Use browse instead." };
+  if (!resolved) return { error: m(msg("Could not read the folder path. Use browse instead.")) };
   return { path: resolved };
 }

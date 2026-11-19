@@ -1,10 +1,13 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import type { ScientRichFenceContextMenuAction } from "~/scient/presentation/RichFenceSourceActions";
 
 const RICH_FENCE_CONTEXT_MENU_ITEMS = [
-  { id: "edit-source", label: "Edit source" },
-  { id: "copy-source", label: "Copy source" },
+  { id: "edit-source", label: msg("Edit source") },
+  { id: "copy-source", label: msg("Copy source") },
 ] as const satisfies readonly ContextMenuItem<ScientRichFenceContextMenuAction>[];
 
 export function showScientRichFenceContextMenu(
@@ -14,5 +17,8 @@ export function showScientRichFenceContextMenu(
     position: { readonly x: number; readonly y: number },
   ) => Promise<ScientRichFenceContextMenuAction | null>,
 ): Promise<ScientRichFenceContextMenuAction | null> {
-  return showContextMenu(RICH_FENCE_CONTEXT_MENU_ITEMS, position);
+  return showContextMenu(
+    RICH_FENCE_CONTEXT_MENU_ITEMS.map((item) => ({ ...item, label: m(item.label) })),
+    position,
+  );
 }

@@ -1,8 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import { msg } from "gt-react";
 import { useEffect, useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 
 import { markdownQuote, type DocumentQuote } from "./quoteFormat";
 
@@ -87,17 +89,20 @@ export async function quoteInDocument(
 ): Promise<void> {
   const target = latestTarget(environmentId, root);
   if (target?.insert(quote)) {
-    toastManager.add({ type: "success", title: `Quoted in ${target.label}` });
+    toastManager.add({
+      type: "success",
+      title: m(msg("Quoted in {document}", { document: target.label })),
+    });
     return;
   }
   try {
     await navigator.clipboard.writeText(markdownQuote(quote).markdown);
     toastManager.add({
       type: "info",
-      title: "Quote copied",
-      description: "Open a Markdown or LaTeX document to insert quotes there.",
+      title: m(msg("Quote copied")),
+      description: m(msg("Open a Markdown or LaTeX document to insert quotes there.")),
     });
   } catch {
-    toastManager.add({ type: "error", title: "Couldn't copy the quote" });
+    toastManager.add({ type: "error", title: m(msg("Couldn't copy the quote")) });
   }
 }

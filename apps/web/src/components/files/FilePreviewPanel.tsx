@@ -216,7 +216,7 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import { MEDIA_FAILURE_COPY, readOnlyNotice } from "~/scient/fileSurfaces/fileFailureCopy";
+import { mediaFailureCopy, readOnlyNotice } from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -364,6 +364,7 @@ function WorkspaceImagePreview(props: {
 }) {
   // SCIENT-FORK:START — persisted threads use the rooted tab-path locator; drafts use the upstream draft resource.
   const resource = workspaceViewerAssetResource(props, "workspace-file");
+  const messages = useMessages();
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -388,7 +389,8 @@ function WorkspaceImagePreview(props: {
         {/* A plain element receives the menu trigger's handlers and ref. */}
         <div className="flex min-h-0 flex-1 flex-col">
           <FileSurfaceFailure
-            {...MEDIA_FAILURE_COPY.image}
+            // SCIENT-FORK: failure copy in the active language.
+            {...mediaFailureCopy("image", messages)}
             retrying={retrying || (assetUrl._tag === "Failure" && assetUrl.waiting === true)}
             onRetry={() =>
               // Keep the failure (busy) until renewed authorization arrives, so
@@ -432,6 +434,7 @@ export function WorkspaceBrowserPreview(props: {
 }) {
   // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
   const resource = workspaceViewerAssetResource(props, "workspace-file", true);
+  const messages = useMessages();
   // SCIENT-FORK:END
   // SCIENT-FORK:START — each change the file's watcher reports re-mints the URL: a file outside
   // the workspace is signed by its inode, which an atomic replace changes. The HTML frame keeps
@@ -447,7 +450,8 @@ export function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <FileSurfaceFailure
-        {...MEDIA_FAILURE_COPY.document}
+        // SCIENT-FORK: failure copy in the active language.
+        {...mediaFailureCopy("document", messages)}
         retrying={assetUrl.waiting === true}
         onRetry={assetUrl.refresh}
       />
@@ -543,6 +547,8 @@ function WorkspaceAudioPreview(props: {
   /** Advances when the file's native watcher reports a change. */
   readonly refreshKey: number;
 }) {
+  // SCIENT-FORK: failure copy in the active language.
+  const messages = useMessages();
   const resource = workspaceAssetResource({
     kind: "media-file",
     threadRef: props.threadRef,
@@ -577,7 +583,8 @@ function WorkspaceAudioPreview(props: {
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
       <FileSurfaceFailure
-        {...MEDIA_FAILURE_COPY.audio}
+        // SCIENT-FORK: failure copy in the active language.
+        {...mediaFailureCopy("audio", messages)}
         retrying={retrying}
         onRetry={() => {
           setFailedUrl(null);
@@ -1942,6 +1949,7 @@ export default function FilePreviewPanel({
     markdownSnapshot,
     relativePath,
     hostOs,
+    m,
   );
   const compiledRevealRevision =
     latexSourceReveal?.id === revealRequestId ? latexSourceReveal.revision : null;
@@ -2759,7 +2767,8 @@ export default function FilePreviewPanel({
       ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          {readOnlyNotice(file.data.outsideWorkspace === true)}
+          {/* SCIENT-FORK: the read-only notice in the active language. */}
+          {readOnlyNotice(file.data.outsideWorkspace === true, m)}
         </div>
       ) : null}
       {previewPath &&

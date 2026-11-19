@@ -213,7 +213,7 @@
     },
     {
       "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
-      "anchor": "MEDIA_FAILURE_COPY",
+      "anchor": "mediaFailureCopy(kind, messages)",
       "purpose": "Use Scient's shared plain-language copy for attachment preview failures."
     },
     {
@@ -323,7 +323,7 @@
     },
     {
       "path": "apps/web/src/components/files/PreviewImageContent.tsx",
-      "anchor": "MEDIA_FAILURE_COPY.image",
+      "anchor": "mediaFailureCopy(\"image\", messages)",
       "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner. A TIFF draws the plane Scient's TIFF preview decoded and shows its value range and plane stepper."
     },
     {

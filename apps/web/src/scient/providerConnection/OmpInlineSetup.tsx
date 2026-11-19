@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 
 import { OhMyPiIcon } from "../../components/Icons";
@@ -14,6 +15,7 @@ export function OmpInlineSetup(props: {
   readonly onRepairSucceeded?: () => void;
   readonly composerController?: ProviderLifecycleController;
 }) {
+  const gt = useGT();
   if (props.composerController) {
     return (
       <ManagedRuntimeComposerSetup
@@ -22,7 +24,7 @@ export function OmpInlineSetup(props: {
         displayName={props.displayName}
         environmentId={props.environmentId}
         icon={OhMyPiIcon}
-        modelSetupHint="Add a custom model, or sign in to a model provider in Oh My Pi."
+        modelSetupHint={gt("Add a custom model, or sign in to a model provider in Oh My Pi.")}
         provider={props.provider}
       />
     );

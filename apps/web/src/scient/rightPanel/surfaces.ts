@@ -7,6 +7,9 @@ import {
   type PdfSourceDescriptor as PdfSourceDescriptorType,
 } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import {
   MAX_COMPUTE_CONTEXT_ID_LENGTH,
@@ -298,14 +301,19 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   return null;
 }
 
-export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): string {
+export function scientRightPanelSurfaceTitle(
+  surface: ScientRightPanelSurface,
+  resolve: MessageResolver = m,
+): string {
   switch (surface.module) {
     case "sources":
-      return "Library";
+      return resolve(msg("Library", { $context: "the reference library panel" }));
     case "new-tab":
-      return "New tab";
+      return resolve(msg("New tab"));
     case "compute":
-      return surface.contextId === undefined ? "Compute history" : "Console";
+      return surface.contextId === undefined
+        ? resolve(msg("Compute history"))
+        : resolve(msg("Console", { $context: "compute console panel" }));
     case "source-pdf":
       return surface.fileName;
     case "artifact":
@@ -320,6 +328,7 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
       return surface.title;
     case "overleaf-review": {
       const folder = surface.folder.replace(/\/+$/u, "");
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- product name, then a folder name
       return folder === "" ? "Overleaf" : `Overleaf · ${folder.slice(folder.lastIndexOf("/") + 1)}`;
     }
   }

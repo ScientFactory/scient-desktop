@@ -1,9 +1,11 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ComposerCitation, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { createContext, useEffect, useRef } from "react";
 import { create } from "zustand";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -88,8 +90,8 @@ export function useSideChatCitationInbox(
       if (cite(citation)) continue;
       toastManager.add({
         type: "warning",
-        title: "Could not add the quote",
-        description: "The side chat's input is not ready. Select the text and try again.",
+        title: m(msg("Could not add the quote")),
+        description: m(msg("The side chat's input is not ready. Select the text and try again.")),
       });
     }
   }, [cite, key, waiting]);

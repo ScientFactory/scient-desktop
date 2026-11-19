@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   RotateCw,
 } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
@@ -42,8 +43,12 @@ interface FileBreadcrumbNavigatorProps {
   readonly currentFileControl?: ReactNode;
 }
 
-function crumbBrowseLabel(crumb: FileBreadcrumb, projectName: string): string {
-  return crumb.kind === "project" ? `Browse ${projectName}` : `Browse ${crumb.path}`;
+function crumbBrowseLabel(
+  crumb: FileBreadcrumb,
+  projectName: string,
+  gt: ReturnType<typeof useGT>,
+): string {
+  return gt("Browse {name}", { name: crumb.kind === "project" ? projectName : crumb.path });
 }
 
 function PickerStatus(props: {
@@ -65,7 +70,7 @@ function PickerStatus(props: {
       {props.kind === "error" && props.onRetry ? (
         <MenuItem closeOnClick={false} onClick={props.onRetry}>
           <RotateCw />
-          Try again
+          <T>Try again</T>
         </MenuItem>
       ) : null}
     </>
@@ -81,18 +86,23 @@ function FileBreadcrumbPickerMenu(props: {
   readonly onOpenFile: (relativePath: string) => void;
   readonly onRequestClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [directoryPath, setDirectoryPath] = useState(props.initialDirectoryPath);
   const [visibleEntryLimit, setVisibleEntryLimit] = useState(FILE_BREADCRUMB_PICKER_PAGE_SIZE);
   const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
   const index =
     entriesQuery.data === null ? null : getFileBreadcrumbEntryIndex(entriesQuery.data.entries);
-  const listing = resolveFileBreadcrumbPickerListing({
-    index,
-    directoryPath,
-    error: entriesQuery.error,
-    isPending: entriesQuery.isPending,
-    truncated: entriesQuery.data?.truncated ?? false,
-  });
+  const listing = resolveFileBreadcrumbPickerListing(
+    {
+      index,
+      directoryPath,
+      error: entriesQuery.error,
+      isPending: entriesQuery.isPending,
+      truncated: entriesQuery.data?.truncated ?? false,
+    },
+    messages,
+  );
   const backTarget = fileBreadcrumbBackTarget(props.initialDirectoryPath, directoryPath);
   const directoryLabel = fileBreadcrumbDirectoryLabel(directoryPath, props.projectName);
   const visibleEntries =
@@ -109,7 +119,7 @@ function FileBreadcrumbPickerMenu(props: {
   return (
     <MenuPopup
       align="start"
-      aria-label={`${directoryLabel} contents`}
+      aria-label={gt("{folder} contents", { folder: directoryLabel })}
       className="w-72 max-w-[calc(100vw-1rem)]"
       side="bottom"
       sideOffset={6}
@@ -127,13 +137,13 @@ function FileBreadcrumbPickerMenu(props: {
           <>
             <MenuItem closeOnClick={false} onClick={() => browseDirectory(backTarget)}>
               <ChevronLeft />
-              Back
+              <T context="go to the parent folder">Back</T>
             </MenuItem>
             <MenuSeparator />
           </>
         ) : null}
         {listing.state === "loading" ? (
-          <PickerStatus kind="loading" message="Loading workspace files…" />
+          <PickerStatus kind="loading" message={gt("Loading workspace files…")} />
         ) : listing.state === "error" ? (
           <PickerStatus kind="error" message={listing.message} onRetry={entriesQuery.refresh} />
         ) : (
@@ -165,7 +175,7 @@ function FileBreadcrumbPickerMenu(props: {
                   {entry.kind === "directory" ? (
                     <ChevronRight aria-hidden className="ms-auto" />
                   ) : currentFile ? (
-                    <Check aria-label="Current file" className="ms-auto" />
+                    <Check aria-label={gt("Current file")} className="ms-auto" />
                   ) : null}
                 </MenuItem>
               );
@@ -178,7 +188,9 @@ function FileBreadcrumbPickerMenu(props: {
                 }
               >
                 <ChevronDown />
-                Show {Math.min(hiddenEntryCount, FILE_BREADCRUMB_PICKER_PAGE_SIZE)} more
+                {gt("Show {count} more", {
+                  count: Math.min(hiddenEntryCount, FILE_BREADCRUMB_PICKER_PAGE_SIZE),
+                })}
               </MenuItem>
             ) : null}
             {listing.message ? <PickerStatus kind="message" message={listing.message} /> : null}
@@ -197,6 +209,7 @@ export function FileBreadcrumbNavigator({
   onOpenFile,
   currentFileControl,
 }: FileBreadcrumbNavigatorProps) {
+  const gt = useGT();
   const [openCrumbPath, setOpenCrumbPath] = useState<string | null>(null);
   const breadcrumbs = fileBreadcrumbs(projectName, relativePath);
 
@@ -244,7 +257,7 @@ export function FileBreadcrumbNavigator({
                         render={
                           <button
                             type="button"
-                            aria-label={crumbBrowseLabel(crumb, projectName)}
+                            aria-label={crumbBrowseLabel(crumb, projectName, gt)}
                             className={cn(
                               "-mx-1 max-w-40 cursor-pointer truncate rounded-sm px-1 py-0.5 text-muted-foreground outline-none",
                               "hover:bg-accent/60 hover:text-foreground data-popup-open:bg-accent/60 data-popup-open:text-foreground",

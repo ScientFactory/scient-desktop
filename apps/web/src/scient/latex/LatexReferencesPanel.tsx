@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
@@ -57,6 +58,7 @@ function BibliographyFile(props: {
   update: (file: BibliographyDocument) => void;
   callbacks?: ReferenceFileCallbacks | undefined;
 }) {
+  const gt = useGT();
   const { environmentId, cwd, path } = props;
   const query = useProjectFileQuery(environmentId, cwd, path);
   const target = { environmentId, cwd, relativePath: path };
@@ -85,7 +87,7 @@ function BibliographyFile(props: {
   const needsAttention =
     snapshot !== null && (snapshot.conflict !== null || snapshot.error !== null);
   const saveError = needsAttention
-    ? `Could not save ${path}. Resolve the save in References.`
+    ? gt("Could not save {path}. Resolve the save in References.", { path })
     : null;
   const saved = useEffectEvent(() => {
     props.callbacks?.onSaved();
@@ -114,9 +116,11 @@ function BibliographyFile(props: {
     saveError ??
     (admissionError !== null
       ? (documentFailureReason(admissionError) ??
-        (admissionError instanceof Error ? admissionError.message : `Could not open ${path}.`))
+        (admissionError instanceof Error
+          ? admissionError.message
+          : gt("Could not open {path}.", { path })))
       : query.error) ??
-    (disk?.truncated ? "This file is too large to edit here." : null);
+    (disk?.truncated ? gt("This file is too large to edit here.") : null);
   const source = snapshot?.draftSource ?? disk?.contents ?? "";
   const readOnly = lease === null || snapshot?.editingBlocked === true;
   const update = props.update;
@@ -250,6 +254,8 @@ export function LatexReferencesPanel(props: {
   fileCallbacks?: ReferenceFileCallbacks | undefined;
   canOpenFiles: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [files, setFiles] = useState<Record<string, BibliographyDocument>>({});
   const [query, setQuery] = useState("");
   const [documentId, setDocumentId] = useState("");
@@ -317,7 +323,10 @@ export function LatexReferencesPanel(props: {
     : (documents.find((document) => document.id === documentId) ?? documents[0]);
   const missingDestination =
     draft && !target
-      ? `${draft.documentPath} is no longer part of this document. Your entry draft is retained; restore that destination or cancel the draft.`
+      ? gt(
+          "{path} is no longer part of this document. Your entry draft is retained; restore that destination or cancel the draft.",
+          { path: draft.documentPath },
+        )
       : null;
   const raw = draft ? draftSource(draft) : null;
   const dirty = !!draft && (draft.isNew || raw !== draft.entry.raw);
@@ -341,7 +350,7 @@ export function LatexReferencesPanel(props: {
     if (dirty) {
       setHandledRequest(props.request.sequence);
       if (props.request.key && props.request.key !== draft?.key)
-        setNotice("Save or cancel the current entry before opening another reference.");
+        setNotice(gt("Save or cancel the current entry before opening another reference."));
     } else {
       const selected = props.request.key
         ? candidates.find(({ entry }) => entry.key === props.request.key)
@@ -366,7 +375,7 @@ export function LatexReferencesPanel(props: {
           setDraft(null);
           if (props.request.key) {
             setQuery(props.request.key);
-            setNotice(`No bibliography entry was found for ${props.request.key}.`);
+            setNotice(gt("No bibliography entry was found for {key}.", { key: props.request.key }));
           }
         }
         setFocusRequest((request) => request + 1);
@@ -401,7 +410,7 @@ export function LatexReferencesPanel(props: {
       : null;
   const choose = (document: BibliographyDocument, entry: BibliographyEntry) => {
     if (dirty) {
-      setNotice("Save or cancel this entry before selecting another.");
+      setNotice(gt("Save or cancel this entry before selecting another."));
       return;
     }
     setDocumentId(document.id);
@@ -414,7 +423,7 @@ export function LatexReferencesPanel(props: {
   const add = () => {
     if (!target || target.readOnly || props.disabled) return;
     if (dirty) {
-      setNotice("Save or cancel this entry before adding another.");
+      setNotice(gt("Save or cancel this entry before adding another."));
       return;
     }
     const keys = new Set(candidates.map(({ entry }) => entry.key));
@@ -451,7 +460,10 @@ export function LatexReferencesPanel(props: {
       )
     ) {
       setNotice(
-        `Citation key ${key} appears more than once in ${target.path}. Repair it in Source before saving. Your entry draft is retained.`,
+        gt(
+          "Citation key {key} appears more than once in {path}. Repair it in Source before saving. Your entry draft is retained.",
+          { key, path: target.path },
+        ),
       );
       return;
     }
@@ -468,7 +480,11 @@ export function LatexReferencesPanel(props: {
                 normalizedBibliographyEntryText(source)),
         ))
     ) {
-      setNotice(parsed.error ?? "Use a unique citation key without spaces or LaTeX commands.");
+      setNotice(
+        parsed.error
+          ? messages(parsed.error)
+          : gt("Use a unique citation key without spaces or LaTeX commands."),
+      );
       return;
     }
     const next = remove
@@ -488,7 +504,7 @@ export function LatexReferencesPanel(props: {
           : replaceBibliographyEntry(draft.original, draft.entry, source);
     if (next === null) {
       setNotice(
-        "Check the entry’s LaTeX/BibTeX syntax and keep the existing citation key unchanged.",
+        gt("Check the entry’s LaTeX/BibTeX syntax and keep the existing citation key unchanged."),
       );
       return;
     }
@@ -501,14 +517,18 @@ export function LatexReferencesPanel(props: {
           setRemoveConfirm(false);
           props.onSaved();
           setNotice(
-            remove ? "Reference removed. Existing citations keep their keys." : "Reference saved.",
+            remove
+              ? gt("Reference removed. Existing citations keep their keys.")
+              : gt("Reference saved."),
           );
         } else
           setNotice(
-            "The file changed before the reference was saved, or the save failed. Your entry draft is retained.",
+            gt(
+              "The file changed before the reference was saved, or the save failed. Your entry draft is retained.",
+            ),
           );
       } catch {
-        setNotice("Could not save this reference. Your draft is retained.");
+        setNotice(gt("Could not save this reference. Your draft is retained."));
       }
     }, setSaving);
   };
@@ -530,28 +550,30 @@ export function LatexReferencesPanel(props: {
   const panel = props.open ? (
     <aside
       className="scient-latex-references-panel"
-      aria-label="References"
+      aria-label={gt("References")}
       data-dock-command-scope="latex"
     >
       <div className="scient-latex-references-header">
-        <strong>References</strong>
+        <strong>
+          <T>References</T>
+        </strong>
         <Button variant="ghost" size="sm" onClick={props.onClose}>
-          Close
+          <T>Close</T>
         </Button>
       </div>
       <div className="scient-latex-references-content">
         <Input
           ref={input}
-          aria-label="Search bibliography entries"
-          placeholder="Search title, author, year or key…"
+          aria-label={gt("Search bibliography entries")}
+          placeholder={gt("Search title, author, year or key…")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         {documents.length > 0 ? (
           <label>
-            Add to
+            <T>Add to</T>
             <LatexSelect
-              aria-label="Bibliography destination"
+              aria-label={gt("Bibliography destination")}
               value={target?.id ?? ""}
               disabled={dirty || saving}
               onValueChange={(value) => {
@@ -561,16 +583,20 @@ export function LatexReferencesPanel(props: {
               }}
               options={documents.map((document) => ({
                 value: document.id,
-                label: `${document.path} · ${document.kind === "bibtex" ? ".bib" : "manual entries"}`,
+                label:
+                  document.kind === "bibtex"
+                    ? // oxlint-disable-next-line t3code/no-untranslated-copy -- a file path and its extension
+                      `${document.path} · .bib`
+                    : gt("{path} · manual entries", { path: document.path }),
               }))}
             />
           </label>
         ) : null}
         {containers.length > 1 ? (
           <label>
-            Bibliography block
+            <T>Bibliography block</T>
             <LatexSelect
-              aria-label="Manual bibliography block"
+              aria-label={gt("Manual bibliography block")}
               value={Math.min(containerIndex, containers.length - 1)}
               disabled={dirty || saving}
               onValueChange={(value) => {
@@ -579,26 +605,30 @@ export function LatexReferencesPanel(props: {
               }}
               options={containers.map((_container, index) => ({
                 value: String(index),
-                label: `Bibliography ${index + 1}`,
+                label: gt("Bibliography {number}", { number: index + 1 }),
               }))}
             />
           </label>
         ) : null}
         <div className="scient-latex-references-actions">
           <Button size="sm" disabled={!writable || !!parserError || dirty || saving} onClick={add}>
-            Add reference
+            <T>Add reference</T>
           </Button>
           {documents.length === 0 && !paths.length ? (
             <Button size="sm" variant="outline" disabled={props.disabled} onClick={props.onSetup}>
-              Set up bibliography…
+              <T>Set up bibliography…</T>
             </Button>
           ) : null}
         </div>
         {paths.length > 24 ? (
-          <p role="status">The first 24 linked bibliography files are shown.</p>
+          <p role="status">
+            <T>The first 24 linked bibliography files are shown.</T>
+          </p>
         ) : null}
         {paths.length && (!props.environmentId || !props.cwd) ? (
-          <p role="status">Connect to the project to read its .bib files.</p>
+          <p role="status">
+            <T>Connect to the project to read its .bib files.</T>
+          </p>
         ) : null}
         {props.documentPersistence?.map((persistence) => (
           <ScientMarkdownPersistenceNotice
@@ -609,7 +639,10 @@ export function LatexReferencesPanel(props: {
         {indexed.map(({ document, parsed }) =>
           document.error || parsed.error ? (
             <div role="alert" key={document.id}>
-              {document.path}: {document.error ?? parsed.error}
+              {gt("{path}: {error}", {
+                path: document.path,
+                error: document.error ?? messages(parsed.error!),
+              })}
               {document.persistence ? (
                 <ScientMarkdownPersistenceNotice persistence={document.persistence} />
               ) : null}
@@ -619,7 +652,7 @@ export function LatexReferencesPanel(props: {
                 disabled={document.kind === "bibtex" && !props.canOpenFiles}
                 onClick={() => props.onOpenSource(document.id, document.path)}
               >
-                Open file in Source
+                <T>Open file in Source</T>
               </Button>
             </div>
           ) : null,
@@ -627,7 +660,7 @@ export function LatexReferencesPanel(props: {
         <div
           className="scient-latex-references-list"
           role="group"
-          aria-label="Bibliography entries"
+          aria-label={gt("Bibliography entries")}
         >
           {filtered.slice(0, 200).map(({ document, entry }) => (
             <button
@@ -648,14 +681,16 @@ export function LatexReferencesPanel(props: {
           {!filtered.length ? (
             <p>
               {paths.length && !documents.some((document) => document.kind === "bibtex")
-                ? "Reading linked bibliography…"
+                ? gt("Reading linked bibliography…")
                 : candidates.length
-                  ? "No matching bibliography entries."
-                  : "No bibliography entries yet."}
+                  ? gt("No matching bibliography entries.")
+                  : gt("No bibliography entries yet.")}
             </p>
           ) : null}
           {filtered.length > 200 ? (
-            <p>Showing the first 200 matches. Refine your search to find an entry.</p>
+            <p>
+              <T>Showing the first 200 matches. Refine your search to find an entry.</T>
+            </p>
           ) : null}
         </div>
         {draft ? (
@@ -666,27 +701,27 @@ export function LatexReferencesPanel(props: {
               void apply();
             }}
           >
-            <h3>{draft.isNew ? "New reference" : "Edit reference"}</h3>
+            <h3>{draft.isNew ? gt("New reference") : gt("Edit reference")}</h3>
             <label>
-              Citation key
+              <T>Citation key</T>
               <Input
                 value={draft.key}
                 readOnly={!draft.isNew}
                 disabled={!writable || saving}
                 onChange={(event) => change({ key: event.target.value })}
-                aria-label="Reference citation key"
+                aria-label={gt("Reference citation key")}
               />
             </label>
             {!draft.isNew ? (
               <p className="scient-latex-references-help">
-                The key stays fixed so existing citations keep working.
+                <T>The key stays fixed so existing citations keep working.</T>
               </p>
             ) : null}
             {draft.sourceMode ? (
               <label>
-                Entry source
+                <T>Entry source</T>
                 <textarea
-                  aria-label="Bibliography entry source"
+                  aria-label={gt("Bibliography entry source")}
                   value={draft.raw}
                   disabled={!writable || saving}
                   rows={10}
@@ -696,7 +731,7 @@ export function LatexReferencesPanel(props: {
             ) : draft.entry.kind === "bibitem" ? (
               <>
                 <label>
-                  Custom label (optional)
+                  <T>Custom label (optional)</T>
                   <Input
                     value={draft.label}
                     disabled={!writable || saving}
@@ -704,9 +739,9 @@ export function LatexReferencesPanel(props: {
                   />
                 </label>
                 <label>
-                  Entry text (LaTeX)
+                  <T>Entry text (LaTeX)</T>
                   <textarea
-                    aria-label="Reference entry text"
+                    aria-label={gt("Reference entry text")}
                     value={draft.body}
                     rows={6}
                     disabled={!writable || saving}
@@ -714,15 +749,17 @@ export function LatexReferencesPanel(props: {
                   />
                 </label>
                 <p className="scient-latex-references-help">
-                  Formatting such as \emph&#123;title&#125; is preserved.
+                  <T>
+                    Formatting such as <Var>{"\\emph{title}"}</Var> is preserved.
+                  </T>
                 </p>
               </>
             ) : (
               <>
                 <label>
-                  Entry type
+                  <T>Entry type</T>
                   <LatexSelect
-                    aria-label="Bibliography entry type"
+                    aria-label={gt("Bibliography entry type")}
                     value={draft.type}
                     disabled={!writable || saving}
                     onValueChange={(type) => change({ type })}
@@ -736,7 +773,7 @@ export function LatexReferencesPanel(props: {
                   <label key={name}>
                     {name[0]!.toUpperCase() + name.slice(1)}
                     <Input
-                      aria-label={`Reference ${name}`}
+                      aria-label={gt("Reference {field}", { field: name })}
                       value={draft.fields[name] ?? ""}
                       disabled={
                         !writable ||
@@ -750,7 +787,9 @@ export function LatexReferencesPanel(props: {
                   </label>
                 ))}
                 <details>
-                  <summary>More fields</summary>
+                  <summary>
+                    <T>More fields</T>
+                  </summary>
                   {entryExtraFields.map((name) => (
                     <label key={name}>
                       {name}
@@ -769,8 +808,10 @@ export function LatexReferencesPanel(props: {
                   ))}
                 </details>
                 <p className="scient-latex-references-help">
-                  TeX formatting and other fields are preserved. Fields defined by BibTeX
-                  expressions can be edited in Entry source.
+                  <T>
+                    TeX formatting and other fields are preserved. Fields defined by BibTeX
+                    expressions can be edited in Entry source.
+                  </T>
                 </p>
               </>
             )}
@@ -782,7 +823,7 @@ export function LatexReferencesPanel(props: {
                 disabled={raw === null || saving}
                 onClick={() => change({ sourceMode: true, raw: raw ?? "" })}
               >
-                Edit entry source
+                <T>Edit entry source</T>
               </Button>
             ) : null}
             {missingDestination || notice ? (
@@ -790,7 +831,7 @@ export function LatexReferencesPanel(props: {
             ) : null}
             <div className="scient-latex-references-actions">
               <Button size="sm" type="submit" disabled={!writable || saving || !dirty}>
-                {saving ? "Saving…" : "Save reference"}
+                {saving ? gt("Saving…") : gt("Save reference")}
               </Button>
               <Button
                 size="sm"
@@ -803,7 +844,7 @@ export function LatexReferencesPanel(props: {
                   setNotice(null);
                 }}
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
               {!draft.isNew ? (
                 <Button
@@ -813,13 +854,18 @@ export function LatexReferencesPanel(props: {
                   disabled={!writable || saving || dirty}
                   onClick={() => setRemoveConfirm(true)}
                 >
-                  Remove…
+                  <T>Remove…</T>
                 </Button>
               ) : null}
             </div>
             {removeConfirm ? (
               <div role="alert" className="scient-latex-references-removal">
-                <p>Remove {draft.entry.key}? Citations using this key will become unresolved.</p>
+                <p>
+                  <T>
+                    Remove <Var>{draft.entry.key}</Var>? Citations using this key will become
+                    unresolved.
+                  </T>
+                </p>
                 <Button
                   type="button"
                   variant="destructive"
@@ -827,7 +873,7 @@ export function LatexReferencesPanel(props: {
                   disabled={saving}
                   onClick={() => void apply(true)}
                 >
-                  Remove reference
+                  <T>Remove reference</T>
                 </Button>
                 <Button
                   type="button"
@@ -836,7 +882,7 @@ export function LatexReferencesPanel(props: {
                   disabled={saving}
                   onClick={() => setRemoveConfirm(false)}
                 >
-                  Keep reference
+                  <T>Keep reference</T>
                 </Button>
               </div>
             ) : null}

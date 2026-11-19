@@ -6,8 +6,10 @@ import {
   type PluginKeyTarget,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useProjects } from "~/state/entities";
@@ -19,15 +21,23 @@ import { DetailSection } from "./ExtensionDetailPages";
 import { bindPluginKey, extensionsPluginKeys, unbindPluginKey } from "./extensionsState";
 
 // oxlint-disable-next-line t3code/no-em-dash-copy -- Explicit product copy for this feature.
-const SCIENT_KEYS_UNAVAILABLE = "Needs a key — not available for Scient Agent yet";
+const SCIENT_KEYS_UNAVAILABLE = msg("Needs a key — not available for Scient Agent yet");
 
-export function pluginKeyStatusLabel(state: PluginKeyState | null, provider?: ServerProvider) {
+export function pluginKeyStatusLabel(
+  state: PluginKeyState | null,
+  provider?: ServerProvider,
+  resolve: MessageResolver = m,
+) {
   if (!state || !state.keys.length) return null;
   if (state.commandLineBlocked)
-    // oxlint-disable-next-line t3code/no-em-dash-copy -- Explicit product explanation for refused secret argv.
-    return "Needs a key — this plugin passes its key on the command line, which Scient doesn't allow";
-  if (provider?.driver === "scient") return SCIENT_KEYS_UNAVAILABLE;
-  return state.status === "needs-key" ? "Needs a key" : null;
+    return resolve(
+      msg(
+        // oxlint-disable-next-line t3code/no-em-dash-copy -- Explicit product explanation for refused secret argv.
+        "Needs a key — this plugin passes its key on the command line, which Scient doesn't allow",
+      ),
+    );
+  if (provider?.driver === "scient") return resolve(SCIENT_KEYS_UNAVAILABLE);
+  return state.status === "needs-key" ? resolve(msg("Needs a key")) : null;
 }
 
 export function usePluginKeys(input: ExtensionPluginContentsInput) {
@@ -65,6 +75,8 @@ export function PluginKeys({
   readonly pluginName: string;
   readonly provider?: ServerProvider | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId, canWrite } = useExtensionsEnvironment();
   const keys = usePluginKeys(input);
   const accounts = useAccounts(environmentId);
@@ -112,16 +124,18 @@ export function PluginKeys({
     }
     setBusy(false);
   };
-  const label = pluginKeyStatusLabel(keys.data, provider);
+  const label = pluginKeyStatusLabel(keys.data, provider, messages);
   return (
-    <DetailSection title="Keys" count={keys.data.keys.length} status={label}>
+    <DetailSection title={gt("Keys")} count={keys.data.keys.length} status={label}>
       {keys.data.keys.map((key) => (
         <div key={key.envName} className="flex min-h-14 flex-wrap items-center gap-3 px-3 py-3">
           <span className="min-w-0 flex-1 text-sm">{key.envName}</span>
-          <span className="text-sm text-muted-foreground">Uses</span>
+          <span className="text-sm text-muted-foreground">
+            <T>Uses</T>
+          </span>
           <div className="w-52">
             <ApiKeyAccountPicker
-              aria-label={`${key.envName} account`}
+              aria-label={gt("{name} account", { name: key.envName })}
               size="sm"
               disabled={!canBind || busy}
               value={selection?.envName === key.envName ? selection.ref : (key.accountRef ?? "")}
@@ -136,7 +150,7 @@ export function PluginKeys({
                 })),
                 ...(key.accountRef &&
                 !keys.data!.accounts.some((account) => account.ref === key.accountRef)
-                  ? [{ value: key.accountRef, name: "Unavailable account" }]
+                  ? [{ value: key.accountRef, name: gt("Unavailable account") }]
                   : []),
               ]}
               onChange={(event) => void change(key.envName, event.target.value)}
@@ -148,7 +162,7 @@ export function PluginKeys({
             disabled={!canBind || busy || !accounts.canWrite}
             onClick={() => setAdding(key.envName)}
           >
-            Add key
+            <T>Add key</T>
           </Button>
         </div>
       ))}

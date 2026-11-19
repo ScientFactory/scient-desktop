@@ -6,6 +6,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useGT } from "gt-react";
 
 import { ProjectFilePickerForTarget } from "~/components/files/ProjectFilePicker";
 import { CommandDialog, CommandDialogPopup } from "~/components/ui/command";
@@ -30,6 +31,7 @@ export function ComputeSavedFileAction(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onSubmitted: (execution: ComputeExecutionRecord) => void;
 }) {
+  const gt = useGT();
   const { open, onOpenChange: setOpen } = props;
   const readFile = useAtomQueryRunner(projectEnvironment.readFile, {
     reportFailure: false,
@@ -64,8 +66,9 @@ export function ComputeSavedFileAction(props: {
     })().catch(async (error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to run saved file",
-        description: error instanceof Error ? error.message : "The file could not be submitted.",
+        title: gt("Unable to run saved file"),
+        description:
+          error instanceof Error ? error.message : gt("The file could not be submitted."),
       });
     });
   };
@@ -74,14 +77,14 @@ export function ComputeSavedFileAction(props: {
       <CommandDialog open={open} onOpenChange={setOpen}>
         {open ? (
           <CommandDialogPopup
-            aria-label="Run saved file"
+            aria-label={gt("Run saved file")}
             padding="none"
             className="overflow-hidden"
             onBackdropPointerDown={() => setOpen(false)}
           >
             <ProjectFilePickerForTarget
               setOpen={setOpen}
-              actionLabel="Run saved file"
+              actionLabel={gt("Run saved file")}
               target={{
                 environmentId: props.environmentId,
                 cwd: props.cwd,

@@ -1,9 +1,11 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import type { ProjectFilePublicationAttention } from "@t3tools/contracts";
 import type {
   DocumentRenameIntent,
   MarkdownDraftCheckpointStore,
 } from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
+import { m } from "~/i18n/messages";
 import type { MarkdownPersistenceTarget } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 
 import {
@@ -357,7 +359,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     const attention = entry.coordinator.publicationAttention;
     if (attention !== null) return { kind: "save-failed", message: attention.message };
     if (entry.coordinator.getRenameIntent() !== null)
-      return { kind: "save-failed", message: "A rename of this file has not finished." };
+      return { kind: "save-failed", message: m(msg("A rename of this file has not finished.")) };
     const failure = entry.lastFailure;
     if (failure !== null && "result" in failure) {
       const kind = activeTransport(entry).classifyFailure?.(failure.result.cause);

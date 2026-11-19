@@ -67,6 +67,7 @@ self.addEventListener("message", (event: MessageEvent<TiffWorkerRequest>) => {
       if (opened?.src === request.src) opened = null;
       post({
         id: request.id,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- a worker has no UI language; decoder errors are English like tiffPreview.ts
         error: cause instanceof Error ? cause.message : "Could not decode this image.",
         kind: isTiffPreviewError(cause) ? cause.kind : "format",
       });

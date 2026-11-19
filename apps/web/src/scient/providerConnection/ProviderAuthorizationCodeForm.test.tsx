@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 describe("ProviderAuthorizationCodeDisclosure", () => {
   it("keeps manual code entry collapsed until requested", () => {
     const markup = renderToStaticMarkup(
