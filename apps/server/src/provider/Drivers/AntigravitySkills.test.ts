@@ -213,6 +213,39 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  // SCIENT-FORK: a profile config Scient cannot read leaves out only the profile's plugins.
+  it.effect("keeps other skills when the profile's plugin config is too large", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const profileDirectory = path.join(workspace.userHome, "t3", "providers", "antigravity", "p");
+      const plugins = path.join(profileDirectory, "config", "plugins");
+      yield* writeSkill(
+        path.join(plugins, "demo", "skills", "demo-skill"),
+        "---\nname: demo-skill\ndescription: From demo.\n---\n",
+      );
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "demo", "plugin.json"),
+        JSON.stringify({ name: "demo" }),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(profileDirectory, "config", "config.json"),
+        `{"padding":"${"x".repeat(1_000_000)}"}`,
+      );
+      yield* writeSkill(
+        path.join(workspace.cwd, ".agents", "skills", "review"),
+        "---\nname: review\ndescription: Project skill.\n---\n",
+      );
+      const input = { ...workspace, profileDirectory };
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
+        ["review"],
+      );
+    }),
+  );
+
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

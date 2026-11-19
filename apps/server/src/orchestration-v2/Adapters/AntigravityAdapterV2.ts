@@ -148,6 +148,14 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
+  // SCIENT-FORK:START — daemon commands tracked as background work. A later update can carry only
+  // the tool ID and status, so a tracked daemon is known by its ID until it ends.
+  const daemonToolCallIds = new Set<string>();
+  type ToolCall = Parameters<NonNullable<AcpAdapterV2Flavor["extractBackgroundTaskId"]>>[0];
+  const isDaemonCommand = (toolCall: ToolCall) =>
+    daemonToolCallIds.has(toolCall.toolCallId) ||
+    (toolCall.kind === "execute" && !antigravityCommandOutlivesPrompt(toolCall));
+  // SCIENT-FORK:END
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -282,15 +290,17 @@ export function makeAntigravityAcpAdapterFlavor(
     toolOutlivesPrompt: antigravityCommandOutlivesPrompt,
     // SCIENT-FORK:START — a daemon (a dev server) never reports its end, so it does not hold the
     // turn; tracking it as background work keeps its row running and gives Stop its process.
-    extractBackgroundTaskId: (toolCall) =>
-      toolCall.kind === "execute" &&
-      !antigravityCommandOutlivesPrompt(toolCall) &&
-      toolCall.status !== undefined &&
-      toolCall.status !== "pending"
-        ? toolCall.toolCallId
-        : undefined,
-    isPersistentBackgroundTool: (toolCall) =>
-      toolCall.kind === "execute" && !antigravityCommandOutlivesPrompt(toolCall),
+    extractBackgroundTaskId: (toolCall) => {
+      if (!isDaemonCommand(toolCall) || toolCall.status === undefined) return undefined;
+      if (toolCall.status === "pending") return undefined;
+      if (toolCall.status === "completed" || toolCall.status === "failed") {
+        daemonToolCallIds.delete(toolCall.toolCallId);
+      } else {
+        daemonToolCallIds.add(toolCall.toolCallId);
+      }
+      return toolCall.toolCallId;
+    },
+    isPersistentBackgroundTool: isDaemonCommand,
     // SCIENT-FORK:END
     // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
     // has ended. A message sent while a command runs leaves the command alone.

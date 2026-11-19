@@ -319,27 +319,30 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     fileSystem.readDirectory(profilePlugins),
     profilePlugins,
   );
-  // Only plugins to inspect need their preferences; an unreadable config must not hide other skills.
   if (profilePluginEntries !== undefined && profilePluginEntries.length > 0) {
+    // A config that cannot be read leaves out only these plugins, whose switches it holds; the
+    // other skills still load.
     const configPath = path.join(input.profileDirectory, "config", "config.json");
-    const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath);
-    if (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES)) {
-      return yield* new AntigravitySkillsProbeError({
-        reason: "scan-budget-exhausted",
-        path: configPath,
-      });
-    }
+    const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath).pipe(
+      Effect.orElseSucceed(() => null),
+    );
     const config =
-      configInfo?.type === "File"
-        ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath)
-        : undefined;
-    const preferences = config === undefined ? undefined : decodePluginPreferences(config);
+      configInfo === null ||
+      (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES))
+        ? null
+        : configInfo?.type === "File"
+          ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath).pipe(
+              Effect.orElseSucceed(() => null),
+            )
+          : undefined;
+    const preferences =
+      config === undefined || config === null ? undefined : decodePluginPreferences(config);
     const disabledPlugins = new Set(
       Object.entries(
         (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
       ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
     );
-    yield* scanPluginDirectory(profilePlugins, disabledPlugins);
+    if (config !== null) yield* scanPluginDirectory(profilePlugins, disabledPlugins);
   }
   // SCIENT-FORK:END
   yield* scanPluginDirectory(globalPlugins);

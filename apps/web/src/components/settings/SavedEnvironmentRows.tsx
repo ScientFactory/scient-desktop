@@ -65,7 +65,11 @@ import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
 import { readEnvironmentScope } from "~/state/session";
-import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
+import {
+  type EnvironmentPresentation,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "~/state/environments";
 import { APP_VERSION } from "~/branding";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -604,9 +608,11 @@ function ConfiguredCloudLinkRow({
   // Connect on; the switch shows the person's choice and the line below what setup is doing.
   const connectHost = useScientConnectHost(environmentId);
   // Turning on needs relay configuration permission; turning off works from anywhere. The
-  // desktop app always shows its computer's switch: only it can turn Scient Connect back on.
+  // desktop app always shows its own computer's switch: only it can turn Scient Connect back on.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const ownComputer = isElectron && environmentId === primaryEnvironmentId;
   const showSwitch =
-    (isElectron && connectHost !== null) || turnOn.kind !== "on-host" || managedTunnelActive;
+    (ownComputer && connectHost !== null) || turnOn.kind !== "on-host" || managedTunnelActive;
   const hostSwitchOn =
     connectHost !== null && !connectHost.off && connectHost.block?.reason !== "revoked";
   const hostDescription =

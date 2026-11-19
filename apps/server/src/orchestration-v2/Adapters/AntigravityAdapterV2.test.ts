@@ -1344,7 +1344,8 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
 
       yield* send({
         sessionUpdate: "tool_call_update",
-        ...command,
+        // An update can carry only the tool ID and status.
+        toolCallId: command.toolCallId,
         status: "completed",
         rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
       });
