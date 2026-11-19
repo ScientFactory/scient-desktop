@@ -39,7 +39,10 @@
       WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
     ${EndIf}
   !endif
-  ; SCIENT-FORK:START — compose conversation registration with shortcut recovery.
+  ; SCIENT-FORK:START — compose install-folder protection and conversation registration with shortcut recovery.
+  !ifmacrodef scientInstallFolderInstall
+    !insertmacro scientInstallFolderInstall
+  !endif
   !ifmacrodef scientConversationInstall
     !insertmacro scientConversationInstall
   !endif

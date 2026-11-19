@@ -12,6 +12,7 @@ import { scientDocumentPdfEnvironment } from "~/state/scientDocumentPdf";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { beginScientUiOperation } from "../analytics/client";
+import type { ScientUiFailureCategory } from "../analytics/clientGate";
 import type { MarkdownPersistenceLease } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { DocumentExportMenuItems } from "./DocumentExportMenuItems";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
@@ -99,6 +100,8 @@ function createMarkdownPdfExport({
     }
     runningRef.current = true;
     const finish = beginScientUiOperation(target.environmentId, "pdf-export", "user");
+    // The step running when a failure is thrown; analytics names it, never the error.
+    let step: ScientUiFailureCategory = "unsaved-changes";
     const toastId = toastManager.add({
       type: "loading",
       title: m(msg("Exporting PDF…")),
@@ -117,13 +120,17 @@ function createMarkdownPdfExport({
             };
           },
           prepare: async (input) => {
+            step = "prepare-failed";
             const result = await prepare({ environmentId: target.environmentId, input });
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
             return result.value;
           },
-          render: (request) =>
-            renderDocumentPagePdf({ httpBaseUrl, request, bridge: availability.bridge }),
+          render: (request) => {
+            step = "render-failed";
+            return renderDocumentPagePdf({ httpBaseUrl, request, bridge: availability.bridge });
+          },
           publish: async (input) => {
+            step = "publication-failed";
             const result = await publish({ environmentId: target.environmentId, input });
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
             return result.value;
@@ -133,6 +140,7 @@ function createMarkdownPdfExport({
         target,
       );
       toastManager.close(toastId);
+      step = "delivery-failed";
       const delivery = await deliverDocumentPdf(
         {
           saveCopy: (pdf, fileName) => saveDocumentPdfCopy(target.environmentId, pdf, fileName),
@@ -153,7 +161,7 @@ function createMarkdownPdfExport({
         title: m(msg("Unable to export PDF")),
         description: error instanceof Error ? error.message : m(msg("The PDF export failed.")),
       });
-      finish("failed");
+      finish("failed", step);
     } finally {
       runningRef.current = false;
     }

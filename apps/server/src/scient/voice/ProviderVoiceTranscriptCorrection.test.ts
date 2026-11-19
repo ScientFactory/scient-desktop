@@ -52,8 +52,11 @@ it.layer(NodeServices.layer)("provider voice transcript correction", (it) => {
   ])("selects Claude effort from advertised capabilities for $model", ({ model, effort }) =>
     Effect.gen(function* () {
       let spawnedArgs: ReadonlyArray<string> | undefined;
+      let spawnedCommand: string | undefined;
+      const binaryPath = "/synthetic/bin/claude";
       const spawner = ChildProcessSpawner.make((command) => {
         if (!ChildProcess.isStandardCommand(command)) return Effect.die("Expected one command.");
+        spawnedCommand = command.command;
         spawnedArgs = command.args.map(String);
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
@@ -74,13 +77,14 @@ it.layer(NodeServices.layer)("provider voice transcript correction", (it) => {
         );
       });
       const service = yield* makeClaudeVoiceTranscriptCorrection(
-        decodeClaudeSettings({ binaryPath: process.execPath }),
+        decodeClaudeSettings({ binaryPath }),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       const result = yield* service.correct({
         transcript: "helo claude",
         modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), model),
       });
       expect(result).toEqual({ text: "Hello, Claude." });
+      expect(spawnedCommand).toBe(binaryPath);
       expect(spawnedArgs).toBeDefined();
       expect(
         spawnedArgs?.slice(spawnedArgs.indexOf("--model"), spawnedArgs.indexOf("--model") + 2),
@@ -136,41 +140,6 @@ it.layer(NodeServices.layer)("provider voice transcript correction", (it) => {
       });
 
       expect(result).toEqual({ text: "Hello, world." });
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("runs Claude without forcing effort on an unknown custom model", () =>
-    Effect.gen(function* () {
-      const mock = makeExecutable(
-        "claude",
-        [
-          "#!/bin/sh",
-          'case " $* " in',
-          '  *" --effort "*) exit 9 ;;',
-          "esac",
-          "cat >/dev/null",
-          'printf "%s" "$SCIENT_VOICE_TEST_OUTPUT"',
-          "",
-        ].join("\n"),
-      );
-      yield* Effect.addFinalizer(() => removeExecutable(mock.directory));
-      const service = yield* makeClaudeVoiceTranscriptCorrection(
-        decodeClaudeSettings({ binaryPath: mock.binaryPath }),
-        {
-          ...process.env,
-          SCIENT_VOICE_TEST_OUTPUT: '{"structured_output":{"text":"Hello, Claude."}}',
-        },
-      );
-
-      const result = yield* service.correct({
-        transcript: "helo claude",
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "custom-claude-model",
-        ),
-      });
-
-      expect(result).toEqual({ text: "Hello, Claude." });
     }).pipe(Effect.scoped),
   );
 

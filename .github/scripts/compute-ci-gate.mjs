@@ -19,6 +19,9 @@ export function computeQualificationSuites(paths) {
     "apps/server/src/scient/compute/PythonComputeService.integration.test.ts",
     "apps/server/src/scient/compute/FreshCompute.integration.test.ts",
   ]);
+  // The product case runs in the Linux 3.12 leg of the kernel job, which every real-kernel
+  // run includes; changing only it needs only that leg.
+  const productOnly = "apps/server/src/scient/compute/ComputeProduct.integration.test.ts";
   const managedOnly = new Set([
     "apps/server/src/scient/compute/ManagedPythonProduct.live.test.ts",
     "apps/server/src/scient/compute/ManagedPythonProduct.bench.ts",
@@ -60,10 +63,13 @@ export function computeQualificationSuites(paths) {
   const broadPrefixes = ["apps/server/src/workspace/", "apps/server/src/testUtils/"];
   let realKernel = false;
   let managedPython = false;
+  let pythonProduct = false;
   let allPlatforms = false;
   for (const path of paths) {
     if (ordinaryTest(path)) continue;
-    if (kernelOnly.has(path) || path.startsWith("apps/server/src/preview/PortScanner")) {
+    if (path === productOnly) {
+      pythonProduct = true;
+    } else if (kernelOnly.has(path) || path.startsWith("apps/server/src/preview/PortScanner")) {
       realKernel = true;
       allPlatforms = true;
     } else if (managedOnly.has(path)) {
@@ -81,13 +87,15 @@ export function computeQualificationSuites(paths) {
   return {
     realKernel,
     managedPython,
-    platforms: realKernel || managedPython ? (allPlatforms ? "all" : "linux") : "none",
+    pythonProduct,
+    platforms:
+      realKernel || managedPython || pythonProduct ? (allPlatforms ? "all" : "linux") : "none",
   };
 }
 
 export function needsComputeQualification(paths) {
   const suites = computeQualificationSuites(paths);
-  return suites.realKernel || suites.managedPython;
+  return suites.realKernel || suites.managedPython || suites.pythonProduct;
 }
 
 export function testGatePasses({ workspace, detection, changed, native }) {
@@ -118,17 +126,17 @@ function detectChanges() {
     return computeQualificationSuites(paths);
   } catch {
     console.warn("Could not establish the changed paths; running Compute qualification.");
-    return { realKernel: true, managedPython: true, platforms: "all" };
+    return { realKernel: true, managedPython: true, pythonProduct: true, platforms: "all" };
   }
 }
 
 if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === "detect") {
     const suites = detectChanges();
-    const changed = suites.realKernel || suites.managedPython;
+    const changed = suites.realKernel || suites.managedPython || suites.pythonProduct;
     NodeFS.appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `changed=${changed}\nreal_kernel=${suites.realKernel}\nmanaged_python=${suites.managedPython}\nplatforms=${suites.platforms}\n`,
+      `changed=${changed}\nreal_kernel=${suites.realKernel}\nmanaged_python=${suites.managedPython}\npython_product=${suites.pythonProduct}\nplatforms=${suites.platforms}\n`,
     );
     console.log("Compute qualification:", suites);
   } else if (process.argv[2] === "check") {

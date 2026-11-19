@@ -13,11 +13,15 @@ import * as ServerConfig from "../../config.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
-import { bindNativeFilePublication, runNativeFilePublication } from "./NativeFilePublication.ts";
+import {
+  bindNativeFilePublication,
+  withNativeFilePublicationLease,
+} from "./NativeFilePublication.ts";
 import {
   bytesRevision,
   decodeRetainedRecord,
   mutateRetainedFile,
+  publicationLeaseBindings,
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
 import { filePublicationTestHelper, nativePublicationHost } from "./fileExchange.testkit.ts";
@@ -169,17 +173,24 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
             { rootPath, parentRelativePath: "", recordPath: rootPath },
             "bound-object",
           );
-          for (let i = 0; i < 25; i++) {
-            const result = await runNativeFilePublication(publication!, {
-              binding,
-              operation: "exchange",
-              authority: "bound-object",
-              sourceName: "slot",
-              destinationName: "target",
-            });
-            expect(result.outcome).toBe("applied");
-            expect(result.code).toBe(0);
-          }
+          await withNativeFilePublicationLease(
+            publication!,
+            await publicationLeaseBindings(publication!, [binding]),
+            async (lease) => {
+              for (let i = 0; i < 25; i++) {
+                const result = await lease.run({
+                  binding,
+                  operation: "exchange",
+                  authority: "bound-object",
+                  sourceName: "slot",
+                  destinationName: "target",
+                });
+                expect(result.outcome).toBe("applied");
+                expect(result.code).toBe(0);
+              }
+            },
+            { mode: "exclusive" },
+          );
         } finally {
           stop = true;
           await reader;

@@ -199,6 +199,22 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeResultsRerun, results.rerun(input), {
         "rpc.aggregate": "compute",
       }),
+    [WS_METHODS.computeResultsPlaceLatex]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsPlaceLatex, results.placeLatex(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsPlacements]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsPlacements, results.placements(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsUpdateFiles]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsUpdateFiles, results.updateFiles(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsUndoUpdate]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsUndoUpdate, results.undoUpdate(input), {
+        "rpc.aggregate": "compute",
+      }),
     [WS_METHODS.computeSubmitCells]: (input) =>
       observeRpcEffect(WS_METHODS.computeSubmitCells, computeGateway.submitCells(input), {
         "rpc.aggregate": "compute",

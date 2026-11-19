@@ -1,6 +1,7 @@
 import { m } from "~/i18n/messages";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { LatexSelect } from "./LatexSelect";
+import { LatexResultsStatus } from "../results/LatexResultsStatus";
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
@@ -2100,6 +2101,21 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             </T>
           </span>
         </ScientTooltip>
+      )}
+      {target === null ? null : (
+        <LatexResultsStatus
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          rootPath={target.relativePath}
+          build={
+            build.snapshot?.finishedAtEpochMs == null
+              ? null
+              : {
+                  finishedAtEpochMs: build.snapshot.finishedAtEpochMs,
+                  digests: build.snapshot.visualSourceRevisions,
+                }
+          }
+        />
       )}
       {status.errorCount > 0 ? (
         <button

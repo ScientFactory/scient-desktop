@@ -267,9 +267,12 @@ export function useComposerAttachmentIntake(input: {
       ? composerEditorRef.current?.captureAttachmentInsertion()
       : undefined;
     // Runs at commit and again in the finally. The size check keeps an empty second run from
-    // recreating a cleared question's count: `-0` is not a decrement.
-    const releasePreparingImages = () => {
-      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds);
+    // recreating a cleared question's count: `-0` is not a decrement. A send held for these
+    // images is dropped when one failed or none joined the draft.
+    const releasePreparingImages = (cancelSubmission: boolean) => {
+      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds, {
+        cancelSubmission,
+      });
       if (questionAttachmentTarget && removed.size > 0)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -removed.size);
     };
@@ -303,7 +306,7 @@ export function useComposerAttachmentIntake(input: {
           acceptedImages.length === 0 ||
           !questionAttachmentTarget ||
           questionAttachmentTarget in useQuestionAttachmentPreparation.getState().counts,
-        commit: ({ images, files }) => {
+        commit: ({ images, files, error }) => {
           let insertedAny = false;
           if (files.length > 0) {
             const storedIds = new Set(addComposerFilesToDraft([...files]));
@@ -331,7 +334,7 @@ export function useComposerAttachmentIntake(input: {
           }
           // Same tick as the draft insert below, with nothing that could render in between, so
           // the strip swaps each placeholder for its ready tile under one key in one render.
-          releasePreparingImages();
+          releasePreparingImages(error !== null);
           const nextImages: ComposerImageAttachment[] = images.map(({ id, file }) => ({
             type: "image",
             id,
@@ -368,12 +371,16 @@ export function useComposerAttachmentIntake(input: {
     };
     return await stageAttachments().finally(() => {
       pendingInsertion?.dispose();
-      releasePreparingImages();
+      releasePreparingImages(true);
     });
   };
 
   const removeComposerImage = (imageId: string) => {
-    if (removePreparingComposerImages(attachmentTargetKey, new Set([imageId])).size > 0) {
+    if (
+      removePreparingComposerImages(attachmentTargetKey, new Set([imageId]), {
+        cancelSubmission: true,
+      }).size > 0
+    ) {
       // Its compression finishes in the background and is dropped.
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);

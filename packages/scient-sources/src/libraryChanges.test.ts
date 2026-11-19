@@ -21,6 +21,7 @@ import {
   removeScientSource,
   updateSourceImportOperationItem,
 } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -32,10 +33,8 @@ afterEach(async () => {
 });
 
 function candidate(sourceKey: string, title: string): ScientSourceCandidate {
-  return {
+  return sourceCandidate({
     sourceKey,
-    type: "article",
-    customType: null,
     title,
     creators: [
       { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
@@ -43,21 +42,8 @@ function candidate(sourceKey: string, title: string): ScientSourceCandidate {
     issuedRaw: "2026",
     issuedYear: 2026,
     identifiers: [{ scheme: "doi", value: `10.1000/${sourceKey.toLowerCase()}` }],
-    abstract: null,
     containerTitle: "Journal",
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
-    pdfAvailable: false,
-    pdfFileName: null,
-    pdfAttachmentCount: 0,
-  };
+  });
 }
 
 describe("the Library's recent changes", () => {

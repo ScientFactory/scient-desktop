@@ -489,66 +489,6 @@ it("renders unknown attachment types as inert rows instead of crashing", async (
   expect(markup).not.toContain("<a href=");
 });
 
-// regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-it("exposes a per-response fork action for completed assistant items", async () => {
-  const { MessagesTimeline } = await import("./MessagesTimeline");
-  const projectedItem = {
-    position: 0,
-    visibility: "local",
-    sourceThreadId: "thread-1",
-    sourceItemId: "assistant-item-1",
-    item: {
-      id: "assistant-item-1",
-      threadId: "thread-1",
-      runId: "run-1",
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "completed",
-      title: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: {},
-      type: "assistant_message",
-      messageId: "assistant-message-1",
-      text: "Done",
-      streaming: false,
-    },
-  } as never;
-  await using screen = await renderElement(
-    <MessagesTimeline
-      {...buildProps()}
-      onForkAssistantMessage={() => undefined}
-      timelineEntries={[
-        {
-          id: "assistant-message-1",
-          kind: "message",
-          createdAt: MESSAGE_CREATED_AT,
-          projectedItem,
-          message: {
-            id: MessageId.make("assistant-message-1"),
-            role: "assistant",
-            text: "Done",
-            runId: RunId.make("run-1"),
-            createdAt: MESSAGE_CREATED_AT,
-            updatedAt: MESSAGE_CREATED_AT,
-            streaming: false,
-          },
-        },
-      ]}
-    />,
-  );
-  await vi.waitFor(() =>
-    expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
-  );
-  const markup = screen.container.innerHTML;
-  expect(markup.match(/aria-label="Fork conversation from this response"/g)).toHaveLength(1);
-  expect(markup).not.toContain('aria-label="Fork from this response"');
-});
-
 // regression: 4a9edff4c1 feat(web): collapse tool activity into one line (#7152)
 it("summarizes changed files in one line", async () => {
   await using screen = await renderElement(

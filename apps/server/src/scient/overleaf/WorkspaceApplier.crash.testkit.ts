@@ -209,6 +209,11 @@ export const recoversStepShape = (shape: ReturnType<typeof stepShapeCases>[numbe
     if (shape.changed) await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
     await h.restart();
     await editorReads(h);
+    // A first step killed before its publication call stays unpublished through the editor's read.
+    const unpublished = shape.changed && shape.occurrence === 1 && shape.point !== "called";
+    if (unpublished)
+      for (const [name, text] of Object.entries(shape.captured))
+        if (name !== "guard.tex") expect(await read(h.cwd, name)).toBe(text);
     const result = await h.apply("crash");
     if (!shape.changed) {
       expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
@@ -218,7 +223,7 @@ export const recoversStepShape = (shape: ReturnType<typeof stepShapeCases>[numbe
     }
     expect(await read(h.cwd, "guard.tex")).toBe("later");
     expect(Object.fromEntries(result.base)).toEqual(revisions(shape.captured));
-    if (shape.occurrence === 1 && shape.point !== "called") {
+    if (unpublished) {
       expect(result.interrupted).toEqual([]);
       for (const [name, text] of Object.entries(shape.captured))
         if (name !== "guard.tex") expect(await read(h.cwd, name)).toBe(text);

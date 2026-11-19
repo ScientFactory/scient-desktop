@@ -13,7 +13,8 @@ import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
-import { showStreamedAnswersNow, streamingTextAppearing } from "./useStreamingBlockEntrance";
+import { ThinkingRowFade } from "./ThinkingRowFade";
+import { showStreamedAnswersNow } from "./useStreamingBlockEntrance";
 import { waitForMeasuredRow } from "../../../test/listMeasurement";
 
 const env = EnvironmentId.make("entrance-motion-tests");
@@ -69,13 +70,21 @@ async function render(
   }
   // Screen.rerender already owns act(); do not leave a second scope pending.
   _fixture.pending = _fixture.root0!.rerender(
-    <MessagesTimeline
-      emptyPlaceholderInset={0}
-      {..._fixture.base}
-      routeThreadKey={key}
-      timelineEntries={entries}
-      {...extra}
-    />,
+    <>
+      <MessagesTimeline
+        emptyPlaceholderInset={0}
+        {..._fixture.base}
+        routeThreadKey={key}
+        timelineEntries={entries}
+        {...extra}
+      />
+      {/* A Thinking fade for one answer, kept mounted while that answer's row is away. */}
+      {_fixture.fadeAnswerId ? (
+        <ThinkingRowFade answerId={_fixture.fadeAnswerId}>
+          <span data-fade-probe />
+        </ThinkingRowFade>
+      ) : null}
+    </>,
   );
   await _fixture.pending;
   _fixture.assertActive();
@@ -296,14 +305,19 @@ it("shows a stopped answer in full when its row comes back, after leaving mid-re
   const text = () =>
     _fixture.host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
   const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
+  const fadeHidden = () =>
+    _fixture.host!.querySelector("[data-fade-probe]")!.parentElement!.hasAttribute("inert");
+  _fixture.fadeAnswerId = "message-45";
   await render(_fixture, "motion:stop-away", [prompt, answer(true)], working);
   const readiness = _fixture.stack.use(observeAnswerReady(_fixture.host!, long.length));
   await playUntil(_fixture, () => readiness.ready);
   await playUntil(_fixture, () => front() > 10, 2000);
+  expect(fadeHidden()).toBe(true);
   // The row unmounts mid-reveal (another thread), then the reader presses Stop.
   await render(_fixture, "motion:stop-away-elsewhere", [entry(72, "Elsewhere")]);
   await play(_fixture, 32);
-  expect(streamingTextAppearing("message-45")).toBe(false);
+  // Its lines no longer appear anywhere, so nothing keeps Thinking hidden for it.
+  expect(fadeHidden()).toBe(false);
   showStreamedAnswersNow();
   // Back to the stopped answer: everything shows, nothing left to type out.
   await render(_fixture, "motion:stop-away", [prompt, answer(false)], {
@@ -311,20 +325,6 @@ it("shows a stopped answer in full when its row comes back, after leaving mid-re
   });
   await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
-});
-
-it("drops an answer's appearing state when its row unmounts mid-reveal", async () => {
-  await using _fixture = _createFixture();
-  await _setupFixture0(_fixture);
-
-  const prompt = entry(1, "Question");
-  const answer = reply(43, "First paragraph.\n\nSecond paragraph.", true);
-  await render(_fixture, "motion:appearing", [prompt, answer], working);
-  await playUntil(_fixture, () => streamingTextAppearing(answer.message.id));
-  // Another thread: the row unmounts while its lines are still appearing.
-  await render(_fixture, "motion:appearing-elsewhere", [entry(71, "Elsewhere")]);
-  await play(_fixture, 32);
-  expect(streamingTextAppearing(answer.message.id)).toBe(false);
 });
 
 it("closes a finished turn's working header gradually, so the answer slides up", async (context) => {
@@ -480,9 +480,11 @@ it("keeps a hidden Thinking disclosure out of focus, then restores its group int
   };
   const disclosure = () =>
     _fixture.host!.querySelector<HTMLButtonElement>('[data-timeline-row-kind="thinking"] button');
+  // The Thinking row's fade makes the disclosure inert while the answer's lines appear.
+  const thinkingInert = () => disclosure()?.closest("[inert]") != null;
   await render(_fixture, "motion:thinking-disclosure", [prompt, answer(true), failedTool], working);
   await playUntil(_fixture, () => disclosure() !== null);
-  await playUntil(_fixture, () => streamingTextAppearing("message-42"));
+  await playUntil(_fixture, thinkingInert);
   disclosure()!.focus();
   // Chromium refuses focus on the invisible native disclosure; it cannot steal
   // keyboard interaction while the answer is appearing above it.
@@ -494,7 +496,7 @@ it("keeps a hidden Thinking disclosure out of focus, then restores its group int
     [prompt, answer(false), failedTool],
     working,
   );
-  await playUntil(_fixture, () => !streamingTextAppearing("message-42"));
+  await playUntil(_fixture, () => !thinkingInert());
   disclosure()!.focus();
   expect(document.activeElement).toBe(disclosure());
   await userEvent.keyboard("{Enter}");
@@ -571,6 +573,7 @@ function _createFixture() {
     host: undefined! as HTMLDivElement | undefined,
     stack,
     root0: undefined! as Screen | undefined,
+    fadeAnswerId: null as string | null,
     pending: Promise.resolve() as Promise<unknown>,
     assertActive() {
       if (disposal) throw new Error("Timeline motion fixture is disposed");

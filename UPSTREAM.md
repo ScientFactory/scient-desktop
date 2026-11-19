@@ -707,9 +707,12 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
-`8cf97b5f06f30a872ce30ab8a888f2ff012365a2` is recorded in
-[the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md).
-Literal merge `fd911abf341715fb283a62d37690c9ca853042a8` has owned base
+`0226239a41e1fd0649fdd2562421d8950db7f39c` is recorded in
+[the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md),
+whose 2026-11-19 extension adds the 41 official commits after `8cf97b5f06` in literal merge
+`22d54223bd7e175755010fb3395658e34ce3c945`. They let side chats keep attachments and context,
+offer fx backends per thread, tunnel another environment's localhost previews, and renew paired
+devices' sessions. Literal merge `fd911abf341715fb283a62d37690c9ca853042a8` has owned base
 `e1c4beb937cdcbf0abc69b3e58c8ebfe20b58334` and the frozen official target as parents, retaining
 the 63 official commits after `42763ff8b1`. The range translates the whole app into T3's ten
 languages, adding Swedish; Scient's wording inside T3's screens is translated with it, and

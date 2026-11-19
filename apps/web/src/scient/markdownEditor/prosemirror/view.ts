@@ -109,6 +109,7 @@ import { RESULT_PROTOCOL } from "@t3tools/shared/computeResults";
 import {
   editorResultReferences,
   resultFigureNode,
+  resultTableSlice,
   resultValueNode,
   setResultMarks,
   updateResults,
@@ -163,7 +164,8 @@ export interface ScientMarkdownEditorViewOptions {
   /** Opens what a clicked citation names; false leaves the click to the editor. */
   readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
   /** Shows a linked result's card beside the value or figure that was clicked. */
-  readonly onOpenResult?: (href: string, anchor: HTMLElement) => void;
+  /** `position` is the clicked result's, when the click landed on one, so the card shows that one. */
+  readonly onOpenResult?: (href: string, anchor: HTMLElement, position?: number) => void;
   /** Opens the picker the Result command inserts from. */
   readonly selectResult?: () => void;
 }
@@ -690,11 +692,39 @@ export class ScientMarkdownEditorView {
           readonly href: string;
           readonly src: string;
           readonly alt: string;
+        }
+      | {
+          readonly kind: "table";
+          readonly href: string;
+          readonly caption: string;
+          readonly rows: ReadonlyArray<ReadonlyArray<string>>;
         },
     at: ResultInsertionPoint | null = null,
   ): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
+    if (input.kind === "table") {
+      const slice = resultTableSlice(input);
+      if (slice === null) return false;
+      const transaction = view.state.tr;
+      if (at !== null)
+        transaction.setSelection(
+          view.state.doc === at.doc
+            ? TextSelection.create(transaction.doc, at.from, at.to)
+            : TextSelection.create(transaction.doc, view.state.selection.to),
+        );
+      // Blocks go in place of an empty paragraph, otherwise after the block the caret is in, so
+      // no empty paragraph is left that Markdown cannot keep.
+      const $from = transaction.selection.$from;
+      const replacesEmpty =
+        $from.depth > 0 && $from.parent.isTextblock && $from.parent.content.size === 0;
+      if ($from.depth === 0) transaction.insert($from.pos, slice.content);
+      else if (replacesEmpty) transaction.replaceWith($from.before(), $from.after(), slice.content);
+      else transaction.insert($from.after(), slice.content);
+      view.dispatch(transaction.scrollIntoView());
+      view.focus();
+      return true;
+    }
     const node =
       input.kind === "value" ? resultValueNode(input.href, input.text) : resultFigureNode(input);
     if (node === null) return false;
@@ -1225,7 +1255,7 @@ export class ScientMarkdownEditorView {
         if (node.type === scientMarkdownSchema.nodes.result_value && this.options.onOpenResult) {
           const element = this.editorView?.nodeDOM(nodePosition);
           if (!(element instanceof HTMLElement)) return false;
-          this.options.onOpenResult(String(node.attrs.target), element);
+          this.options.onOpenResult(String(node.attrs.target), element, nodePosition);
           return true;
         }
         if (node.type === scientMarkdownSchema.nodes.citation) {

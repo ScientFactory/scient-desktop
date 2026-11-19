@@ -12,7 +12,11 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 // SCIENT-FORK:START — Scient classifies harness errors that are not Google API errors.
-import { antigravityHarnessFailure } from "../../scient/providerLifecycle/AntigravityHarnessFailure.ts";
+import {
+  antigravityHarnessFailure,
+  readAntigravityUserToolServers,
+  type AntigravityToolServers,
+} from "../../scient/providerLifecycle/AntigravityHarnessFailure.ts";
 // SCIENT-FORK:END
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 
@@ -23,6 +27,10 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// Claude rejects a saved thinking block without a valid signature. It sits in the native
+// history, so every later prompt to that session fails the same way.
+const INVALID_THINKING_SIGNATURE =
+  /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -109,7 +117,14 @@ function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
   now: DateTime.Utc,
-): OrchestrationV2ProviderFailure | undefined {
+  // SCIENT-FORK: the tool servers this session had, to say whose one failed.
+  toolServers?: AntigravityToolServers,
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
       ? new TextDecoder().decode(step.payload ?? new Uint8Array())
@@ -118,35 +133,53 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
+  const reusable = (failure: OrchestrationV2ProviderFailure) =>
+    ({ failure, threadDisposition: "reusable" }) as const;
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return makeProviderFailure({
-      class: "usage_limit",
-      message: "You have reached your Antigravity quota for this period.",
-      code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
-      retryable: true,
-      resetAt: resetAtFrom(text, now) ?? null,
-      // SCIENT-FORK:START — the Google API error's HTTP status.
-      httpStatus: apiError === null ? null : Number(apiError[1]),
-      // SCIENT-FORK:END
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "usage_limit",
+        message: "You have reached your Antigravity quota for this period.",
+        code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
+        retryable: true,
+        resetAt: resetAtFrom(text, now) ?? null,
+        // SCIENT-FORK:START — the Google API error's HTTP status.
+        httpStatus: apiError === null ? null : Number(apiError[1]),
+        // SCIENT-FORK:END
+      }),
+    );
+  }
+  if (INVALID_THINKING_SIGNATURE.test(text)) {
+    return {
+      failure: makeProviderFailure({
+        class: "provider_error",
+        message:
+          "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
+        code: "INVALID_THINKING_SIGNATURE",
+        retryable: true,
+      }),
+      threadDisposition: "broken",
+    };
   }
   if (apiError === null) {
     // SCIENT-FORK:START — Antigravity's own error text, and a tool server that failed to start.
-    return antigravityHarnessFailure(step?.payload ?? null);
+    return reusable(antigravityHarnessFailure(step?.payload ?? null, toolServers));
     // SCIENT-FORK:END
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return makeProviderFailure({
-    class: rateLimited ? "usage_limit" : "provider_error",
-    message: message!.trim(),
-    code: status ?? null,
-    retryable: rateLimited || Number(httpStatus) >= 500,
-    resetAt: resetAtFrom(text, now) ?? null,
-    // SCIENT-FORK:START — the Google API error's HTTP status.
-    httpStatus: Number(httpStatus),
-    // SCIENT-FORK:END
-  });
+  return reusable(
+    makeProviderFailure({
+      class: rateLimited ? "usage_limit" : "provider_error",
+      message: message!.trim(),
+      code: status ?? null,
+      retryable: rateLimited || Number(httpStatus) >= 500,
+      resetAt: resetAtFrom(text, now) ?? null,
+      // SCIENT-FORK:START — the Google API error's HTTP status.
+      httpStatus: Number(httpStatus),
+      // SCIENT-FORK:END
+    }),
+  );
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
@@ -160,6 +193,8 @@ const conversationSegments = ["antigravity-acp", "conversations"];
 export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.watch")(function* (
   profileDirectory: string,
   sessionId: string,
+  // SCIENT-FORK: the connectors Scient delivered to this session.
+  delivery?: { readonly connectorServerNames: ReadonlySet<string> },
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
     DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
@@ -219,6 +254,17 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    // SCIENT-FORK:START — an error step may name a tool server; say whose it was.
+    const toolServers: AntigravityToolServers | undefined =
+      step?.type === ERROR_STEP_TYPE
+        ? {
+            connectorServerNames: delivery?.connectorServerNames ?? new Set(),
+            userServerNames: yield* Effect.promise(() =>
+              readAntigravityUserToolServers(profileDirectory),
+            ),
+          }
+        : undefined;
+    return turnFailure(result.stopReason, step, yield* DateTime.now, toolServers);
+    // SCIENT-FORK:END
   });
 });

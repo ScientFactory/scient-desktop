@@ -2799,34 +2799,6 @@ describe("connector state file", () => {
   );
 });
 
-describe("connector credential store", () => {
-  it.live("replaces material only at the expected version and reads only for its owner", () =>
-    Effect.gen(function* () {
-      const store = yield* ConnectorCredentialStore.ConnectorCredentialStore;
-      const encode = (text: string) => new TextEncoder().encode(text);
-      const owner = { type: "connector", connectorId: "con_abcdefgh" } as const;
-      const ref = yield* store.put(owner, "bearer", encode("one"), { label: "test" });
-      expect(yield* store.replace(ref, encode("two"), 1)).toBe(2);
-      const conflict = yield* store.replace(ref, encode("three"), 1).pipe(Effect.flip);
-      expect(conflict._tag).toBe("SecretVersionConflict");
-      const foreign = yield* store.readOwned(ref, {
-        type: "connector",
-        connectorId: "con_other123",
-      });
-      expect(Option.isNone(foreign)).toBe(true);
-      const read = yield* store.readOwned(ref, owner);
-      expect(
-        Option.map(read, ({ material, version }) => ({
-          text: new TextDecoder().decode(material),
-          version,
-        })),
-      ).toEqual(Option.some({ text: "two", version: 2 }));
-      yield* store.remove(ref);
-      expect(Option.isNone(yield* store.readOwned(ref, owner))).toBe(true);
-    }).pipe(Effect.provide(testLayer)),
-  );
-});
-
 describe("bound connector credentials", () => {
   it.live(
     "uses live account rotation after reload and loses access on removal without fallback",

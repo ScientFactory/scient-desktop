@@ -3,6 +3,7 @@ import {
   type AntigravitySettings,
   ProviderInstanceId,
   type ProviderAuthState,
+  type ProviderConnectionFailureReason,
   type ProviderInstallState,
   type ProviderManagedRuntimeAction,
   type ProviderRuntimeSummary,
@@ -45,10 +46,11 @@ function isTerminalInstallPhase(
   return phase === "succeeded" || phase === "failed" || phase === "cancelled";
 }
 
-const failure = (message: string, cause?: unknown) =>
+const failure = (message: string, cause?: unknown, reason?: ProviderConnectionFailureReason) =>
   new ProviderConnectionActionError({
     message,
     ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
   });
 
 export const ANTIGRAVITY_STARTING_MESSAGE = "Antigravity can take up to a minute to start.";
@@ -59,15 +61,24 @@ export function antigravityConnectionMethod(method: AntigravityAuthMethod) {
     : ("antigravity_credentials" as const);
 }
 
-function authFailure(state: { readonly phase: string; readonly message: string | null }) {
+function authFailure(state: {
+  readonly phase: string;
+  readonly message: string | null;
+  readonly failureReason?: ProviderConnectionFailureReason | undefined;
+}) {
   const message =
     state.message?.trim() ||
     (state.phase === "cancelled"
       ? "Antigravity sign-in was cancelled."
       : "Antigravity sign-in did not finish.");
+  const afterSignIn = message === ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE;
+  const reason =
+    (state.phase === "failed" ? state.failureReason : undefined) ??
+    (afterSignIn ? "post_signin_setup" : state.phase === "cancelled" ? "flow_stopped" : undefined);
   return new ProviderConnectionActionError({
     message,
-    ...(message === ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE ? { afterSignIn: true } : {}),
+    ...(afterSignIn ? { afterSignIn: true } : {}),
+    ...(reason === undefined ? {} : { failureReason: reason }),
   });
 }
 
@@ -93,13 +104,23 @@ export function makeAntigravityConnectionActionsFromController(input: {
       if (method !== antigravityConnectionMethod(input.authMethod)) {
         return yield* failure(
           "The selected connection method does not match this Antigravity account.",
+          undefined,
+          "start_failed",
         );
       }
       const owner = `scient-provider-lifecycle-${yield* input.randomOwnerId.pipe(
-        Effect.mapError((cause) => failure("Could not start Antigravity sign-in.", cause)),
+        Effect.mapError((cause) =>
+          failure("Could not start Antigravity sign-in.", cause, "start_failed"),
+        ),
       )}`;
       const started = yield* Effect.acquireRelease(
-        input.controller.start(owner, input.stopSessions).pipe(Effect.mapError(mapSetupError)),
+        input.controller
+          .start(owner, input.stopSessions)
+          .pipe(
+            Effect.mapError((cause) =>
+              failure(mapSetupError(cause).message, cause, "start_failed"),
+            ),
+          ),
         (state) =>
           state.flowId
             ? input.controller.cancel(owner, state.flowId).pipe(Effect.ignore)
@@ -112,7 +133,14 @@ export function makeAntigravityConnectionActionsFromController(input: {
               Stream.runHead,
               Effect.flatMap(
                 Option.match({
-                  onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
+                  onNone: () =>
+                    Effect.fail(
+                      failure(
+                        "Antigravity sign-in stopped unexpectedly.",
+                        undefined,
+                        "flow_stopped",
+                      ),
+                    ),
                   onSome: Effect.succeed,
                 }),
               ),
@@ -123,14 +151,21 @@ export function makeAntigravityConnectionActionsFromController(input: {
       }
       const flowId = initial.flowId ?? started.flowId;
       if (!flowId) {
-        return yield* failure("Antigravity did not provide a sign-in operation identifier.");
+        return yield* failure(
+          "Antigravity did not provide a sign-in operation identifier.",
+          undefined,
+          "invalid_response",
+        );
       }
       const waitForCompletion = input.controller.subscribe(owner).pipe(
         Stream.filter((state) => state.flowId === flowId && isTerminalAuthPhase(state.phase)),
         Stream.runHead,
         Effect.flatMap(
           Option.match({
-            onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
+            onNone: () =>
+              Effect.fail(
+                failure("Antigravity sign-in stopped unexpectedly.", undefined, "flow_stopped"),
+              ),
             onSome: (state) =>
               state.phase === "succeeded" ? Effect.void : Effect.fail(authFailure(state)),
           }),

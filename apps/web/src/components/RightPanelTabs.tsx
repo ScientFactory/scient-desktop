@@ -234,7 +234,7 @@ const SURFACE_DISABLED_REASONS = {
   files: msg("Files are only available when a workspace is open."),
   diff: msg("Diff is only available for server threads in Git repositories."),
   pullRequest: msg("This thread's branch has no pull request yet."),
-  pullRequests: msg("No linked pull requests are available for this thread."),
+  pullRequests: msg("This thread has no linked items."),
   agents: msg("Agents are only available from a thread."),
   sources: msg("The Library is only available inside a project workspace."),
   documents: msg("Open a project to create and edit documents."),
@@ -264,7 +264,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   files: msg("Available when a project is open."),
   diff: msg("Available for Git repositories."),
   pullRequest: msg("No pull request on this branch yet."),
-  pullRequests: msg("No linked pull requests available."),
+  pullRequests: msg("No linked items available."),
   device: msg("Available from a thread."),
   sideChat: msg("Available after the first message."),
 } as const;
@@ -544,7 +544,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequest,
     },
     {
-      label: msg("Linked pull requests"),
+      label: msg("Linked items"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
@@ -825,7 +825,7 @@ function surfaceTitle(
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
-      return resolve(msg("Pull requests"));
+      return resolve(msg("Linked items"));
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
@@ -1518,7 +1518,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequest,
     },
     {
-      label: msg("Linked pull requests"),
+      label: msg("Linked items"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,

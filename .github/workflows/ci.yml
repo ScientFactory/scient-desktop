@@ -100,6 +100,7 @@ jobs:
       compute_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.changed }}
       real_kernel: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.real_kernel }}
       managed_python: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.managed_python }}
+      python_product: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.python_product }}
       compute_platforms: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'all' || steps.compute.outputs.platforms }}
       windows_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.changed }}
       linux_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.linux_changed }}
@@ -1068,6 +1069,7 @@ jobs:
     with:
       real_kernel: ${{ needs.changes.outputs.real_kernel != 'false' }}
       managed_python: ${{ needs.changes.outputs.managed_python != 'false' }}
+      python_product: ${{ needs.changes.outputs.python_product != 'false' }}
       # Only an explicit `linux` narrows it; a missing output runs all four.
       platforms: ${{ needs.changes.outputs.compute_platforms == 'linux' && 'linux' || 'all' }}
 

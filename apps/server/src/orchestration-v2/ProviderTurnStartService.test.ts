@@ -1,4 +1,8 @@
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
+import {
+  serializeAssistantCitation,
+  expandAssistantCitationsForProvider,
+} from "@t3tools/shared/assistantCitations";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ServerConfig from "../config.ts";
@@ -23,6 +27,8 @@ import {
   ThreadId,
   TurnItemId,
   ProjectId,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -3222,11 +3228,20 @@ effectIt.effect(
     }),
 );
 
-effectIt.effect(
-  "signs out the existing native provider before opening the newly selected provider",
-  () =>
+effectIt.effect.each(["not_loaded", "error"] as const)(
+  "signs out the existing native provider before opening the newly selected provider with status %s",
+  (providerThreadStatus) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+      const initial = harness.projection();
+      harness.setProjection({
+        ...initial,
+        providerThreads: initial.providerThreads.map((thread) =>
+          thread.id === "new-provider-thread"
+            ? { ...thread, status: providerThreadStatus }
+            : thread,
+        ),
+      });
 
       yield* harness.start;
       yield* harness.start;
@@ -3252,6 +3267,9 @@ effectIt.effect(
       ]);
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
+      expect(
+        projection.providerThreads.find((thread) => thread.id === "new-provider-thread")?.status,
+      ).toBe(providerThreadStatus);
     }),
 );
 
@@ -3433,5 +3451,38 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
     // Preparation never opened a stream lease; there is nothing to close.
     expect(harness.subscribeEvents).not.toHaveBeenCalled();
     expect(harness.closeSubscription).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("rejects citation expansion before opening a provider session", () =>
+  Effect.gen(function* () {
+    const marker = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("assistant"),
+      text: "\u0001".repeat(8_000),
+      start: 0,
+      end: 8_000,
+      prefix: "",
+      suffix: "",
+    });
+    const text = "x".repeat(80_000) + marker;
+    expect(text.length).toBeLessThan(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(expandAssistantCitationsForProvider(text).length).toBeGreaterThan(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+    const harness = makeLocalCommandHarness({ text });
+    yield* harness.start;
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startTurn).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        failure: { class: "validation_error", message: expect.stringContaining("120,000") },
+      },
+    ]);
+    expect(harness.projection().messages[0]?.text).toBe(text);
   }),
 );

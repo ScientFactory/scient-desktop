@@ -1,31 +1,21 @@
 import type {
   ComputeResultResolution,
-  ComputeResultScript,
   ComputeResultSummary,
   EnvironmentId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   formatResultTarget,
+  isResultTableOutput,
   parseResultTarget,
+  resultCaption,
   resultHasNewer,
   resultReferenceState as resultMarkState,
 } from "@t3tools/shared/computeResults";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "~/components/ui/dialog";
-import { Input } from "~/components/ui/input";
-import { m } from "~/i18n/messages";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { computeEnvironment } from "~/state/compute";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -37,19 +27,15 @@ import {
   resultMarkKey,
 } from "../markdownEditor/prosemirror/results";
 import type { ScientMarkdownEditorView } from "../markdownEditor/prosemirror/view";
+import { ResultPicker, resultErrorMessage, type ResultChoice } from "./ResultPicker";
 import { RESULT_STATE_LABEL, resultCauseText } from "./resultState";
 
 export interface MarkdownResultsHandle {
-  readonly openCard: (href: string, anchor: HTMLElement) => void;
+  readonly openCard: (href: string, anchor: HTMLElement, position?: number) => void;
   readonly openPicker: () => void;
 }
 
 const REFRESH_DELAY_MS = 400;
-
-function errorMessage(result: unknown, fallback: string): string {
-  const error = squashAtomCommandFailure(result as never);
-  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
-}
 
 const relativeTime = (iso: string) => {
   const date = new Date(iso);
@@ -77,7 +63,11 @@ export function MarkdownResults(props: {
     () => new Map(),
   );
   const [refreshTick, setRefreshTick] = useState(0);
-  const [card, setCard] = useState<{ href: string; anchor: HTMLElement } | null>(null);
+  const [card, setCard] = useState<{
+    href: string;
+    anchor: HTMLElement;
+    position?: number | undefined;
+  } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const resolveCommand = useAtomCommand(computeEnvironment.resultsResolve, {
@@ -152,8 +142,8 @@ export function MarkdownResults(props: {
   useEffect(
     () =>
       register({
-        openCard: (href, anchor) => {
-          setCard({ href, anchor });
+        openCard: (href, anchor, position) => {
+          setCard({ href, anchor, position });
           setRefreshTick((tick) => tick + 1);
         },
         openPicker: () => setPickerOpen(true),
@@ -161,7 +151,16 @@ export function MarkdownResults(props: {
     [register],
   );
 
-  const cardReference = card === null ? undefined : references.find((r) => r.href === card.href);
+  // Two results can cite the same output; the card is for the one clicked.
+  const cardReference =
+    card === null
+      ? undefined
+      : (references.find(
+          (reference) =>
+            reference.href === card.href &&
+            (reference.position === card.position ||
+              (reference.kind === "table" && reference.atomPosition === card.position)),
+        ) ?? references.find((reference) => reference.href === card.href));
   return (
     <>
       <Popover
@@ -200,7 +199,7 @@ export function MarkdownResults(props: {
         ) : null}
       </Popover>
       {pickerOpen ? (
-        <ResultPicker
+        <MarkdownResultPicker
           onClose={() => setPickerOpen(false)}
           environmentId={props.environmentId}
           cwd={props.cwd}
@@ -285,7 +284,12 @@ function ResultCard(props: {
   const canRerun = useAtomValue(
     computeEnvironment.resultsRerun.permissionAtom(props.environmentId),
   );
-  const shown = reference.kind === "value" ? reference.text : reference.alt || gt("Figure");
+  const shown =
+    reference.kind === "value"
+      ? reference.text
+      : reference.kind === "table"
+        ? reference.caption || gt("Table")
+        : reference.alt || gt("Figure");
 
   if (resolution === undefined || resolution._tag === "unrecorded")
     return (
@@ -346,7 +350,7 @@ function ResultCard(props: {
         },
       });
       if (result._tag !== "Success") {
-        setMessage(errorMessage(result, gt("The new figure could not be copied.")));
+        setMessage(resultErrorMessage(result, gt("The new figure could not be copied.")));
         return;
       }
       placed.set(candidate.href, result.value.src);
@@ -377,6 +381,15 @@ function ResultCard(props: {
           href,
           text: match.newer.value,
         });
+      else if (current.kind === "table" && match.newer.table != null)
+        updates.push({
+          kind: "table",
+          position: current.position,
+          captionPosition: current.captionPosition,
+          previousHref: current.href,
+          href,
+          rows: match.newer.table,
+        });
       else if (current.kind === "figure" && placed.has(current.href))
         updates.push({
           kind: "figure",
@@ -405,7 +418,7 @@ function ResultCard(props: {
       input: { cwd: props.cwd, scriptPath },
     });
     if (result._tag !== "Success") {
-      setMessage(errorMessage(result, gt("The script could not run.")));
+      setMessage(resultErrorMessage(result, gt("The script could not run.")));
       return;
     }
     if (result.value._tag === "failed") setMessage(result.value.message);
@@ -442,6 +455,11 @@ function ResultCard(props: {
           </T>
         </span>
       ) : null}
+      {reference.kind === "table" && state === "edited" ? (
+        <span>
+          <T>Cells differ from what the run wrote.</T>
+        </span>
+      ) : null}
       {resolution.summary.causes.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
           {resolution.summary.causes.map((cause) => (
@@ -474,6 +492,16 @@ function ResultCard(props: {
                   </span>
                   .
                 </T>
+              )
+            ) : reference.kind === "table" ? (
+              newer.summary.causes.length > 0 ? (
+                gt("A newer run ({time}) has a new table, but it is out of date too.", {
+                  time: relativeTime(newer.summary.finishedAt),
+                })
+              ) : (
+                gt("A newer run ({time}) has a new table.", {
+                  time: relativeTime(newer.summary.finishedAt),
+                })
               )
             ) : newer.summary.causes.length > 0 ? (
               gt("A newer run ({time}) has a new figure, but it is out of date too.", {
@@ -511,6 +539,33 @@ function ResultCard(props: {
             </T>
           </Button>
         ) : null}
+        {editable &&
+        reference.kind === "table" &&
+        state === "edited" &&
+        resolution.table != null ? (
+          <Button
+            size="xs"
+            disabled={busy !== null}
+            onClick={() => {
+              const rows = resolution.table;
+              if (rows == null) return;
+              props.controller.updateResults([
+                {
+                  kind: "table",
+                  position: reference.position,
+                  captionPosition: reference.captionPosition,
+                  previousHref: reference.href,
+                  href: reference.href,
+                  rows,
+                },
+              ]);
+              props.onChanged();
+              props.onClose();
+            }}
+          >
+            <T>Use the run's table</T>
+          </Button>
+        ) : null}
         {editable && canPlace && updateCount > 0 ? (
           <Button size="xs" disabled={busy !== null} onClick={() => void updateFromScript()}>
             {busy === "update"
@@ -537,176 +592,90 @@ function ResultCard(props: {
   );
 }
 
-function ResultPicker(props: {
+/** Markdown shows PNG, JPEG and SVG figures; PDF figures are for LaTeX papers. */
+const MARKDOWN_FIGURE = /\.(?:png|jpe?g|svg)$/iu;
+
+function MarkdownResultPicker(props: {
   readonly onClose: () => void;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly documentPath: string;
   readonly controller: ScientMarkdownEditorView;
 }) {
-  const gt = useGT();
-  const list = useStableCallback(
-    useAtomCommand(computeEnvironment.resultsList, { reportFailure: false }),
-  );
   const canPlace = useAtomValue(
     computeEnvironment.resultsPlaceFigure.permissionAtom(props.environmentId),
   );
   const placeFigure = useAtomCommand(computeEnvironment.resultsPlaceFigure, {
     reportFailure: false,
   });
-  const [scripts, setScripts] = useState<ReadonlyArray<ComputeResultScript> | null>(null);
-  const [query, setQuery] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
+  const resolve = useAtomCommand(computeEnvironment.resultsResolve, { reportFailure: false });
+  const gt = useGT();
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the project's results over the environment connection while the picker is open
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const result = await list({ environmentId: props.environmentId, input: { cwd: props.cwd } });
-      if (cancelled) return;
-      if (result._tag !== "Success") {
-        setMessage(errorMessage(result, m(msg("The results could not be read."))));
-        setScripts([]);
-        return;
-      }
-      setScripts(result.value.scripts);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [list, props.environmentId, props.cwd]);
-
-  const needle = query.trim().toLocaleLowerCase();
-  const matches = (text: string) =>
-    needle.length === 0 || text.toLocaleLowerCase().includes(needle);
-
-  const insertFigure = async (script: ComputeResultScript, output: string) => {
+  const pick = async (choice: ResultChoice): Promise<string | null> => {
+    const revision = choice.script.latest.revision;
+    if (choice.kind === "value") {
+      props.controller.insertResult({
+        kind: "value",
+        href: formatResultTarget({
+          revision,
+          output: choice.value.output,
+          pointer: choice.value.pointer,
+        }),
+        text: choice.value.value,
+      });
+      return null;
+    }
+    if (choice.kind === "table") {
+      const at = props.controller.insertionPoint();
+      const target = { revision, output: choice.output, pointer: null };
+      const result = await resolve({
+        environmentId: props.environmentId,
+        input: { cwd: props.cwd, references: [target] },
+      });
+      const resolution = result._tag === "Success" ? result.value.resolutions[0] : undefined;
+      const rows = resolution?._tag === "resolved" ? resolution.table : null;
+      if (rows == null)
+        return gt("{output} is not a table Scient can show.", { output: choice.output });
+      props.onClose();
+      props.controller.insertResult(
+        {
+          kind: "table",
+          href: formatResultTarget(target),
+          caption: resultCaption(choice.output, choice.script.latest.scriptPath),
+          rows,
+        },
+        at,
+      );
+      return null;
+    }
     const at = props.controller.insertionPoint();
     const result = await placeFigure({
       environmentId: props.environmentId,
-      input: {
-        cwd: props.cwd,
-        documentPath: props.documentPath,
-        revision: script.latest.revision,
-        output,
-      },
+      input: { cwd: props.cwd, documentPath: props.documentPath, revision, output: choice.output },
     });
-    if (result._tag !== "Success") {
-      setMessage(errorMessage(result, gt("The figure could not be copied.")));
-      return;
-    }
+    if (result._tag !== "Success")
+      return resultErrorMessage(result, gt("The figure could not be copied."));
     props.onClose();
     props.controller.insertResult(
       {
         kind: "figure",
-        href: formatResultTarget({ revision: script.latest.revision, output, pointer: null }),
+        href: formatResultTarget({ revision, output: choice.output, pointer: null }),
         src: result.value.src,
-        alt: output.replace(/^.*\//u, "").replace(/\.[^.]+$/u, ""),
+        alt: choice.output.replace(/^.*\//u, "").replace(/\.[^.]+$/u, ""),
       },
       at,
     );
+    return null;
   };
 
   return (
-    <Dialog
-      modal={false}
-      open
-      onOpenChange={(open) => {
-        if (!open) props.onClose();
-      }}
-    >
-      <DialogPopup
-        showBackdrop={false}
-        className="w-[min(560px,calc(100vw-32px))]"
-        padding="none"
-        gap="none"
-        finalFocus={false}
-      >
-        <DialogHeader>
-          <DialogTitle>
-            <T>Insert a result</T>
-          </DialogTitle>
-          <DialogDescription>
-            <T>Values and figures from scripts run from scratch. Each one stays tied to its run.</T>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogPanel>
-          <div className="flex flex-col gap-2 px-4 pb-4">
-            <Input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={gt("Find a value, figure, or script…")}
-              aria-label={gt("Search results")}
-            />
-            {message === null ? null : (
-              <p className="text-xs text-destructive-foreground">{message}</p>
-            )}
-            {scripts !== null && scripts.length === 0 && message === null ? (
-              <p className="text-xs text-muted-foreground">
-                <T>
-                  No results yet. Have a script write a JSON file of values, or figures, into the
-                  folder named by the SCIENT_RESULTS_DIR environment variable, then run it in a
-                  fresh session.
-                </T>
-              </p>
-            ) : null}
-            <div className="flex max-h-80 flex-col overflow-y-auto" role="list">
-              {(scripts ?? []).flatMap((script) => [
-                ...script.values
-                  .filter((value) =>
-                    matches(
-                      `${script.latest.scriptPath} ${value.output} ${value.pointer} ${value.value}`,
-                    ),
-                  )
-                  .map((value) => (
-                    <button
-                      type="button"
-                      role="listitem"
-                      className="flex w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                      key={`${script.latest.revision}:${value.output}:${value.pointer}`}
-                      onClick={() => {
-                        props.onClose();
-                        props.controller.insertResult({
-                          kind: "value",
-                          href: formatResultTarget({
-                            revision: script.latest.revision,
-                            output: value.output,
-                            pointer: value.pointer,
-                          }),
-                          text: value.value,
-                        });
-                      }}
-                    >
-                      <span className="font-medium">{value.value}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {value.pointer.slice(1).replaceAll("/", " › ")} · {script.latest.scriptPath}
-                      </span>
-                    </button>
-                  )),
-                ...(canPlace ? script.figures : [])
-                  .filter((figure) => matches(`${script.latest.scriptPath} ${figure}`))
-                  .map((figure) => (
-                    <button
-                      type="button"
-                      role="listitem"
-                      className="flex w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                      key={`${script.latest.revision}:${figure}`}
-                      onClick={() => void insertFigure(script, figure)}
-                    >
-                      <span className="font-medium">{figure}</span>
-                      <span className="text-xs text-muted-foreground">
-                        <T>
-                          Figure · <Var>{script.latest.scriptPath}</Var>
-                        </T>
-                      </span>
-                    </button>
-                  )),
-              ])}
-            </div>
-          </div>
-        </DialogPanel>
-      </DialogPopup>
-    </Dialog>
+    <ResultPicker
+      environmentId={props.environmentId}
+      cwd={props.cwd}
+      figures={(output) => canPlace && MARKDOWN_FIGURE.test(output)}
+      tables={isResultTableOutput}
+      onPick={pick}
+      onClose={props.onClose}
+    />
   );
 }

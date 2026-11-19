@@ -94,7 +94,7 @@ import { AgentInvocationContext } from "../scient/operations/AgentInvocationCont
 import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
-import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { codexThreadRuntimeParams } from "./Adapters/CodexAdapterV2.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -3119,14 +3119,17 @@ it.effect(
               diagnostics: [],
             }),
         };
-        yield* prepareScientV2SkillTurn({
+        yield* prepareScientV2SkillScope({
           threadId,
           driver: CODEX_DRIVER,
           mcpSessionInjection: true,
           projectRoot: undefined,
           text: "Prepare selected skill",
           selectedScientSkillNames: [release.name],
-        }).pipe(Effect.provideService(ScientSkillSessionPlanner, planner));
+        }).pipe(
+          Effect.provideService(ScientSkillSessionPlanner, planner),
+          Effect.flatMap((prepared) => prepared.publish),
+        );
         const selectedScope = yield* registry.resolve(token!);
         if (selectedScope === undefined)
           return yield* Effect.die("Stable native credential was lost");
@@ -3138,14 +3141,17 @@ it.effect(
         );
         assert.equal(loaded.instructions, release.instructions);
         assert.equal(loaded.skill.releaseKey, releaseKey);
-        yield* prepareScientV2SkillTurn({
+        yield* prepareScientV2SkillScope({
           threadId,
           driver: CODEX_DRIVER,
           mcpSessionInjection: true,
           projectRoot: undefined,
           text: "Clear selection",
           selectedScientSkillNames: [],
-        }).pipe(Effect.provideService(ScientSkillSessionPlanner, planner));
+        }).pipe(
+          Effect.provideService(ScientSkillSessionPlanner, planner),
+          Effect.flatMap((prepared) => prepared.publish),
+        );
         const clearedScope = yield* registry.resolve(token!);
         if (clearedScope === undefined)
           return yield* Effect.die("Stable native credential was lost");

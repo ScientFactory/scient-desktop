@@ -23,6 +23,7 @@ import {
   withScientProjectPinsLock,
 } from "./projectPins.ts";
 import { importScientSource } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 const children: NodeChildProcess.ChildProcess[] = [];
@@ -46,32 +47,15 @@ async function setup() {
   await NodeFSP.mkdir(projectRoot);
   await initializeScientProject({ root: projectRoot });
   const add = async (sourceKey: string) => {
-    const candidate: ScientSourceCandidate = {
+    const candidate: ScientSourceCandidate = sourceCandidate({
       sourceKey,
-      type: "article",
-      customType: null,
       title: `Study ${sourceKey}`,
       creators: [
         { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
       ],
       issuedRaw: "2020",
       issuedYear: 2020,
-      identifiers: [],
-      abstract: null,
-      containerTitle: null,
-      publisher: null,
-      volume: null,
-      issue: null,
-      pages: null,
-      language: null,
-      url: null,
-      tags: [],
-      externalReferences: [],
-      fieldProvenance: [],
-      pdfAvailable: false,
-      pdfFileName: null,
-      pdfAttachmentCount: 0,
-    };
+    });
     const imported = await importScientSource({
       root: library,
       operationId: NodeCrypto.randomUUID(),

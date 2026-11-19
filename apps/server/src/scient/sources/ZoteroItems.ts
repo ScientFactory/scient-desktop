@@ -852,13 +852,6 @@ export function zoteroItemMaterial(
   };
 }
 
-export function zoteroItemWithChildrenToCandidate(
-  item: ZoteroRawItem,
-  children: ReadonlyArray<ZoteroRawItem>,
-): ScientSourceCandidate {
-  return zoteroItemMaterial(item, children).candidate;
-}
-
 export function zoteroDescendantCollectionKeys(
   collectionKey: string,
   collections: ReadonlyArray<ZoteroCollection>,

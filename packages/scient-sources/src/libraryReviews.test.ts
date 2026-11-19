@@ -27,6 +27,7 @@ import {
   updateScientSourceMetadata,
 } from "./store.ts";
 import { changeScientSystematicReview } from "./systematicReviewStore.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -60,10 +61,8 @@ async function newProject(base: string, name = "project"): Promise<string> {
 }
 
 function candidate(index: number, abstract: string | null = null): ScientSourceCandidate {
-  return {
+  return sourceCandidate({
     sourceKey: `S${index}`,
-    type: "article",
-    customType: null,
     title: `Randomised trial number ${index}`,
     creators: [
       { creatorType: "author", givenName: "Ada", familyName: `Author${index}`, literalName: null },
@@ -73,19 +72,7 @@ function candidate(index: number, abstract: string | null = null): ScientSourceC
     identifiers: [{ scheme: "doi", value: `10.1000/trial-${index}` }],
     abstract,
     containerTitle: "Journal",
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
-    pdfAvailable: false,
-    pdfFileName: null,
-    pdfAttachmentCount: 0,
-  };
+  });
 }
 
 async function addRecord(

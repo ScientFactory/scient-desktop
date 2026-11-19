@@ -6,7 +6,21 @@ const STATUS_MAX_AGE_MS = 60_000;
 
 export type ScientUiOperationKind = "pdf-export" | "document-export" | "latex-visual-edit";
 export type ScientUiOperationOutcome = "completed" | "failed" | "cancelled" | null;
-export type FinishScientUiOperation = (outcome: ScientUiOperationOutcome) => void;
+/** The step a UI export failed at, and whose failure that step's failure is. */
+const UI_FAILURE_OWNERS = {
+  "unsaved-changes": "input",
+  "source-changed": "input",
+  "renderer-unavailable": "scient",
+  "prepare-failed": "scient",
+  "publication-failed": "scient",
+  "render-failed": "unknown",
+  "delivery-failed": "environment",
+} as const;
+export type ScientUiFailureCategory = keyof typeof UI_FAILURE_OWNERS;
+export type FinishScientUiOperation = (
+  outcome: ScientUiOperationOutcome,
+  failureCategory?: ScientUiFailureCategory,
+) => void;
 const ignoreOperation: FinishScientUiOperation = () => {};
 type RecordVoiceAnalytics = (event: ScientAnalyticsUiEvent) => void;
 const ignoreVoice: RecordVoiceAnalytics = () => {};
@@ -280,7 +294,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
       });
       if (!started && state.status?.consent !== "essential") return ignoreOperation;
       let finished = false;
-      return (outcome) => {
+      return (outcome, failureCategory) => {
         if (finished) return;
         finished = true;
         if (outcome === null || generation !== state.generation) return;
@@ -293,6 +307,11 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
             trigger,
             durationMs: now() - startedAt,
             failureClass: "unknown",
+            ...(outcome === "failed"
+              ? failureCategory === undefined
+                ? { failureOwner: "unknown", failureCategory: "unknown" }
+                : { failureOwner: UI_FAILURE_OWNERS[failureCategory], failureCategory }
+              : {}),
           },
           collectionContext,
         });

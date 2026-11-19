@@ -13,6 +13,7 @@ import {
   type ComputeResultsRerunResult,
 } from "@t3tools/contracts";
 import { findMarkdownResultReferences, resultReferenceState } from "@t3tools/shared/computeResults";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -21,6 +22,13 @@ import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.t
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type { ComputeRuntimeDescriptor } from "../compute/ComputeSessionService.ts";
 import type { ComputeResults } from "./ComputeResults.ts";
+import {
+  placeLatexResult,
+  placementStatus,
+  undoPlacedFilesUpdate,
+  updatePlacedFiles,
+  type ProjectFiles,
+} from "./resultPlacements.ts";
 
 const failure = (message: string) => (cause: unknown) =>
   new ComputeResultsError({
@@ -50,6 +58,53 @@ async function sameCopyInProject(root: string, relativePath: string, bytes: Uint
 }
 
 /**
+ * The path inside the project when it is reached without links: the file, or the nearest folder
+ * that exists on the way to it, is where its name says. Null for a link or a path that leaves.
+ */
+async function unaliasedPath(root: string, relativePath: string): Promise<string | null> {
+  try {
+    const realRoot = await NodeFSP.realpath(root);
+    const target = NodePath.join(realRoot, ...relativePath.split("/"));
+    if (!target.startsWith(`${realRoot}${NodePath.sep}`)) return null;
+    for (
+      let existing = target;
+      existing.startsWith(realRoot);
+      existing = NodePath.dirname(existing)
+    ) {
+      const status = await NodeFSP.lstat(existing).catch(() => null);
+      if (status === null) continue;
+      if (status.isSymbolicLink()) return null;
+      return (await NodeFSP.realpath(existing)) === existing ? target : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Bytes of a regular file inside the project, or null when nothing is there. A path reached
+ * through a link, or anything but a regular file, throws: it is neither absent nor the placed file.
+ */
+async function readProjectFile(root: string, relativePath: string): Promise<Uint8Array | null> {
+  const target = await unaliasedPath(root, relativePath);
+  if (target === null)
+    throw new Error(`${relativePath} is reached through a link, so Scient does not change it.`);
+  const status = await NodeFSP.lstat(target).catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === "ENOENT" || cause.code === "ENOTDIR") return null;
+    throw cause;
+  });
+  if (status === null) return null;
+  if (!status.isFile()) throw new Error(`${relativePath} is not a regular file.`);
+  return new Uint8Array(await NodeFSP.readFile(target));
+}
+
+const requireUnaliased = async (root: string, relativePath: string) => {
+  if ((await unaliasedPath(root, relativePath)) === null)
+    throw new Error(`${relativePath} is reached through a link, so Scient does not change it.`);
+};
+
+/**
  * The linked-results operations both doors use: the app's RPC and the agents' tools. Each takes the
  * project folder and resolves its Compute project the same way Compute does.
  */
@@ -62,7 +117,7 @@ export function makeResultOperations(input: {
   readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
   readonly workspace: Pick<
     WorkspaceFileSystem.WorkspaceFileSystem["Service"],
-    "readFile" | "createBinaryFile"
+    "readFile" | "createBinaryFile" | "writeBinaryFile"
   >;
 }) {
   const project = (cwd: string) =>
@@ -227,12 +282,167 @@ export function makeResultOperations(input: {
         reference,
         line: file.contents.slice(0, reference.start).split("\n").length,
         resolution,
-        state: resultReferenceState(reference, resolution),
+        // From source, a table's cells are not compared; only its run is.
+        state: resultReferenceState(
+          reference.kind === "table" ? { kind: "table", rows: null } : reference,
+          resolution,
+        ),
       };
     });
   });
 
-  return { resolve, list, placeFigure, rerun, check };
+  /**
+   * Project files through the workspace's guarded writer: a write lands only on the bytes the
+   * caller saw, and an open editor hears about it.
+   */
+  const projectFiles = (root: string): ProjectFiles => ({
+    read: (path) => readProjectFile(root, path),
+    write: async (path, bytes, expectedSha256) => {
+      await requireUnaliased(root, path);
+      return Effect.runPromise(
+        input.workspace
+          .writeBinaryFile({
+            cwd: root,
+            relativePath: path,
+            bytes,
+            ...(expectedSha256 === null
+              ? { createOnly: true as const }
+              : { expectedRevision: `sha256:${expectedSha256}` }),
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.catchTags({
+              WorkspaceFileExistsError: () => Effect.succeed(false),
+              WorkspaceFileRevisionConflictError: () => Effect.succeed(false),
+            }),
+          ),
+      );
+    },
+    // The workspace's delete is for text files; a placed figure can be binary or large. Removal
+    // happens only when the whole file still holds the bytes the update wrote.
+    remove: async (path, expectedSha256) => {
+      const target = await unaliasedPath(root, path);
+      if (target === null)
+        throw new Error(`${path} is reached through a link, so Scient does not change it.`);
+      const current = await readProjectFile(root, path);
+      if (current === null || sha256(current) !== expectedSha256) return false;
+      await NodeFSP.rm(target);
+      return true;
+    },
+  });
+
+  const documentText = (root: string, documentPath: string) =>
+    input.workspace.readFile({ cwd: root, relativePath: documentPath }).pipe(
+      Effect.map((file) => file.contents),
+      Effect.mapError(failure(`${documentPath} could not be read.`)),
+    );
+
+  const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
+  /** Places a value, table or figure for a LaTeX paper and says what to insert. */
+  const placeLatex = Effect.fn("ResultOperations.placeLatex")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly setup?: string | undefined;
+    readonly revision: string;
+    readonly output: string;
+    readonly pointer: string | null;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const placedAt = yield* now;
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        placeLatexResult(context, {
+          documentPath: request.documentPath,
+          // The editor's setup includes the preamble's included files, which the root alone lacks.
+          documentText: `${text}\n${request.setup ?? ""}`,
+          revision: request.revision,
+          output: request.output,
+          pointer: request.pointer,
+          now: placedAt,
+        }),
+    );
+  });
+
+  /** The placed files under a LaTeX paper's root, and whether the shown PDF used them. */
+  const placements = Effect.fn("ResultOperations.placements")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly build: {
+      readonly finishedAt: string;
+      readonly digests: Readonly<Record<string, string>>;
+    } | null;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    const text = yield* documentText(resultsProject.root, request.documentPath);
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        placementStatus(context, {
+          documentPath: request.documentPath,
+          documentText: text,
+          build: request.build,
+        }),
+    );
+  });
+
+  const updateFiles = Effect.fn("ResultOperations.updateFiles")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly scriptPath: string;
+    readonly toRevision: string;
+    readonly replaceEdited: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const updatedAt = yield* now;
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        updatePlacedFiles(context, {
+          documentPath: request.documentPath,
+          documentText: text,
+          script: request.scriptPath,
+          toRevision: request.toRevision,
+          replaceEdited: request.replaceEdited,
+          now: updatedAt,
+        }),
+    );
+  });
+
+  const undoUpdate = Effect.fn("ResultOperations.undoUpdate")(function* (request: {
+    readonly cwd: string;
+    readonly documentPath: string;
+    readonly scriptPath: string;
+  }) {
+    const resultsProject = yield* project(request.cwd);
+    return yield* input.results.placements(
+      resultsProject,
+      projectFiles(resultsProject.root),
+      (context) =>
+        undoPlacedFilesUpdate(context, {
+          documentPath: request.documentPath,
+          script: request.scriptPath,
+        }),
+    );
+  });
+
+  return {
+    resolve,
+    list,
+    placeFigure,
+    rerun,
+    check,
+    placeLatex,
+    placements,
+    updateFiles,
+    undoUpdate,
+  };
 }
 
 export type ResultOperations = ReturnType<typeof makeResultOperations>;

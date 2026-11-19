@@ -60,24 +60,46 @@ it.effect(
       expect(
         Option.isNone(yield* store.readOwned(ref, { type: "connector", connectorId: "other" })),
       ).toBe(true);
-      const material = new TextEncoder().encode(syntheticValue());
-      const results = yield* Effect.all(
-        [
-          store.replace(ref, material, 1).pipe(Effect.result),
-          store.replace(ref, material, 1).pipe(Effect.result),
-        ],
+      const second = new TextEncoder().encode(syntheticValue());
+      expect(yield* store.replace(ref, second, 1)).toBe(2);
+      const replaced = yield* store.readOwned(ref, owner);
+      expect(
+        Option.map(replaced, ({ material, version }) => ({
+          material: Buffer.from(material).toString(),
+          version,
+        })),
+      ).toEqual(Option.some({ material: Buffer.from(second).toString(), version: 2 }));
+      // Distinct bytes per writer, so a losing writer that still persisted its bytes shows.
+      const contenders = [syntheticValue(), syntheticValue()].map((v) =>
+        new TextEncoder().encode(v),
+      );
+      const results = yield* Effect.forEach(
+        contenders,
+        (material) => store.replace(ref, material, 2).pipe(Effect.result),
         { concurrency: 2 },
       );
-      expect(results.filter((result) => result._tag === "Success").length).toBe(1);
-      expect(
-        results.some(
-          (result) => result._tag === "Failure" && result.failure._tag === "SecretVersionConflict",
-        ),
-      ).toBe(true);
-      const read = yield* store.readOwned(ref, owner);
-      expect(
-        Option.isSome(read) && Buffer.from(read.value.material).equals(Buffer.from(material)),
-      ).toBe(true);
+      const winner = results.findIndex((result) => result._tag === "Success");
+      expect(results.map((result) => result._tag).toSorted()).toEqual(["Failure", "Success"]);
+      expect(results[1 - winner]).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "SecretVersionConflict", expectedVersion: 2, actualVersion: 3 },
+      });
+      const stored = (expected: Uint8Array) =>
+        Effect.map(store.readOwned(ref, owner), (read) =>
+          expect(
+            Option.map(read, ({ material, version }) => ({
+              material: Buffer.from(material).toString(),
+              version,
+            })),
+          ).toEqual(Option.some({ material: Buffer.from(expected).toString(), version: 3 })),
+        );
+      yield* stored(contenders[winner]!);
+      // A stale writer afterwards is refused and leaves the winner's bytes in place.
+      const stale = new TextEncoder().encode(syntheticValue());
+      expect((yield* store.replace(ref, stale, 2).pipe(Effect.flip))._tag).toBe(
+        "SecretVersionConflict",
+      );
+      yield* stored(contenders[winner]!);
       yield* store.remove(ref);
       expect(Option.isNone(yield* store.readOwned(ref, owner))).toBe(true);
       expect(storage.blobs.has(ref)).toBe(false);

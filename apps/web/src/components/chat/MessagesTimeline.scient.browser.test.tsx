@@ -507,6 +507,11 @@ describe("MessagesTimeline Scient messages", () => {
         onForkAssistantMessage,
       },
     );
+    // One Fork action, under Scient's label rather than upstream's "Fork from this response".
+    expect(
+      screen.container.querySelectorAll('[aria-label="Fork conversation from this response"]'),
+    ).toHaveLength(1);
+    expect(screen.container.querySelector('[aria-label="Fork from this response"]')).toBeNull();
     // Scient fork V2 receives the message, not a client-chosen run boundary.
     await click(screen.button("Fork conversation from this response"));
     expect(onForkAssistantMessage).toHaveBeenCalledExactlyOnceWith("assistant-1");

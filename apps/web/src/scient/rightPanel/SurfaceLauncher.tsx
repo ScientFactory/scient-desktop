@@ -297,7 +297,7 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     },
     {
       id: "pull-requests",
-      label: gt("Linked pull requests"),
+      label: gt("Linked items"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,

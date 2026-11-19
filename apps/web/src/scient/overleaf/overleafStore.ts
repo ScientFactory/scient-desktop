@@ -948,13 +948,8 @@ export function useOverleafTokenSaved(environmentId: EnvironmentId | null): Toke
   );
 }
 
-/** The token's status now, without reading it. */
-export function readOverleafTokenState(environmentId: EnvironmentId): TokenState {
-  return tokens.get(environmentId) ?? UNKNOWN_TOKEN;
-}
-
 /** Reads whether a token is saved; the answer is shared by every view. */
-export function loadOverleafTokenStatus(environmentId: EnvironmentId): Promise<void> {
+function loadOverleafTokenStatus(environmentId: EnvironmentId): Promise<void> {
   const read = ++readCounter;
   tokenReads.set(environmentId, read);
   return readOverleafToken(environmentId).then(

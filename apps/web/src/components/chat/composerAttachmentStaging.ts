@@ -78,6 +78,8 @@ export async function stageComposerAttachmentBatch(input: {
   readonly commit: (input: {
     readonly images: ReadonlyArray<StagedComposerImage>;
     readonly files: ReadonlyArray<ComposerFileAttachment>;
+    /** Another image of this batch failed; it is reported once staging returns. */
+    readonly error: string | null;
   }) => boolean;
 }): Promise<{ readonly inserted: boolean; readonly error: string | null }> {
   // These images take the byte-for-byte passthrough path. HEIC and oversized
@@ -149,5 +151,5 @@ export async function stageComposerAttachmentBatch(input: {
   // No await between the fresh read above and this commit: overlapping pastes
   // see each other's actual stored bytes rather than a stale render snapshot.
   if (batch.images.length === 0 && batch.files.length === 0) return { inserted: false, error };
-  return { inserted: input.commit(batch), error };
+  return { inserted: input.commit({ ...batch, error }), error };
 }

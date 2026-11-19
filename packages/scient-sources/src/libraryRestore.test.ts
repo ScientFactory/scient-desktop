@@ -43,6 +43,7 @@ import {
   runStep,
   type Scenario,
 } from "./testing/librarySteps.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const roots: string[] = [];
 
@@ -387,30 +388,12 @@ describe("restoring a backup of the Library", () => {
     const own = await importScientSource({
       root: project,
       operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
-      candidate: {
+      candidate: sourceCandidate({
         sourceKey: "own",
-        type: "article",
-        customType: null,
         title: "A study the project keeps",
-        creators: [],
         issuedRaw: "2020",
         issuedYear: 2020,
-        identifiers: [],
-        abstract: null,
-        containerTitle: null,
-        publisher: null,
-        volume: null,
-        issue: null,
-        pages: null,
-        language: null,
-        url: null,
-        tags: [],
-        externalReferences: [],
-        fieldProvenance: [],
-        pdfAvailable: false,
-        pdfFileName: null,
-        pdfAttachmentCount: 0,
-      },
+      }),
       actor: "user",
       intake: "file",
     });

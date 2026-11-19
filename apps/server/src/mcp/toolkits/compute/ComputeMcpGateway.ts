@@ -55,6 +55,8 @@ export interface ComputeMcpGatewayShape extends ComputeRpcGateway {
   readonly placeResultFigure: ResultOperations["placeFigure"];
   readonly rerunResults: ResultOperations["rerun"];
   readonly checkResults: ResultOperations["check"];
+  readonly placeLatexResult: ResultOperations["placeLatex"];
+  readonly latexResultFiles: ResultOperations["placements"];
 }
 
 export class ComputeMcpGateway extends Context.Service<ComputeMcpGateway, ComputeMcpGatewayShape>()(
@@ -112,6 +114,8 @@ export const ComputeMcpGatewayLive = Layer.effect(
       placeResultFigure: resultOperations.placeFigure,
       rerunResults: resultOperations.rerun,
       checkResults: resultOperations.check,
+      placeLatexResult: resultOperations.placeLatex,
+      latexResultFiles: resultOperations.placements,
     });
   }),
 );

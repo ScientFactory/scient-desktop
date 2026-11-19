@@ -476,6 +476,7 @@ const ScientResultsListTool = Tool.make("scient_results_list", {
         revisions: Schema.Int,
         values: Schema.Array(ComputeToolResultValue),
         figures: Schema.Array(Schema.String),
+        tables: Schema.Array(Schema.String),
       }),
     ),
   }),
@@ -491,7 +492,7 @@ const ScientResultsListTool = Tool.make("scient_results_list", {
 
 const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
   description:
-    "Markdown that cites one result in a manuscript: a value by JSON Pointer, or a figure (copied beside the manuscript). Insert it with your file tools.",
+    "Text that cites one result: a value by JSON Pointer, a figure or a CSV table. For a .tex paper Scient writes results/<script>/ files and also returns preamble lines. Insert it with your file tools.",
   parameters: Schema.Struct({
     document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
     revision: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(64)),
@@ -503,7 +504,10 @@ const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
     ),
     alt: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
   }),
-  success: Schema.Struct({ markdown: Schema.String }),
+  success: Schema.Struct({
+    markdown: Schema.String,
+    preamble: Schema.optional(Schema.Array(Schema.String)),
+  }),
   failure: ScientComputeToolError,
   dependencies,
 })
@@ -516,7 +520,7 @@ const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
 
 const ScientResultsCheckTool = Tool.make("scient_results_check", {
   description:
-    "Check the linked results in a Markdown manuscript: out of date, a newer run, or edited. Update by re-running and replacing each reference with the new Markdown.",
+    "Check the linked results in a manuscript, or the result files a .tex paper includes: out of date, a newer run, or edited.",
   parameters: Schema.Struct({
     document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
   }),
@@ -524,7 +528,7 @@ const ScientResultsCheckTool = Tool.make("scient_results_check", {
     results: Schema.Array(
       Schema.Struct({
         line: Schema.Int,
-        kind: Schema.Literals(["value", "figure"]),
+        kind: Schema.Literals(["value", "figure", "table", "file"]),
         shown: Schema.String,
         /** current, newer-run, out-of-date, edited, missing or no-record. */
         state: Schema.String,

@@ -70,10 +70,6 @@ const revealing = new Set<string>();
 export function streamingRevealActive(messageId: string): boolean {
   return revealing.has(messageId);
 }
-/** Whether this message's lines are appearing right now. */
-export function streamingTextAppearing(messageId: string): boolean {
-  return appearing.has(messageId);
-}
 /** Whether this message's lines are appearing right now, as React state. */
 export function useStreamingTextAppearing(messageId: string | null): boolean {
   return useSyncExternalStore(

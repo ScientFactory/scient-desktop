@@ -189,8 +189,8 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
       if (resultsRef.current === handle) resultsRef.current = null;
     };
   });
-  const openResult = useStableCallback((href: string, anchor: HTMLElement) =>
-    resultsRef.current?.openCard(href, anchor),
+  const openResult = useStableCallback((href: string, anchor: HTMLElement, position?: number) =>
+    resultsRef.current?.openCard(href, anchor, position),
   );
   const selectResult = useStableCallback(() => resultsRef.current?.openPicker());
   const [controller] = useState(

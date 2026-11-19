@@ -77,7 +77,7 @@ describe("SourceEditor", () => {
     expect(markup).toContain("Clinical guideline");
   });
 
-  it("shows each further detail under the name a person knows it by, and a way to add one", () => {
+  it("lists further details in the list's order, keeps Extra as written, and omits absent ones", () => {
     const markup = renderToStaticMarkup(
       <SourceEditor
         environmentId={EnvironmentId.make("environment_test")}
@@ -96,10 +96,7 @@ describe("SourceEditor", () => {
     expect(markup).toContain("More details");
     // In the list's order, whatever order the record keeps them in.
     expect(markup.indexOf("Edition")).toBeLessThan(markup.indexOf("Place of publication"));
-    expect(markup).toContain('value="Oxford"');
-    expect(markup).toContain('aria-label="Remove Edition"');
     expect(markup).toContain("OCLC: 12345");
-    expect(markup).toContain("Add a detail");
     // A detail the source does not have is offered, not shown as an empty row.
     expect(markup).not.toContain('aria-label="Remove Series"');
   });

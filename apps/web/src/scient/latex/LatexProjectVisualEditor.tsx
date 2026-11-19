@@ -388,6 +388,10 @@ export function LatexProjectVisualEditor(props: Props) {
     return () => registerSaveProject?.(null);
   }, [registerSaveProject, states]);
   const [pendingPaths, setPendingPaths] = useState(new Set<string>());
+  // Files an insertion is about to include. Read first, so the edit that adds
+  // the include assembles with their text instead of as a missing file.
+  const [includePaths, setIncludePaths] = useState<ReadonlySet<string>>(new Set());
+  const includeWaiters = useRef(new Map<string, Array<(loaded: boolean) => void>>());
   const [saveErrors, setSaveErrors] = useState(new Map<string, string>());
   const [editError, setEditError] = useState<string | null>(null);
   const update = (path: string, file: FileState) => {
@@ -709,6 +713,46 @@ export function LatexProjectVisualEditor(props: Props) {
       inverseEdit: { source: nextSnapshot.source, patches: [], physical: inverses },
     };
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- answers callers waiting for a file they asked to read before including it
+  useEffect(() => {
+    for (const [path, waiters] of includeWaiters.current) {
+      if (!states.get(path)?.data) continue;
+      includeWaiters.current.delete(path);
+      for (const resolve of waiters) resolve(true);
+    }
+  }, [states]);
+  const prepareIncludedFiles = (paths: ReadonlyArray<string>) => {
+    const needed = paths.filter(
+      (path) => isLatexPreviewFile(path) && !states.get(path)?.data && path !== props.relativePath,
+    );
+    if (needed.length === 0) return Promise.resolve(true);
+    setIncludePaths((previous) => new Set([...previous, ...needed]));
+    return Promise.all(
+      needed.map(
+        (path) =>
+          new Promise<boolean>((resolve) => {
+            const waiters = includeWaiters.current.get(path) ?? [];
+            includeWaiters.current.set(path, [...waiters, resolve]);
+            globalThis.setTimeout(() => {
+              // A file that never arrived is not kept open for an insertion that gave up.
+              const left = (includeWaiters.current.get(path) ?? []).filter(
+                (item) => item !== resolve,
+              );
+              if (left.length > 0) includeWaiters.current.set(path, left);
+              else includeWaiters.current.delete(path);
+              if (left.length === 0)
+                setIncludePaths((previous) => {
+                  if (!previous.has(path)) return previous;
+                  const next = new Set(previous);
+                  next.delete(path);
+                  return next;
+                });
+              resolve(false);
+            }, 8000);
+          }),
+      ),
+    ).then((loaded) => loaded.every(Boolean));
+  };
   const ready =
     !!document &&
     !document.missing.length &&
@@ -725,18 +769,20 @@ export function LatexProjectVisualEditor(props: Props) {
     null;
   return (
     <>
-      {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys()])].map((path) => (
-        <ProjectFileSession
-          key={path}
-          owner={props}
-          path={path}
-          update={update}
-          pending={pending}
-          failure={failure}
-          reported={reported}
-          detach={detach}
-        />
-      ))}
+      {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys(), ...includePaths])].map(
+        (path) => (
+          <ProjectFileSession
+            key={path}
+            owner={props}
+            path={path}
+            update={update}
+            pending={pending}
+            failure={failure}
+            reported={reported}
+            detach={detach}
+          />
+        ),
+      )}
       {ready && document ? (
         <LatexVisualEditor
           {...props}
@@ -756,6 +802,7 @@ export function LatexProjectVisualEditor(props: Props) {
           draftKey={draftKey}
           fileRevision={JSON.stringify(paths.map((path) => [path, files.get(path)?.revision]))}
           onEdit={onEdit}
+          prepareIncludedFiles={prepareIncludedFiles}
           flushReferenceEdits={async () => {
             const results = await Promise.all([
               props.flushReferenceEdits?.() ?? Promise.resolve(false),

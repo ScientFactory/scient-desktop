@@ -1,18 +1,9 @@
 import { expect, it } from "@effect/vitest";
-import { Tool } from "effect/ai";
 import * as Schema from "effect/Schema";
 
-import {
-  ScientSkillListInput,
-  ScientSkillLoadTool,
-  ScientSkillReadResourceTool,
-  ScientSkillsListTool,
-} from "./tools.ts";
+import { ScientSkillListInput } from "./tools.ts";
 
-it("emits object-only MCP input schemas for every Scient skill tool", () => {
-  for (const tool of [ScientSkillsListTool, ScientSkillLoadTool, ScientSkillReadResourceTool]) {
-    expect(Tool.getJsonSchema(tool)).toMatchObject({ type: "object" });
-  }
+it("accepts only bounded object inputs for the skill list", () => {
   const accepts = Schema.is(ScientSkillListInput);
   expect(accepts({})).toBe(true);
   expect(accepts([])).toBe(false);

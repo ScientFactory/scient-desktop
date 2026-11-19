@@ -199,6 +199,7 @@ import {
   type ReferenceFileCallbacks,
 } from "./LatexReferencesPanel";
 import { LatexFigureInsertDialog } from "./LatexFigureInsertDialog";
+import { LatexResultPicker } from "../results/LatexResultPicker";
 import { LatexFigureArtwork } from "./LatexFigureArtwork";
 import { LatexTikzArtwork } from "./LatexTikzView";
 import { LatexColorBoxView } from "./LatexColorBoxView";
@@ -5954,6 +5955,11 @@ export interface LatexVisualEditorProps {
   readonly rootRelativePath?: string | null;
   readonly disabled: boolean;
   readonly onEdit: (request: LatexVisualEditRequest) => LatexVisualEditOutcome;
+  /**
+   * Reads project files an insertion is about to include, so the edit that includes them shows
+   * their text at once. False when they could not be read in time.
+   */
+  readonly prepareIncludedFiles?: (paths: ReadonlyArray<string>) => Promise<boolean>;
   readonly canEditRoot?: boolean;
   /** False when the document is assembled from several files; recovery is then offered to read and copy only. */
   readonly singleFileDocument?: boolean;
@@ -6630,6 +6636,7 @@ function LatexVisualEditorReady(
   const pendingLink = useRef<{ text: string; url: string } | null>(null);
   const insertionTarget = useRef<{ doc: ProseMirrorNode; selection: Selection } | null>(null);
   const [figureOpen, setFigureOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const selectionActionOwnerId = useId();
@@ -8304,14 +8311,22 @@ function LatexVisualEditorReady(
   };
 
   const insertVisualSource = (source: string, wrap = false) => {
-    if (!editor || textReadOnly) return;
+    if (!editor || textReadOnly) return false;
     const nodes = projectLatexVisualDocument(source).content.content ?? [];
-    if (nodes.length && !insertLatexBlock(editor, nodes, wrap))
+    // The source guard can still refuse after the commands report success.
+    const refused = refusedChanges.current;
+    if (
+      nodes.length &&
+      (!insertLatexBlock(editor, nodes, wrap) || refusedChanges.current !== refused)
+    ) {
       setNotice(
         gt(
           "This insertion cannot preserve the selected content here. Place the cursor in ordinary text or edit Source.",
         ),
       );
+      return false;
+    }
+    return nodes.length > 0;
   };
   const captureInsertion = () => {
     if (!editor || textReadOnly || !flushTypingRef.current()) return false;
@@ -8663,6 +8678,21 @@ function LatexVisualEditorReady(
           ? captureInsertion() && setFigureOpen(true)
           : setNotice(gt("Choose a root document before inserting a figure.")),
     },
+    // Results live in a project's Compute record, so a document outside one has none to insert.
+    ...(props.environmentId && props.cwd
+      ? [
+          {
+            id: "result",
+            label: gt("Result"),
+            description: gt("A value, table or figure from a script run"),
+            group: "Objects",
+            run: () =>
+              props.rootRelativePath
+                ? captureInsertion() && setResultOpen(true)
+                : setNotice(gt("Choose a root document before inserting a result.")),
+          },
+        ]
+      : []),
     ...[
       "theorem",
       "definition",
@@ -9100,6 +9130,60 @@ function LatexVisualEditorReady(
       );
     },
   });
+  /** The picker kept the cursor; put it back before the first change a result makes. */
+  const resultSelectionReady = () => insertionTarget.current === null || restoreInsertion();
+  /**
+   * Adds a line just before `\begin{document}` in the root, unless the setup already has what it
+   * brings: a package, or a macro an included file defines.
+   */
+  const ensureResultPreambleLine = (line: string, present: RegExp) => {
+    if (!editor || readOnly || !resultSelectionReady()) return false;
+    if (!flushTypingRef.current() || !flushSourceEditRef.current()) return false;
+    if (present.test(currentSetupSource.current ?? "")) return true;
+    const expected = currentSource.current;
+    const root = currentSnapshot.current.rootSource;
+    const ownRoot = root == null || root === expected;
+    const rootSource = ownRoot ? expected : root;
+    if (!rootSource || (!ownRoot && !props.canEditRoot)) return false;
+    const end = latexPreambleEnd(rootSource);
+    if (rootSource.slice(0, end).includes(line)) return true;
+    const lead = end === 0 || rootSource[end - 1] === "\n" ? "" : "\n";
+    const patch = latexOwnedSourcePatch(rootSource, end, end, `${lead}${line}\n`);
+    if (!patch) return false;
+    const edit = { source: rootSource, patches: [patch] };
+    return commitDocumentSource(ownRoot ? edit : { source: expected, patches: [], root: edit });
+  };
+  const insertResultMacro = (macro: { name: string; definition: string; source: string }) => {
+    if (!editor || readOnly || !resultSelectionReady()) return false;
+    if (
+      !editor.state.selection.$from.parent.isTextblock ||
+      editor.state.selection instanceof NodeSelection
+    )
+      return false;
+    return editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        closeHistory(tr);
+        return true;
+      })
+      .insertContent([
+        // Re-projecting after the preamble change drops a paragraph's trailing space.
+        ...(/[^\s([{~/-]$/u.test(editor.state.selection.$from.nodeBefore?.text ?? "")
+          ? [{ type: "text", text: " " }]
+          : []),
+        {
+          type: "latexInlineCommand",
+          attrs: {
+            name: "proseMacro",
+            argument: macro.name,
+            raw: macro.source,
+            linkText: macro.definition,
+          },
+        },
+      ])
+      .run();
+  };
   const documentSettings = (
     <LatexDocumentSettings
       onOpenChange={setSettingsOpen}
@@ -10598,6 +10682,30 @@ function LatexVisualEditorReady(
                               }}
                               onInsert={(source) => {
                                 if (restoreInsertion()) insertVisualSource(source);
+                              }}
+                            />
+                          ) : null}
+                          {resultOpen &&
+                          !readOnly &&
+                          props.environmentId &&
+                          props.cwd &&
+                          props.rootRelativePath ? (
+                            <LatexResultPicker
+                              environmentId={props.environmentId}
+                              cwd={props.cwd}
+                              rootPath={props.rootRelativePath}
+                              setup={() => currentSetupSource.current ?? ""}
+                              prepareFiles={
+                                props.prepareIncludedFiles ?? (() => Promise.resolve(true))
+                              }
+                              ensurePreambleLine={ensureResultPreambleLine}
+                              insertMacro={insertResultMacro}
+                              insertBlock={(source) =>
+                                resultSelectionReady() && insertVisualSource(source)
+                              }
+                              onClose={() => {
+                                setResultOpen(false);
+                                if (insertionTarget.current !== null) restoreInsertion();
                               }}
                             />
                           ) : null}

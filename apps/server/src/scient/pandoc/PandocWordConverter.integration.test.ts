@@ -170,6 +170,30 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
     ),
   );
 
+  it.live("prints a linked table with its caption, without links", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const { docx } = yield* convertTo(converter, directory, "linked-table", {
+          bundle: makeBundle({
+            markdown: [
+              "| Arm | Patients |",
+              "| --- | ---: |",
+              "| Treatment | 632 |",
+              "",
+              "Table: [Events by arm](scient-result:r0123456789ab/table1.csv)",
+            ].join("\n"),
+          }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(count(xml, /<w:tbl>/gu)).toBe(1);
+        expect(xml).toContain("Events by arm");
+        expect(xml).toContain("632");
+        expect(xml).not.toContain("<w:hyperlink");
+        expect(xml).not.toContain("scient-result");
+      }),
+    ),
+  );
+
   it.live("keeps text inside a complete raw HTML details block in the Word file", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {

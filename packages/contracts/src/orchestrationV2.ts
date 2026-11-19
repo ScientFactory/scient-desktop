@@ -591,6 +591,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
     ),
   ),
   lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
+  /** Set by a rename until a generated title replaces it; absent reads as false. */
+  titleRenamed: Schema.optional(Schema.Boolean),
   /** Latest accepted rollback; terminal receipts apply only to this request. */
   rollbackRequestId: Schema.optional(CommandId),
   /** Durable success receipt, including a file restore that removes no runs. */
@@ -1751,6 +1753,8 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // SCIENT-FORK: the provider's HTTP status beside `code`; absent from older records.
   httpStatus: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
+  // SCIENT-FORK: whose tool server failed to start, for a failure caused by one.
+  toolServerOwner: Schema.optional(Schema.Literals(["scient", "connector", "user", "unknown"])),
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 
@@ -4419,6 +4423,8 @@ export const OrchestrationV2ThreadHistoryPage = withRecordIdTable(
     ),
     nextCursor: Schema.NullOr(TrimmedNonEmptyString),
     hasMoreHistory: Schema.Boolean,
+    /** Records of the page's subagent items, which a bounded snapshot can omit. */
+    subagents: Schema.optionalKey(Schema.Array(OrchestrationV2Subagent)),
     idTable: IdTableMarker,
   }),
   () => null,

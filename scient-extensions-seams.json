@@ -305,6 +305,16 @@
       "path": "apps/server/src/mcp/McpHttpServer.ts",
       "anchor": "SCIENT_MCP_INSTRUCTIONS",
       "purpose": "Describe Scient's tool server, connectors included, to MCP clients in one instructions line."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts",
+      "anchor": "watchAntigravityPromptOutcome(profileDirectory, sessionId, delivery)",
+      "purpose": "Hand the session's delivered connector names to the Antigravity outcome watcher, so a tool server that stopped a turn is attributed to Scient, a connector or the user."
+    },
+    {
+      "path": "packages/contracts/src/orchestrationV2.ts",
+      "anchor": "toolServerOwner: Schema.optional(",
+      "purpose": "Carry whose tool server (Scient's, a delivered connector or the user's) stopped a turn on the provider failure."
     }
   ],
   "scientMounts": [
@@ -532,6 +542,26 @@
       "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
       "anchor": "connectorTarget",
       "purpose": "Name the connector or plugin an Extensions action acts on in its feature.used event."
+    },
+    {
+      "path": "apps/server/src/scient/providerLifecycle/AntigravityHarnessFailure.ts",
+      "anchor": "connectorServerNames",
+      "purpose": "Attribute an Antigravity tool server that failed to start to Scient, a delivered connector or the user's own configuration."
+    },
+    {
+      "path": "packages/scient-analytics/src/contract.ts",
+      "anchor": "TOOL_SERVER_OWNERS",
+      "purpose": "Allow the closed tool-server owner, including connector, on failed turns."
+    },
+    {
+      "path": "packages/scient-analytics/src/conformance.ts",
+      "anchor": "toolServerOwner: \"connector\"",
+      "purpose": "Conformance input for the tool-server owner on failed turns."
+    },
+    {
+      "path": "packages/scient-analytics/fixtures/contract-v11.json",
+      "anchor": "toolServerOwner",
+      "purpose": "Generated conformance fixture for the tool-server owner on failed turns."
     }
   ]
 }

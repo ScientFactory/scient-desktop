@@ -237,12 +237,13 @@ tag or release already exists.
    managed feed only over HTTPS, so each job creates a certificate for this run,
    trusts it only on that disposable runner (macOS System keychain, Linux NSS
    database, Windows Root store), deletes its signing key, and serves the
-   loopback feed with it. Windows runners cannot read project files (the native
-   publication helper's permission probes time out there; see
-   [CI flakes](./ci-flakes.md)), so on Windows the harness skips the unsaved file
-   edit and the receipt records `unsavedEditPreserved: "not-checked-windows-file-access"`;
-   the save barrier is the same renderer code on every platform and is checked on
-   macOS and Linux.
+   loopback feed with it. Every platform, Windows included, checks that an unsaved
+   file edit typed before consent is on disk after the restart. The Windows jobs
+   install directly under the system drive, whose new folders other users may
+   change: the installer must protect the install folder (see
+   [native publication](../internals/scient-overleaf-engine.md)) or the app cannot
+   save there. The drive root is one they cannot replace; a runner's `D:\` root
+   has an owner the app does not trust, so no install below it can save.
    The two rehearsals must build the same product code (only the harness and docs
    may differ), because the installed source runs consent, saving and handoff. The
    harness drops only the editor's 500 ms autosave timer while typing the edit, so
