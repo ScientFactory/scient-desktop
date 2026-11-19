@@ -46,6 +46,9 @@ import {
   makeScientForkEffects,
   type ScientForkEffectsContext,
 } from "./scient-fork/ScientForkEffects.ts";
+// SCIENT-FORK:START — a steer over the input limit is refused once, on the steer.
+import { refuseUserSteerInput, steerInputRefusal } from "./scient-fork/SteerInputRefusal.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START checkpoint-capture-final-attempt
 import {
   CheckpointCaptureFinalAttempt,
@@ -475,6 +478,20 @@ export const layerExecutor: Layer.Layer<
                 ),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
+                    // SCIENT-FORK:START — the input limit's refusal is final; the steer shows why.
+                    const refusal =
+                      isProviderTurnControlError(error) &&
+                      effect.request.type === "provider-turn.steer"
+                        ? steerInputRefusal({
+                            effectId: effect.id,
+                            threadId: effect.threadId,
+                            messageId: effect.request.messageId,
+                            cause: error.cause,
+                          })
+                        : undefined;
+                    if (refusal !== undefined && (yield* refuseUserSteerInput(threads, refusal)))
+                      return;
+                    // SCIENT-FORK:END
                     if (
                       !isProviderTurnControlError(error) ||
                       (!error.turnCompleted && !error.steerDeclined) ||

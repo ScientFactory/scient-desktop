@@ -101,6 +101,7 @@ async function setup() {
     projectId: "p",
     reader: makeResultsReader(layout, "p", root),
     files,
+    projectRoot: root,
   });
   const read = (path: string) => NodeFSP.readFile(NodePath.join(root, path), "utf8");
   const status = (documentText = "") =>
@@ -375,6 +376,40 @@ describe("updating placed files", () => {
       _tag: "refused",
     });
     expect((await place.status("\\resultAnalysisHr only")).scripts[0]!.updateBlocked).toBeNull();
+  });
+
+  it("refuses a newer run without a value a chapter the paper includes uses", async () => {
+    const place = await placedPaper();
+    await NodeFSP.mkdir(NodePath.join(place.root, "chapters"));
+    await NodeFSP.writeFile(
+      NodePath.join(place.root, "chapters", "methods.tex"),
+      "\\input{cohort}",
+    );
+    await NodeFSP.writeFile(NodePath.join(place.root, "cohort.tex"), "\\resultAnalysisCohortN");
+    const second = await place.publish({
+      "values.json": '{"hr": "0.75"}',
+      "table1.csv": FIRST["table1.csv"],
+    });
+    const paper = "\\input{results/analysis/values.tex}\n\\include{chapters/methods}";
+    expect(
+      await updatePlacedFiles(place.context(), { ...update(second), documentText: paper }),
+    ).toEqual({
+      _tag: "refused",
+      message: "The newer run no longer produces cohort/n (\\resultAnalysisCohortN).",
+      edited: [],
+    });
+  });
+
+  it("refuses to drop a value when the paper includes a file Scient cannot follow", async () => {
+    const place = await placedPaper();
+    await place.publish({ "values.json": '{"hr": "0.75"}', "table1.csv": FIRST["table1.csv"] });
+    expect(
+      (await place.status("\\resultAnalysisHr\n\\input{\\chapter}")).scripts[0]!,
+    ).toMatchObject({
+      updateBlocked:
+        "The newer run no longer produces cohort/n (\\resultAnalysisCohortN), and Scient could not read all of this paper's files to check that nothing uses it.",
+    });
+    expect((await place.status("\\input{missing}")).scripts[0]!.updateBlocked).toMatch(/not read/u);
   });
 
   it("changes nothing when one file cannot be written, and removes a file it recreated", async () => {

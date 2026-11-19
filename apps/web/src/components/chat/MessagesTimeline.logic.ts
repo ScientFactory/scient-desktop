@@ -112,6 +112,12 @@ import {
 // SCIENT-FORK:START — real answers stay visible when their turn folds.
 import { keepsSettledAnswerVisible } from "../../scient/threadTimeline/keptAnswers";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — an error about a user's message sits under that message.
+import {
+  isPlacedMessageRefusal,
+  placeMessageRefusals,
+} from "../../scient/threadTimeline/messageRefusals";
+// SCIENT-FORK:END
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -1181,6 +1187,9 @@ function deriveTurnFolds(input: {
       }
       continue;
     }
+    // SCIENT-FORK:START — an error about a user's message stays visible under it.
+    if (isPlacedMessageRefusal(entry)) continue;
+    // SCIENT-FORK:END
     // SCIENT-FORK:START — an imported entry folds with its own turn; unknown prompts stay visible.
     const historicalBoundary = historicalFoldBoundary(historicalBoundaries, entry);
     if (historicalBoundary === null) continue;
@@ -1625,7 +1634,9 @@ function timelineRowEntries(
         entry.kind !== "work" || !workEntryHiddenByToolCallVisibility(entry.entry, visibility),
     );
   }
-  return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
+  // SCIENT-FORK:START — an error about a user's message sits under that message.
+  return placeMessageRefusals(withoutSubagentDelegationRows(settleSupersededReasoning(shown)));
+  // SCIENT-FORK:END
 }
 
 function deriveTimelineTurnFolds(

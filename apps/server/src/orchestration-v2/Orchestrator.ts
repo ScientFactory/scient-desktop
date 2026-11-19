@@ -158,6 +158,7 @@ import {
   isReplayableBesideAdmittedSteer,
   makeDroidHeldSteer,
 } from "./scient-fork/DroidHeldSteer.ts";
+import { dispatchSteerInputRefusal } from "./scient-fork/SteerInputRefusal.ts";
 // SCIENT-FORK:END
 import * as Stream from "effect/Stream";
 
@@ -804,6 +805,10 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.stop":
     case "provider.switch":
       return command.threadId;
+    // SCIENT-FORK:START — a steer the input limit refused.
+    case "steer-input.refuse":
+      return command.threadId;
+    // SCIENT-FORK:END
     case "delegated_task.request":
     case "delegated_task.remote.request":
     case "delegated_task.remote.complete":
@@ -17137,6 +17142,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "checkpoint.rollback.fail":
         yield* dispatchCheckpointRollbackFail(command, events);
         break;
+      // SCIENT-FORK:START — a steer the input limit refused shows why on the steer.
+      case "steer-input.refuse":
+        yield* dispatchSteerInputRefusal(
+          { idAllocator, projectionStore, mapDispatchError, emit, nextTurnItemOrdinal },
+          command,
+          events,
+        );
+        break;
+      // SCIENT-FORK:END
       case "runtime-request.delivery.fail":
         yield* dispatchRuntimeRequestDeliveryFail(command, events);
         break;
@@ -17314,6 +17328,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.background-work.settle" ||
           command.type === "checkpoint.rollback.complete" ||
           command.type === "checkpoint.rollback.fail" ||
+          // SCIENT-FORK:START — a refusal already shown, or for a deleted thread, changes nothing.
+          command.type === "steer-input.refuse" ||
+          // SCIENT-FORK:END
           // A stale visit changes no read state.
           command.type === "thread.visit" ||
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.

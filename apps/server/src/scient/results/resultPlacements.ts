@@ -25,6 +25,7 @@ import {
   uniqueMacroName,
   valuesTexFile,
 } from "./latexOutputs.ts";
+import { readLatexDocumentSources } from "../latex/LatexProjectIndex.ts";
 import type { ResultsLayout, ResultsReader } from "./resultRevisions.ts";
 
 /**
@@ -213,6 +214,8 @@ export interface PlacementContext {
   readonly projectId: string;
   readonly reader: ResultsReader;
   readonly files: ProjectFiles;
+  /** The project folder, which a paper's includes are resolved inside. */
+  readonly projectRoot: string;
 }
 
 async function revisionById(context: PlacementContext, id: string) {
@@ -660,6 +663,35 @@ async function fileState(
 const macroUsed = (text: string, macro: string) =>
   new RegExp(`\\\\${macro}(?![A-Za-z])`, "u").test(text);
 
+interface PaperDocument {
+  readonly documentPath: string;
+  readonly documentText: string;
+  /** The root's text was cut short when read, so part of it went unchecked. */
+  readonly documentTruncated?: boolean | undefined;
+}
+
+/** The TeX a paper and the files it includes build from, and whether all of it was read. */
+async function paperSource(
+  context: PlacementContext,
+  record: PlacementRecord,
+  document: PaperDocument,
+): Promise<{ readonly text: string; readonly complete: boolean }> {
+  const scan = await readLatexDocumentSources({
+    workspaceRoot: context.projectRoot,
+    rootRelativePath: document.documentPath,
+    rootContents: document.documentText,
+  });
+  // A placed file defines the macros; once edited, it is the user's and may use them.
+  const generated = new Map(record.files.map((file) => [file.path, file.sha256]));
+  return {
+    text: scan.sources
+      .filter((source) => generated.get(source.relativePath) !== source.sha256)
+      .map((source) => source.visibleSource)
+      .join("\n"),
+    complete: scan.incompleteReasons.size === 0 && document.documentTruncated !== true,
+  };
+}
+
 /** Why the newest run cannot replace a script's placed files, or null when it can. */
 async function updateRefusal(
   context: PlacementContext,
@@ -667,8 +699,9 @@ async function updateRefusal(
   files: ReadonlyArray<PlacedFileRecord>,
   from: ComputeResultRevision,
   to: ComputeResultRevision,
-  documentText: string,
+  document: PaperDocument,
 ): Promise<string | null> {
+  let paper: { readonly text: string; readonly complete: boolean } | undefined;
   for (const file of files) {
     const source = file.source;
     if (source.kind === "values") {
@@ -676,19 +709,25 @@ async function updateRefusal(
         (await revisionValues(context, to)).map((value) => `${value.output}#${value.pointer}`),
       );
       // A value the newer run dropped matters only when the paper uses it.
-      const gone = (await revisionValues(context, from)).flatMap((value) => {
-        if (after.has(`${value.output}#${value.pointer}`)) return [];
+      const gone: string[] = [];
+      const unchecked: string[] = [];
+      for (const value of await revisionValues(context, from)) {
+        if (after.has(`${value.output}#${value.pointer}`)) continue;
         const macro = record.macros.find(
           (candidate) =>
             candidate.script === file.script &&
             candidate.output === value.output &&
             candidate.pointer === value.pointer,
         );
-        return macro === undefined || !macroUsed(documentText, macro.macro)
-          ? []
-          : [`${value.pointer.slice(1) || value.output} (\\${macro.macro})`];
-      });
+        if (macro === undefined) continue;
+        paper ??= await paperSource(context, record, document);
+        const name = `${value.pointer.slice(1) || value.output} (\\${macro.macro})`;
+        if (macroUsed(paper.text, macro.macro)) gone.push(name);
+        else if (!paper.complete) unchecked.push(name);
+      }
       if (gone.length > 0) return `The newer run no longer produces ${gone.join(", ")}.`;
+      if (unchecked.length > 0)
+        return `The newer run no longer produces ${unchecked.join(", ")}, and Scient could not read all of this paper's files to check that nothing uses ${unchecked.length === 1 ? "it" : "them"}.`;
       continue;
     }
     const output = to.outputs.find((candidate) => candidate.name === source.output);
@@ -776,9 +815,7 @@ async function undoable(
 /** Placed files under a paper's root, grouped by script, with what Update files would do. */
 export function placementStatus(
   context: PlacementContext,
-  request: {
-    readonly documentPath: string;
-    readonly documentText: string;
+  request: PaperDocument & {
     readonly build: {
       readonly finishedAt: string;
       readonly digests: Readonly<Record<string, string>>;
@@ -830,7 +867,7 @@ export function placementStatus(
       const updateBlocked =
         newer === null
           ? null
-          : await updateRefusal(context, record, files, revision, newer, request.documentText);
+          : await updateRefusal(context, record, files, revision, newer, request);
       scripts.push({
         summary,
         newer: newer === null ? null : await context.reader.summary(newer),
@@ -860,9 +897,7 @@ const refused = (
  */
 export function updatePlacedFiles(
   context: PlacementContext,
-  request: {
-    readonly documentPath: string;
-    readonly documentText: string;
+  request: PaperDocument & {
     readonly script: string;
     readonly toRevision: string;
     readonly replaceEdited: ReadonlyArray<ComputeResultFileDigest>;
@@ -903,7 +938,7 @@ export function updatePlacedFiles(
     }
     if (to.revision !== request.toRevision)
       return refused(`A newer run of ${request.script} finished. Look at what it changes first.`);
-    const refusal = await updateRefusal(context, record, files, from, to, request.documentText);
+    const refusal = await updateRefusal(context, record, files, from, to, request);
     if (refusal !== null) return refused(refusal);
 
     const documentMacros = definedMacros(request.documentText);
