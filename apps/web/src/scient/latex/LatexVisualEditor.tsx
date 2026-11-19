@@ -8785,12 +8785,12 @@ function LatexVisualEditorReady(
     },
     ...(
       [
-        ["code", "Code block", "lstlisting"],
-        ["verbatim", "Literal text", "verbatim"],
-        ["quotation", "Long quotation", "quotation"],
-        ["verse", "Verse", "verse"],
-        ["left-text", "Left-aligned text", "flushleft"],
-        ["right-text", "Right-aligned text", "flushright"],
+        ["code", gt("Code block"), "lstlisting"],
+        ["verbatim", gt("Literal text"), "verbatim"],
+        ["quotation", gt("Long quotation"), "quotation"],
+        ["verse", gt("Verse", { $context: "A LaTeX block for poetry" }), "verse"],
+        ["left-text", gt("Left-aligned text"), "flushleft"],
+        ["right-text", gt("Right-aligned text"), "flushright"],
       ] as const
     ).map(([id, label, environment]) => ({
       id,
