@@ -3,6 +3,7 @@ import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
 } from "@t3tools/contracts/settings";
+import { useGT } from "gt-react";
 import { useState } from "react";
 
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
@@ -23,6 +24,7 @@ const SETTING_KEYS = ["threadSectionsDeleteEmptyAfterDays"] as const;
  * follows the environment the settings page has selected.
  */
 export function EmptySectionCleanupSettings() {
+  const gt = useGT();
   const setting = useSearchableSetting();
   const afterDays = useScopedSettings((settings) => settings.threadSectionsDeleteEmptyAfterDays);
   const updateScopedSettings = useUpdateScopedSettings();
@@ -35,11 +37,13 @@ export function EmptySectionCleanupSettings() {
         serverScoped
         settingKeys={SETTING_KEYS}
         {...setting("delete-empty-sections")}
-        description="Remove sidebar sections that have held no threads for this long. General is never removed."
+        description={gt(
+          "Remove sidebar sections that have held no threads for this long. General is never removed.",
+        )}
         resetAction={
           afterDays !== DEFAULT_UNIFIED_SETTINGS.threadSectionsDeleteEmptyAfterDays ? (
             <SettingResetButton
-              ariaLabel="Reset empty-section cleanup to default"
+              ariaLabel={gt("Reset empty-section cleanup to default")}
               onClick={() => update(DEFAULT_UNIFIED_SETTINGS.threadSectionsDeleteEmptyAfterDays)}
             />
           ) : null
@@ -48,7 +52,7 @@ export function EmptySectionCleanupSettings() {
           <Switch
             checked={afterDays !== null}
             onCheckedChange={(checked) => update(checked ? DEFAULT_DAYS : null)}
-            aria-label="Delete empty sections"
+            aria-label={gt("Delete empty sections")}
           />
         }
       />
@@ -57,7 +61,7 @@ export function EmptySectionCleanupSettings() {
           serverScoped
           settingKeys={SETTING_KEYS}
           title={setting("days-before-deleting-empty-sections").title}
-          description="Adding a thread to a section restarts its count."
+          description={gt("Adding a thread to a section restarts its count.")}
           control={<DaysInput value={afterDays} onCommit={update} />}
         />
       ) : null}
@@ -67,6 +71,7 @@ export function EmptySectionCleanupSettings() {
 
 /** Whole days, committed only when valid; snaps back to the saved value on blur. */
 function DaysInput(props: { readonly value: number; readonly onCommit: (days: number) => void }) {
+  const gt = useGT();
   // Keyed to the saved value, so a change saved elsewhere resets the draft.
   const [draft, setDraft] = useState({ saved: props.value, text: String(props.value) });
   const text = draft.saved === props.value ? draft.text : String(props.value);
@@ -90,7 +95,7 @@ function DaysInput(props: { readonly value: number; readonly onCommit: (days: nu
         }
       }}
       onBlur={() => setDraft({ saved: props.value, text: String(props.value) })}
-      aria-label="Days before deleting an empty section"
+      aria-label={gt("Days before deleting an empty section")}
     />
   );
 }

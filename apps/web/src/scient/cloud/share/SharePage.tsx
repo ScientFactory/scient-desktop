@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
 
 import * as Schema from "effect/Schema";
@@ -18,12 +19,16 @@ import {
 const isShareOpenError = Schema.is(ShareOpenError);
 
 const FAILURE_TEXT: Record<ShareOpenFailure, string> = {
-  "not-found": "This link has been turned off or has expired.",
-  "sign-in": "This conversation is shared with specific people. Sign in to read it.",
-  "not-shared-with-you": "This conversation isn't shared with the account you're signed in with.",
-  "key-missing": "This link is missing the part that unlocks it. Ask the sender for the full link.",
-  "key-wrong": "This link doesn't unlock the conversation. Ask the sender for the full link.",
-  unavailable: "The conversation couldn't be loaded right now.",
+  "not-found": msg("This link has been turned off or has expired."),
+  "sign-in": msg("This conversation is shared with specific people. Sign in to read it."),
+  "not-shared-with-you": msg(
+    "This conversation isn't shared with the account you're signed in with.",
+  ),
+  "key-missing": msg(
+    "This link is missing the part that unlocks it. Ask the sender for the full link.",
+  ),
+  "key-wrong": msg("This link doesn't unlock the conversation. Ask the sender for the full link."),
+  unavailable: msg("The conversation couldn't be loaded right now."),
 };
 
 export interface SharePageProps {
@@ -65,6 +70,8 @@ function SharePageContent({
   );
 
   const readToken = useEffectEvent(async () => (await getToken?.()) ?? null);
+  const gt = useGT();
+  const messages = useMessages();
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads and decrypts the share from the cloud
   useEffect(() => {
@@ -98,7 +105,9 @@ function SharePageContent({
   if (state.status === "loading") {
     return (
       <SharePageFrame>
-        <p className="py-16 text-center text-sm text-muted-foreground">Opening the conversation…</p>
+        <p className="py-16 text-center text-sm text-muted-foreground">
+          <T>Opening the conversation…</T>
+        </p>
       </SharePageFrame>
     );
   }
@@ -106,19 +115,19 @@ function SharePageContent({
     return (
       <SharePageFrame>
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <p className="max-w-md text-sm">{FAILURE_TEXT[state.reason]}</p>
+          <p className="max-w-md text-sm">{messages(FAILURE_TEXT[state.reason])}</p>
           {state.reason === "unavailable" ? (
             <Button variant="outline" size="sm" onClick={onRetry}>
-              Try again
+              <T>Try again</T>
             </Button>
           ) : null}
           {state.reason === "sign-in" && onSignIn ? (
             <Button size="sm" onClick={onSignIn}>
-              Sign in
+              <T>Sign in</T>
             </Button>
           ) : state.reason === "sign-in" && signInHref ? (
             <Button size="sm" render={<a href={signInHref} />}>
-              Sign in
+              <T>Sign in</T>
             </Button>
           ) : null}
         </div>
@@ -138,8 +147,15 @@ function SharePageContent({
           <div className="min-w-0 flex-1 basis-56">
             <h1 className="truncate text-base font-medium">{snapshot.thread.title}</h1>
             <p className="text-xs text-muted-foreground">
-              Shared from Scient{sharedAt ? ` · ${formatDate(sharedAt)}` : ""}
-              {info.versions.length > 1 ? ` · version ${info.currentVersion}` : ""}
+              {[
+                gt("Shared from Scient"),
+                sharedAt ? formatDate(sharedAt) : null,
+                info.versions.length > 1
+                  ? gt("version {version}", { version: info.currentVersion })
+                  : null,
+              ]
+                .filter((part) => part !== null)
+                .join(" · ")}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1 print:hidden">
@@ -173,7 +189,7 @@ export function ShareUnavailablePage() {
   return (
     <SharePageFrame>
       <p className="py-16 text-center text-sm text-muted-foreground">
-        Shared links can't be opened in this version of Scient.
+        <T>Shared links can't be opened in this version of Scient.</T>
       </p>
     </SharePageFrame>
   );
@@ -208,7 +224,9 @@ function ContinueInScient({ onDownload }: { onDownload: () => void }) {
   return (
     <div className="flex items-center gap-2">
       {saved ? (
-        <span className="text-xs text-muted-foreground">Open the file in Scient to continue.</span>
+        <span className="text-xs text-muted-foreground">
+          <T>Open the file in Scient to continue.</T>
+        </span>
       ) : null}
       <Button
         size="sm"
@@ -217,7 +235,7 @@ function ContinueInScient({ onDownload }: { onDownload: () => void }) {
           setSaved(true);
         }}
       >
-        Continue in Scient
+        <T>Continue in Scient</T>
       </Button>
     </div>
   );
@@ -238,25 +256,32 @@ function ReportShare({ apiOrigin, shareId }: { apiOrigin: string; shareId: strin
       setStatus("failed");
     }
   };
-  if (status === "sent") return <p>Thanks. We'll look at it.</p>;
+  if (status === "sent")
+    return (
+      <p>
+        <T>Thanks. We'll look at it.</T>
+      </p>
+    );
   if (!open) {
     return (
       <p>
-        Something wrong with this conversation?{" "}
-        <button
-          type="button"
-          className="underline underline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-          onClick={() => setOpen(true)}
-        >
-          Report it
-        </button>
+        <T>
+          Something wrong with this conversation?{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={() => setOpen(true)}
+          >
+            Report it
+          </button>
+        </T>
       </p>
     );
   }
   return (
     <form className="flex flex-col gap-2" onSubmit={submit}>
       <label htmlFor="share-report" className="text-foreground">
-        What's wrong with it?
+        <T>What's wrong with it?</T>
       </label>
       <textarea
         id="share-report"
@@ -268,9 +293,13 @@ function ReportShare({ apiOrigin, shareId }: { apiOrigin: string; shareId: strin
       />
       <div className="flex items-center gap-2">
         <Button type="submit" size="sm" disabled={status === "sending" || reason.trim() === ""}>
-          Send report
+          <T>Send report</T>
         </Button>
-        {status === "failed" ? <span>It couldn't be sent. Try again.</span> : null}
+        {status === "failed" ? (
+          <span>
+            <T>It couldn't be sent. Try again.</T>
+          </span>
+        ) : null}
       </div>
     </form>
   );

@@ -8,6 +8,9 @@ import {
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { SCIENT_LIBRARY_MERGES_TO_REVIEW } from "@scientfactory/scient-sources";
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { Button } from "../../components/ui/button";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
@@ -20,6 +23,8 @@ export function LibraryMoveNotice(props: {
   /** Opens the merges the move made, for a line that says some kept different values. */
   readonly onReview?: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { line } = props.move;
   if (!line) return null;
   return (
@@ -29,15 +34,19 @@ export function LibraryMoveNotice(props: {
           {line.action === "dismiss" ? (
             <>
               <p>
-                Moved into your Library. A copy of the project's sources from before the move is
-                kept in the project.
+                <T>
+                  Moved into your Library. A copy of the project's sources from before the move is
+                  kept in the project.
+                </T>
               </p>
               <details className="mt-1">
-                <summary className="cursor-pointer">Show locations</summary>
+                <summary className="cursor-pointer">
+                  <T>Show locations</T>
+                </summary>
                 <p className="mt-1">{line.text}</p>
                 {props.onReview && line.text.includes(SCIENT_LIBRARY_MERGES_TO_REVIEW) ? (
                   <Button size="xs" variant="ghost" onClick={props.onReview}>
-                    {DUPLICATE_LABELS.review}
+                    {m(DUPLICATE_LABELS.review)}
                   </Button>
                 ) : null}
               </details>
@@ -48,7 +57,7 @@ export function LibraryMoveNotice(props: {
         </div>
         {line.action === "dismiss" && props.move.canChange ? (
           <Button size="xs" variant="ghost" onClick={() => void props.move.dismiss()}>
-            Dismiss
+            <T>Dismiss</T>
           </Button>
         ) : null}
         {line.action === "retry" && props.move.canChange ? (
@@ -58,7 +67,7 @@ export function LibraryMoveNotice(props: {
             disabled={props.move.retrying}
             onClick={props.move.retry}
           >
-            {props.move.retrying ? "Trying again…" : "Try again"}
+            {props.move.retrying ? gt("Trying again…") : gt("Try again")}
           </Button>
         ) : null}
       </div>
@@ -73,6 +82,7 @@ export function LibraryMoveNotice(props: {
 export function libraryMoveActivity(
   move: LibraryMoveStatus,
   onReview?: () => void,
+  resolve: MessageResolver = m,
 ): SourcesActivityItem | null {
   const { line } = move;
   if (!line) return null;
@@ -81,10 +91,10 @@ export function libraryMoveActivity(
     tone: line.action === "retry" ? "error" : line.action === "dismiss" ? "advisory" : "running",
     label:
       line.action === "retry"
-        ? "Moving the Library failed"
+        ? resolve(msg("Moving the Library failed"))
         : line.action === "dismiss"
-          ? "Moved into your Library"
-          : "Moving the Library",
+          ? resolve(msg("Moved into your Library"))
+          : resolve(msg("Moving the Library")),
     body: <LibraryMoveNotice move={move} {...(onReview ? { onReview } : {})} />,
   };
 }
@@ -98,23 +108,30 @@ export function MoveBackDialog(props: {
     <AlertDialog open={props.open} onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Keep this project's sources in its folder?</AlertDialogTitle>
+          <AlertDialogTitle>
+            <T>Keep this project's sources in its folder?</T>
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            The sources and their PDFs are copied back into this project’s folder. The papers also
-            stay in your personal Library, because other projects may use them. This project’s notes
-            and its reviews come back too. The sealed copy from before the move stays as a recovery
-            copy; it does not include later changes. For a large Library this can take a while.
+            <T>
+              The sources and their PDFs are copied back into this project’s folder. The papers also
+              stay in your personal Library, because other projects may use them. This project’s
+              notes and its reviews come back too. The sealed copy from before the move stays as a
+              recovery copy; it does not include later changes. For a large Library this can take a
+              while.
+            </T>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <T>Cancel</T>
+          </AlertDialogClose>
           <Button
             onClick={() => {
               props.onClose();
               props.onConfirm();
             }}
           >
-            Move back
+            <T>Move back</T>
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

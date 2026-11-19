@@ -1,4 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import {
   clearProjectFileQueryData,
@@ -23,6 +26,7 @@ export function scientDocumentSessionFile(
   markdownSnapshot: ReturnType<typeof useMarkdownPersistenceLease>["snapshot"],
   relativePath: string | null,
   hostOs: string | null,
+  resolve: MessageResolver = m,
 ) {
   // The editor keeps showing its last confirmed version when a refresh read
   // fails; this is why it failed, so the notice can say the file moved.
@@ -30,7 +34,7 @@ export function scientDocumentSessionFile(
     markdownSnapshot && !markdownSnapshot.pending
       ? projectReadFailure(markdownSnapshot.error)
       : null;
-  const markdownRefreshCopy = refreshFailureNoticeCopy(markdownRefreshFailure, hostOs);
+  const markdownRefreshCopy = refreshFailureNoticeCopy(markdownRefreshFailure, hostOs, resolve);
   // Once admitted, the retained draft is the editor's display truth even when
   // an unrelated cached query fails or temporarily returns an older snapshot.
   const file =
@@ -91,6 +95,7 @@ export function ScientDocumentSessionAdmissionFailure(props: {
   readonly wordWrap: boolean;
   readonly onPostRender: FilePostRender;
 }) {
+  const gt = useGT();
   return (
     <>
       <div
@@ -98,15 +103,18 @@ export function ScientDocumentSessionAdmissionFailure(props: {
         className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-ui text-xs text-warning-foreground"
       >
         <p>
-          This file could not be opened safely for editing. The last available preview is read-only.
+          <T>
+            This file could not be opened safely for editing. The last available preview is
+            read-only.
+          </T>
         </p>
         <p>
           {props.admissionError instanceof Error
             ? props.admissionError.message
-            : "The current disk version could not be verified."}
+            : gt("The current disk version could not be verified.")}
         </p>
         <Button size="xs" variant="outline" onClick={props.onRetry}>
-          Try again
+          <T>Try again</T>
         </Button>
       </div>
       {props.relativePath && props.contents !== undefined ? (

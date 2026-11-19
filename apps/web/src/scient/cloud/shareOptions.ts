@@ -1,16 +1,19 @@
+import { msg } from "gt-react";
+
 export type ExpiryChoice = "never" | "day" | "week" | "month";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const EXPIRY_CHOICES: ReadonlyArray<{
   readonly id: ExpiryChoice;
+  /** A `msg()` label, resolved where it is shown. */
   readonly label: string;
   readonly ms: number | null;
 }> = [
-  { id: "never", label: "Never expires", ms: null },
-  { id: "day", label: "Expires in a day", ms: DAY_MS },
-  { id: "week", label: "Expires in a week", ms: 7 * DAY_MS },
-  { id: "month", label: "Expires in 30 days", ms: 30 * DAY_MS },
+  { id: "never", label: msg("Never expires"), ms: null },
+  { id: "day", label: msg("Expires in a day"), ms: DAY_MS },
+  { id: "week", label: msg("Expires in a week"), ms: 7 * DAY_MS },
+  { id: "month", label: msg("Expires in 30 days"), ms: 30 * DAY_MS },
 ];
 
 export function expiresAtFor(choice: ExpiryChoice, now = Date.now()): string | null {

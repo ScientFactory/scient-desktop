@@ -18,6 +18,7 @@ function keyedParts(values: readonly string[]) {
 
 function keyLabel(part: string, mac: boolean): string {
   if (part === "mod") return mac ? "⌘" : "Ctrl";
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- key name, like Ctrl and Alt
   if (part === "meta") return mac ? "⌘" : "Meta";
   if (part === "ctrl") return mac ? "⌃" : "Ctrl";
   if (part === "alt") return mac ? "⌥" : "Alt";

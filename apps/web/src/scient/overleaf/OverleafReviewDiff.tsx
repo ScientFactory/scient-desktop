@@ -1,20 +1,22 @@
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { ScientOverleafDiffFile, ScientOverleafDiffResult } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { StyledDiffCodeView } from "~/components/diffs/StyledDiffCodeView";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 
 const REASONS = {
-  binary: "Binary file; diff not shown.",
-  "file-too-large": "File is too large to preview.",
-  "total-limit": "Review preview limit reached; diff not shown.",
+  binary: msg("Binary file; diff not shown."),
+  "file-too-large": msg("File is too large to preview."),
+  "total-limit": msg("Review preview limit reached; diff not shown."),
 };
 
 function DiffGroup(props: {
   readonly title: string;
   readonly files: ReadonlyArray<ScientOverleafDiffFile>;
 }) {
+  const messages = useMessages();
   const theme = useRenderedAppearance();
   const items = props.files.flatMap((file) =>
     file._tag === "text"
@@ -48,12 +50,14 @@ function DiffGroup(props: {
           />
         </div>
       ) : props.files.length === 0 ? (
-        <p className="px-1 text-xs text-muted-foreground">No changes.</p>
+        <p className="px-1 text-xs text-muted-foreground">
+          <T>No changes.</T>
+        </p>
       ) : null}
       {props.files.map((file) =>
         file._tag === "not-shown" ? (
           <p key={file.path} className="px-1 text-xs text-muted-foreground">
-            {file.path}: {REASONS[file.reason]}
+            {file.path}: {messages(REASONS[file.reason])}
           </p>
         ) : null,
       )}
@@ -62,19 +66,23 @@ function DiffGroup(props: {
 }
 
 export function OverleafReviewDiff(props: { readonly result: ScientOverleafDiffResult }) {
+  const gt = useGT();
   if (props.result._tag === "stale")
     return (
       <p role="status" className="px-1 text-sm text-muted-foreground">
-        This review is no longer current. Check again to see its diff.
+        <T>This review is no longer current. Check again to see its diff.</T>
       </p>
     );
   return (
-    <div className="flex flex-col gap-4" aria-label="Overleaf line changes">
+    <div className="flex flex-col gap-4" aria-label={gt("Overleaf line changes")}>
       <p className="px-1 text-xs text-muted-foreground">
-        Compared with the last sync. To Overleaf includes the combined version this sync would send.
+        <T>
+          Compared with the last sync. To Overleaf includes the combined version this sync would
+          send.
+        </T>
       </p>
-      <DiffGroup title="From Overleaf" files={props.result.incoming} />
-      <DiffGroup title="To Overleaf" files={props.result.outgoing} />
+      <DiffGroup title={gt("From Overleaf")} files={props.result.incoming} />
+      <DiffGroup title={gt("To Overleaf")} files={props.result.outgoing} />
     </div>
   );
 }

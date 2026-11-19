@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
@@ -124,11 +125,12 @@ export function AssistedSetupDeviceCode(props: {
   readonly providerName: string;
 }) {
   const { copyToClipboard } = useCopyToClipboard();
+  const gt = useGT();
   return (
     <div className="ms-8 flex w-fit items-center gap-2 rounded-md border bg-background/40 py-0.5 ps-2.5 pe-1 in-[[data-model-picker-content=true]]:mx-auto in-[[data-model-picker-content=true]]:ms-0">
       <code className="text-sm font-semibold tracking-wider text-foreground">{props.code}</code>
       <Button
-        aria-label={`Copy ${props.providerName} device code`}
+        aria-label={gt("Copy {provider} device code", { provider: props.providerName })}
         onClick={() => copyToClipboard(props.code, undefined)}
         size="icon-sm"
         type="button"
@@ -211,7 +213,9 @@ export function AssistedSetupUpdateStatus(props: {
   readonly trailing?: ReactNode;
 }) {
   const { name, update } = props;
-  const computer = providerRuntimeComputerLabel(props.provider);
+  const gt = useGT();
+  const messages = useMessages();
+  const computer = providerRuntimeComputerLabel(props.provider, messages);
   const command =
     update.path === "external" && update.command ? (
       <code className="text-foreground wrap-anywhere">{update.command}</code>
@@ -221,20 +225,24 @@ export function AssistedSetupUpdateStatus(props: {
       <AssistedSetupStatus
         body={
           props.working === "queued" ? (
-            "Waiting for another provider update to finish."
+            gt("Waiting for another provider update to finish.")
           ) : update.path === "managed" ? (
-            "Downloading and verifying the reviewed update…"
+            gt("Downloading and verifying the reviewed update…")
           ) : command ? (
-            <>
-              Running {command} on {computer}. Scient checks the installed version when it finishes.
-            </>
+            <T>
+              Running <Var>{command}</Var> on <Var>{computer}</Var>. Scient checks the installed
+              version when it finishes.
+            </T>
           ) : (
-            `Running ${name}’s own updater on ${computer}. Scient checks the installed version when it finishes.`
+            gt(
+              "Running {provider}’s own updater on {computer}. Scient checks the installed version when it finishes.",
+              { provider: name, computer },
+            )
           )
         }
         icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
         role="status"
-        title={`Updating ${name}`}
+        title={gt("Updating {provider}", { provider: name })}
         trailing={props.trailing}
       />
     );
@@ -250,29 +258,50 @@ export function AssistedSetupUpdateStatus(props: {
           />
         }
         role="alert"
-        title={unchanged ? `${name} update didn’t take effect` : `${name} couldn’t be updated`}
+        title={
+          unchanged
+            ? gt("{provider} update didn’t take effect", { provider: name })
+            : gt("{provider} couldn’t be updated", { provider: name })
+        }
         trailing={props.trailing}
       />
     );
   }
-  const offered = update.version
-    ? `${name} ${update.version} is available.`
-    : `A newer ${name} is available.`;
+  const version = update.version;
   return (
     <AssistedSetupStatus
       body={
         update.path === "managed" ? (
-          "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
+          gt(
+            "Install the reviewed update when you’re ready. Your current version remains available until the update is verified.",
+          )
         ) : command ? (
-          <>
-            {offered} Scient will run {command} to update the {name} installed on {computer}.
-          </>
+          version ? (
+            <T>
+              <Var>{name}</Var> <Var>{version}</Var> is available. Scient will run{" "}
+              <Var>{command}</Var> to update the <Var>{name}</Var> installed on{" "}
+              <Var>{computer}</Var>.
+            </T>
+          ) : (
+            <T>
+              A newer <Var>{name}</Var> is available. Scient will run <Var>{command}</Var> to update
+              the <Var>{name}</Var> installed on <Var>{computer}</Var>.
+            </T>
+          )
+        ) : version ? (
+          gt(
+            "{provider} {version} is available. Scient will update the {provider} installed on {computer} with its own updater.",
+            { provider: name, version, computer },
+          )
         ) : (
-          `${offered} Scient will update the ${name} installed on ${computer} with its own updater.`
+          gt(
+            "A newer {provider} is available. Scient will update the {provider} installed on {computer} with its own updater.",
+            { provider: name, computer },
+          )
         )
       }
       icon={<RefreshCwIcon className="size-5 text-primary" />}
-      title={`${name} update available`}
+      title={gt("{provider} update available", { provider: name })}
       trailing={props.trailing}
     />
   );
@@ -284,15 +313,21 @@ export function AssistedSetupUpdateButton(props: {
   readonly retry: boolean;
   readonly onClick: () => void;
 }) {
+  const gt = useGT();
   return (
     <Button
-      aria-label={props.retry ? `Try again to update ${props.name}` : `Update ${props.name}`}
+      aria-label={
+        props.retry
+          ? gt("Try again to update {provider}", { provider: props.name })
+          : gt("Update {provider}", { provider: props.name })
+      }
       onClick={props.onClick}
       size="sm"
       type="button"
       variant="ghost-primary"
     >
-      <RefreshCwIcon aria-hidden /> {props.retry ? "Try again" : "Update"}
+      <RefreshCwIcon aria-hidden />{" "}
+      {props.retry ? gt("Try again") : gt("Update", { $context: "verb, update the provider" })}
     </Button>
   );
 }

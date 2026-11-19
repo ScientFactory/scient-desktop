@@ -5,6 +5,9 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import { roomUrl } from "./roomGuest.logic";
 
@@ -48,7 +51,7 @@ export async function postRoom(
     });
     return response.ok ? null : roomResponseError(response);
   } catch {
-    return "Could not reach the server. Try again.";
+    return m(msg("Could not reach the server. Try again."));
   }
 }
 

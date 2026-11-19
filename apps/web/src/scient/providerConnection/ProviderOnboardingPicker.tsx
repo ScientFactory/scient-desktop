@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useNavigate } from "@tanstack/react-router";
 import type {
@@ -44,27 +45,32 @@ import {
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
 import { resolveAntigravityDraftSelection } from "./antigravityDraftSelection";
+import { m, type MessageResolver } from "~/i18n/messages";
 
-export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
-  if (!entry) return "Not configured";
-  if (!entry.enabled) return "Disabled";
-  if (isProviderInstancePickerReady(entry)) return "Ready";
+export function providerOnboardingStatusLabel(
+  entry: ProviderInstanceEntry | undefined,
+  resolve: MessageResolver = m,
+): string {
+  if (!entry) return resolve(msg("Not configured"));
+  if (!entry.enabled) return resolve(msg("Disabled", { $context: "provider status" }));
+  if (isProviderInstancePickerReady(entry))
+    return resolve(msg("Ready", { $context: "provider status" }));
   switch (providerConnectionPresentation(entry.snapshot).kind) {
     case "not-installed":
-      return "Not installed";
+      return resolve(msg("Not installed", { $context: "provider status" }));
     case "not-connected":
-      return "Sign in required";
+      return resolve(msg("Sign in required"));
     case "setting-up":
-      return "Setting up";
+      return resolve(msg("Setting up"));
     case "connecting":
-      return "Connecting";
+      return resolve(msg("Connecting"));
     case "connected":
     case "not-required":
-      return "Needs attention";
+      return resolve(msg("Needs attention", { $context: "provider status" }));
     case "unsupported":
-      return "Manual setup";
+      return resolve(msg("Manual setup", { $context: "provider status" }));
     case "unavailable":
-      return "Unavailable";
+      return resolve(msg("Unavailable"));
   }
 }
 
@@ -142,6 +148,8 @@ export function ProviderOnboardingPicker(props: {
   } = useModelPickerOverlay(true);
   const reconnectEntry = props.reconnectEntry;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const gt = useGT();
+  const messages = useMessages();
   const [selectedDriver, setSelectedDriver] = useState<ProviderDriverKind | null>(null);
   const [query, setQuery] = useState("");
   const [dialogEntry, setDialogEntry] = useState<ProviderInstanceEntry | null>(null);
@@ -198,8 +206,8 @@ export function ProviderOnboardingPicker(props: {
     : undefined;
   const TriggerIcon = reconnectDefinition?.icon ?? BlocksIcon;
   const triggerLabel = reconnectEntry
-    ? `Reconnect ${reconnectEntry.displayName}`
-    : "Choose your AI";
+    ? gt("Reconnect {provider}", { provider: reconnectEntry.displayName })
+    : gt("Choose your AI");
 
   const readySelection = readyProviderModelSelection(
     selectedEntry,
@@ -260,7 +268,7 @@ export function ProviderOnboardingPicker(props: {
             render={
               <ComposerControl
                 ref={pickerTriggerRef}
-                aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
+                aria-label={reconnectEntry ? triggerLabel : gt("Choose and connect your AI")}
                 className={cn(
                   "min-w-0 justify-between whitespace-nowrap",
                   props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
@@ -303,13 +311,13 @@ export function ProviderOnboardingPicker(props: {
               data-provider-onboarding-picker="true"
             >
               <aside
-                aria-label="AI providers"
+                aria-label={gt("AI providers")}
                 className="w-11 shrink-0 overflow-y-auto bg-muted/30 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 <RailButton
                   active={showHome}
                   icon={BlocksIcon}
-                  label="Choose a provider"
+                  label={gt("Choose a provider")}
                   onClick={() => {
                     setSelectedDriver(null);
                     setQuery("");
@@ -322,7 +330,10 @@ export function ProviderOnboardingPicker(props: {
                       key={definition.value}
                       active={!showHome && definition.value === selectedDriver}
                       icon={definition.icon}
-                      label={`${definition.label}, ${providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}`}
+                      label={`${definition.label}, ${providerOnboardingStatusLabel(
+                        entriesByDriver.get(definition.value),
+                        messages,
+                      )}`}
                       onClick={() => {
                         setSelectedDriver(definition.value);
                         setQuery("");
@@ -336,11 +347,13 @@ export function ProviderOnboardingPicker(props: {
                 {showHome ? (
                   <label className="flex h-11 shrink-0 items-center gap-2 border-b border-border/70 px-3">
                     <SearchIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
-                    <span className="sr-only">Search providers</span>
+                    <span className="sr-only">
+                      <T>Search providers</T>
+                    </span>
                     <input
                       className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-placeholder"
                       onChange={(event) => setQuery(event.currentTarget.value)}
-                      placeholder="Search providers…"
+                      placeholder={gt("Search providers…")}
                       type="search"
                       value={query}
                     />
@@ -351,15 +364,17 @@ export function ProviderOnboardingPicker(props: {
                   normalizedQuery.length === 0 ? (
                     <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-7 pb-5 text-center">
                       <BlocksIcon aria-hidden className="mb-3 size-7 text-icon-muted" />
-                      <h2 className="font-semibold text-lg">Choose your provider</h2>
+                      <h2 className="font-semibold text-lg">
+                        <T>Choose your provider</T>
+                      </h2>
                       <p className="mt-1.5 max-w-52 text-balance text-muted-foreground text-sm leading-relaxed">
-                        Connect your existing subscription or account, then choose a model.
+                        <T>Connect your existing subscription or account, then choose a model.</T>
                       </p>
                     </div>
                   ) : (
                     <div className="min-h-0 flex-1 overflow-y-auto p-3">
                       <p className="mb-2 px-2 font-medium text-muted-foreground text-xs">
-                        Providers
+                        <T>Providers</T>
                       </p>
                       {visibleDefinitions.map((definition) => {
                         const Icon = definition.icon;
@@ -382,6 +397,7 @@ export function ProviderOnboardingPicker(props: {
                                 {definition.vendorLabel ? `${definition.vendorLabel} · ` : null}
                                 {providerOnboardingStatusLabel(
                                   entriesByDriver.get(definition.value),
+                                  messages,
                                 )}
                               </span>
                             </span>
@@ -394,7 +410,9 @@ export function ProviderOnboardingPicker(props: {
                       })}
                       {visibleDefinitions.length === 0 ? (
                         <p className="px-2 py-8 text-center text-muted-foreground text-sm">
-                          No providers match “{query}”.
+                          <T>
+                            No providers match “<Var>{query}</Var>”.
+                          </T>
                         </p>
                       ) : null}
                     </div>
@@ -417,8 +435,8 @@ export function ProviderOnboardingPicker(props: {
                   />
                 ) : (
                   <ProviderSetupDetail
-                    displayName={selectedDefinition?.label ?? "Provider"}
-                    status="Not configured"
+                    displayName={selectedDefinition?.label ?? gt("Provider")}
+                    status={gt("Not configured")}
                     onManage={openSettings}
                   />
                 )}
@@ -464,6 +482,7 @@ export function ProviderLifecycleSetupSurface(props: {
   readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }) {
   const navigate = useNavigate();
+  const messages = useMessages();
   if (supportsAssistedProviderSetupSurface(props.entry.driverKind, "composer")) {
     return (
       <AssistedProviderSetupHost
@@ -479,7 +498,7 @@ export function ProviderLifecycleSetupSurface(props: {
   return (
     <ProviderSetupDetail
       displayName={props.entry.displayName}
-      status={providerOnboardingStatusLabel(props.entry)}
+      status={providerOnboardingStatusLabel(props.entry, messages)}
       onManage={props.onManageFallback ?? (() => void navigate({ to: "/settings/providers" }))}
     />
   );
@@ -532,7 +551,7 @@ function ProviderSetupDetail(props: {
         type="button"
         variant="ghost-primary"
       >
-        <SettingsIcon aria-hidden /> Open provider settings
+        <SettingsIcon aria-hidden /> <T>Open provider settings</T>
       </Button>
     </div>
   );

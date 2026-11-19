@@ -62,13 +62,14 @@ import { mathSymbolShortcuts } from "./mathSymbolShortcuts";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 import { latexPackageInventory } from "./latexPackages";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 const STORAGE_KEY = "scient.latex.math-palette.v1";
 const byId = new Map(MATH_SYMBOLS.map((symbol) => [symbol.id, symbol]));
 const paletteCategories = [
-  { id: "recent", label: "Recent", Icon: Clock },
-  { id: "favorites", label: "Favorites", Icon: Star },
-  { id: "document", label: "Macros", Icon: FileBraces },
+  { id: "recent", label: msg("Recent", { $context: "math symbol category" }), Icon: Clock },
+  { id: "favorites", label: msg("Favorites", { $context: "math symbol category" }), Icon: Star },
+  { id: "document", label: msg("Macros", { $context: "math symbol category" }), Icon: FileBraces },
   ...MATH_PALETTE_GROUPS.map((group) => ({
     ...group,
     Icon: {
@@ -166,11 +167,12 @@ function SymbolCommand({
   symbol: MathSymbol;
   shortcuts: readonly string[];
 }) {
+  const gt = useGT();
   return (
     <div className="scient-latex-symbol-command-detail">
       <code dir="ltr">{mathSymbolCommand(symbol)}</code>
       {shortcuts.length > 0 && (
-        <div className="scient-latex-symbol-palette-shortcuts" aria-label="Shortcuts">
+        <div className="scient-latex-symbol-palette-shortcuts" aria-label={gt("Shortcuts")}>
           {shortcuts.map((shortcut) => (
             <Kbd key={shortcut}>{shortcut}</Kbd>
           ))}
@@ -225,6 +227,8 @@ export function LatexMathPalette({
   showTrigger?: boolean;
   onDismiss?: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const documentSetup = useContext(LatexAuthoringContext);
   const preamble = latexPackageInventory(documentSetup.source).preamble;
   const catalog = documentMathPalette(preamble);
@@ -452,15 +456,12 @@ export function LatexMathPalette({
       : mathPaletteGroup(catalog, category);
   const active = symbols.find((symbol) => symbol.id === activeId) ?? symbols[0];
   const hasQuery = Boolean(query.trim());
+  const categoryGroup = paletteCategories.find(({ id }) => id === category);
   const categoryLabel = hasQuery
-    ? "Search results"
-    : category === "recent"
-      ? "Recent"
-      : category === "favorites"
-        ? "Favorites"
-        : category === "document"
-          ? "Macros"
-          : MATH_PALETTE_GROUPS.find(({ id }) => id === category)?.label;
+    ? gt("Search results")
+    : categoryGroup
+      ? messages(categoryGroup.label)
+      : undefined;
   const remember = (next: typeof preferences) => {
     setPreferences(next);
     try {
@@ -529,7 +530,7 @@ export function LatexMathPalette({
       data-dock-command-scope="latex"
       id={panelId}
       className="scient-latex-symbol-palette-panel"
-      aria-label="Symbols"
+      aria-label={gt("Symbols")}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape") {
@@ -543,11 +544,11 @@ export function LatexMathPalette({
           ref={dragHandle}
           type="button"
           className="scient-latex-symbol-palette-move"
-          aria-label="Move Symbols"
+          aria-label={gt("Move Symbols")}
         >
-          Symbols
+          <T>Symbols</T>
         </button>
-        <Button variant="ghost" size="icon-xs" aria-label="Close Symbols" onClick={close}>
+        <Button variant="ghost" size="icon-xs" aria-label={gt("Close Symbols")} onClick={close}>
           <X />
         </Button>
       </div>
@@ -561,8 +562,8 @@ export function LatexMathPalette({
             nativeInput
             size="compact"
             type="search"
-            placeholder="Search symbols"
-            aria-label="Search symbols"
+            placeholder={gt("Search symbols")}
+            aria-label={gt("Search symbols")}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -582,7 +583,10 @@ export function LatexMathPalette({
         </InputGroup>
       </div>
       <div className="scient-latex-symbol-palette-body">
-        <nav className="scient-latex-symbol-palette-categories" aria-label="Math symbol categories">
+        <nav
+          className="scient-latex-symbol-palette-categories"
+          aria-label={gt("Math symbol categories")}
+        >
           {paletteCategories
             .filter(
               ({ id }) =>
@@ -600,7 +604,7 @@ export function LatexMathPalette({
                 }}
               >
                 <Icon aria-hidden="true" />
-                {label}
+                {messages(label)}
               </button>
             ))}
         </nav>
@@ -639,12 +643,12 @@ export function LatexMathPalette({
           {!symbols.length && (
             <p className="scient-latex-symbol-palette-empty">
               {hasQuery
-                ? "No matching symbols."
+                ? gt("No matching symbols.")
                 : category === "favorites"
-                  ? "No favorite symbols."
+                  ? gt("No favorite symbols.")
                   : category === "recent"
-                    ? "No recent symbols."
-                    : "No symbols."}
+                    ? gt("No recent symbols.")
+                    : gt("No symbols.")}
             </p>
           )}
         </div>
@@ -658,7 +662,7 @@ export function LatexMathPalette({
             variant={preferences.favorites.includes(active.id) ? "selected" : "ghost"}
             size="icon-xs"
             aria-label={
-              preferences.favorites.includes(active.id) ? "Remove favorite" : "Add favorite"
+              preferences.favorites.includes(active.id) ? gt("Remove favorite") : gt("Add favorite")
             }
             aria-pressed={preferences.favorites.includes(active.id)}
             onClick={() => {
@@ -700,7 +704,7 @@ export function LatexMathPalette({
             }
           }}
         >
-          Symbols <ChevronUp aria-hidden="true" />
+          <T>Symbols</T> <ChevronUp aria-hidden="true" />
         </button>
       )}
       {panel && portalHost ? createPortal(panel, portalHost) : panel}

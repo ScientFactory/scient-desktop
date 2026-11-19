@@ -9,6 +9,7 @@ import {
   type InsertMenuAction,
   type InsertMenuLayout,
 } from "../writing/InsertMenu";
+import { T } from "gt-react";
 
 export interface LatexInsertAction extends InsertMenuAction {
   description: string;
@@ -59,7 +60,9 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
         <MenuSub>
           <MenuSubTrigger>
             <BookOpen className={ICON} />
-            <span>References</span>
+            <span>
+              <T>References</T>
+            </span>
           </MenuSubTrigger>
           <MenuSubPopup {...SUBMENU}>
             {["citation", "reference", "link"].map(item)}
@@ -70,7 +73,9 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
         <MenuSub>
           <MenuSubTrigger>
             <Shapes className={ICON} />
-            <span>Theorems &amp; proofs</span>
+            <span>
+              <T>Theorems &amp; proofs</T>
+            </span>
           </MenuSubTrigger>
           <MenuSubPopup {...SUBMENU}>
             {STATEMENTS.slice(0, 5).map(item)}
@@ -81,7 +86,9 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
-          <MenuSubTrigger>Document blocks</MenuSubTrigger>
+          <MenuSubTrigger>
+            <T>Document blocks</T>
+          </MenuSubTrigger>
           <MenuSubPopup {...SUBMENU}>
             {["abstract", "contents", "bibliography"].map(item)}
             <MenuSeparator />

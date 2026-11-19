@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 import {
   DownloadIcon,
@@ -45,6 +46,7 @@ import {
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 type PendingAction =
   | "install"
@@ -58,22 +60,25 @@ type PendingAction =
   | null;
 type ClaudeSignInMethod = "claude_subscription" | "claude_console";
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): string {
+function runtimeStage(
+  operation: ProviderRuntimeOperation | null,
+  resolve: MessageResolver = m,
+): string {
   switch (operation?.status) {
     case "preparing":
-      return "Preparing the verified download…";
+      return resolve(msg("Preparing the verified download…"));
     case "downloading":
-      return "Downloading Claude…";
+      return resolve(msg("Downloading Claude…"));
     case "verifying":
-      return "Verifying the download…";
+      return resolve(msg("Verifying the download…"));
     case "installing":
-      return "Installing Claude privately…";
+      return resolve(msg("Installing Claude privately…"));
     case "testing":
-      return "Checking the installation…";
+      return resolve(msg("Checking the installation…"));
     case "activating":
-      return "Finishing setup…";
+      return resolve(msg("Finishing setup…"));
     default:
-      return "Preparing Claude…";
+      return resolve(msg("Preparing Claude…"));
   }
 }
 
@@ -87,6 +92,8 @@ export function ClaudeInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
   const [showAuthorizationCode, setShowAuthorizationCode] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
 
@@ -162,7 +169,9 @@ export function ClaudeInlineSetup(props: {
       try {
         await startReviewedClaudeRuntimeAction(props.controller, "install");
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Claude."));
+        setLocalError(
+          providerLifecycleFailureMessage(error, gt("Scient could not install Claude.")),
+        );
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -179,7 +188,9 @@ export function ClaudeInlineSetup(props: {
       try {
         await updateClaudeRuntime(props.controller, props.provider);
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Claude."));
+        setLocalError(
+          providerLifecycleFailureMessage(error, gt("Scient could not update Claude.")),
+        );
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -202,7 +213,9 @@ export function ClaudeInlineSetup(props: {
           props.onRepairSucceeded?.();
         }
       } catch (error) {
-        setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Claude."));
+        setLocalError(
+          providerLifecycleFailureMessage(error, gt("Scient could not repair Claude.")),
+        );
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -221,7 +234,7 @@ export function ClaudeInlineSetup(props: {
         await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not cancel Claude setup."),
+          providerLifecycleFailureMessage(error, gt("Scient could not cancel Claude setup.")),
         );
       }
     } catch (cause) {
@@ -241,7 +254,7 @@ export function ClaudeInlineSetup(props: {
         await startClaudeSignIn(props.controller, method);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not start Claude sign in."),
+          providerLifecycleFailureMessage(error, gt("Scient could not start Claude sign in.")),
         );
       }
     } catch (cause) {
@@ -266,7 +279,7 @@ export function ClaudeInlineSetup(props: {
         setLocalError(
           providerLifecycleFailureMessage(
             error,
-            "Scient could not return the one-time code to Claude.",
+            gt("Scient could not return the one-time code to Claude."),
           ),
         );
       }
@@ -287,7 +300,7 @@ export function ClaudeInlineSetup(props: {
       setLocalError(
         providerLifecycleFailureMessage(
           error,
-          "Scient could not open Claude’s fallback sign-in page.",
+          gt("Scient could not open Claude’s fallback sign-in page."),
         ),
       );
     }
@@ -304,7 +317,7 @@ export function ClaudeInlineSetup(props: {
         await props.controller.cancelConnection(activeConnectionOperation.operationId);
       } catch (error) {
         setLocalError(
-          providerLifecycleFailureMessage(error, "Scient could not cancel Claude sign in."),
+          providerLifecycleFailureMessage(error, gt("Scient could not cancel Claude sign in.")),
         );
       }
     } catch (cause) {
@@ -327,7 +340,7 @@ export function ClaudeInlineSetup(props: {
     pendingAction === "repair" ||
     pendingAction === "update"
   ) {
-    const stage = runtimeStage(activeRuntimeOperation);
+    const stage = runtimeStage(activeRuntimeOperation, messages);
     const updating = pendingAction === "update" || activeRuntimeOperation?.action === "update";
     const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
     return (
@@ -336,13 +349,21 @@ export function ClaudeInlineSetup(props: {
           body={stage}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            updating ? "Updating Claude" : repairing ? "Repairing Claude" : "Installing Claude"
+            updating
+              ? gt("Updating Claude")
+              : repairing
+                ? gt("Repairing Claude")
+                : gt("Installing Claude")
           }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              aria-label={cancelRuntimeActionLabel("Claude", activeRuntimeOperation.action)}
+              aria-label={cancelRuntimeActionLabel(
+                "Claude",
+                activeRuntimeOperation.action,
+                messages,
+              )}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -354,7 +375,7 @@ export function ClaudeInlineSetup(props: {
               ) : (
                 <XIcon aria-hidden />
               )}
-              Cancel
+              <T>Cancel</T>
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -377,18 +398,19 @@ export function ClaudeInlineSetup(props: {
   }
 
   if (needsRuntimeRepair) {
-    const error = localError ?? managedRuntimeRepairMessage(props.provider, "Claude");
+    const error =
+      localError ?? managedRuntimeRepairMessage(props.provider, "Claude", undefined, messages);
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
-          title="Claude needs repair"
+          title={gt("Claude needs repair")}
         />
         <AssistedSetupActions>
           <Button onClick={() => void repair()} size="sm" type="button" variant="ghost-primary">
-            <RefreshCwIcon aria-hidden /> Repair Claude
+            <RefreshCwIcon aria-hidden /> <T>Repair Claude</T>
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
@@ -405,8 +427,13 @@ export function ClaudeInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Claude is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Claude installation.`)
+              ? gt("Claude is not installed on {computer}.", {
+                  computer: providerRuntimeComputerLabel(props.provider, messages),
+                })
+              : gt(
+                  "Assisted installation is not available for {computer}. You can use an existing Claude installation.",
+                  { computer: providerRuntimeComputerLabel(props.provider, messages) },
+                ))
           }
           icon={
             error ? (
@@ -416,19 +443,19 @@ export function ClaudeInlineSetup(props: {
             )
           }
           role={error ? "alert" : undefined}
-          title={error ? "Claude installation couldn’t finish" : "Install Claude"}
+          title={error ? gt("Claude installation couldn’t finish") : gt("Install Claude")}
         />
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry installation of Claude" : "Install Claude"}
+              aria-label={error ? gt("Retry installation of Claude") : gt("Install Claude")}
               onClick={() => void install()}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {error ? "Retry installation" : "Install"}
+              {error ? gt("Retry installation") : gt("Install")}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -443,9 +470,13 @@ export function ClaudeInlineSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={verifying ? "Finding your available models…" : "Complete sign-in in your browser."}
+          body={
+            verifying
+              ? gt("Finding your available models…")
+              : gt("Complete sign-in in your browser.")
+          }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={verifying ? "Checking your account" : "Finish signing in"}
+          title={verifying ? gt("Checking your account") : gt("Finish signing in")}
         />
         {activeConnectionOperation &&
         activeConnectionOperation.acceptsAuthorizationCode !== false ? (
@@ -475,19 +506,19 @@ export function ClaudeInlineSetup(props: {
               variant="ghost-muted"
             >
               <ExternalLinkIcon aria-hidden />
-              Browser didn’t open?
+              <T>Browser didn’t open?</T>
             </Button>
           ) : null}
           {activeConnectionOperation ? (
             <Button
-              aria-label="Cancel Claude sign-in"
+              aria-label={gt("Cancel Claude sign-in")}
               disabled={pendingAction === "cancel-sign-in" || pendingAction === "submit-code"}
               onClick={() => void cancelSignIn()}
               size="sm"
               type="button"
               variant="ghost-destructive-action"
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           ) : null}
         </AssistedSetupActions>
@@ -503,10 +534,10 @@ export function ClaudeInlineSetup(props: {
           body={
             props.provider.message ??
             (hasModels
-              ? "Claude is connected, but its readiness check did not finish."
-              : "Claude is connected but did not report an available model.")
+              ? gt("Claude is connected, but its readiness check did not finish.")
+              : gt("Claude is connected but did not report an available model."))
           }
-          title="Claude needs attention"
+          title={gt("Claude needs attention")}
           warning
           diagnostics={runtimeDiagnostics}
         />
@@ -539,19 +570,21 @@ export function ClaudeInlineSetup(props: {
     return (
       <AssistedSetupStatusFrame
         accountAction={props.accountAction}
-        title="Claude is ready"
+        title={gt("Claude is ready")}
         body={
           accountLabel && isSubscriptionAccount ? (
-            <>
-              <ProviderAccountManagementLink provider="claude">
-                {accountLabel}
-              </ProviderAccountManagementLink>{" "}
+            <T>
+              <Var>
+                <ProviderAccountManagementLink provider="claude">
+                  {accountLabel}
+                </ProviderAccountManagementLink>
+              </Var>{" "}
               is connected.
-            </>
+            </T>
           ) : accountLabel ? (
-            `${accountLabel} is connected.`
+            gt("{account} is connected.", { account: accountLabel })
           ) : (
-            "Claude is connected."
+            gt("Claude is connected.")
           )
         }
       />
@@ -561,11 +594,11 @@ export function ClaudeInlineSetup(props: {
   if (props.provider.auth.required === false) {
     return (
       <AssistedSetupStatusFrame
-        title={isReady ? "Claude is ready" : "Claude needs attention"}
+        title={isReady ? gt("Claude is ready") : gt("Claude needs attention")}
         body={
           isReady
-            ? "This Claude setup does not require account sign-in."
-            : (props.provider.message ?? "Claude did not report an available model.")
+            ? gt("This Claude setup does not require account sign-in.")
+            : (props.provider.message ?? gt("Claude did not report an available model."))
         }
         warning={!isReady}
         diagnostics={isReady ? undefined : runtimeDiagnostics}
@@ -576,8 +609,8 @@ export function ClaudeInlineSetup(props: {
   if (!signInMethod) {
     return (
       <AssistedSetupStatusFrame
-        title="Claude needs setup"
-        body="Finish configuring this custom Claude provider in Settings."
+        title={gt("Claude needs setup")}
+        body={gt("Finish configuring this custom Claude provider in Settings.")}
         warning
         diagnostics={runtimeDiagnostics}
       />
@@ -594,8 +627,8 @@ export function ClaudeInlineSetup(props: {
         body={
           signInError ??
           (signInMethod === "claude_subscription"
-            ? "Sign in with your existing Claude subscription. Scient never sees your password."
-            : "Connect your Anthropic Console account. Scient never sees your password.")
+            ? gt("Sign in with your existing Claude subscription. Scient never sees your password.")
+            : gt("Connect your Anthropic Console account. Scient never sees your password."))
         }
         icon={
           signInError ? (
@@ -605,7 +638,7 @@ export function ClaudeInlineSetup(props: {
           )
         }
         role={signInError ? "alert" : undefined}
-        title={signInError ? "Claude sign-in didn’t finish" : "Sign in required"}
+        title={signInError ? gt("Claude sign-in didn’t finish") : gt("Sign in required")}
       />
       <AssistedSetupActions>
         {alternateSignInMethod ? (
@@ -616,12 +649,12 @@ export function ClaudeInlineSetup(props: {
             variant="ghost-muted"
           >
             {alternateSignInMethod === "claude_console"
-              ? "Use Anthropic Console"
-              : "Use Claude subscription"}
+              ? gt("Use Anthropic Console")
+              : gt("Use Claude subscription")}
           </Button>
         ) : null}
         <Button
-          aria-label={signInError ? "Try again to sign in to Claude" : undefined}
+          aria-label={signInError ? gt("Try again to sign in to Claude") : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"
@@ -629,10 +662,10 @@ export function ClaudeInlineSetup(props: {
         >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
-            ? "Try sign in again"
+            ? gt("Try sign in again")
             : signInMethod === "claude_subscription"
-              ? "Sign in to Claude"
-              : "Sign in with Console"}
+              ? gt("Sign in to Claude")
+              : gt("Sign in with Console")}
         </Button>
       </AssistedSetupActions>
       {signInError && !props.managedRuntimePresentedExternally ? (

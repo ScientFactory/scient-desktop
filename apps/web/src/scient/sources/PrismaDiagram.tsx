@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { ScientPrismaCounts } from "@scientfactory/scient-sources";
 import { ArrowDown, ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
@@ -52,33 +53,34 @@ function Row(props: { readonly main: ReactNode; readonly side?: ReactNode }) {
 
 /** The PRISMA 2020 flow for one review, drawn from the same counts agents read. */
 export function PrismaDiagram(props: { readonly prisma: ScientPrismaCounts }) {
+  const gt = useGT();
   const { prisma } = props;
   const awaitingScreening = prisma.titleAbstract.pending + prisma.titleAbstract.maybe;
   const awaitingAssessment = prisma.fullText.pending + prisma.fullText.maybe;
   return (
-    <figure className="space-y-1.5" aria-label="PRISMA flow diagram">
+    <figure className="space-y-1.5" aria-label={gt("PRISMA flow diagram")}>
       <Row
         main={
           <Box
-            title="Records identified"
+            title={gt("Records identified")}
             count={prisma.identified.databases + prisma.identified.otherMethods}
           >
             {prisma.identified.byDatabase.map((entry) => (
               <Line key={entry.database} label={entry.database} count={entry.count} />
             ))}
             {prisma.identified.otherMethods > 0 ? (
-              <Line label="Other methods" count={prisma.identified.otherMethods} />
+              <Line label={gt("Other methods")} count={prisma.identified.otherMethods} />
             ) : null}
           </Box>
         }
         side={
           <Box
-            title="Removed before screening"
+            title={gt("Removed before screening")}
             count={prisma.removedBeforeScreening.duplicates + prisma.removedBeforeScreening.other}
           >
-            <Line label="Duplicates" count={prisma.removedBeforeScreening.duplicates} />
+            <Line label={gt("Duplicates")} count={prisma.removedBeforeScreening.duplicates} />
             {prisma.removedBeforeScreening.other > 0 ? (
-              <Line label="Other reasons" count={prisma.removedBeforeScreening.other} />
+              <Line label={gt("Other reasons")} count={prisma.removedBeforeScreening.other} />
             ) : null}
           </Box>
         }
@@ -86,36 +88,36 @@ export function PrismaDiagram(props: { readonly prisma: ScientPrismaCounts }) {
       <Down />
       <Row
         main={
-          <Box title="Records screened" count={prisma.screened}>
+          <Box title={gt("Records screened")} count={prisma.screened}>
             {awaitingScreening > 0 ? (
-              <Line label="Awaiting screening" count={awaitingScreening} />
+              <Line label={gt("Awaiting screening")} count={awaitingScreening} />
             ) : null}
           </Box>
         }
-        side={<Box title="Records excluded" count={prisma.titleAbstract.excluded} />}
+        side={<Box title={gt("Records excluded")} count={prisma.titleAbstract.excluded} />}
       />
       <Down />
       <Row
         main={
-          <Box title="Reports sought for retrieval" count={prisma.retrieval.sought}>
+          <Box title={gt("Reports sought for retrieval")} count={prisma.retrieval.sought}>
             {prisma.retrieval.pending > 0 ? (
-              <Line label="Awaiting retrieval" count={prisma.retrieval.pending} />
+              <Line label={gt("Awaiting retrieval")} count={prisma.retrieval.pending} />
             ) : null}
           </Box>
         }
-        side={<Box title="Reports not retrieved" count={prisma.retrieval.notRetrieved} />}
+        side={<Box title={gt("Reports not retrieved")} count={prisma.retrieval.notRetrieved} />}
       />
       <Down />
       <Row
         main={
-          <Box title="Reports assessed for eligibility" count={prisma.fullText.assessed}>
+          <Box title={gt("Reports assessed for eligibility")} count={prisma.fullText.assessed}>
             {awaitingAssessment > 0 ? (
-              <Line label="Awaiting assessment" count={awaitingAssessment} />
+              <Line label={gt("Awaiting assessment")} count={awaitingAssessment} />
             ) : null}
           </Box>
         }
         side={
-          <Box title="Reports excluded" count={prisma.fullText.excluded}>
+          <Box title={gt("Reports excluded")} count={prisma.fullText.excluded}>
             {prisma.fullText.excludedByReason.map((entry) => (
               <Line key={entry.reason} label={entry.reason} count={entry.count} />
             ))}
@@ -123,7 +125,7 @@ export function PrismaDiagram(props: { readonly prisma: ScientPrismaCounts }) {
         }
       />
       <Down />
-      <Row main={<Box title="Studies included in review" count={prisma.included} />} />
+      <Row main={<Box title={gt("Studies included in review")} count={prisma.included} />} />
     </figure>
   );
 }

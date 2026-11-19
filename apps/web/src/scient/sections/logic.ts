@@ -6,6 +6,9 @@ import type {
   ThreadSections,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { manualOrderForPlacement } from "./automaticPlacement";
 
 /**
@@ -69,9 +72,11 @@ function renumber(sections: readonly ThreadSection[]): ThreadSection[] {
 }
 
 /** Names what a new section is for, so threads the user picked are never silently dropped. */
-export function newSectionTitle(threadCount: number): string {
-  if (threadCount === 1) return "New section for this thread";
-  return threadCount > 1 ? `New section for ${threadCount} threads` : "New section";
+export function newSectionTitle(threadCount: number, resolve: MessageResolver = m): string {
+  if (threadCount === 1) return resolve(msg("New section for this thread"));
+  return threadCount > 1
+    ? resolve(msg("New section for {count} threads", { count: threadCount }))
+    : resolve(msg("New section"));
 }
 
 /** What a new section records about where it was made (see `ThreadSection`). */

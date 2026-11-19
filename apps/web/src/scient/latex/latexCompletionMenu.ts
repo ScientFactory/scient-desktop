@@ -1,5 +1,7 @@
 import type { LatexCommandChoice } from "./latexCommandCompletion";
 import "./mathCommandCompletion.css";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 /** One anchored list for source, prose and math; clicking never discards the edit range. */
 export function latexCompletionMenu(
@@ -14,7 +16,7 @@ export function latexCompletionMenu(
   menu.className = "scient-latex-command-completion";
   menu.dataset.latexSelectOwner = owner.id;
   menu.setAttribute("role", "listbox");
-  menu.setAttribute("aria-label", "LaTeX completions");
+  menu.setAttribute("aria-label", m(msg("LaTeX completions")));
   menu.hidden = true;
   let active = 0;
   let count = 0;

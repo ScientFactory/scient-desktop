@@ -259,6 +259,7 @@ export const recoveryFixtures = [
     source: "flowchart LR\nA(Read {local}) -> B",
     expected: 'flowchart LR\nA("Read {local}") --> B',
     shape: "round",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Mermaid node label in a test fixture
     label: "Read {local}",
   },
   {
@@ -266,6 +267,7 @@ export const recoveryFixtures = [
     source: "flowchart LR\nA((Read {local})) -> B",
     expected: 'flowchart LR\nA(("Read {local}")) --> B',
     shape: "circle",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Mermaid node label in a test fixture
     label: "Read {local}",
   },
   {
@@ -273,6 +275,7 @@ export const recoveryFixtures = [
     source: "flowchart LR\nA[(Read {local})] -> B",
     expected: 'flowchart LR\nA[("Read {local}")] --> B',
     shape: "cylinder",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Mermaid node label in a test fixture
     label: "Read {local}",
   },
   {
@@ -280,6 +283,7 @@ export const recoveryFixtures = [
     source: "flowchart LR\nA{{Read (local)}} -> B",
     expected: 'flowchart LR\nA{{"Read (local)"}} --> B',
     shape: "hexagon",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Mermaid node label in a test fixture
     label: "Read (local)",
   },
   {

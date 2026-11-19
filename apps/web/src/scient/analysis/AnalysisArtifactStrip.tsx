@@ -23,8 +23,10 @@ import {
 } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { resolveAssetUrl, useAssetUrls } from "~/assets/assetUrls";
+import { m } from "~/i18n/messages";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { previewBridge } from "~/components/preview/previewBridge";
 import {
@@ -86,16 +88,16 @@ interface ArtifactChoiceMenu {
 const ARTIFACT_DRAG_THRESHOLD = 7;
 
 const STATUS_LABELS: Readonly<Record<ArtifactDisplayStatus, string>> = {
-  current: "Current",
-  updating: "Updating…",
-  stale: "Source changed",
-  partial: "Partial run",
-  "failed-latest": "Last good · latest failed",
+  current: msg("Current", { $context: "an analysis result is up to date" }),
+  updating: msg("Updating…", { $context: "an analysis result is being rebuilt" }),
+  stale: msg("Source changed"),
+  partial: msg("Partial run"),
+  "failed-latest": msg("Last good · latest failed"),
 };
 
 function actionFailureMessage(result: AtomCommandFailure): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "The artifact operation failed.";
+  return error instanceof Error ? error.message : m(msg("The artifact operation failed."));
 }
 
 function artifactCards(run: AnalysisRun) {
@@ -131,6 +133,8 @@ export function AnalysisArtifactStrip(props: {
   readonly run: AnalysisRun;
   readonly status: ArtifactDisplayStatus;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -266,7 +270,9 @@ export function AnalysisArtifactStrip(props: {
       stackedThreadToast({
         type: "error",
         title,
-        description: result ? actionFailureMessage(result) : "The environment is unavailable.",
+        description: result
+          ? actionFailureMessage(result)
+          : m(msg("The environment is unavailable.")),
       }),
     );
   };
@@ -278,11 +284,11 @@ export function AnalysisArtifactStrip(props: {
       input: { resource },
     });
     if (result._tag !== "Success") {
-      if (!isAtomCommandInterrupted(result)) reportFailure("Unable to load figure", result);
+      if (!isAtomCommandInterrupted(result)) reportFailure(m(msg("Unable to load figure")), result);
       return null;
     }
     const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-    if (url === null) reportFailure("Unable to load figure");
+    if (url === null) reportFailure(m(msg("Unable to load figure")));
     return url;
   };
 
@@ -293,7 +299,7 @@ export function AnalysisArtifactStrip(props: {
     initialPosition?: { readonly x: number; readonly y: number },
   ) => {
     if (!representation) {
-      reportFailure("Figure preview is unavailable");
+      reportFailure(m(msg("Figure preview is unavailable")));
       return;
     }
     const actionKey = `${mode}:${artifact.artifactId}`;
@@ -317,7 +323,7 @@ export function AnalysisArtifactStrip(props: {
           break completeOperation;
         }
         if (!isPreviewAvailableFor(props.environmentId)) {
-          reportFailure("Figure preview is unavailable");
+          reportFailure(m(msg("Figure preview is unavailable")));
           break completeOperation;
         }
         const url = await createUrl(analysisArtifactResource(props.run, artifact, representation));
@@ -333,7 +339,9 @@ export function AnalysisArtifactStrip(props: {
           },
         });
         if (result._tag !== "Success") {
-          if (!isAtomCommandInterrupted(result)) reportFailure("Unable to open figure", result);
+          if (!isAtomCommandInterrupted(result)) {
+            reportFailure(m(msg("Unable to open figure")), result);
+          }
           break completeOperation;
         }
         applyPreviewServerSnapshot(props.threadRef, result.value);
@@ -452,7 +460,7 @@ export function AnalysisArtifactStrip(props: {
   };
 
   return (
-    <div className="border-t border-border bg-background" aria-label="Analysis figures">
+    <div className="border-t border-border bg-background" aria-label={gt("Analysis figures")}>
       <div className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
         <button
           type="button"
@@ -469,13 +477,13 @@ export function AnalysisArtifactStrip(props: {
             <ChevronRight className="size-3.5" aria-hidden="true" />
           )}
           <span>
-            {props.run.artifacts.length === 1
-              ? "1 figure"
-              : `${props.run.artifacts.length} figures`}
+            {gt("{count, plural, =1 {1 figure} other {{count} figures}}", {
+              count: props.run.artifacts.length,
+            })}
           </span>
         </button>
         <span className="text-muted-foreground" role="status">
-          {STATUS_LABELS[props.status]}
+          {messages(STATUS_LABELS[props.status])}
         </span>
       </div>
       {expanded ? (
@@ -513,7 +521,7 @@ export function AnalysisArtifactStrip(props: {
                         anchor: event.currentTarget,
                       });
                     }}
-                    aria-label={`Choose how to open ${card.artifact.label}`}
+                    aria-label={gt("Choose how to open {figure}", { figure: card.artifact.label })}
                     aria-haspopup="menu"
                     aria-expanded={choiceMenu?.artifactId === card.artifact.artifactId}
                   >
@@ -545,7 +553,7 @@ export function AnalysisArtifactStrip(props: {
                         variant="ghost"
                         disabled={pendingAction !== null}
                         onClick={() => void downloadNative(card.artifact)}
-                        aria-label={`Download native ${card.artifact.label}`}
+                        aria-label={gt("Download native {figure}", { figure: card.artifact.label })}
                       >
                         {downloadPending ? <LoaderCircle className="animate-spin" /> : <Download />}
                       </Button>
@@ -579,7 +587,9 @@ export function AnalysisArtifactStrip(props: {
               }}
             >
               <Image />
-              <span>Static</span>
+              <span>
+                <T context="open the figure as a static image">Static</T>
+              </span>
             </MenuItem>
             <MenuItem
               disabled={!choiceCard.interactive || pendingAction !== null}
@@ -589,9 +599,13 @@ export function AnalysisArtifactStrip(props: {
               }}
             >
               <ExternalLink />
-              <span>Interactive</span>
+              <span>
+                <T context="open the figure as an interactive page">Interactive</T>
+              </span>
               {!choiceCard.interactive ? (
-                <span className="ml-auto text-[10px] text-muted-foreground">Unavailable</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">
+                  <T>Unavailable</T>
+                </span>
               ) : null}
             </MenuItem>
             <MenuItem
@@ -602,7 +616,9 @@ export function AnalysisArtifactStrip(props: {
               }}
             >
               <Pin />
-              <span>Floating card</span>
+              <span>
+                <T>Floating card</T>
+              </span>
             </MenuItem>
           </MenuPopup>
         ) : null}

@@ -3,6 +3,7 @@ import {
   accountHandoffInstruction,
 } from "@t3tools/shared/scientSignInPage";
 import type { AccountApproval, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -20,6 +21,7 @@ export function ThreadAccountRequests(props: {
   readonly threadId: ThreadId;
 }) {
   const { environmentId, threadId } = props;
+  const gt = useGT();
   const { data } = useEnvironmentQuery(accountsEnvironment.snapshot({ environmentId, input: {} }));
   const respond = useAtomCommand(accountsEnvironment.respondApproval, "Answer account request");
   const cancel = useAtomCommand(accountsEnvironment.cancelHandoff, "Cancel sign-in");
@@ -40,9 +42,21 @@ export function ThreadAccountRequests(props: {
             {accountApprovalQuestion(approval.action)}
           </Text>
           <View className="flex-row flex-wrap gap-2">
-            <Button label="Allow" tone="primary" onPress={() => answer(approval, "once")} />
-            <Button label="Always" tone="secondary" onPress={() => answer(approval, "always")} />
-            <Button label="Deny" tone="text" onPress={() => answer(approval, "deny")} />
+            <Button
+              label={gt("Allow", { $context: "allow this account request once" })}
+              tone="primary"
+              onPress={() => answer(approval, "once")}
+            />
+            <Button
+              label={gt("Always", { $context: "always allow this account request" })}
+              tone="secondary"
+              onPress={() => answer(approval, "always")}
+            />
+            <Button
+              label={gt("Deny", { $context: "deny this account request" })}
+              tone="text"
+              onPress={() => answer(approval, "deny")}
+            />
           </View>
         </View>
       ))}
@@ -54,8 +68,12 @@ export function ThreadAccountRequests(props: {
           <Text className="font-t3-bold text-base text-foreground">{handoff.accountName}</Text>
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
             {accountHandoffInstruction(handoff.kind)}
-            {handoff.kind === "push" && handoff.number ? ` Tap ${handoff.number}.` : ""}
-            {handoff.kind === "captcha" || handoff.kind === "passkey" ? " On your computer." : ""}
+            {handoff.kind === "push" && handoff.number
+              ? ` ${gt("Tap {number}.", { number: handoff.number })}`
+              : ""}
+            {handoff.kind === "captcha" || handoff.kind === "passkey"
+              ? ` ${gt("On your computer.")}`
+              : ""}
           </Text>
           {handoff.reason ? (
             <Text className="font-sans text-sm leading-5 text-foreground-muted">
@@ -63,7 +81,7 @@ export function ThreadAccountRequests(props: {
             </Text>
           ) : null}
           <Button
-            label="Cancel sign-in"
+            label={gt("Cancel sign-in")}
             tone="text"
             onPress={() => void cancel({ environmentId, input: { handoffId: handoff.handoffId } })}
           />

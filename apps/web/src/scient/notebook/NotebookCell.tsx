@@ -19,9 +19,11 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import { msg, useGT, useMessages } from "gt-react";
 import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
@@ -89,7 +91,7 @@ function CellEditor(props: {
       code: initial.current.code,
       editable: true,
       language: initial.current.language,
-      ariaLabel: "Notebook cell",
+      ariaLabel: m(msg("Notebook cell")),
       onUserCodeChange: onChange,
       onEscape,
     });
@@ -166,17 +168,26 @@ function formatRunTime(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-function runLabel(cell: Cell, stale: NotebookStaleness | null): string {
-  if (stale === "edited") return "Run · edited since it ran";
-  if (stale === "upstream") return "Run · a cell above changed since it ran";
-  if (cell.run === null) return "Run";
+function runLabel(
+  cell: Cell,
+  stale: NotebookStaleness | null,
+  resolve: MessageResolver = m,
+): string {
+  if (stale === "edited") return resolve(msg("Run · edited since it ran"));
+  if (stale === "upstream") return resolve(msg("Run · a cell above changed since it ran"));
+  if (cell.run === null) return resolve(msg("Run", { $context: "verb, runs a notebook cell" }));
   const time = new Date(cell.run.at).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
   return cell.run.ms === null
-    ? `Run · ran at ${time}`
-    : `Run · ran at ${time} in ${formatRunTime(cell.run.ms)}`;
+    ? resolve(msg("Run · ran at {time}", { time }))
+    : resolve(
+        msg("Run · ran at {time} in {duration}", {
+          time,
+          duration: formatRunTime(cell.run.ms),
+        }),
+      );
 }
 
 /** A cell's state, one mark in one place; the pointer or focus turns it into Run or Stop. */
@@ -187,6 +198,8 @@ function CellGutter(props: {
   readonly onRun: () => void;
   readonly onStop: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { cell, activity, stale } = props;
   const failed = cell.outputs.some((output) => output.outputType === "error");
   return (
@@ -194,16 +207,16 @@ function CellGutter(props: {
       <span className="flex items-center justify-center group-focus-within/cell:hidden group-hover/cell:hidden">
         {activity === "running" ? (
           <LoaderCircle
-            aria-label="Running"
+            aria-label={gt("Running")}
             className="size-3.5 animate-spin text-muted-foreground"
           />
         ) : activity === "queued" ? (
           <span
-            aria-label="Queued"
+            aria-label={gt("Queued")}
             className="size-2 rounded-full border border-muted-foreground/70"
           />
         ) : stale !== null ? (
-          <span aria-label="Out of date" className="size-2 rounded-full bg-warning" />
+          <span aria-label={gt("Out of date")} className="size-2 rounded-full bg-warning" />
         ) : (
           <span
             className={cn(
@@ -217,11 +230,14 @@ function CellGutter(props: {
       </span>
       <span className="hidden group-focus-within/cell:inline-flex group-hover/cell:inline-flex">
         {activity === null ? (
-          <CellAction label={runLabel(cell, stale)} onClick={props.onRun}>
+          <CellAction label={runLabel(cell, stale, messages)} onClick={props.onRun}>
             <Play />
           </CellAction>
         ) : (
-          <CellAction label="Stop" onClick={props.onStop}>
+          <CellAction
+            label={gt("Stop", { $context: "verb, stops a running cell" })}
+            onClick={props.onStop}
+          >
             <Square />
           </CellAction>
         )}
@@ -237,31 +253,35 @@ function CellRow(props: {
   readonly onMove: (offset: -1 | 1) => void;
   readonly onDelete: () => void;
 }) {
+  const gt = useGT();
   return (
     <div className="col-start-2 flex h-6.5 min-w-0 items-center justify-between gap-1">
       <div className="group/insert flex h-full min-w-0 flex-1 items-center">
         <span className="flex gap-0.5 opacity-0 transition-opacity group-hover/insert:opacity-100 focus-within:opacity-100">
           <Button variant="ghost-muted" size="xs" onClick={() => props.onInsert("code")}>
-            <Plus /> Code
+            <Plus /> {gt("Code", { $context: "inserts a code cell" })}
           </Button>
           <Button variant="ghost-muted" size="xs" onClick={() => props.onInsert("markdown")}>
-            <Plus /> Text
+            <Plus /> {gt("Text", { $context: "inserts a text cell" })}
           </Button>
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
         {props.onAsk !== null ? (
-          <CellAction label="Ask in chat" onClick={props.onAsk}>
+          <CellAction label={gt("Ask in chat")} onClick={props.onAsk}>
             <MessageSquarePlus />
           </CellAction>
         ) : null}
-        <CellAction label="Move up" onClick={() => props.onMove(-1)}>
+        <CellAction label={gt("Move up")} onClick={() => props.onMove(-1)}>
           <ArrowUp />
         </CellAction>
-        <CellAction label="Move down" onClick={() => props.onMove(1)}>
+        <CellAction label={gt("Move down")} onClick={() => props.onMove(1)}>
           <ArrowDown />
         </CellAction>
-        <CellAction label="Delete" onClick={props.onDelete}>
+        <CellAction
+          label={gt("Delete", { $context: "verb, deletes a cell" })}
+          onClick={props.onDelete}
+        >
           <Trash2 />
         </CellAction>
       </div>
@@ -348,6 +368,7 @@ export function NotebookCell(props: {
   readonly language: string;
   readonly handlers: NotebookCellHandlers;
 }) {
+  const gt = useGT();
   const { controller, cellId, handlers } = props;
   const cell = useStore(controller.store, (state) => state.cells[cellId]);
   const selected = useStore(controller.store, (state) => state.selected === cellId);
@@ -378,7 +399,7 @@ export function NotebookCell(props: {
       data-notebook-cell={cellId}
       data-assistant-citation-source={cellId}
       role="application"
-      aria-label={isCode ? "Code cell" : "Text cell"}
+      aria-label={isCode ? gt("Code cell") : gt("Text cell")}
       tabIndex={-1}
       className="group/cell grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-1 pr-3 pl-1 outline-none [content-visibility:auto] [contain-intrinsic-size:auto_6rem]"
       onFocusCapture={() => controller.select(cellId)}

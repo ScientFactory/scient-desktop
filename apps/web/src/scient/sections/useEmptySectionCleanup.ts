@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useThreadSectionCatalogs } from "./catalog";
 import {
@@ -117,10 +119,10 @@ export function useEmptySectionCleanup(input: {
           type: "success",
           title:
             removed.length === 1
-              ? `Removed empty section “${removed[0]!.section.name}”`
-              : `Removed ${removed.length} empty sections`,
+              ? m(msg("Removed empty section “{name}”", { name: removed[0]!.section.name }))
+              : m(msg("Removed {count} empty sections", { count: removed.length })),
           actionProps: {
-            children: "Undo",
+            children: m(msg("Undo")),
             onClick: () => {
               void restoreAll(environmentId, removed);
             },

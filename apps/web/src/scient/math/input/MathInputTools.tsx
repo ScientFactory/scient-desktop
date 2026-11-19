@@ -1,7 +1,8 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import { matchingMathCommands } from "./catalog";
+import { matchingMathCommands, MATH_GROUP_LABELS } from "./catalog";
 import type { MathInputController } from "./controller";
 import { MATRIX_ENVIRONMENTS, type MatrixEnvironment } from "./matrix";
 import {
@@ -16,6 +17,13 @@ import "./math-input.css";
  * The math palette. With `anchor`, it has no button of its own and opens next
  * to that element (a Math menu in the bar, for example).
  */
+const MATRIX_ACTION_LABELS = {
+  addRow: msg("add Row"),
+  deleteRow: msg("delete Row"),
+  addColumn: msg("add Column"),
+  deleteColumn: msg("delete Column"),
+} as const;
+
 export function MathInputTools({
   controller,
   anchor,
@@ -23,6 +31,8 @@ export function MathInputTools({
   readonly controller: MathInputController;
   readonly anchor?: React.RefObject<HTMLElement | null>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const panel = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
@@ -45,10 +55,10 @@ export function MathInputTools({
   const trigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const symbols = useRef<HTMLSpanElement>(null);
-  const matches = matchingMathCommands(panel.query);
+  const matches = matchingMathCommands(panel.query, messages);
   const run = (id: string) => {
     if (controller.execute(id)) controller.close();
-    else setError("This command is unavailable at the current selection.");
+    else setError(gt("This command is unavailable at the current selection."));
   };
   return (
     <span className="scient-math-tools" data-scient-math-tools="true" contentEditable={false}>
@@ -60,14 +70,14 @@ export function MathInputTools({
       {anchor ? null : (
         <ScientTooltip
           content={
-            "Math and symbols" +
+            gt("Math and symbols") +
             (shortcutLabel("math.palette") ? " (" + shortcutLabel("math.palette") + ")" : "")
           }
         >
           <button
             ref={trigger}
             type="button"
-            aria-label="Insert math or symbol"
+            aria-label={gt("Insert math or symbol")}
             aria-expanded={panel.open}
             aria-controls={panel.open ? panelId : undefined}
             onMouseDown={(event) => event.preventDefault()}
@@ -98,7 +108,7 @@ export function MathInputTools({
             finalFocus={false}
             data-keybinding-capture=""
             data-scient-math-tools="true"
-            aria-label="Math and symbols"
+            aria-label={gt("Math and symbols")}
           >
             <span
               id={panelId}
@@ -112,10 +122,12 @@ export function MathInputTools({
               }}
             >
               <span className="scient-math-palette-heading">
-                <strong>Math and symbols</strong>
+                <strong>
+                  <T>Math and symbols</T>
+                </strong>
                 <button
                   type="button"
-                  aria-label="Close math palette"
+                  aria-label={gt("Close math palette")}
                   onClick={() => controller.close()}
                 >
                   ×
@@ -123,13 +135,13 @@ export function MathInputTools({
               </span>
               <span className="scient-math-palette-actions">
                 <button type="button" onClick={() => run("math.inline")}>
-                  Inline equation
+                  <T>Inline equation</T>
                 </button>
                 <button type="button" onClick={() => run("math.display")}>
-                  Display equation
+                  <T>Display equation</T>
                 </button>
                 <button type="button" onClick={() => run("math.fraction")}>
-                  Fraction
+                  <T>Fraction</T>
                 </button>
                 <button type="button" onClick={() => run("math.sqrt")}>
                   √
@@ -137,8 +149,8 @@ export function MathInputTools({
               </span>
               <input
                 ref={searchInput}
-                aria-label="Find a math symbol or command"
-                placeholder="Search: alpha, fraction, arrow…"
+                aria-label={gt("Find a math symbol or command")}
+                placeholder={gt("Search: alpha, fraction, arrow…")}
                 value={panel.query}
                 onChange={(event) => controller.search(event.target.value)}
                 onKeyDown={(event) => {
@@ -177,22 +189,27 @@ export function MathInputTools({
                   else buttons[Math.min(next, buttons.length - 1)]?.focus();
                 }}
               >
-                {matches.map((command) => (
-                  <ScientTooltip
-                    key={command.id}
-                    content={`${command.group}: ${command.label}${shortcutLabel(command.id) ? " · " + shortcutLabel(command.id) : ""}`}
-                  >
-                    <button type="button" onClick={() => run(command.id)}>
-                      {command.label}
-                    </button>
-                  </ScientTooltip>
-                ))}
+                {matches.map((command) => {
+                  const group = messages(MATH_GROUP_LABELS[command.group]);
+                  const label = messages(command.label);
+                  const shortcut = shortcutLabel(command.id);
+                  return (
+                    <ScientTooltip
+                      key={command.id}
+                      content={`${group}: ${label}${shortcut ? " · " + shortcut : ""}`}
+                    >
+                      <button type="button" onClick={() => run(command.id)}>
+                        {label}
+                      </button>
+                    </ScientTooltip>
+                  );
+                })}
               </span>
               <span className="scient-math-matrix-picker">
                 <label>
-                  Matrix{" "}
+                  <T>Matrix</T>{" "}
                   <select
-                    aria-label="Matrix style"
+                    aria-label={gt("Matrix style")}
                     value={environment}
                     onChange={(event) => setEnvironment(event.target.value as MatrixEnvironment)}
                   >
@@ -204,9 +221,9 @@ export function MathInputTools({
                   </select>
                 </label>
                 <label>
-                  Rows{" "}
+                  <T>Rows</T>{" "}
                   <input
-                    aria-label="Matrix rows"
+                    aria-label={gt("Matrix rows")}
                     type="number"
                     min={1}
                     max={20}
@@ -215,9 +232,9 @@ export function MathInputTools({
                   />
                 </label>
                 <label>
-                  Columns{" "}
+                  <T>Columns</T>{" "}
                   <input
-                    aria-label="Matrix columns"
+                    aria-label={gt("Matrix columns")}
                     type="number"
                     min={1}
                     max={20}
@@ -239,11 +256,13 @@ export function MathInputTools({
                       controller.close();
                     else
                       setError(
-                        "Use whole dimensions from 1 to 20 and place the caret in an editable equation or paragraph.",
+                        gt(
+                          "Use whole dimensions from 1 to 20 and place the caret in an editable equation or paragraph.",
+                        ),
                       );
                   }}
                 >
-                  Insert matrix
+                  <T>Insert matrix</T>
                 </button>
               </span>
               <span className="scient-math-palette-actions">
@@ -253,14 +272,16 @@ export function MathInputTools({
                     key={action}
                     onClick={() => {
                       if (controller.execute(`math.matrix.${action}`)) controller.close();
-                      else setError("Place the caret inside a supported matrix cell first.");
+                      else setError(gt("Place the caret inside a supported matrix cell first."));
                     }}
                   >
-                    {action.replace(/([A-Z])/gu, " $1")}
+                    {messages(MATRIX_ACTION_LABELS[action])}
                   </button>
                 ))}
               </span>
-              <span className="text-xs">Customize in Settings → Shortcuts → Math.</span>
+              <span className="text-xs">
+                <T>Customize in Settings → Shortcuts → Math.</T>
+              </span>
               {error || panel.notice ? <span role="status">{panel.notice || error}</span> : null}
             </span>
           </PopoverPopup>

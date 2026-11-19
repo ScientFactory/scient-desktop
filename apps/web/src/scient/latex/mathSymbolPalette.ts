@@ -1,32 +1,74 @@
+import { msg } from "gt-react";
 import { mathSymbolCommand, type MathSymbol } from "./mathSymbols";
 
 /** Presentation groups share the catalog used for insertion and package discovery. */
+/** `label` is a `msg()` string: resolve it with `useMessages()` where it is shown. */
 export const MATH_PALETTE_GROUPS = [
-  { id: "common", label: "Common", categories: [] },
+  { id: "common", label: msg("Common", { $context: "math symbol category" }), categories: [] },
   {
     id: "structures",
-    label: "Structures",
+    label: msg("Structures", { $context: "math symbol category" }),
     categories: ["structures", "frac-square", "sqrt-square"],
   },
-  { id: "annotations", label: "Labels", categories: ["annotations"] },
-  { id: "greek", label: "Greek", categories: ["latex_greek"] },
-  { id: "operators", label: "Operators", categories: ["latex_bop", "latex_ams_ops"] },
-  { id: "sets", label: "Sets", categories: [] },
+  {
+    id: "annotations",
+    label: msg("Labels", { $context: "math symbol category" }),
+    categories: ["annotations"],
+  },
+  {
+    id: "greek",
+    label: msg("Greek", { $context: "math symbol category" }),
+    categories: ["latex_greek"],
+  },
+  {
+    id: "operators",
+    label: msg("Operators", { $context: "math symbol category" }),
+    categories: ["latex_bop", "latex_ams_ops"],
+  },
+  { id: "sets", label: msg("Sets", { $context: "math symbol category" }), categories: [] },
   {
     id: "relations",
-    label: "Relations",
+    label: msg("Relations", { $context: "math symbol category" }),
     categories: ["latex_brel", "latex_ams_rel", "latex_ams_nrel"],
   },
-  { id: "arrows", label: "Arrows", categories: ["latex_arrow", "latex_ams_arrows"] },
-  { id: "large", label: "Calculus", categories: ["latex_varsz"] },
-  { id: "accents", label: "Accents", categories: ["latex_deco"] },
-  { id: "brackets", label: "Brackets", categories: ["latex_delim"] },
-  { id: "functions", label: "Functions", categories: ["functions"] },
-  { id: "alphabets", label: "Alphabets", categories: ["font"] },
-  { id: "spacing", label: "Spacing", categories: ["space"] },
+  {
+    id: "arrows",
+    label: msg("Arrows", { $context: "math symbol category" }),
+    categories: ["latex_arrow", "latex_ams_arrows"],
+  },
+  {
+    id: "large",
+    label: msg("Calculus", { $context: "math symbol category" }),
+    categories: ["latex_varsz"],
+  },
+  {
+    id: "accents",
+    label: msg("Accents", { $context: "math symbol category" }),
+    categories: ["latex_deco"],
+  },
+  {
+    id: "brackets",
+    label: msg("Brackets", { $context: "math symbol category" }),
+    categories: ["latex_delim"],
+  },
+  {
+    id: "functions",
+    label: msg("Functions", { $context: "math symbol category" }),
+    categories: ["functions"],
+  },
+  {
+    id: "alphabets",
+    label: msg("Alphabets", { $context: "math symbol category" }),
+    categories: ["font"],
+  },
+  {
+    id: "spacing",
+    label: msg("Spacing", { $context: "math symbol category" }),
+    categories: ["space"],
+  },
   {
     id: "other",
-    label: "More",
+    label: msg("More", { $context: "math symbol category" }),
     categories: ["latex_dots", "style", "latex_misc", "latex_ams_misc"],
   },
 ] as const;

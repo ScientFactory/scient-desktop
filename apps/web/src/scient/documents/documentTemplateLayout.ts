@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /**
  * Which templates a new document offers on its page and which behind "More",
@@ -142,21 +144,42 @@ export function templateActions(
   id: string,
   defaultTemplate: string,
   own = false,
+  resolve: MessageResolver = m,
 ): readonly TemplateMenuItem[] {
   const placing: TemplateMenuItem[] = [
     defaultTemplate === id
-      ? { id: "default", label: "Default", disabled: true }
-      : { id: "default", label: "Set as default" },
+      ? {
+          id: "default",
+          label: resolve(msg("Default", { $context: "this template is the default" })),
+          disabled: true,
+        }
+      : { id: "default", label: resolve(msg("Set as default")) },
     layout.page.includes(id)
-      ? { id: "more", label: "Move to More" }
-      : { id: "page", label: "Move to page" },
+      ? { id: "more", label: resolve(msg("Move to More")) }
+      : { id: "page", label: resolve(msg("Move to page")) },
   ];
-  if (!own) return [...placing, { id: "hide", label: "Hide", separatorBefore: true }];
+  if (!own)
+    return [
+      ...placing,
+      {
+        id: "hide",
+        label: resolve(msg("Hide", { $context: "hide the template" })),
+        separatorBefore: true,
+      },
+    ];
   return [
     ...placing,
-    { id: "edit", label: "Edit", separatorBefore: true },
-    { id: "rename", label: "Rename…" },
-    { id: "delete", label: "Delete", destructive: true },
+    {
+      id: "edit",
+      label: resolve(msg("Edit", { $context: "edit the template" })),
+      separatorBefore: true,
+    },
+    { id: "rename", label: resolve(msg("Rename…")) },
+    {
+      id: "delete",
+      label: resolve(msg("Delete", { $context: "delete the template" })),
+      destructive: true,
+    },
   ];
 }
 

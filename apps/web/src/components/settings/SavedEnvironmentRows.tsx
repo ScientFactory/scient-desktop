@@ -610,7 +610,9 @@ function ConfiguredCloudLinkRow({
   const hostSwitchOn =
     connectHost !== null && !connectHost.off && connectHost.block?.reason !== "revoked";
   const hostDescription =
-    connectHost === null ? null : describeScientConnectHost(connectHost, isSignedIn === true);
+    connectHost === null
+      ? null
+      : describeScientConnectHost(connectHost, isSignedIn === true, messages);
   // SCIENT-FORK:END
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);

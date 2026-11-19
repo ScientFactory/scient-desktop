@@ -1,5 +1,6 @@
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 
 import {
   formatCount,
@@ -54,6 +55,7 @@ export function UsageAccountingTrendChart({
   readonly trend: AccountingTrend;
   readonly metric: AccountingChartMetric;
 }) {
+  const gt = useGT();
   const [activePeriod, setActivePeriod] = useState<number | null>(null);
   const [activeSeriesIndex, setActiveSeriesIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
@@ -226,7 +228,7 @@ export function UsageAccountingTrendChart({
   if (trend.periods.length === 0 || trend.series.length === 0) {
     return (
       <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-        No provider-billed activity in this period.
+        <T>No provider-billed activity in this period.</T>
       </div>
     );
   }
@@ -236,7 +238,7 @@ export function UsageAccountingTrendChart({
   const middlePeriod = trend.periods[Math.floor((trend.periods.length - 1) / 2)]!;
   const activeDescription =
     activePeriod === null
-      ? "No billing day selected"
+      ? gt("No billing day selected")
       : `${formatDayShort(trend.periods[activePeriod]!)}: ${trend.series
           .map(
             (series) => `${series.label} ${formatMetric(series.values[activePeriod] ?? 0, metric)}`,
@@ -259,7 +261,19 @@ export function UsageAccountingTrendChart({
         </div>
         <div
           ref={plotRef}
-          aria-label={`${metric} over time by billing day. Use the left and right arrow keys to inspect exact daily values.`}
+          aria-label={
+            metric === "spend"
+              ? gt(
+                  "spend over time by billing day. Use the left and right arrow keys to inspect exact daily values.",
+                )
+              : metric === "tokens"
+                ? gt(
+                    "tokens over time by billing day. Use the left and right arrow keys to inspect exact daily values.",
+                  )
+                : gt(
+                    "requests over time by billing day. Use the left and right arrow keys to inspect exact daily values.",
+                  )
+          }
           aria-orientation="horizontal"
           aria-valuemax={trend.periods.length - 1}
           aria-valuemin={0}
@@ -386,7 +400,7 @@ export function UsageAccountingTrendChart({
           <span>{formatDayShort(lastPeriod)}</span>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2" aria-label="Chart legend">
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2" aria-label={gt("Chart legend")}>
         {trend.series.map((series) => (
           <div
             key={series.id}

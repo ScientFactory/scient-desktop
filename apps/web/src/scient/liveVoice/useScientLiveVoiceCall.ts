@@ -7,8 +7,10 @@ import type {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react";
 import { type SetStateAction, useEffect, useState, useSyncExternalStore } from "react";
 
+import { m } from "../../i18n/messages.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { getVoiceBridge } from "../voice/voiceClient.ts";
 import { acquireCurrentMicrophone } from "../voice/voiceMedia.ts";
@@ -92,7 +94,7 @@ const describeFailure = (cause: Cause.Cause<unknown>): string => {
     const error = reason.error;
     if (error instanceof Error && error.message) return error.message;
   }
-  return "The voice call couldn't continue.";
+  return m(msg("The voice call couldn't continue."));
 };
 
 /**
@@ -166,7 +168,7 @@ async function runLiveVoiceCall(input: {
       ? describeMicrophoneAccessRefusal("denied", window.desktopBridge?.getClientPlatform?.())
       : cause instanceof Error && cause.message
         ? cause.message
-        : "The voice call couldn't start.";
+        : m(msg("The voice call couldn't start."));
   } finally {
     call.peer?.close();
     for (const track of microphone?.getTracks() ?? []) track.stop();

@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import {
   scientSourcesMayBeVersions,
   type ScientSourceIdentifierAddItem,
@@ -91,10 +92,10 @@ import { NOTICE_CHANGES_SHOWN } from "./sourceLifecycleLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
-  SCIENT_SOURCE_SORT_OPTIONS,
   sortScientSourceRecords,
   type ScientSourceSort,
 } from "./filterSources";
+import { SCIENT_SOURCE_SORT_OPTIONS } from "./filterSourcesCopy";
 import {
   importedSourceIdToReveal,
   importedSourceIds,
@@ -261,6 +262,8 @@ export function ScientSourcesPanel(props: {
   }) => void;
   readonly onOpenFile?: (path: string, line: number) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
   const libraryVersion = useLibraryVersionStore((state) => state.byRoot[props.root] ?? "");
   const canChange = useCanChangeLibrary(props.environmentId);
@@ -522,7 +525,7 @@ export function ScientSourcesPanel(props: {
     sourceSort,
   );
   // oxlint-disable-next-line react/purity -- Last added's headings read the clock whenever the list is derived; one that lags past midnight until the next render is harmless
-  const sourceSections = scientSourceSections(filteredSourceRecords, sourceSort, Date.now());
+  const sourceSections = scientSourceSections(filteredSourceRecords, sourceSort, Date.now(), m);
   const listFilterActive =
     packageSources !== null ||
     organize.filterActive ||
@@ -537,7 +540,7 @@ export function ScientSourcesPanel(props: {
   const showPackageSources = useStableCallback(
     (sourceIds: ReadonlyArray<string>, label?: string) => {
       if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-      setShownSourcesLabel(label ?? "Papers kept after Undo");
+      setShownSourcesLabel(label ?? gt("Papers kept after Undo"));
       setSelectedSourceId(null);
       setShowingReviews(false);
       setShowingDuplicates(null);
@@ -557,7 +560,7 @@ export function ScientSourcesPanel(props: {
       .catch((cause: unknown) => {
         toastManager.add({
           type: "error",
-          title: "The line was not dismissed",
+          title: gt("The line was not dismissed"),
           description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
         });
       });
@@ -667,72 +670,75 @@ export function ScientSourcesPanel(props: {
         : (outcome?.operation ?? null);
     const fileRest = referenceFile && canChange ? referenceFile.report.remaining : 0;
     const zoteroRest = receipt.intake === "zotero" && canChange ? sources.zoteroRunRemaining : 0;
-    return importResultContent({
-      operation,
-      outcome,
-      referenceFile: referenceFile
-        ? { name: referenceFile.file.name, report: referenceFile.report }
-        : null,
-      target: receipt.target,
-      intake: receipt.intake,
-      sourceTitle: (sourceId) =>
-        sources.overview?.records.find((record) => record.sourceId === sourceId)?.title ?? null,
-      detailsMissing: (sourceId) => (diagnosticsBySourceId.get(sourceId)?.length ?? 0) > 0,
-      hasOtherVersion: (sourceId) => {
-        const records = sources.overview?.records ?? [];
-        const imported = records.find((record) => record.sourceId === sourceId);
-        return (
-          imported !== undefined &&
-          records.some(
-            (record) =>
-              record.sourceId !== sourceId && scientSourcesMayBeVersions(imported, record),
-          )
-        );
-      },
-      ...(referenceFile && fileRest > 0
-        ? { rest: { count: fileRest, onImport: () => importReferenceFile(referenceFile.file) } }
-        : zoteroRest > 0
+    return importResultContent(
+      {
+        operation,
+        outcome,
+        referenceFile: referenceFile
+          ? { name: referenceFile.file.name, report: referenceFile.report }
+          : null,
+        target: receipt.target,
+        intake: receipt.intake,
+        sourceTitle: (sourceId) =>
+          sources.overview?.records.find((record) => record.sourceId === sourceId)?.title ?? null,
+        detailsMissing: (sourceId) => (diagnosticsBySourceId.get(sourceId)?.length ?? 0) > 0,
+        hasOtherVersion: (sourceId) => {
+          const records = sources.overview?.records ?? [];
+          const imported = records.find((record) => record.sourceId === sourceId);
+          return (
+            imported !== undefined &&
+            records.some(
+              (record) =>
+                record.sourceId !== sourceId && scientSourcesMayBeVersions(imported, record),
+            )
+          );
+        },
+        ...(referenceFile && fileRest > 0
+          ? { rest: { count: fileRest, onImport: () => importReferenceFile(referenceFile.file) } }
+          : zoteroRest > 0
+            ? {
+                rest: {
+                  count: zoteroRest,
+                  onImport: () =>
+                    revealImportedSource(sources.importZoteroRest(), { intake: "zotero" }),
+                },
+              }
+            : {}),
+        ...(canChange ? { onRetryFailed: () => void sources.retryFailedImport() } : {}),
+        ...(canChangeProject
           ? {
-              rest: {
-                count: zoteroRest,
-                onImport: () =>
-                  revealImportedSource(sources.importZoteroRest(), { intake: "zotero" }),
-              },
+              onAddToProject: (sourceIds: ReadonlyArray<string>) =>
+                void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(result.dismiss),
             }
           : {}),
-      ...(canChange ? { onRetryFailed: () => void sources.retryFailedImport() } : {}),
-      ...(canChangeProject
-        ? {
-            onAddToProject: (sourceIds: ReadonlyArray<string>) =>
-              void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(result.dismiss),
-          }
-        : {}),
-      ...(scopes ? { onShowSources: showPackageSources } : {}),
-      onViewSource: (sourceId) => {
-        setEditingSource(false);
-        setSelectedSourceId(sourceId);
+        ...(scopes ? { onShowSources: showPackageSources } : {}),
+        onViewSource: (sourceId) => {
+          setEditingSource(false);
+          setSelectedSourceId(sourceId);
+        },
       },
-    });
+      m,
+    );
   };
   // A source this project keeps from its own details: link it to a Library copy, or keep it apart.
   const linkToCopy = async (projectSourceId: string, librarySourceId: string) => {
     const result = await organize.organize(
       { action: "link-pin", sourceId: projectSourceId, librarySourceId },
-      LIBRARY_LABELS.linkFailed,
+      m(LIBRARY_LABELS.linkFailed),
     );
     if (result?.outcome !== "linked") return;
     setSelectedSourceId(librarySourceId);
     toastManager.add({
       type: "success",
-      title: LIBRARY_LABELS.linked,
-      description: LIBRARY_LABELS.linkedHelp,
+      title: m(LIBRARY_LABELS.linked),
+      description: m(LIBRARY_LABELS.linkedHelp),
       actionProps: {
-        children: "Undo",
+        children: gt("Undo", { $context: "verb, button that undoes a change" }),
         onClick: organize.whenFree(() => {
           void organize
             .organize(
               { action: "unlink-pin", sourceId: projectSourceId },
-              LIBRARY_LABELS.linkFailed,
+              m(LIBRARY_LABELS.linkFailed),
             )
             .then((undone) => {
               if (undone?.outcome === "unlinked") setSelectedSourceId(projectSourceId);
@@ -744,7 +750,7 @@ export function ScientSourcesPanel(props: {
   const keepSeparate = async (record: ScientSourceDetailResult, separate: boolean) => {
     const result = await organize.organize(
       { action: separate ? "keep-pin-separate" : "clear-pin-separate", sourceId: record.sourceId },
-      LIBRARY_LABELS.separateFailed,
+      m(LIBRARY_LABELS.separateFailed),
     );
     if (!result || !record.libraryMatch) return;
     sources.acceptSourceRecord({
@@ -818,7 +824,7 @@ export function ScientSourcesPanel(props: {
         void moveToTrash(record).catch((cause: unknown) => {
           toastManager.add({
             type: "error",
-            title: "Source could not be moved to Trash",
+            title: gt("Source could not be moved to Trash"),
             description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
           });
         }),
@@ -858,10 +864,15 @@ export function ScientSourcesPanel(props: {
                 : "advisory",
           label:
             paperQueue.requests.length > 0
-              ? "Getting papers needs you"
+              ? gt("Getting papers needs you")
               : paperQueue.waiting > 0
-                ? `Getting ${paperQueue.waiting} ${paperQueue.waiting === 1 ? "paper" : "papers"}`
-                : "Some papers could not be reached",
+                ? gt(
+                    "{count, plural, one {Getting {count} paper} other {Getting {count} papers}}",
+                    {
+                      count: paperQueue.waiting,
+                    },
+                  )
+                : gt("Some papers could not be reached"),
           body: (
             <PaperQueueBand
               environmentId={props.environmentId}
@@ -872,27 +883,30 @@ export function ScientSourcesPanel(props: {
         }
       : null;
   const activity = selectSourcesActivity([
-    ...sourcesStateActivity({
-      importPreparation: sources.importPreparation,
-      operation: sources.operation,
-      ...(sources.operation
-        ? {
-            operationBody: (
-              <RunningImportBody
-                operation={sources.operation}
-                cancelling={sources.cancelling}
-                onCancel={() => void sources.cancelImport()}
-              />
-            ),
-          }
-        : {}),
-      error: sources.error,
-      onDismissError: sources.clearError,
-      overviewError: sources.overview ? sources.overviewError : null,
-      onRetryOverview: () => void sources.reloadOverview(),
-    }),
+    ...sourcesStateActivity(
+      {
+        importPreparation: sources.importPreparation,
+        operation: sources.operation,
+        ...(sources.operation
+          ? {
+              operationBody: (
+                <RunningImportBody
+                  operation={sources.operation}
+                  cancelling={sources.cancelling}
+                  onCancel={() => void sources.cancelImport()}
+                />
+              ),
+            }
+          : {}),
+        error: sources.error,
+        onDismissError: sources.clearError,
+        overviewError: sources.overview ? sources.overviewError : null,
+        onRetryOverview: () => void sources.reloadOverview(),
+      },
+      m,
+    ),
     paperQueueActivity,
-    ...libraryBackupActivity(backup),
+    ...libraryBackupActivity(backup, m),
     libraryMoveActivity(
       move,
       scopes
@@ -901,20 +915,27 @@ export function ScientSourcesPanel(props: {
             setShowingDuplicates("merged");
           }
         : undefined,
+      m,
     ),
     sources.overview &&
-      libraryNoticeChangesActivity({
-        changes: sources.overview.noticeChanges ?? [],
-        onShow: (sourceIds) => showPackageSources(sourceIds, NOTICE_CHANGES_SHOWN),
-        onDismiss: canChange ? dismissNoticeChanges : undefined,
-      }),
+      libraryNoticeChangesActivity(
+        {
+          changes: sources.overview.noticeChanges ?? [],
+          onShow: (sourceIds) => showPackageSources(sourceIds, m(NOTICE_CHANGES_SHOWN)),
+          onDismiss: canChange ? dismissNoticeChanges : undefined,
+        },
+        m,
+      ),
     sources.overview && sourceStoreActivity(sources.overview.unreadableRecords ?? []),
     bibliography.status &&
-      managedBibliographyActivity({
-        files: bibliography.status.files,
-        replacing: bibliography.replacing || !bibliography.canChange,
-        onResolve: (name, action) => void bibliography.resolve(name, action),
-      }),
+      managedBibliographyActivity(
+        {
+          files: bibliography.status.files,
+          replacing: bibliography.replacing || !bibliography.canChange,
+          onResolve: (name, action) => void bibliography.resolve(name, action),
+        },
+        m,
+      ),
   ]);
   const shownResult =
     result.result && importReceipt?.resultId === result.result.operationId
@@ -957,7 +978,7 @@ export function ScientSourcesPanel(props: {
       return (
         <CenteredState
           icon={<AlertCircle />}
-          title="The Library could not be loaded"
+          title={gt("The Library could not be loaded")}
           description={sources.overviewError}
           action={
             <Button
@@ -966,14 +987,17 @@ export function ScientSourcesPanel(props: {
               onClick={() => void sources.reloadOverview()}
             >
               <RefreshCw />
-              Try again
+              <T>Try again</T>
             </Button>
           }
         />
       );
     }
     return (
-      <CenteredState icon={<LoaderCircle className="animate-spin" />} title="Loading sources…" />
+      <CenteredState
+        icon={<LoaderCircle className="animate-spin" />}
+        title={gt("Loading sources…")}
+      />
     );
   }
 
@@ -982,12 +1006,17 @@ export function ScientSourcesPanel(props: {
     return (
       <CenteredState
         icon={conflicting ? <AlertCircle /> : <Library />}
-        title={conflicting ? "Scient project setup needs attention" : "Set up this Scient project"}
+        title={
+          conflicting
+            ? gt("Scient project setup needs attention")
+            : gt("Set up this Scient project")
+        }
         description={
           conflicting
-            ? (sources.overview.issues[0]?.message ?? "Scient will not change conflicting files.")
+            ? (sources.overview.issues[0]?.message ??
+              gt("Scient will not change conflicting files."))
             : (setupError ??
-              "Use Project package to carry this project’s sources, PDFs and highlights.")
+              gt("Use Project package to carry this project’s sources, PDFs and highlights."))
         }
         action={
           conflicting ? null : (
@@ -996,7 +1025,7 @@ export function ScientSourcesPanel(props: {
               onClick={() => {
                 const prepared = readPreparedConnection(props.environmentId);
                 if (!prepared) {
-                  setSetupError("This environment is not connected.");
+                  setSetupError(gt("This environment is not connected."));
                   return;
                 }
                 setSetupError(null);
@@ -1009,14 +1038,14 @@ export function ScientSourcesPanel(props: {
                   .then(() => sources.refreshOverview())
                   .catch((cause: unknown) => {
                     setSetupError(
-                      cause instanceof Error ? cause.message : "Scient project setup failed.",
+                      cause instanceof Error ? cause.message : gt("Scient project setup failed."),
                     );
                   })
                   .finally(() => setSettingUpProject(false));
               }}
             >
               {settingUpProject ? <LoaderCircle className="animate-spin" /> : null}
-              Set up Scient project
+              <T>Set up Scient project</T>
             </Button>
           )
         }
@@ -1053,13 +1082,15 @@ export function ScientSourcesPanel(props: {
             variant="ghost"
             size="icon-sm"
             onClick={sources.closeLibrary}
-            aria-label="Go back"
+            aria-label={gt("Go back")}
           >
             <ChevronLeft />
           </Button>
           <div className="flex min-w-0 items-center gap-2">
             <ZoteroMark />
-            <div className="truncate text-sm font-medium">Import from Zotero</div>
+            <div className="truncate text-sm font-medium">
+              <T>Import from Zotero</T>
+            </div>
           </div>
           <Menu>
             <MenuTrigger
@@ -1090,7 +1121,7 @@ export function ScientSourcesPanel(props: {
                   }}
                 >
                   <Library />
-                  My Library
+                  <T>My Library</T>
                 </MenuItem>
               ) : null}
               {sources.zoteroGroups.map((group) => (
@@ -1145,8 +1176,8 @@ export function ScientSourcesPanel(props: {
                 nativeInput
                 unstyled
                 type="search"
-                aria-label="Search Zotero library"
-                placeholder="Search title, creator, or year"
+                aria-label={gt("Search Zotero library")}
+                placeholder={gt("Search title, creator, or year")}
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}
                 size="inline"
@@ -1158,7 +1189,7 @@ export function ScientSourcesPanel(props: {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear Zotero search"
+                  aria-label={gt("Clear Zotero search")}
                   onClick={() => {
                     setQuery("");
                     void sources.searchZotero("");
@@ -1184,14 +1215,21 @@ export function ScientSourcesPanel(props: {
                   }
                 >
                   <Download />
-                  {sources.zoteroScope.kind === "collection" ? "Import collection" : "Import all"}
+                  {sources.zoteroScope.kind === "collection"
+                    ? gt("Import collection")
+                    : gt("Import all")}
                 </Button>
               }
             />
             <TooltipPopup side="bottom">
               {sources.zoteroScope.kind === "collection"
-                ? `Import ${sources.library.total} references in this collection`
-                : `Import all ${sources.library.total} references in ${zoteroLibraryName}`}
+                ? gt("Import {total} references in this collection", {
+                    total: sources.library.total,
+                  })
+                : gt("Import all {total} references in {zoteroLibraryName}", {
+                    total: sources.library.total,
+                    zoteroLibraryName,
+                  })}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -1207,7 +1245,7 @@ export function ScientSourcesPanel(props: {
                 disabled={sources.busy}
                 onClick={() => void sources.searchZotero(query, 0)}
               >
-                Try again
+                <T>Try again</T>
               </Button>
             </div>
           </div>
@@ -1230,7 +1268,9 @@ export function ScientSourcesPanel(props: {
                 }
               >
                 <Download />
-                {selectedKeys.size === 1 ? "Import" : `Import ${selectedKeys.size}`}
+                {selectedKeys.size === 1
+                  ? gt("Import", { $context: "verb, button" })
+                  : gt("Import {size}", { size: selectedKeys.size })}
               </Button>
             </div>
           </div>
@@ -1253,12 +1293,12 @@ export function ScientSourcesPanel(props: {
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium">
-                      {item.title ?? "Untitled source"}
+                      {item.title ?? gt("Untitled source")}
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {creator?.familyName ?? creator?.literalName ?? "Unknown creator"}
+                      {creator?.familyName ?? creator?.literalName ?? gt("Unknown creator")}
                       {item.issuedYear ? ` · ${item.issuedYear}` : ""}
-                      {item.pdfAvailable ? " · PDF" : ""}
+                      {item.pdfAvailable ? gt(" · PDF") : ""}
                     </span>
                   </span>
                 </label>
@@ -1267,15 +1307,17 @@ export function ScientSourcesPanel(props: {
             {sources.library.items.length === 0 && sources.busy ? (
               <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" />
-                Loading Zotero…
+                <T>Loading Zotero…</T>
               </div>
             ) : sources.library.items.length === 0 ? (
               <div className="p-8 text-center text-sm text-muted-foreground">
                 {query.trim()
-                  ? "No matching Zotero references were found."
+                  ? gt("No matching Zotero references were found.")
                   : sources.library.total === 0
-                    ? "Your Zotero library is empty. Add references in Zotero, then refresh."
-                    : "No importable references were found in this part of your Zotero library."}
+                    ? gt("Your Zotero library is empty. Add references in Zotero, then refresh.")
+                    : gt(
+                        "No importable references were found in this part of your Zotero library.",
+                      )}
               </div>
             ) : null}
             {sources.library.hasMore ? (
@@ -1286,7 +1328,7 @@ export function ScientSourcesPanel(props: {
                   onClick={() => void sources.searchZotero(query, sources.library?.nextStart ?? 0)}
                 >
                   {sources.busy ? <LoaderCircle className="animate-spin" /> : null}
-                  Load more
+                  <T>Load more</T>
                 </Button>
               </div>
             ) : null}
@@ -1314,7 +1356,9 @@ export function ScientSourcesPanel(props: {
           title={
             <span className="flex min-w-0 items-center gap-2">
               <ZoteroMark />
-              <span className="truncate">Import from Zotero</span>
+              <span className="truncate">
+                <T>Import from Zotero</T>
+              </span>
             </span>
           }
           onBack={sources.closeZoteroStatus}
@@ -1332,7 +1376,7 @@ export function ScientSourcesPanel(props: {
                 onClick={() => void sources.openZoteroLibrary(true)}
               >
                 {sources.checkingZotero ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                Check again
+                <T>Check again</T>
               </Button>
               {status.state === "unreachable" ? (
                 <Button
@@ -1344,7 +1388,7 @@ export function ScientSourcesPanel(props: {
                   }
                 >
                   <ExternalLink />
-                  Download Zotero
+                  <T>Download Zotero</T>
                 </Button>
               ) : null}
               <Popover>
@@ -1357,7 +1401,7 @@ export function ScientSourcesPanel(props: {
                       className="w-full justify-start"
                     >
                       <BookOpen />
-                      How to connect
+                      <T>How to connect</T>
                     </Button>
                   }
                 />
@@ -1367,18 +1411,28 @@ export function ScientSourcesPanel(props: {
                   className="w-[min(20rem,calc(100vw-1.5rem))] [--popup-width:min(20rem,calc(100vw-1.5rem))]"
                 >
                   <div className="grid gap-2 text-xs leading-relaxed">
-                    <p className="text-sm font-medium text-foreground">Connect Zotero</p>
+                    <p className="text-sm font-medium text-foreground">
+                      <T>Connect Zotero</T>
+                    </p>
                     <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
-                      <li>Open Zotero on this computer.</li>
                       <li>
-                        In Zotero, open Settings → Advanced and enable “Allow other applications on
-                        this computer to communicate with Zotero.”
+                        <T>Open Zotero on this computer.</T>
                       </li>
-                      <li>Return here and choose Check again.</li>
+                      <li>
+                        <T>
+                          In Zotero, open Settings → Advanced and enable “Allow other applications
+                          on this computer to communicate with Zotero.”
+                        </T>
+                      </li>
+                      <li>
+                        <T>Return here and choose Check again.</T>
+                      </li>
                     </ol>
                     <p className="text-muted-foreground">
-                      Without Zotero on this computer, add a Zotero API key in Accounts to use your
-                      library on zotero.org.
+                      <T>
+                        Without Zotero on this computer, add a Zotero API key in Accounts to use
+                        your library on zotero.org.
+                      </T>
                     </p>
                   </div>
                 </PopoverPopup>
@@ -1527,14 +1581,14 @@ export function ScientSourcesPanel(props: {
                   : "warning",
               title:
                 result.outcome === "refreshed"
-                  ? "Metadata refreshed"
+                  ? gt("Metadata refreshed")
                   : result.outcome === "unchanged"
-                    ? "Metadata is already up to date"
+                    ? gt("Metadata is already up to date")
                     : result.outcome === "stale"
-                      ? "Source changed while metadata was refreshed"
+                      ? gt("Source changed while metadata was refreshed")
                       : result.outcome === "duplicate"
-                        ? "Metadata refresh stopped"
-                        : "Metadata cannot be refreshed yet",
+                        ? gt("Metadata refresh stopped")
+                        : gt("Metadata cannot be refreshed yet"),
               description: result.message ?? undefined,
             });
           }}
@@ -1563,8 +1617,8 @@ export function ScientSourcesPanel(props: {
               toastManager.add({
                 type: "success",
                 title: result.value.published
-                  ? "PDF attached"
-                  : "PDF attached: an accepted manuscript or preprint",
+                  ? gt("PDF attached")
+                  : gt("PDF attached: an accepted manuscript or preprint"),
               });
               return;
             }
@@ -1663,7 +1717,7 @@ export function ScientSourcesPanel(props: {
           void addToProject(added.map((sourceId) => ({ sourceId }))).then(result.dismiss)
         }
       >
-        {LIBRARY_LABELS.addToProject}
+        {m(LIBRARY_LABELS.addToProject)}
       </Button>
     ) : null;
     result.settle(
@@ -1680,7 +1734,7 @@ export function ScientSourcesPanel(props: {
     );
     void sources.refreshOverview();
   };
-  const empty = emptySourcesLabel(scopes?.listed);
+  const empty = emptySourcesLabel(scopes?.listed, m);
   const fullTextFooter = (
     <SourceFullTextResults
       environmentId={props.environmentId}
@@ -1751,7 +1805,7 @@ export function ScientSourcesPanel(props: {
     >
       {dragActive ? (
         <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed border-foreground/30 bg-background/85 px-3 text-center text-xs text-muted-foreground">
-          Drop PDFs or a reference file to add them to the Library
+          <T>Drop PDFs or a reference file to add them to the Library</T>
         </div>
       ) : null}
       <input
@@ -1785,8 +1839,8 @@ export function ScientSourcesPanel(props: {
         }}
       />
       <PanelHeader
-        title="Library"
-        {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere) } : {})}
+        title={gt("Library", { $context: "the personal Library of sources" })}
+        {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere, m) } : {})}
         action={
           <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
@@ -1797,25 +1851,27 @@ export function ScientSourcesPanel(props: {
                     size="xs"
                     variant="ghost"
                     disabled={!canChange || sources.importing || sources.checkingZotero}
-                    aria-label="Import sources"
+                    aria-label={gt("Import sources")}
                   >
                     {sources.importing || sources.checkingZotero ? (
                       <LoaderCircle className="animate-spin" />
                     ) : (
                       <Download />
                     )}
-                    <span className="@max-[20rem]:hidden">Import sources</span>
+                    <span className="@max-[20rem]:hidden">
+                      <T>Import sources</T>
+                    </span>
                   </Button>
                 }
               />
               <MenuPopup align="end" side="bottom" className="min-w-44">
                 <MenuItem onClick={() => localFileInput.current?.click()}>
                   <FileUp />
-                  Import PDF files
+                  <T>Import PDF files</T>
                 </MenuItem>
                 <MenuItem onClick={() => referenceFileInput.current?.click()}>
                   <FileText />
-                  Import a reference file
+                  <T>Import a reference file</T>
                 </MenuItem>
                 <MenuItem
                   onClick={() => {
@@ -1825,11 +1881,11 @@ export function ScientSourcesPanel(props: {
                   }}
                 >
                   <ZoteroMark />
-                  Import from Zotero
+                  <T>Import from Zotero</T>
                 </MenuItem>
                 <MenuItem onClick={() => setAddingByIdentifier(result.begin())}>
                   <Hash />
-                  Add by identifier
+                  <T>Add by identifier</T>
                 </MenuItem>
                 {scopes && canChange ? (
                   <ImportPackageSubmenu
@@ -1907,7 +1963,7 @@ export function ScientSourcesPanel(props: {
           canChange={canChange}
           onUndoBulkEdit={organize.undoBulkEdit}
           onShowSources={(sourceIds) =>
-            showPackageSources(sourceIds, RECENT_CHANGES_LABELS.importedSources)
+            showPackageSources(sourceIds, m(RECENT_CHANGES_LABELS.importedSources))
           }
           onShowPackageSources={(sourceIds) => showPackageSources(sourceIds)}
           onChanged={sources.refreshOverview}
@@ -1954,21 +2010,21 @@ export function ScientSourcesPanel(props: {
         {scopes ? (
           <div className="@container mx-3 mt-2 flex flex-wrap items-center gap-2">
             <ToggleGroup
-              aria-label="Source scope"
+              aria-label={gt("Source scope")}
               value={[scopes.listed]}
               onValueChange={(values) => {
                 const scope = values[0];
                 if (scope === "project" || scope === "library") selectScope(scope);
               }}
             >
-              <Toggle value="project">{LIBRARY_LABELS.scopes.project}</Toggle>
-              <Toggle value="library">{LIBRARY_LABELS.scopes.library}</Toggle>
+              <Toggle value="project">{m(LIBRARY_LABELS.scopes.project)}</Toggle>
+              <Toggle value="library">{m(LIBRARY_LABELS.scopes.library)}</Toggle>
             </ToggleGroup>
             {packageSources ? (
               <>
                 <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
                 <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
-                  Show all
+                  <T>Show all</T>
                 </Button>
               </>
             ) : null}
@@ -2035,9 +2091,9 @@ export function ScientSourcesPanel(props: {
                 unstyled
                 type="search"
                 aria-label={
-                  scopes?.listed === "library" ? "Search Library" : "Search project sources"
+                  scopes?.listed === "library" ? gt("Search Library") : gt("Search project sources")
                 }
-                placeholder="Search sources"
+                placeholder={gt("Search sources")}
                 value={sourceQuery}
                 onChange={(event) => setSourceQuery(event.currentTarget.value)}
                 size="inline"
@@ -2049,7 +2105,7 @@ export function ScientSourcesPanel(props: {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear source search"
+                  aria-label={gt("Clear source search")}
                   onClick={() => setSourceQuery("")}
                 >
                   <X />
@@ -2080,7 +2136,7 @@ export function ScientSourcesPanel(props: {
                 size="compact"
                 variant="ghost"
                 className="w-auto shrink-0 cursor-pointer"
-                aria-label="Sort sources"
+                aria-label={gt("Sort sources")}
               >
                 <ArrowDownUp className="size-3.5" aria-hidden="true" />
                 <SelectValue className="max-w-20" />
@@ -2131,7 +2187,7 @@ export function ScientSourcesPanel(props: {
             ? {
                 action: (
                   <Button size="sm" variant="outline" onClick={() => selectScope("library")}>
-                    Choose from Library
+                    <T>Choose from Library</T>
                   </Button>
                 ),
               }

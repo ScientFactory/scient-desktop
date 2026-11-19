@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -21,6 +22,7 @@ export function TemplateNameDialog(props: {
   readonly onSubmit: (name: string) => Promise<void> | void;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const gt = useGT();
   const [name, setName] = useState(props.initialName);
   const [pending, setPending] = useState(false);
   // Each time it opens, the field starts again from the name it is given.
@@ -55,8 +57,8 @@ export function TemplateNameDialog(props: {
             autoFocus
             // Ready to type over, the way a rename field opens.
             onFocus={(event) => event.currentTarget.select()}
-            aria-label="Template name"
-            placeholder="Template name"
+            aria-label={gt("Template name")}
+            placeholder={gt("Template name")}
             value={name}
             spellCheck={false}
             onChange={(event) => setName(event.target.value)}
@@ -75,7 +77,7 @@ export function TemplateNameDialog(props: {
             disabled={pending}
             onClick={() => props.onOpenChange(false)}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             type="button"

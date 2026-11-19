@@ -1,5 +1,6 @@
 import { observeResize } from "~/lib/observeResize";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
+import { useGT } from "gt-react";
 import { useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -15,6 +16,7 @@ export function TemplatePreviewDialog(props: {
   readonly returnFocus: HTMLElement | null;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const viewport = useRef<HTMLDivElement | null>(null);
   const [pageWidth, setPageWidth] = useState(600);
   const [zoom, setZoom] = useState(1);
@@ -44,7 +46,7 @@ export function TemplatePreviewDialog(props: {
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Zoom out"
+                aria-label={gt("Zoom out")}
                 disabled={zoom <= 0.75}
                 onClick={() => setZoom((current) => Math.max(0.75, current - 0.25))}
               >
@@ -53,7 +55,7 @@ export function TemplatePreviewDialog(props: {
               <Button
                 size="sm"
                 variant="ghost-muted"
-                aria-label="Fit page width"
+                aria-label={gt("Fit page width")}
                 onClick={() => {
                   setZoom(1);
                   viewport.current?.scrollTo({ left: 0, top: 0 });
@@ -64,14 +66,14 @@ export function TemplatePreviewDialog(props: {
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Zoom in"
+                aria-label={gt("Zoom in")}
                 disabled={zoom >= 2}
                 onClick={() => setZoom((current) => Math.min(2, current + 0.25))}
               >
                 <PlusIcon />
               </Button>
               <DialogClose
-                aria-label="Close"
+                aria-label={gt("Close")}
                 render={<Button size="icon-xs" variant="ghost-muted" />}
               >
                 <XIcon />
@@ -82,7 +84,7 @@ export function TemplatePreviewDialog(props: {
             ref={attachViewport}
             tabIndex={0}
             role="region"
-            aria-label={`${props.name} first page`}
+            aria-label={gt("{name} first page", { name: props.name })}
             className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto px-1 pt-2 pb-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <div className="w-fit min-w-full">

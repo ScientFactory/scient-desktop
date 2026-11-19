@@ -18,6 +18,7 @@ import {
   type ServerProviderMcpServerStatus,
   type ServerProviderPlugin,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   BookOpenIcon,
   CpuIcon,
@@ -29,59 +30,66 @@ import {
 } from "lucide-react";
 
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
 import { parseUrl } from "@t3tools/shared/url";
 
-/** Shown after a row's name; healthy entries show nothing. */
+/** Shown after a row's name; healthy entries show nothing. `msg()` strings. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
   connected: null,
-  "needs-auth": "Needs sign-in",
-  "needs-credential": "Needs credential",
+  "needs-auth": msg("Needs sign-in"),
+  "needs-credential": msg("Needs credential"),
 };
 
+/** `msg()` strings: resolve them where they are shown. */
 export const MCP_SERVER_STATUS_TEXT: Readonly<
   Record<ServerProviderMcpServerStatus, string | null>
 > = {
   connected: null,
-  failed: "Failed",
-  "needs-auth": "Needs sign-in",
-  pending: "Starting",
-  disabled: "Off",
+  failed: msg("Failed", { $context: "connector status" }),
+  "needs-auth": msg("Needs sign-in"),
+  pending: msg("Starting", { $context: "connector status" }),
+  disabled: msg("Off", { $context: "connector status, turned off" }),
   unknown: null,
 };
 
+/** `msg()` strings: resolve them where they are shown. */
 export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, string>> = {
-  "needs-auth": "Needs sign-in",
-  "needs-credential": "Credential missing",
-  disabled: "Turned off",
-  "project-deselected": "Off for this project",
-  "agent-deselected": "Not chosen for this agent",
-  "transport-unsupported": "Not supported by this agent",
-  "name-collision": "Name taken by the agent's own server",
-  "native-servers-unknown": "Agent's own servers couldn't be checked",
-  "registration-failed": "The agent couldn't connect it",
+  "needs-auth": msg("Needs sign-in"),
+  "needs-credential": msg("Credential missing"),
+  disabled: msg("Turned off"),
+  "project-deselected": msg("Off for this project"),
+  "agent-deselected": msg("Not chosen for this agent"),
+  "transport-unsupported": msg("Not supported by this agent"),
+  "name-collision": msg("Name taken by the agent's own server"),
+  "native-servers-unknown": msg("Agent's own servers couldn't be checked"),
+  "registration-failed": msg("The agent couldn't connect it"),
 };
 
+/** `msg()` strings: resolve them where they are shown. */
 export const TEST_OUTCOME_LABELS: Readonly<Record<ConnectorTestResult["outcome"], string>> = {
-  ok: "Reachable",
-  "needs-auth": "Needs sign-in",
-  "needs-setup": "Needs setup",
-  unreachable: "Unreachable",
-  error: "Error",
+  ok: msg("Reachable"),
+  "needs-auth": msg("Needs sign-in"),
+  "needs-setup": msg("Needs setup"),
+  unreachable: msg("Unreachable"),
+  error: msg("Error", { $context: "connector test outcome" }),
 };
 
 /** A turned-off connector says so first; otherwise its health. */
 export function connectorStatusText(
   connector: Pick<ConnectorSummary, "status" | "enabled" | "lastError" | "local">,
+  resolve: MessageResolver = m,
 ) {
-  if (!connector.enabled) return "Off";
-  if (connector.local?.problem !== undefined) return "Can't read its folder";
-  if (connector.local?.signIn?.state === "needs-user") return "Needs sign-in";
-  if (connector.local !== undefined && connector.local.missing.length > 0) return "Needs setup";
+  if (!connector.enabled) return resolve(msg("Off", { $context: "connector status, turned off" }));
+  if (connector.local?.problem !== undefined) return resolve(msg("Can't read its folder"));
+  if (connector.local?.signIn?.state === "needs-user") return resolve(msg("Needs sign-in"));
+  if (connector.local !== undefined && connector.local.missing.length > 0)
+    return resolve(msg("Needs setup"));
   if (connector.local !== undefined && connector.lastError !== undefined)
-    return "Stopped with an error";
-  return CONNECTOR_STATUS_TEXT[connector.status];
+    return resolve(msg("Stopped with an error"));
+  const text = CONNECTOR_STATUS_TEXT[connector.status];
+  return text === null ? null : resolve(text);
 }
 
 export interface ConnectorActions {
@@ -103,23 +111,34 @@ export function connectorActions(connector: Pick<ConnectorSummary, "status">) {
   return actions[connector.status];
 }
 
-export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
+export function connectorAuthLabel(
+  auth: ConnectorSummary["auth"],
+  resolve: MessageResolver = m,
+): string {
   switch (auth.type) {
     case "none":
-      return "No sign-in";
+      return resolve(msg("No sign-in"));
     case "oauth":
-      return auth.usesOwnClient ? "OAuth with your own client" : "OAuth";
+      return auth.usesOwnClient ? resolve(msg("OAuth with your own client")) : "OAuth";
     case "credential": {
-      const kind =
-        auth.strategy === "bearer"
-          ? "Bearer token"
-          : auth.strategy === "basic"
-            ? "Basic auth"
-            : `Header ${auth.headerName ?? ""}`.trim();
-      return auth.storage === "bound" ? `${kind} from Accounts` : kind;
+      const bound = auth.storage === "bound";
+      if (auth.strategy === "bearer")
+        return resolve(bound ? msg("Bearer token from Accounts") : msg("Bearer token"));
+      if (auth.strategy === "basic")
+        return resolve(bound ? msg("Basic auth from Accounts") : msg("Basic auth"));
+      const name = auth.headerName ?? "";
+      if (name.trim() === "")
+        return resolve(
+          bound ? msg("Header from Accounts") : msg("Header", { $context: "HTTP header sign-in" }),
+        );
+      return resolve(
+        bound
+          ? msg("Header {name} from Accounts", { name })
+          : msg("Header {name}", { name, $context: "HTTP header sign-in" }),
+      );
     }
     case "source-control":
-      return `${auth.account} from Source Control`;
+      return resolve(msg("{account} from Source Control", { account: auth.account }));
   }
 }
 
@@ -131,23 +150,30 @@ export function connectorSourceLabel(
   source: ConnectorSummary["source"],
   curated: boolean,
   pluginName: string | undefined,
+  resolve: MessageResolver = m,
 ): string {
   switch (source.type) {
     case "registry":
-      return curated ? "Scient catalog" : "MCP Registry";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- MCP Registry is the registry's name
+      return curated ? resolve(msg("Scient catalog")) : "MCP Registry";
     case "url":
-      return curated ? "Scient catalog" : "Added by URL";
+      return resolve(curated ? msg("Scient catalog") : msg("Added by URL"));
     case "plugin":
-      return `Plugin ${pluginName ?? source.pluginId}`;
+      return resolve(msg("Plugin {name}", { name: pluginName ?? source.pluginId }));
     case "local":
-      return source.registry === undefined ? "Runs on this computer" : "MCP Registry, runs locally";
+      return resolve(
+        source.registry === undefined
+          ? msg("Runs on this computer")
+          : msg("MCP Registry, runs locally"),
+      );
   }
 }
 
-export function entrySourceLabel(entry: DiscoverEntry): string {
+export function entrySourceLabel(entry: DiscoverEntry, resolve: MessageResolver = m): string {
   return isCatalogOnlyEntry(entry) || entry.categories.length > 0
-    ? "Scient catalog"
-    : "MCP Registry";
+    ? resolve(msg("Scient catalog"))
+    : // oxlint-disable-next-line t3code/no-untranslated-copy -- MCP Registry is the registry's name
+      "MCP Registry";
 }
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
@@ -362,26 +388,27 @@ const LOOPBACK_HOSTS: Readonly<Record<string, true>> = {
 };
 
 /** `https://…`, or plain `http://` only to a loopback host the user typed. */
-export function validateConnectorUrl(raw: string): string | null {
+export function validateConnectorUrl(raw: string, resolve: MessageResolver = m): string | null {
   const value = raw.trim();
-  if (value.length === 0) return "Enter the server URL.";
+  if (value.length === 0) return resolve(msg("Enter the server URL."));
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return "Enter a full URL, for example https://mcp.example.com/mcp.";
+    return resolve(msg("Enter a full URL, for example https://mcp.example.com/mcp."));
   }
   if (url.protocol === "https:") return null;
   if (url.protocol === "http:" && LOOPBACK_HOSTS[url.hostname] === true) return null;
-  return "Use an https:// URL. Plain http:// is allowed only for this computer.";
+  return resolve(msg("Use an https:// URL. Plain http:// is allowed only for this computer."));
 }
 
 const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
-export function validateHeaderName(raw: string): string | null {
+export function validateHeaderName(raw: string, resolve: MessageResolver = m): string | null {
   const value = raw.trim();
-  if (value.length === 0) return "Enter the header name.";
-  if (!HTTP_HEADER_NAME.test(value)) return "Header names use letters, digits and dashes.";
+  if (value.length === 0) return resolve(msg("Enter the header name."));
+  if (!HTTP_HEADER_NAME.test(value))
+    return resolve(msg("Header names use letters, digits and dashes."));
   return null;
 }
 
@@ -422,14 +449,14 @@ export function providerExtensionAudience(
           : providerLabel(provider),
     reason:
       provider.driver === "codex" && "source" in entry && entry.source === "remote"
-        ? "Uses Codex's own ChatGPT account"
+        ? msg("Uses Codex's own ChatGPT account")
         : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
-          ? "Uses Claude's own Claude account"
+          ? msg("Uses Claude's own Claude account")
           : provider.driver === "scient" && "scope" in entry && entry.scope === "chatgpt"
-            ? "Uses Scient Agent's own ChatGPT account"
+            ? msg("Uses Scient Agent's own ChatGPT account")
             : provider.driver === "codex" && "scope" in entry && entry.scope === "chatgpt"
-              ? "Uses Codex's own ChatGPT account"
-              : "Managed by this agent",
+              ? msg("Uses Codex's own ChatGPT account")
+              : msg("Managed by this agent"),
   };
 }
 
@@ -445,7 +472,7 @@ export function providerStoreAudience(
         driver: provider.driver,
         instanceId: provider.instanceId,
         label: "Codex",
-        reason: "Uses Codex’s own ChatGPT account",
+        reason: msg("Uses Codex’s own ChatGPT account"),
       };
 }
 
@@ -469,42 +496,57 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
 }
 
 /** "Codex", "Codex and Claude", "Codex, Claude and Scient Agent". */
-export function listLabels(labels: ReadonlyArray<string>): string {
+export function listLabels(labels: ReadonlyArray<string>, resolve: MessageResolver = m): string {
   return labels.length <= 1
     ? (labels[0] ?? "")
-    : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+    : resolve(
+        msg("{items} and {last}", {
+          items: labels.slice(0, -1).join(", "),
+          last: labels.at(-1) ?? "",
+          $context: "a list of agent names",
+        }),
+      );
 }
 
 /** Who can use it, as the value beside a "Works with" label: "All your agents", "Codex only". */
-export function audienceNames(audience: ExtensionAudience): string {
+export function audienceNames(audience: ExtensionAudience, resolve: MessageResolver = m): string {
   switch (audience.layer) {
     case "scient":
-      return audience.agents === undefined ? "All your agents" : "The agents you chose";
+      return resolve(
+        audience.agents === undefined ? msg("All your agents") : msg("The agents you chose"),
+      );
     case "shared":
-      return "Claude and Scient Agent";
+      return resolve(msg("Claude and Scient Agent"));
     case "agent":
-      return `${audience.label} only`;
+      return resolve(msg("{agent} only", { agent: audience.label }));
     case "account":
       return audience.connected.length === 0
-        ? audience.pending.length === 0
-          ? "Through your ChatGPT or Claude account"
-          : "Not connected yet"
-        : listLabels([...new Set(audience.connected.map((agent) => agent.label))]);
+        ? resolve(
+            audience.pending.length === 0
+              ? msg("Through your ChatGPT or Claude account")
+              : msg("Not connected yet"),
+          )
+        : listLabels([...new Set(audience.connected.map((agent) => agent.label))], resolve);
   }
 }
 
 /** The same as a sentence of its own: "Works with all your agents", "Codex only". */
-export function audienceLabel(audience: ExtensionAudience): string {
-  const names = audienceNames(audience);
+export function audienceLabel(audience: ExtensionAudience, resolve: MessageResolver = m): string {
   switch (audience.layer) {
     case "scient":
-      return `Works with ${names.charAt(0).toLowerCase()}${names.slice(1)}`;
+      return resolve(
+        audience.agents === undefined
+          ? msg("Works with all your agents")
+          : msg("Works with the agents you chose"),
+      );
     case "shared":
-      return `Works with ${names}`;
+      return resolve(msg("Works with Claude and Scient Agent"));
     case "agent":
-      return names;
+      return audienceNames(audience, resolve);
     case "account":
-      return audience.connected.length === 0 ? names : `Works with ${names}`;
+      return audience.connected.length === 0
+        ? audienceNames(audience, resolve)
+        : resolve(msg("Works with {names}", { names: audienceNames(audience, resolve) }));
   }
 }
 
@@ -512,6 +554,7 @@ export function audienceSupport(
   audience: ExtensionAudience,
   providers: ReadonlyArray<ServerProvider>,
   connectorSupport: ReadonlyArray<ConnectorProviderSupport>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ConnectorProviderSupport> {
   return providers.map((provider) => {
     const supported = audienceReaches(audience, provider);
@@ -523,7 +566,7 @@ export function audienceSupport(
       return {
         ...connector,
         status: "unsupported",
-        reason: "Not chosen for this agent",
+        reason: resolve(msg("Not chosen for this agent")),
       };
     if (audience.layer === "scient" && connector) return connector;
     const pending =
@@ -548,10 +591,10 @@ export function audienceSupport(
         ? {
             reason:
               audience.layer === "agent"
-                ? audience.reason
+                ? resolve(audience.reason)
                 : audience.layer === "account"
-                  ? "This agent has no account that offers it"
-                  : "Uses Claude Code's plugin format",
+                  ? resolve(msg("This agent has no account that offers it"))
+                  : resolve(msg("Uses Claude Code's plugin format")),
           }
         : {}),
     };
@@ -575,10 +618,13 @@ export function worksWithCardAgents(
 /** The action that opens an agent's account page for this server, or none. */
 export function providerServerConnectLabel(
   server: Pick<ServerProviderMcpServer, "connectUrl" | "scope" | "status">,
+  resolve: MessageResolver = m,
 ): string | undefined {
   if (!server.connectUrl) return undefined;
-  if (server.scope === "chatgpt") return "Open in ChatGPT";
-  return server.status === "connected" ? "Manage on claude.ai" : "Connect on claude.ai";
+  if (server.scope === "chatgpt") return resolve(msg("Open in ChatGPT"));
+  return resolve(
+    server.status === "connected" ? msg("Manage on claude.ai") : msg("Connect on claude.ai"),
+  );
 }
 
 export function providerServerDisplayName(
@@ -597,9 +643,10 @@ export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
 export const EXTENSION_KINDS = ["plugins", "skills"] as const;
 export type ExtensionKind = (typeof EXTENSION_KINDS)[number];
 
+/** `msg()` strings: resolve them where they are shown. */
 export const EXTENSION_KIND_LABELS: Readonly<Record<ExtensionKind, string>> = {
-  plugins: "Plugins",
-  skills: "Skills",
+  plugins: msg("Plugins"),
+  skills: msg("Skills"),
 };
 
 /** `?kind=skills` from an Extensions address; anything else is the plugins list. */
@@ -622,23 +669,36 @@ export function entryNeedsSetup(entry: DiscoverEntry): boolean {
   );
 }
 
+const ACCESS_FACT = msg("Access", { $context: "what a connector needs to be used" });
+
 export function entryFacts(
   entry: DiscoverEntry | undefined,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<readonly [string, string]> {
   if (!entry) return [];
+  const access = resolve(ACCESS_FACT);
   return [
-    ...(entry.hosting ? [["Hosting", entry.hosting] as const] : []),
-    ...(entry.paidPlan ? [["Plan", "Paid plan"] as const] : []),
-    ...(entry.beta ? [["Status", "Beta"] as const] : []),
+    ...(entry.hosting ? [[resolve(msg("Hosting")), entry.hosting] as const] : []),
+    ...(entry.paidPlan ? [[resolve(msg("Plan")), resolve(msg("Paid plan"))] as const] : []),
+    ...(entry.beta
+      ? [[resolve(msg("Status")), resolve(msg("Beta", { $context: "release stage" }))] as const]
+      : []),
     ...(entry.apiKey
-      ? [["Access", "API key needed"] as const]
+      ? [[access, resolve(msg("API key needed"))] as const]
       : entry.accountRequired === true
-        ? [["Access", "Account needed"] as const]
+        ? [[access, resolve(msg("Account needed"))] as const]
         : entry.accountRequired === false
-          ? [["Access", "No account needed"] as const]
+          ? [[access, resolve(msg("No account needed"))] as const]
           : []),
-    ...(entry.address ? [["Setup", "Your address needed"] as const] : []),
-    ...(entry.accessNote ? [["Requirements", entry.accessNote] as const] : []),
+    ...(entry.address
+      ? [
+          [
+            resolve(msg("Setup", { $context: "noun" })),
+            resolve(msg("Your address needed")),
+          ] as const,
+        ]
+      : []),
+    ...(entry.accessNote ? [[resolve(msg("Requirements")), entry.accessNote] as const] : []),
   ];
 }
 
@@ -660,27 +720,40 @@ function connectorHost(
 export function connectorFacts(
   entry: DiscoverEntry | undefined,
   connector: Pick<ConnectorSummary, "status" | "auth" | "url"> & { readonly local?: unknown },
+  resolve: MessageResolver = m,
 ): ReadonlyArray<readonly [string, string]> {
   const signedIn = connector.status === "connected" && connector.auth.type !== "none";
   // Without a sign-in, the Connection card already says so.
   const settled = signedIn || connector.auth.type === "none";
   const host = connectorHost(connector);
+  const access = resolve(ACCESS_FACT);
   return [
-    ...(host === undefined ? [] : [["Host", host] as const]),
-    ...entryFacts(entry).flatMap(([label, value]) =>
-      !settled || label !== "Access"
+    ...(host === undefined
+      ? []
+      : [[resolve(msg("Host", { $context: "who hosts a server" })), host] as const]),
+    ...entryFacts(entry, resolve).flatMap(([label, value]) =>
+      !settled || label !== access
         ? [[label, value] as const]
         : connector.auth.type === "source-control"
-          ? [[label, `Signed in as ${connector.auth.account}`] as const]
+          ? [
+              [
+                label,
+                resolve(msg("Signed in as {account}", { account: connector.auth.account })),
+              ] as const,
+            ]
           : [],
     ),
   ];
 }
 
-export function validateCuratedAddress(value: string, template: string): string | null {
+export function validateCuratedAddress(
+  value: string,
+  template: string,
+  resolve: MessageResolver = m,
+): string | null {
   return matchesExtensionAddressTemplate(value, template)
     ? null
-    : "Enter an https address matching " + template + ".";
+    : resolve(msg("Enter an https address matching {template}.", { template }));
 }
 
 /**

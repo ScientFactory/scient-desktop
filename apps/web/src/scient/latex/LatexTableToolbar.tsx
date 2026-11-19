@@ -20,6 +20,7 @@ import { useLatexObjectContext } from "./useLatexObjectContext";
 import { LatexTableProperties } from "./LatexTableProperties";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
 import { latexTableStructureEditable, type LatexTableAction } from "./latexTableAuthoring";
+import { T, useGT } from "gt-react";
 
 interface Props {
   source: string;
@@ -59,6 +60,7 @@ interface Props {
 }
 
 export function LatexTableToolbar(props: Props) {
+  const gt = useGT();
   const { active, bar, id } = useLatexObjectContext(props.editor, props.tableRoot, props.selected);
   const onActiveChange = props.onActiveChange;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports toolbar active state to the parent through its imperative callback until unmount
@@ -72,17 +74,17 @@ export function LatexTableToolbar(props: Props) {
         ?.querySelector(".scient-latex-context-tools-slot")
     : null;
   if (!active || !host) return null;
-  const readOnly = !props.editor.isEditable ? "This document is read-only." : null;
+  const readOnly = !props.editor.isEditable ? gt("This document is read-only.") : null;
   const contentReason =
-    readOnly ?? (!props.editable ? "Edit this table's content in Source." : null);
+    readOnly ?? (!props.editable ? gt("Edit this table's content in Source.") : null);
   const structureReason =
     contentReason ??
     (!props.structureEditable && !latexTableStructureEditable(props.source)
-      ? "Edit this table's imported row and column structure in Source."
+      ? gt("Edit this table's imported row and column structure in Source.")
       : null);
   const presentationReason =
     contentReason ??
-    (!props.structureEditable ? "Use the column and border controls for this table." : null);
+    (!props.structureEditable ? gt("Use the column and border controls for this table.") : null);
   const rowAction = (
     operation: "insert-before" | "insert-after" | "previous" | "next" | "delete",
     legacy: () => void,
@@ -115,99 +117,115 @@ export function LatexTableToolbar(props: Props) {
       className="scient-latex-context-toolbar scient-latex-table-context"
       data-context-presentation="inline"
       role="toolbar"
-      aria-label="Table tools"
+      aria-label={gt("Table tools")}
+      data-context-name={gt("Table", { $context: "LaTeX object" })}
       onClick={(event) => event.stopPropagation()}
     >
-      <DockMenu label="Rows & columns" icon="Rows & columns" commandScope="latex" side="top">
+      <DockMenu
+        label={gt("Rows & columns")}
+        icon={gt("Rows & columns")}
+        commandScope="latex"
+        side="top"
+      >
         <MenuSub>
-          <MenuSubTrigger id={`${id}-rows`}>Rows</MenuSubTrigger>
+          <MenuSubTrigger id={`${id}-rows`}>
+            <T>Rows</T>
+          </MenuSubTrigger>
           <MenuSubPopup
             data-writing-menu-owner={`${id}-rows`}
             data-dock-command-scope="latex"
             data-keybinding-capture=""
           >
             {action(
-              "Insert above",
+              gt("Insert above"),
               () => rowAction("insert-before", () => props.onAddRow(props.row - 1)),
               structureReason,
             )}
             {action(
-              "Insert below",
+              gt("Insert below"),
               () => rowAction("insert-after", () => props.onAddRow(props.row)),
               structureReason,
             )}
             {action(
-              "Move up",
+              gt("Move up"),
               () => rowAction("previous", () => props.onMoveRow(-1)),
-              structureReason ?? (props.row === 0 ? "Already the first row." : null),
+              structureReason ?? (props.row === 0 ? gt("Already the first row.") : null),
             )}
             {action(
-              "Move down",
+              gt("Move down"),
               () => rowAction("next", () => props.onMoveRow(1)),
-              structureReason ?? (props.row >= props.rowCount - 1 ? "Already the last row." : null),
+              structureReason ??
+                (props.row >= props.rowCount - 1 ? gt("Already the last row.") : null),
             )}
             <MenuSeparator />
             {action(
-              "Delete row",
+              gt("Delete row"),
               () => rowAction("delete", props.onRemoveRow),
-              structureReason ?? (props.rowCount <= 1 ? "Keep at least one row." : null),
+              structureReason ?? (props.rowCount <= 1 ? gt("Keep at least one row.") : null),
               true,
             )}
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
-          <MenuSubTrigger id={`${id}-columns`}>Columns</MenuSubTrigger>
+          <MenuSubTrigger id={`${id}-columns`}>
+            <T>Columns</T>
+          </MenuSubTrigger>
           <MenuSubPopup
             data-writing-menu-owner={`${id}-columns`}
             data-dock-command-scope="latex"
             data-keybinding-capture=""
           >
             {action(
-              "Insert left",
+              gt("Insert left"),
               () => columnAction("insert-before", () => props.onAddColumn(props.column - 1)),
               structureReason,
             )}
             {action(
-              "Insert right",
+              gt("Insert right"),
               () => columnAction("insert-after", () => props.onAddColumn(props.column)),
               structureReason,
             )}
             {action(
-              "Move left",
+              gt("Move left"),
               () => columnAction("previous", () => props.onMoveColumn(-1)),
-              structureReason ?? (props.column === 0 ? "Already the first column." : null),
+              structureReason ?? (props.column === 0 ? gt("Already the first column.") : null),
             )}
             {action(
-              "Move right",
+              gt("Move right"),
               () => columnAction("next", () => props.onMoveColumn(1)),
               structureReason ??
-                (props.column >= props.columnCount - 1 ? "Already the last column." : null),
+                (props.column >= props.columnCount - 1 ? gt("Already the last column.") : null),
             )}
             <MenuSeparator />
             {action(
-              "Delete column",
+              gt("Delete column"),
               () => columnAction("delete", props.onRemoveColumn),
-              structureReason ?? (props.columnCount <= 1 ? "Keep at least one column." : null),
+              structureReason ?? (props.columnCount <= 1 ? gt("Keep at least one column.") : null),
               true,
             )}
           </MenuSubPopup>
         </MenuSub>
         <MenuSeparator />
-        {action("Delete table", props.onDelete, readOnly, true)}
+        {action(gt("Delete table"), props.onDelete, readOnly, true)}
       </DockMenu>
-      <DockMenu label="Cells" icon="Cells" commandScope="latex" side="top">
+      <DockMenu
+        label={gt("Cells", { $context: "table cells menu" })}
+        icon={gt("Cells", { $context: "table cells menu" })}
+        commandScope="latex"
+        side="top"
+      >
         {action(
-          "Merge cells",
+          gt("Merge cells"),
           () => props.onProperties({ kind: "merge" }),
-          contentReason ?? (!props.canMergeCells ? "Select adjacent cells to merge." : null),
+          contentReason ?? (!props.canMergeCells ? gt("Select adjacent cells to merge.") : null),
         )}
         {action(
-          "Split cell",
+          gt("Split cell"),
           () => props.onProperties({ kind: "split" }),
-          contentReason ?? (!props.canSplitCell ? "Choose a merged cell to split." : null),
+          contentReason ?? (!props.canSplitCell ? gt("Choose a merged cell to split.") : null),
         )}
       </DockMenu>
-      <DockMenu label="Appearance" icon="Appearance" commandScope="latex" side="top">
+      <DockMenu label={gt("Appearance")} icon={gt("Appearance")} commandScope="latex" side="top">
         <LatexTableProperties
           key={props.column}
           source={props.source}
@@ -218,7 +236,7 @@ export function LatexTableToolbar(props: Props) {
         >
           <MenuSub>
             <MenuSubTrigger id={`${id}-rules`} disabled={Boolean(presentationReason)}>
-              Rules
+              <T context="table border rules">Rules</T>
             </MenuSubTrigger>
             <MenuSubPopup
               data-writing-menu-owner={`${id}-rules`}
@@ -227,9 +245,10 @@ export function LatexTableToolbar(props: Props) {
             >
               <MenuRadioGroup value={props.style}>
                 {[
-                  { value: "plain", label: "Simple" },
+                  { value: "plain", label: gt("Simple", { $context: "table rule style" }) },
+                  // oxlint-disable-next-line t3code/no-untranslated-copy -- the booktabs LaTeX package
                   { value: "booktabs", label: "Booktabs" },
-                  { value: "grid", label: "Full grid" },
+                  { value: "grid", label: gt("Full grid") },
                 ].map((option) => (
                   <DockCommandRadioItem
                     key={option.value}
@@ -249,7 +268,7 @@ export function LatexTableToolbar(props: Props) {
               id={`${id}-width`}
               disabled={Boolean(presentationReason) || props.width === "long"}
             >
-              Width
+              <T>Width</T>
             </MenuSubTrigger>
             <MenuSubPopup
               data-writing-menu-owner={`${id}-width`}
@@ -258,9 +277,9 @@ export function LatexTableToolbar(props: Props) {
             >
               <MenuRadioGroup value={props.width}>
                 {[
-                  { value: "fixed", label: "Fit content" },
-                  { value: "stretch", label: "Fit page" },
-                  ...(props.width === "long" ? [{ value: "long", label: "Multipage" }] : []),
+                  { value: "fixed", label: gt("Fit content") },
+                  { value: "stretch", label: gt("Fit page") },
+                  ...(props.width === "long" ? [{ value: "long", label: gt("Multipage") }] : []),
                 ].map((option) => (
                   <DockCommandRadioItem
                     key={option.value}
@@ -281,7 +300,7 @@ export function LatexTableToolbar(props: Props) {
             aria-description={presentationReason ?? undefined}
             onClick={props.onHeader}
           >
-            Header row
+            <T>Header row</T>
           </DockCommandCheckboxItem>
         </LatexTableProperties>
       </DockMenu>
@@ -289,18 +308,18 @@ export function LatexTableToolbar(props: Props) {
         type="button"
         className={dockButtonClass()}
         disabled={Boolean(contentReason) || !props.captionEditable}
-        aria-label={props.hasCaption ? "Edit table caption" : "Add table caption"}
+        aria-label={props.hasCaption ? gt("Edit table caption") : gt("Add table caption")}
         aria-description={
           contentReason ??
-          (!props.captionEditable ? "This table's caption setup requires Source." : undefined)
+          (!props.captionEditable ? gt("This table's caption setup requires Source.") : undefined)
         }
         onClick={props.onEditCaption}
       >
-        Caption
+        <T>Caption</T>
       </button>
       {props.hasCaption && (
         <LatexReferenceLabelControl
-          label="Table reference label"
+          label={gt("Table reference label")}
           value={props.label}
           allowEmpty
           draftKey={props.draftKey}

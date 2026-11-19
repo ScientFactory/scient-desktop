@@ -199,6 +199,8 @@ import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+// SCIENT-FORK: stale Antigravity model lists reload when the picker opens.
+import * as ProviderModelFreshness from "./scient/providerLifecycle/ProviderModelFreshness.ts";
 import { dispatchCommandRpcError } from "./orchestration-v2/DispatchCommandRpcError.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -1707,6 +1709,8 @@ export const layerWsRpc = (
       };
       // SCIENT-FORK:END
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      // SCIENT-FORK: the picker's new-model check also reloads a stale Antigravity list.
+      const providerModelFreshness = yield* ProviderModelFreshness.ProviderModelFreshness;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const acpRegistryRuntimeCoordinator =
         yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
@@ -2915,6 +2919,8 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
             if (input.modelCatalogOnly === true) {
+              // SCIENT-FORK: returns at once; the reload publishes when it finishes.
+              yield* providerModelFreshness.refreshStale;
               yield* providerRegistry.refreshModelCatalog;
               return { providers: [] };
             }

@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
 import type { AccountSummary, EnvironmentId } from "@t3tools/contracts";
 import { signInReturn, universitiesOf } from "@t3tools/shared/scientPaperLinks";
@@ -7,6 +8,7 @@ import { isIdentityProvider, signedInSite, type CookieMetadata } from "./session
 import { accountsState } from "./accountsState";
 import { profileAccounts } from "./accountsView";
 import { useAccountCommand } from "./useAccounts";
+import { m } from "~/i18n/messages";
 
 /** Returns being recorded now, so two views of one tab record it once. */
 const recording = new Set<string>();
@@ -83,9 +85,11 @@ export function useSignInRecording(input: {
           if (!created) return;
           toastManager.add({
             type: "success",
-            title: `${site} saved to Accounts${profileName ? ` for ${profileName}` : ""}`,
+            title: profileName
+              ? m(msg("{site} saved to Accounts for {profile}", { site, profile: profileName }))
+              : m(msg("{site} saved to Accounts", { site })),
             actionProps: {
-              children: "Undo",
+              children: m(msg("Undo")),
               onClick: () => void remove({ accountId: created }),
             },
           });

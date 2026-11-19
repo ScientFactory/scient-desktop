@@ -34,6 +34,7 @@ export function modelCompanyLabel(input: {
     case "claudeAgent":
       return "Anthropic";
     case "antigravity":
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- company name
       return "Google";
     default:
       return input.providerDisplayName;

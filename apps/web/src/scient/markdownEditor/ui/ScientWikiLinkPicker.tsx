@@ -1,4 +1,5 @@
 import { useEffectEvent } from "react";
+import { T, useGT } from "gt-react";
 import { Brackets, FileText, Search, Unlink } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -74,6 +75,7 @@ function WikiLinkOption(props: {
 
 /** Choose a real Markdown target before replacing the current text selection. */
 export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -203,7 +205,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
                 <button
                   type="button"
                   className={dockButtonClass(false)}
-                  aria-label="Link selection to a Markdown file"
+                  aria-label={gt("Link selection to a Markdown file")}
                   disabled={props.disabled}
                 >
                   <Brackets className="size-4" />
@@ -212,7 +214,9 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
             />
           }
         />
-        <TooltipPopup side="top">Wiki link</TooltipPopup>
+        <TooltipPopup side="top">
+          <T>Wiki link</T>
+        </TooltipPopup>
       </Tooltip>
       <PopoverPopup
         align="center"
@@ -224,9 +228,11 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between px-1">
             <PopoverTitle size="compact">
-              {editingTarget === null ? "Link to Markdown" : "Edit wiki link"}
+              {editingTarget === null ? gt("Link to Markdown") : gt("Edit wiki link")}
             </PopoverTitle>
-            <span className="text-[10px] text-muted-foreground">Enter to select</span>
+            <span className="text-[10px] text-muted-foreground">
+              <T>Enter to select</T>
+            </span>
           </div>
           <InputGroup>
             <InputGroupAddon>
@@ -240,8 +246,8 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
               }
               aria-controls={listId}
               aria-expanded={open}
-              aria-label="Search Markdown files"
-              placeholder="Search Markdown files…"
+              aria-label={gt("Search Markdown files")}
+              placeholder={gt("Search Markdown files…")}
               role="combobox"
               size="compact"
               value={query}
@@ -281,19 +287,19 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
           <div
             id={listId}
             role="listbox"
-            aria-label="Markdown files"
+            aria-label={gt("Markdown files")}
             className="max-h-72 overflow-y-auto rounded-md"
           >
             {visibleCandidates.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                {query.trim() ? "No matching Markdown files." : "No other Markdown files."}
+                {query.trim() ? gt("No matching Markdown files.") : gt("No other Markdown files.")}
               </div>
             ) : (
               <>
                 {sections.recent.length > 0 ? (
-                  <div role="group" aria-label="Recently linked">
+                  <div role="group" aria-label={gt("Recently linked")}>
                     <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Recently linked
+                      <T>Recently linked</T>
                     </div>
                     {renderOptions(sections.recent, 0)}
                   </div>
@@ -301,12 +307,12 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
                 {sections.results.length > 0 ? (
                   <div
                     role="group"
-                    aria-label={query.trim() ? "Search results" : "Markdown files"}
+                    aria-label={query.trim() ? gt("Search results") : gt("Markdown files")}
                     className={sections.recent.length > 0 ? "mt-1 border-t border-border pt-1" : ""}
                   >
                     {!query.trim() && sections.recent.length > 0 ? (
                       <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                        Markdown files
+                        <T>Markdown files</T>
                       </div>
                     ) : null}
                     {renderOptions(sections.results, sections.recent.length)}
@@ -325,7 +331,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
                 onClick={remove}
               >
                 <Unlink className="size-3.5" />
-                Remove link
+                <T>Remove link</T>
               </Button>
             </div>
           ) : null}

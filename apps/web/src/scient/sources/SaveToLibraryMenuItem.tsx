@@ -1,3 +1,6 @@
+import { msg, T, useGT } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { BookOpen } from "lucide-react";
 import { useState } from "react";
@@ -16,7 +19,7 @@ import { requestLibraryFileImport } from "./libraryFileHandoff";
 import { settleAfter } from "./settleAfter";
 
 function savedDescription(passageSaved: boolean): string | undefined {
-  return passageSaved ? "The selected passage is in its note." : undefined;
+  return passageSaved ? m(msg("The selected passage is in its note.")) : undefined;
 }
 
 /**
@@ -29,6 +32,7 @@ export function SaveToLibraryMenuItem(props: {
   readonly runtimeTabId: string | null;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const shell = useQuietThreadShell(props.threadRef);
   const project = useProject(
     shell ? { environmentId: props.threadRef.environmentId, projectId: shell.projectId } : null,
@@ -56,8 +60,8 @@ export function SaveToLibraryMenuItem(props: {
           if (!read) {
             toastManager.add({
               type: "error",
-              title: "Couldn't save this page",
-              description: "Scient could not read this tab. Reload it, then try again.",
+              title: gt("Couldn't save this page"),
+              description: gt("Scient could not read this tab. Reload it, then try again."),
             });
             return;
           }
@@ -75,7 +79,7 @@ export function SaveToLibraryMenuItem(props: {
           if (result.outcome === "not-added") {
             toastManager.add({
               type: "error",
-              title: "Not saved to Library",
+              title: gt("Not saved to Library"),
               description: result.message,
             });
             return;
@@ -83,15 +87,15 @@ export function SaveToLibraryMenuItem(props: {
           const description = savedDescription(result.passageSaved);
           toastManager.add({
             type: "success",
-            title: result.outcome === "added" ? "Saved to Library" : "Already in Library",
+            title: result.outcome === "added" ? gt("Saved to Library") : gt("Already in Library"),
             ...(description ? { description } : { data: { compact: true } }),
-            actionProps: { children: "Open Library", onClick: openLibrary },
+            actionProps: { children: gt("Open Library"), onClick: openLibrary },
           });
         } catch (error) {
           toastManager.add({
             type: "error",
-            title: "Couldn't save this page",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Couldn't save this page"),
+            description: error instanceof Error ? error.message : gt("An error occurred."),
           });
         }
       },
@@ -105,7 +109,7 @@ export function SaveToLibraryMenuItem(props: {
       onClick={() => void save()}
     >
       <BookOpen />
-      Save to Library
+      <T>Save to Library</T>
     </MenuItem>
   );
 }

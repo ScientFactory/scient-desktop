@@ -11,6 +11,9 @@ import type {
   ScientConversationImportConfirmRequest,
 } from "@t3tools/contracts";
 import { SCIC_MEDIA_TYPE, SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "../../i18n/messages";
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
@@ -20,7 +23,7 @@ function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) {
     throw new ConversationImportNotice({
-      message: "The destination isn't connected. Reconnect it and try again.",
+      message: m(msg("The destination isn't connected. Reconnect it and try again.")),
     });
   }
   return connection;
@@ -94,7 +97,7 @@ export function uploadConversationFile(
       else
         reject(
           new ConversationImportNotice({
-            message: "The destination didn't accept the file. Try again.",
+            message: m(msg("The destination didn't accept the file. Try again.")),
           }),
         );
     });
@@ -102,7 +105,7 @@ export function uploadConversationFile(
       settle();
       reject(
         new ConversationImportNotice({
-          message: "The file couldn't be sent. Check the connection and try again.",
+          message: m(msg("The file couldn't be sent. Check the connection and try again.")),
         }),
       );
     });

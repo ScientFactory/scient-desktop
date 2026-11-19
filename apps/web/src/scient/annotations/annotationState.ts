@@ -10,7 +10,10 @@ import {
   type ScientUnplacedAnnotation,
 } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 
 import { isLibraryMovingError, LIBRARY_MOVING_MESSAGE } from "../sources/errorMessage";
@@ -84,24 +87,24 @@ async function send(
     if (result.outcome === "stale") {
       toastManager.add({
         type: "info",
-        title: "This annotation changed elsewhere",
-        description: "Showing its latest version.",
+        title: m(msg("This annotation changed elsewhere")),
+        description: m(msg("Showing its latest version.")),
       });
     } else if (result.outcome === "material-changed") {
       toastManager.add({
         type: "warning",
-        title: "This PDF changed on disk",
-        description: "Reopen it and select the text again.",
+        title: m(msg("This PDF changed on disk")),
+        description: m(msg("Reopen it and select the text again.")),
       });
     } else if (result.outcome === "limit-reached") {
-      toastManager.add({ type: "warning", title: "This PDF has too many annotations" });
+      toastManager.add({ type: "warning", title: m(msg("This PDF has too many annotations")) });
     }
     return result;
   } catch (cause) {
     toastManager.add({
       type: "error",
-      title: "Couldn't save the annotation",
-      ...(isLibraryMovingError(cause) ? { description: LIBRARY_MOVING_MESSAGE } : {}),
+      title: m(msg("Couldn't save the annotation")),
+      ...(isLibraryMovingError(cause) ? { description: m(LIBRARY_MOVING_MESSAGE) } : {}),
     });
     return null;
   }
@@ -164,9 +167,9 @@ export async function removeAnnotation(
   if (!removed) return;
   toastManager.add({
     type: "success",
-    title: removed.highlighted ? "Highlight removed" : "Note removed",
+    title: removed.highlighted ? m(msg("Highlight removed")) : m(msg("Note removed")),
     actionProps: {
-      children: "Undo",
+      children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {
         void send(pdf, {
           action: "restore",
@@ -196,10 +199,10 @@ export async function removeUnplacedAnnotation(
     type: "success",
     title:
       removed.kind === "highlight" || removed.kind === "underline"
-        ? "Highlight removed"
-        : "Note removed",
+        ? m(msg("Highlight removed"))
+        : m(msg("Note removed")),
     actionProps: {
-      children: "Undo",
+      children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
       onClick: () => {
         void send(pdf, {
           action: "restore",

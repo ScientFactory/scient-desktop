@@ -1,8 +1,10 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useBlocker } from "@tanstack/react-router";
+import { msg } from "gt-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 
 export function pendingSurfaceBlocksActivation(input: {
   readonly activeSurfaceId: string | null;
@@ -125,16 +127,19 @@ export function usePendingSurfaceDeparture(
           if (departureRef.current === null) return;
           noticeIdRef.current = toastManager.add({
             type: "info",
-            title: "Finishing your changes",
-            description: "Scient will continue when your changes are on disk.",
+            title: m(msg("Finishing your changes")),
+            description: m(msg("Scient will continue when your changes are on disk.")),
           });
         }, 1_000);
       } else {
         noticeIdRef.current = toastManager.add({
           type: "warning",
-          title: "Finishing the file save",
-          description:
-            "Scient will continue automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
+          title: m(msg("Finishing the file save")),
+          description: m(
+            msg(
+              "Scient will continue automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
+            ),
+          ),
         });
       }
       return false;

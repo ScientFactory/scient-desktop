@@ -1,3 +1,4 @@
+import { msg, useGT } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AuthProvidersManageScope,
@@ -24,6 +25,7 @@ import {
   connectedProviderEnvironments,
   useManagedRuntimeUpdates,
 } from "./useManagedRuntimeUpdates";
+import { m } from "~/i18n/messages";
 
 const dismissalsSchema = Schema.Struct({ keys: Schema.Array(Schema.String) });
 const seenNotificationKeys = new Set<string>();
@@ -88,7 +90,9 @@ function useAvailabilityNotice(notice: AvailabilityNotice) {
     const key = notice.key;
     if (key === null) return;
     const actionProps = {
-      children: notice.update ? "Update" : "Settings",
+      children: notice.update
+        ? m(msg("Update", { $context: "verb, update the provider" }))
+        : m(msg("Settings")),
       disabled: notice.update !== undefined && !canUpdate,
       onClick: () => (notice.update ? update(key) : settings(key)),
     };
@@ -97,7 +101,7 @@ function useAvailabilityNotice(notice: AvailabilityNotice) {
       hideCopyButton: true,
       ...(notice.update
         ? {
-            secondaryActionProps: { children: "Settings", onClick: () => settings(key) },
+            secondaryActionProps: { children: m(msg("Settings")), onClick: () => settings(key) },
             secondaryActionVariant: "outline" as const,
           }
         : {}),
@@ -138,6 +142,7 @@ function BrowserAvailabilityNotices() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const cliUpdates = useProviderUpdates();
   const managedUpdates = useManagedRuntimeUpdates();
+  const gt = useGT();
   const groups = connectedProviderEnvironments(environments, providersByEnvironment).flatMap(
     (environment) => {
       const candidates = collectProviderUpdateCandidates(environment.providers);
@@ -161,19 +166,23 @@ function BrowserAvailabilityNotices() {
             .toSorted()
             .join("|");
   const labels = groups.flatMap((group) =>
-    group.candidates.map(
-      (provider) =>
-        `${PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver} ${provider.versionAdvisory.latestVersion} in ${group.label}`,
+    group.candidates.map((provider) =>
+      gt("{provider} {version} in {environment}", {
+        provider: PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,
+        version: provider.versionAdvisory.latestVersion,
+        environment: group.label,
+      }),
     ),
   );
   useAvailabilityNotice({
     key: cliKey,
     title:
       labels.length === 1
-        ? `Update available for ${labels[0]}`
-        : `${labels.length} provider updates available`,
-    description:
+        ? gt("Update available for {provider}", { provider: labels[0] })
+        : gt("{count} provider updates available", { count: labels.length }),
+    description: gt(
       "Review provider settings, or update with the app or tool that installed the provider.",
+    ),
     ...(cliUpdates.machines.length > 0
       ? {
           update: {
@@ -189,15 +198,21 @@ function BrowserAvailabilityNotices() {
   const targets = managedUpdates.targets;
   const managedLabels = managedUpdates.candidates.map(
     ({ provider, environmentLabel, availableVersion }) =>
-      `${PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver}${availableVersion ? ` ${availableVersion.startsWith("v") ? availableVersion : `v${availableVersion}`}` : ""} in ${environmentLabel}`,
+      gt("{provider}{version} in {environment}", {
+        provider: PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,
+        version: availableVersion
+          ? ` ${availableVersion.startsWith("v") ? availableVersion : `v${availableVersion}`}`
+          : "",
+        environment: environmentLabel,
+      }),
   );
   useAvailabilityNotice({
     key: managedRuntimeUpdateNotificationKey(managedUpdates.candidates),
     title:
       managedLabels.length === 1
-        ? `Update available for ${managedLabels[0]}`
-        : `${managedLabels.length} managed provider updates available`,
-    description: "A verified Scient-managed update is ready to install.",
+        ? gt("Update available for {provider}", { provider: managedLabels[0] })
+        : gt("{count} managed provider updates available", { count: managedLabels.length }),
+    description: gt("A verified Scient-managed update is ready to install."),
     update: {
       environments: targets,
       run: () => managedUpdates.update(targets),

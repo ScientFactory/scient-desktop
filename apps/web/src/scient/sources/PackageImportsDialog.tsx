@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import type { EnvironmentId, ScientSourcesOrganizeResult } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
@@ -28,6 +29,7 @@ export function PackageImportsDialog(props: {
   readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const [imports, setImports] = useState<Imports | null>(null);
   const [diagnostics, setDiagnostics] = useState<ReadonlyArray<string>>([]);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +64,7 @@ export function PackageImportsDialog(props: {
             root,
             change: { action: "undo-import", importId },
           });
-          if (result.outcome === "not-found") setError("The import receipt was not found.");
+          if (result.outcome === "not-found") setError(gt("The import receipt was not found."));
           await props.onImported();
           const listed = await organizeScientSources(environmentId, {
             root,
@@ -87,10 +89,14 @@ export function PackageImportsDialog(props: {
     >
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Package imports</DialogTitle>
+          <DialogTitle>
+            <T>Package imports</T>
+          </DialogTitle>
           <DialogDescription>
-            Packages imported into this project. Undo takes out what an import added and nobody
-            changed since; its papers stay in My Library.
+            <T>
+              Packages imported into this project. Undo takes out what an import added and nobody
+              changed since; its papers stay in My Library.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -109,11 +115,13 @@ export function PackageImportsDialog(props: {
           {imports === null ? (
             <p role="status">
               {error
-                ? "Imports could not be read. Close and reopen to try again."
-                : "Reading imports…"}
+                ? gt("Imports could not be read. Close and reopen to try again.")
+                : gt("Reading imports…")}
             </p>
           ) : imports.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No package imports in this project.</p>
+            <p className="text-sm text-muted-foreground">
+              <T>No package imports in this project.</T>
+            </p>
           ) : (
             <div className="space-y-4">
               {imports.map((entry) => (
@@ -136,23 +144,35 @@ export function PackageImportsDialog(props: {
                         disabled={working}
                         onClick={() => void undo(entry.importId)}
                       >
-                        Undo
+                        <T context="verb, button that undoes a change">Undo</T>
                       </Button>
                     ) : entry.canUndo ? null : (
                       <span className="text-xs text-muted-foreground">
-                        Undone {entry.undoneAt ? new Date(entry.undoneAt).toLocaleString() : ""}
+                        <T>
+                          Undone{" "}
+                          <Var>
+                            {entry.undoneAt ? new Date(entry.undoneAt).toLocaleString() : ""}
+                          </Var>
+                        </T>
                       </span>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {entry.added.sources} papers added, {entry.sourcesMatched} already here ·{" "}
-                    {entry.added.pdfs} PDFs · {entry.added.pins} added to project ·{" "}
-                    {entry.added.collections} collections · {entry.added.reviews} review files
+                    <T>
+                      <Var>{entry.added.sources}</Var> papers added,{" "}
+                      <Var>{entry.sourcesMatched}</Var> already here · <Var>{entry.added.pdfs}</Var>{" "}
+                      PDFs · <Var>{entry.added.pins}</Var> added to project ·{" "}
+                      <Var>{entry.added.collections}</Var> collections ·{" "}
+                      <Var>{entry.added.reviews}</Var> review files
+                    </T>
                   </p>
                   {entry.retainedSourceIds.length > 0 ? (
                     <div className="flex items-center gap-2">
                       <p>
-                        {entry.retainedSourceIds.length} papers stay in My Library, with their PDFs.
+                        <T>
+                          <Var>{entry.retainedSourceIds.length}</Var> papers stay in My Library,
+                          with their PDFs.
+                        </T>
                       </p>
                       {props.onShowSources ? (
                         <Button
@@ -163,7 +183,7 @@ export function PackageImportsDialog(props: {
                             props.onClose();
                           }}
                         >
-                          Show them
+                          <T>Show them</T>
                         </Button>
                       ) : null}
                     </div>
@@ -171,12 +191,14 @@ export function PackageImportsDialog(props: {
                   {entry.kept.length > 0 || entry.left.length > 0 ? (
                     <details>
                       <summary className="cursor-pointer">
-                        {entry.canUndo ? "What Undo keeps" : "What stayed"}
+                        {entry.canUndo ? gt("What Undo keeps") : gt("What stayed")}
                       </summary>
                       <ul className="mt-2 list-disc space-y-1 pl-5 break-words">
                         {[...new Set(entry.kept)].map((item) => (
                           <li key={`kept-${item}`}>
-                            Changed or used elsewhere: {evidenceLabel(item)}
+                            <T>
+                              Changed or used elsewhere: <Var>{evidenceLabel(item)}</Var>
+                            </T>
                           </li>
                         ))}
                         {[...new Set(entry.left)].map((item) => (
@@ -189,7 +211,9 @@ export function PackageImportsDialog(props: {
                     <ul className="list-disc pl-5 break-words">
                       {entry.failed.map((failure) => (
                         <li key={JSON.stringify(failure)}>
-                          Not imported: {failure.item}: {failure.message}
+                          <T>
+                            Not imported: <Var>{failure.item}</Var>: <Var>{failure.message}</Var>
+                          </T>
                         </li>
                       ))}
                     </ul>

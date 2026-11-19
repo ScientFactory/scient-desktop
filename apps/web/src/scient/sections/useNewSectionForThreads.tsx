@@ -4,9 +4,11 @@ import type {
   ThreadSection,
   ThreadSectionProjectRef,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { type ReactNode, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import { readThreadShell } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { useThreadSectionActions } from "./actions";
@@ -189,8 +191,12 @@ export function useNewSectionForThreads(
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Section not created everywhere",
-          description: `Could not create it on ${labels.join(", ")}. Those threads were not moved.`,
+          title: m(msg("Section not created everywhere")),
+          description: m(
+            msg("Could not create it on {computers}. Those threads were not moved.", {
+              computers: labels.join(", "),
+            }),
+          ),
         }),
       );
     }

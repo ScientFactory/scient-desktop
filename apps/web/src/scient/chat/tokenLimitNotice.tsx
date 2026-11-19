@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { InfoIcon } from "lucide-react";
 
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
@@ -7,6 +8,7 @@ import {
   isThreadErrorBannerDismissedForSession,
   isTokenLimitError as isTokenLimitThreadError,
 } from "~/components/chat/ThreadErrorBanner";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 const EMPTY_TURN_ITEMS: Parameters<typeof getTruncationNoticeKey>[1] = [];
 
@@ -52,7 +54,9 @@ export function tokenLimitBannerItems(input: {
   readonly hasTokenLimitNotice: boolean;
   readonly tokenLimitNoticeKey: string | null;
   readonly onDismissed: () => void;
+  readonly resolve?: MessageResolver;
 }): ComposerBannerStackItem[] {
+  const resolve = input.resolve ?? m;
   const { hasTokenLimitNotice, tokenLimitNoticeKey, onDismissed } = input;
   return hasTokenLimitNotice
     ? [
@@ -60,8 +64,8 @@ export function tokenLimitBannerItems(input: {
           id: `token-limit:${tokenLimitNoticeKey}`,
           variant: "info",
           icon: <InfoIcon />,
-          title: "Response stopped at a token limit.",
-          dismissLabel: "Dismiss token limit notice",
+          title: resolve(msg("Response stopped at a token limit.")),
+          dismissLabel: resolve(msg("Dismiss token limit notice")),
           onDismiss: () => {
             dismissThreadErrorBannerForSession(tokenLimitNoticeKey);
             onDismissed();

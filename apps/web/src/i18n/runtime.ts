@@ -1,11 +1,6 @@
-import { resolveLocale } from "@t3tools/client-runtime/locales";
+import { resolveLocale, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { getTranslationsSnapshot } from "gt-react";
 
-import {
-  getClientSettings,
-  subscribeClientSettings,
-  updateClientSettings,
-} from "../hooks/useSettings";
 import { initializeI18n } from "./initializeI18n";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
@@ -22,6 +17,7 @@ const pendingLoads = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
 let snapshot: I18nSnapshot = { locale: DEFAULT_LOCALE, translations: { ...loadedTranslations } };
 let requestedLocale = DEFAULT_LOCALE;
+let onGTLocaleRequest: (locale: string) => void = () => {};
 
 function loadLocale(locale: string): Promise<void> {
   if (locale in loadedTranslations) return Promise.resolve();
@@ -52,26 +48,19 @@ function activateLocale(locale: string): void {
   for (const listener of listeners) listener();
 }
 
-function applyLanguageSetting(): void {
-  // Not desktopBridge.getSystemLocale(): that is the regional/time locale, not the UI language.
-  requestedLocale = resolveLocale(
-    getClientSettings().language,
-    navigator.languages,
-    SUPPORTED_LOCALES,
-    DEFAULT_LOCALE,
-  );
-  void whenLocaleReady();
+export function setI18nLanguage(language: string = SYSTEM_LANGUAGE): Promise<void> {
+  // The browser exposes UI language preferences, independent of the desktop regional locale.
+  requestedLocale = resolveLocale(language, navigator.languages, SUPPORTED_LOCALES, DEFAULT_LOCALE);
+  return whenLocaleReady();
 }
 
-/** GT's own locale setters write the saved setting, which stays the only source of truth. */
-export function persistGTLocale(locale: string): void {
-  void updateClientSettings({ language: locale });
+export function requestGTLocale(locale: string): void {
+  onGTLocaleRequest(locale);
 }
 
-export function startI18n(): void {
-  initializeI18n(persistGTLocale);
-  subscribeClientSettings(applyLanguageSetting);
-  applyLanguageSetting();
+export function startI18n(onLocaleRequest?: (locale: string) => void): void {
+  onGTLocaleRequest = onLocaleRequest ?? (() => {});
+  initializeI18n(requestGTLocale);
 }
 
 /** Resolves once the requested locale's translations are ready; immediate for English. */

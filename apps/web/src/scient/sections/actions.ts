@@ -7,9 +7,11 @@ import { EnvironmentId, type ScopedThreadRef, ThreadId, ThreadSectionId } from "
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import { m } from "../../i18n/messages";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThreadShell } from "../../state/entities";
@@ -147,7 +149,7 @@ export function useThreadSectionActions() {
                 ? null
                 : { environmentId: target.environmentId, sectionId: previous },
             ),
-          failureTitle: "Failed to undo section move",
+          failureTitle: m(msg("Failed to undo section move")),
         });
         return result;
       }),
@@ -163,9 +165,14 @@ export function useThreadSectionActions() {
           type: "error",
           title:
             moves.length === 1
-              ? "Failed to move thread to section"
-              : `Failed to move ${failures.length} of ${moves.length} threads`,
-          description: error instanceof Error ? error.message : "An error occurred.",
+              ? m(msg("Failed to move thread to section"))
+              : m(
+                  msg("Failed to move {failed} of {count} threads", {
+                    failed: failures.length,
+                    count: moves.length,
+                  }),
+                ),
+          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
         }),
       );
     }

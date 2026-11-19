@@ -4,6 +4,7 @@
  */
 import { type EnvironmentId, usableRegistryContactEmail } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
@@ -14,6 +15,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 /** The setting belongs to the server the Documents page is showing. */
 export function LibrarySettings({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
   const saved = useEnvironmentSettings(
     environmentId,
     (settings) => settings.scientSources.registryContactEmail,
@@ -35,7 +37,7 @@ export function LibrarySettings({ environmentId }: { environmentId: EnvironmentI
     });
     if (result._tag === "Failure") {
       const cause = squashAtomCommandFailure(result);
-      setFailure(cause instanceof Error ? cause.message : "The setting could not be saved.");
+      setFailure(cause instanceof Error ? cause.message : gt("The setting could not be saved."));
       return;
     }
     setFailure(null);
@@ -43,15 +45,22 @@ export function LibrarySettings({ environmentId }: { environmentId: EnvironmentI
   };
 
   return (
-    <SettingsSection id="library" title="Library">
+    <SettingsSection
+      id="library"
+      title={gt("Library", { $context: "settings section for the personal Library of sources" })}
+    >
       <SettingsRow
-        title="Contact email for reference registries"
+        title={gt("Contact email for reference registries")}
         description={
           <>
-            Crossref, OpenAlex and Unpaywall answer faster and more reliably when requests carry a
-            contact address. Leave empty to send none.
+            <T>
+              Crossref, OpenAlex and Unpaywall answer faster and more reliably when requests carry a
+              contact address. Leave empty to send none.
+            </T>
             {invalid ? (
-              <span className="mt-1 block text-destructive">Enter an email address.</span>
+              <span className="mt-1 block text-destructive">
+                <T>Enter an email address.</T>
+              </span>
             ) : null}
             {failure ? <span className="mt-1 block text-destructive">{failure}</span> : null}
           </>
@@ -61,7 +70,7 @@ export function LibrarySettings({ environmentId }: { environmentId: EnvironmentI
             size="sm"
             type="email"
             className="w-full sm:w-64"
-            aria-label="Contact email for reference registries"
+            aria-label={gt("Contact email for reference registries")}
             placeholder="you@university.edu"
             value={value}
             onValueChange={setDraft}

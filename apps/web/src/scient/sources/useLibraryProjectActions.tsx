@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import type { EnvironmentId, ScientSourcesReadingStateResult } from "@t3tools/contracts";
 import { useLayoutEffect, useRef, useState } from "react";
 
@@ -61,6 +62,8 @@ export function useLibraryProjectActions(
     readonly applyReadingState: (result: ScientSourcesReadingStateResult) => void;
   },
 ) {
+  const m = useMessages();
+  const gt = useGT();
   const [snapshotRemoval, setSnapshotRemoval] = useState<SnapshotRemoval | null>(null);
   const pendingRemovalRef = useRef<{
     readonly request: SnapshotRemoval;
@@ -101,8 +104,8 @@ export function useLibraryProjectActions(
                 snapshots > 0
                   ? goneFromComputerLabel(snapshots)
                   : outcome.changed === 1
-                    ? LIBRARY_LABELS.staysInLibrary
-                    : LIBRARY_LABELS.stayInLibrary,
+                    ? m(LIBRARY_LABELS.staysInLibrary)
+                    : m(LIBRARY_LABELS.stayInLibrary),
             }
           : {}),
       });
@@ -110,12 +113,12 @@ export function useLibraryProjectActions(
     if (outcome.failed > 0) {
       toastManager.add({
         type: "error",
-        title: kind === "add" ? LIBRARY_LABELS.addFailed : LIBRARY_LABELS.removeFailed,
+        title: kind === "add" ? m(LIBRARY_LABELS.addFailed) : m(LIBRARY_LABELS.removeFailed),
         description:
           outcome.error ??
           (outcome.failed === 1
-            ? "1 source is no longer in the Library."
-            : `${outcome.failed} sources are no longer in the Library.`),
+            ? gt("1 source is no longer in the Library.")
+            : gt("{failed} sources are no longer in the Library.", { failed: outcome.failed })),
       });
     }
   };
@@ -182,7 +185,7 @@ export function useLibraryProjectActions(
     }).catch((cause: unknown) => {
       toastManager.add({
         type: "error",
-        title: LIBRARY_LABELS.readingFailed,
+        title: m(LIBRARY_LABELS.readingFailed),
         description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
       });
       return null;
@@ -230,6 +233,7 @@ export function useLibraryProjectActions(
 export function SnapshotRemovalDialog(props: {
   readonly actions: ReturnType<typeof useLibraryProjectActions>;
 }) {
+  const m = useMessages();
   const { actions } = props;
   return (
     <AlertDialog
@@ -241,16 +245,18 @@ export function SnapshotRemovalDialog(props: {
       <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {removeSnapshotsLabel(actions.snapshotRemoval?.snapshots ?? 1)}
+            {removeSnapshotsLabel(actions.snapshotRemoval?.snapshots ?? 1, m)}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {removeSnapshotsHelp(actions.snapshotRemoval?.snapshots ?? 1)}
+            {removeSnapshotsHelp(actions.snapshotRemoval?.snapshots ?? 1, m)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <T>Cancel</T>
+          </AlertDialogClose>
           <Button onClick={actions.confirmSnapshotRemoval}>
-            {LIBRARY_LABELS.removeFromProject}
+            {m(LIBRARY_LABELS.removeFromProject)}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

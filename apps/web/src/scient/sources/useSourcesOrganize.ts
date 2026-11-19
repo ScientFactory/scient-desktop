@@ -12,7 +12,10 @@ import type {
   ScientSourcesBulkResult,
   ScientSourcesOrganizeRequest,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useRef, useState } from "react";
+
+import { m } from "~/i18n/messages";
 
 import { toastManager } from "../../components/ui/toast";
 import { randomUUID } from "../../lib/utils";
@@ -169,8 +172,8 @@ export function useSourcesOrganize(input: {
   const refuse = () => {
     toastManager.add({
       type: "info",
-      title: "Another change is still running",
-      description: "Try again when it finishes.",
+      title: m(msg("Another change is still running")),
+      description: m(msg("Try again when it finishes.")),
     });
   };
   /**
@@ -238,7 +241,7 @@ export function useSourcesOrganize(input: {
           root: input.root,
           change: { undoBatchId: batchId },
         }),
-      "Changes were not undone",
+      m(msg("Changes were not undone")),
     );
     if (!result) return;
     const failed = [...result.sources, ...result.collections].filter(
@@ -248,22 +251,28 @@ export function useSourcesOrganize(input: {
     if (failed.length > 0) {
       const id = toastManager.add({
         type: "warning",
-        title: "Some changes were not undone",
+        title: m(msg("Some changes were not undone")),
         description: [
-          failed.length === 1
-            ? "1 change could not be undone."
-            : `${failed.length} changes could not be undone.`,
+          m(
+            msg(
+              "{count, plural, =1 {1 change could not be undone.} other {{count} changes could not be undone.}}",
+              { count: failed.length },
+            ),
+          ),
           // What Undo left on purpose is said here too, not lost behind the failure.
           ...(kept.length > 0
             ? [
-                kept.length === 1
-                  ? "1 later change was kept."
-                  : `${kept.length} later changes were kept.`,
+                m(
+                  msg(
+                    "{count, plural, =1 {1 later change was kept.} other {{count} later changes were kept.}}",
+                    { count: kept.length },
+                  ),
+                ),
               ]
             : []),
         ].join(" "),
         actionProps: {
-          children: "Try again",
+          children: m(msg("Try again")),
           onClick: whenFree(() => {
             toastManager.close(id);
             void undoBulk(batchId);
@@ -277,11 +286,18 @@ export function useSourcesOrganize(input: {
     const undidNothing = result.sources.length === 0 && result.collections.length === 0;
     toastManager.add({
       type: "warning",
-      title: undidNothing ? "Changes were not undone" : "Some later changes were kept",
+      title: undidNothing
+        ? m(msg("Changes were not undone"))
+        : m(msg("Some later changes were kept")),
       description:
         conflicts.length === 1
           ? conflicts[0]!.message
-          : `${conflicts[0]!.message} ${conflicts.length - 1} more were kept as well.`,
+          : m(
+              msg("{first} {more} more were kept as well.", {
+                first: conflicts[0]!.message,
+                more: conflicts.length - 1,
+              }),
+            ),
     });
   };
 
@@ -304,7 +320,7 @@ export function useSourcesOrganize(input: {
             showDone(undone);
           },
         }),
-      "Changes were not undone",
+      m(msg("Changes were not undone")),
     );
     if (!outcome) return;
     const announcement = undoPartsAnnouncement(outcome, message);
@@ -315,7 +331,7 @@ export function useSourcesOrganize(input: {
       ...(retry.length > 0
         ? {
             actionProps: {
-              children: "Try again",
+              children: m(msg("Try again")),
               onClick: whenFree(() => {
                 toastManager.close(id);
                 void undoInParts(retry);
@@ -364,7 +380,7 @@ export function useSourcesOrganize(input: {
         ...(undo.length > 0
           ? {
               actionProps: {
-                children: "Undo",
+                children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
                 onClick: whenFree(() => {
                   toastManager.close(id);
                   void undoInParts(undo);
@@ -415,7 +431,7 @@ export function useSourcesOrganize(input: {
       });
       return { created, filled };
     };
-    const outcome = await runInParts("changing", total, work, "Collection was not created");
+    const outcome = await runInParts("changing", total, work, m(msg("Collection was not created")));
     if (!outcome) return null;
     const announcement = outcome.filled
       ? collectionPartsAnnouncement({ outcome: outcome.filled, name, message })
@@ -438,9 +454,13 @@ export function useSourcesOrganize(input: {
     if (undo) {
       const id = toastManager.add({
         type: "success",
-        title: undo.sourceCount === 1 ? "Changed 1 source" : `Changed ${undo.sourceCount} sources`,
+        title: m(
+          msg("{count, plural, =1 {Changed 1 source} other {Changed {count} sources}}", {
+            count: undo.sourceCount,
+          }),
+        ),
         actionProps: {
-          children: "Undo",
+          children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
           onClick: whenFree(() => {
             toastManager.close(id);
             void undoBulk(undo.batchId);
@@ -533,7 +553,7 @@ export function useSourcesOrganize(input: {
           ...(sourceIds && sourceIds.length > 0 ? { sourceIds } : {}),
           ...(parentCollectionId ? { parentCollectionId } : {}),
         },
-        "Collection was not created",
+        m(msg("Collection was not created")),
       );
       return result?.collection ?? null;
     },
@@ -543,7 +563,7 @@ export function useSourcesOrganize(input: {
       ).length;
       const result = await organize(
         { action: "delete-collection", collectionId },
-        "Collection was not deleted",
+        m(msg("Collection was not deleted")),
       );
       if (result?.outcome !== "deleted" || !result.collection) return;
       const { name } = result.collection;
@@ -552,17 +572,22 @@ export function useSourcesOrganize(input: {
       }
       toastManager.add({
         type: "success",
-        title: `Deleted collection “${name}”`,
+        title: m(msg("Deleted collection “{name}”", { name })),
         description:
           under === 0
-            ? "Its sources stay in the Library."
-            : `Its sources stay in the Library, and ${under === 1 ? "its subcollection" : `its ${under} subcollections`} moved up a level.`,
+            ? m(msg("Its sources stay in the Library."))
+            : m(
+                msg(
+                  "{count, plural, =1 {Its sources stay in the Library, and its subcollection moved up a level.} other {Its sources stay in the Library, and its {count} subcollections moved up a level.}}",
+                  { count: under },
+                ),
+              ),
         actionProps: {
-          children: "Undo",
+          children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
           onClick: () => {
             void organize(
               { action: "restore-collection", collectionId },
-              "Collection was not restored",
+              m(msg("Collection was not restored")),
             );
           },
         },
@@ -571,7 +596,7 @@ export function useSourcesOrganize(input: {
     saveSearch: async (name: string, searchId?: string) => {
       const result = await organize(
         { action: "save-search", name, filter: fullFilter, ...(searchId ? { searchId } : {}) },
-        "Search was not saved",
+        m(msg("Search was not saved")),
       );
       if (result?.savedSearch) update({ savedSearchId: result.savedSearch.searchId });
       return result;
@@ -580,19 +605,19 @@ export function useSourcesOrganize(input: {
       const search = organization.savedSearches.find((entry) => entry.searchId === searchId);
       const result = await organize(
         { action: "delete-search", searchId },
-        "Search was not deleted",
+        m(msg("Search was not deleted")),
       );
       if (result?.outcome !== "deleted" || !search) return;
       if (current.savedSearchId === searchId) update({ savedSearchId: null });
       toastManager.add({
         type: "success",
-        title: `Deleted saved search “${search.name}”`,
+        title: m(msg("Deleted saved search “{name}”", { name: search.name })),
         actionProps: {
-          children: "Undo",
+          children: m(msg("Undo", { $context: "verb, button that undoes a change" })),
           onClick: () => {
             void organize(
               { action: "save-search", name: search.name, filter: search.filter },
-              "Search was not restored",
+              m(msg("Search was not restored")),
             );
           },
         },

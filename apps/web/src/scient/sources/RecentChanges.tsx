@@ -3,6 +3,7 @@ import type {
   ScientSourcesImportNotBrought,
   ScientSourcesRecentChange,
 } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -52,6 +53,8 @@ function NotBrought(props: {
   readonly about: string;
   readonly onShowSources: (sourceIds: ReadonlyArray<string>) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [lines, setLines] = useState<ScientSourcesImportNotBrought | null>(null);
   const [open, setOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -72,10 +75,13 @@ function NotBrought(props: {
         size="xs"
         variant="outline"
         aria-expanded={open}
-        aria-label={`${RECENT_CHANGES_LABELS.notBrought} (${props.kinds}): ${props.about}`}
+        aria-label={gt("Not brought ({count}): {about}", {
+          count: props.kinds,
+          about: props.about,
+        })}
         onClick={toggle}
       >
-        {RECENT_CHANGES_LABELS.notBrought} ({props.kinds})
+        {gt("Not brought ({count})", { count: props.kinds })}
       </Button>
       {open && problem ? (
         <p role="alert" className="mt-1 text-xs text-muted-foreground">
@@ -83,11 +89,13 @@ function NotBrought(props: {
         </p>
       ) : null}
       {open && lines?.length === 0 ? (
-        <p className="mt-1 text-xs text-muted-foreground">{RECENT_CHANGES_LABELS.notBroughtNone}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {m(RECENT_CHANGES_LABELS.notBroughtNone)}
+        </p>
       ) : null}
       {open && lines && lines.length > 0 ? (
         <div className="mt-1 text-xs">
-          <p className="text-muted-foreground">{RECENT_CHANGES_LABELS.notBroughtAbout}</p>
+          <p className="text-muted-foreground">{m(RECENT_CHANGES_LABELS.notBroughtAbout)}</p>
           <ul className="mt-1 space-y-0.5">
             {lines.map((line) => (
               <li key={line.what} className="flex items-center justify-between gap-2">
@@ -99,10 +107,10 @@ function NotBrought(props: {
                     className="shrink-0"
                     size="xs"
                     variant="ghost"
-                    aria-label={`${RECENT_CHANGES_LABELS.showThese}: ${line.what}`}
+                    aria-label={gt("Show: {what}", { what: line.what })}
                     onClick={() => props.onShowSources(line.sourceIds)}
                   >
-                    {RECENT_CHANGES_LABELS.showThese}
+                    {m(RECENT_CHANGES_LABELS.showThese)}
                   </Button>
                 ) : null}
               </li>
@@ -141,6 +149,8 @@ export function RecentChangesDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, root } = props;
+  const gt = useGT();
+  const m = useMessages();
   const [limit, setLimit] = useState(PAGE);
   const [listed, setListed] = useState<{
     readonly changes: ReadonlyArray<ScientSourcesRecentChange>;
@@ -193,7 +203,7 @@ export function RecentChangesDialog(props: {
     switch (change.kind) {
       case "bulk-edit":
         return {
-          label: RECENT_CHANGES_LABELS.undo,
+          label: m(RECENT_CHANGES_LABELS.undo),
           // Only what is not undone yet, in the edit's order: the panel undoes the newest part
           // first and says what was undone and what was left; the row then shows it too.
           run: () =>
@@ -207,19 +217,19 @@ export function RecentChangesDialog(props: {
         };
       case "merge":
         return {
-          label: RECENT_CHANGES_LABELS.undo,
+          label: m(RECENT_CHANGES_LABELS.undo),
           run: () =>
             act(async () => {
               const result = await organizeScientSources(environmentId, {
                 root,
                 change: { action: "undo-merge", mergeId: change.id },
               });
-              return undoProblem(result) ?? unrevertedLabel(result.unrevertedFields);
+              return undoProblem(result, m) ?? unrevertedLabel(result.unrevertedFields, m);
             }),
         };
       case "import":
         return {
-          label: RECENT_CHANGES_LABELS.showSources,
+          label: m(RECENT_CHANGES_LABELS.showSources),
           always: true,
           run: () => {
             setWorking(true);
@@ -238,7 +248,7 @@ export function RecentChangesDialog(props: {
       // Offered while the Library the restore replaced is kept: add what it holds to this one.
       case "restore":
         return {
-          label: RECENT_CHANGES_LABELS.addKept,
+          label: m(RECENT_CHANGES_LABELS.addKept),
           run: () => {
             if (!change.kept) return;
             void props.onAddFromLibrary(change.kept.path);
@@ -247,7 +257,7 @@ export function RecentChangesDialog(props: {
         };
       case "join":
         return {
-          label: RECENT_CHANGES_LABELS.undo,
+          label: m(RECENT_CHANGES_LABELS.undo),
           run: () =>
             act(async () => {
               const result = await organizeScientSources(environmentId, {
@@ -255,21 +265,27 @@ export function RecentChangesDialog(props: {
                 change: { action: "undo-join", joinId: change.id },
               });
               if (result.outcome === "join-busy") {
-                return "Sources are being added from another Library. Undo this when that has finished.";
+                return gt(
+                  "Sources are being added from another Library. Undo this when that has finished.",
+                );
               }
               const left = result.joinUndone?.left ?? 0;
               return left > 0
-                ? `${left.toLocaleString()} ${left === 1 ? "source or collection that was changed or used since was" : "sources or collections that were changed or used since were"} left in the Library.`
+                ? gt(
+                    "{count, plural, one {{shown} source or collection that was changed or used since was left in the Library.} other {{shown} sources or collections that were changed or used since were left in the Library.}}",
+                    { count: left, shown: left.toLocaleString() },
+                  )
                 : null;
             }),
         };
       case "trash":
         return {
-          label: RECENT_CHANGES_LABELS.restore,
+          label: m(RECENT_CHANGES_LABELS.restore),
           run: () =>
             act(async () =>
               restoreProblem(
                 await restoreScientSource(environmentId, { root, sourceId: change.id }),
+                m,
               ),
             ),
         };
@@ -285,8 +301,8 @@ export function RecentChangesDialog(props: {
     >
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{RECENT_CHANGES_LABELS.title}</DialogTitle>
-          <DialogDescription>{RECENT_CHANGES_LABELS.coverage}</DialogDescription>
+          <DialogTitle>{m(RECENT_CHANGES_LABELS.title)}</DialogTitle>
+          <DialogDescription>{m(RECENT_CHANGES_LABELS.coverage)}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {notice ? (
@@ -296,29 +312,29 @@ export function RecentChangesDialog(props: {
           ) : null}
           {listed !== null && error ? (
             <p role="alert" className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
-              {RECENT_CHANGES_LABELS.reloadFailed}
+              {m(RECENT_CHANGES_LABELS.reloadFailed)}
               <Button
                 size="xs"
                 variant="ghost"
                 disabled={working}
                 onClick={() => void load({ root, limit })}
               >
-                {RECENT_CHANGES_LABELS.tryAgain}
+                {m(RECENT_CHANGES_LABELS.tryAgain)}
               </Button>
             </p>
           ) : null}
           {listed === null ? (
             <p role={error ? "alert" : "status"} className="text-sm text-muted-foreground">
-              {error ? RECENT_CHANGES_LABELS.loadFailed : RECENT_CHANGES_LABELS.loading}
+              {error ? m(RECENT_CHANGES_LABELS.loadFailed) : m(RECENT_CHANGES_LABELS.loading)}
             </p>
           ) : listed.changes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{RECENT_CHANGES_LABELS.none}</p>
+            <p className="text-sm text-muted-foreground">{m(RECENT_CHANGES_LABELS.none)}</p>
           ) : (
             <ul className="divide-y divide-border text-sm">
               {listed.changes.map((change) => {
-                const state = recentChangeState(change);
+                const state = recentChangeState(change, m);
                 const offered = action(change);
-                const sentence = recentChangeSentence(change);
+                const sentence = recentChangeSentence(change, m);
                 return (
                   <li
                     key={`${change.kind}:${change.id}`}
@@ -327,11 +343,11 @@ export function RecentChangesDialog(props: {
                     <div className="min-w-0">
                       <p className="break-words">{sentence}</p>
                       <p className="text-xs text-muted-foreground">
-                        {recentChangeBy(change)} · {new Date(change.at).toLocaleString()}
+                        {recentChangeBy(change, m)} · {new Date(change.at).toLocaleString()}
                       </p>
-                      {recentChangeDetail(change) ? (
+                      {recentChangeDetail(change, m) ? (
                         <p className="text-xs break-words text-muted-foreground">
-                          {recentChangeDetail(change)}
+                          {recentChangeDetail(change, m)}
                         </p>
                       ) : null}
                       {change.kind === "import" && (change.notBrought ?? 0) > 0 ? (
@@ -354,13 +370,13 @@ export function RecentChangesDialog(props: {
                           size="xs"
                           variant="outline"
                           disabled={working}
-                          aria-label={`${RECENT_CHANGES_LABELS.importRest}: ${sentence}`}
+                          aria-label={gt("Import the rest: {change}", { change: sentence })}
                           onClick={() => {
                             void props.onImportRest(change.id, change.remaining ?? 0);
                             props.onClose();
                           }}
                         >
-                          {RECENT_CHANGES_LABELS.importRest}
+                          {m(RECENT_CHANGES_LABELS.importRest)}
                         </Button>
                       ) : null}
                       {change.kind === "restore" && change.kept && props.canChange ? (
@@ -371,14 +387,14 @@ export function RecentChangesDialog(props: {
                           size="xs"
                           variant="outline"
                           disabled={working}
-                          aria-label={`${RECENT_CHANGES_LABELS.putBack}: ${sentence}`}
+                          aria-label={gt("Put it back: {change}", { change: sentence })}
                           onClick={() => {
                             if (!change.kept) return;
                             void props.onPutBackLibrary(change.kept.path);
                             props.onClose();
                           }}
                         >
-                          {RECENT_CHANGES_LABELS.putBack}
+                          {m(RECENT_CHANGES_LABELS.putBack)}
                         </Button>
                       ) : null}
                       {change.kind === "join" && change.different > 0 ? (
@@ -387,10 +403,10 @@ export function RecentChangesDialog(props: {
                           className="mt-1"
                           size="xs"
                           variant="outline"
-                          aria-label={`${JOIN_DIFFERENCES_LABELS.open}: ${sentence}`}
+                          aria-label={gt("Show differences: {change}", { change: sentence })}
                           onClick={() => props.onShowDifferences(change.id)}
                         >
-                          {JOIN_DIFFERENCES_LABELS.open}
+                          {m(JOIN_DIFFERENCES_LABELS.open)}
                         </Button>
                       ) : null}
                     </div>
@@ -404,7 +420,10 @@ export function RecentChangesDialog(props: {
                         size="xs"
                         variant="outline"
                         disabled={working || (change.kind === "import" && change.available === 0)}
-                        aria-label={`${offered.label}: ${sentence}`}
+                        aria-label={gt("{action}: {change}", {
+                          action: offered.label,
+                          change: sentence,
+                        })}
                         onClick={offered.run}
                       >
                         {offered.label}
@@ -423,18 +442,18 @@ export function RecentChangesDialog(props: {
               disabled={working}
               onClick={() => setLimit((value) => Math.min(MOST, value * 2))}
             >
-              {RECENT_CHANGES_LABELS.showOlder}
+              {m(RECENT_CHANGES_LABELS.showOlder)}
             </Button>
           ) : listed?.more ? (
-            <p className="mt-3 text-xs text-muted-foreground">{RECENT_CHANGES_LABELS.noOlder}</p>
+            <p className="mt-3 text-xs text-muted-foreground">{m(RECENT_CHANGES_LABELS.noOlder)}</p>
           ) : null}
           <section
-            aria-label={RECENT_CHANGES_LABELS.packageImports}
+            aria-label={m(RECENT_CHANGES_LABELS.packageImports)}
             className="mt-4 border-t border-border pt-3 text-sm"
           >
-            <h3 className="font-medium">{RECENT_CHANGES_LABELS.packageImports}</h3>
+            <h3 className="font-medium">{m(RECENT_CHANGES_LABELS.packageImports)}</h3>
             <p className="text-xs text-muted-foreground">
-              {RECENT_CHANGES_LABELS.packageImportsAbout}
+              {m(RECENT_CHANGES_LABELS.packageImportsAbout)}
             </p>
             <Button
               className="mt-1"
@@ -442,7 +461,7 @@ export function RecentChangesDialog(props: {
               variant="outline"
               onClick={() => setPackageImportsOpen(true)}
             >
-              {RECENT_CHANGES_LABELS.openPackageImports}
+              {m(RECENT_CHANGES_LABELS.openPackageImports)}
             </Button>
           </section>
         </DialogPanel>

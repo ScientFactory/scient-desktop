@@ -1,6 +1,7 @@
 import { LatexSelect } from "./LatexSelect";
 import { DocumentGridSizeMenu } from "../writing/DocumentTableSizeMenu";
 import { insertMatrix, type MatrixEnvironment } from "../math/input/matrix";
+import { useGT } from "gt-react";
 
 export function LatexMatrixBrackets({
   value,
@@ -11,21 +12,25 @@ export function LatexMatrixBrackets({
   onChange: (value: MatrixEnvironment) => void;
   compact?: boolean;
 }) {
+  const gt = useGT();
   return (
     <label className={compact ? "grid justify-items-start" : "grid gap-1"}>
-      {!compact && "Brackets"}
+      {!compact && gt("Brackets")}
       <LatexSelect
-        aria-label="Matrix brackets"
+        aria-label={gt("Matrix brackets")}
         size={compact ? "compact" : "default"}
         value={value}
         onValueChange={(value) => onChange(value as MatrixEnvironment)}
         options={[
-          { value: "bmatrix", label: "[ ] Square" },
-          { value: "pmatrix", label: "( ) Round" },
-          { value: "Bmatrix", label: "{ } Braces" },
-          { value: "vmatrix", label: "| | Single bars" },
-          { value: "Vmatrix", label: "\u2016 \u2016 Double bars" },
-          { value: "matrix", label: "None" },
+          { value: "bmatrix", label: gt("{brackets} Square", { brackets: "[ ]" }) },
+          { value: "pmatrix", label: gt("{brackets} Round", { brackets: "( )" }) },
+          { value: "Bmatrix", label: gt("{brackets} Braces", { brackets: "{ }" }) },
+          { value: "vmatrix", label: gt("{brackets} Single bars", { brackets: "| |" }) },
+          {
+            value: "Vmatrix",
+            label: gt("{brackets} Double bars", { brackets: "\u2016 \u2016" }),
+          },
+          { value: "matrix", label: gt("None", { $context: "no matrix brackets" }) },
         ]}
       />
     </label>
@@ -45,9 +50,11 @@ export function LatexMatrixSizeMenu({
   disabled: boolean;
   display: boolean;
 }) {
+  const gt = useGT();
   return (
     <DocumentGridSizeMenu
-      label="Matrix"
+      label={gt("Matrix")}
+      kind="matrix"
       commandScope="latex"
       disabled={disabled}
       options={

@@ -1,5 +1,6 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT } from "gt-react";
 import { LoaderCircle, Maximize2 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -57,6 +58,7 @@ function ComputeFigurePreview(
     readonly retry: () => void;
   },
 ) {
+  const gt = useGT();
   const { presentation, asset } = props;
   const imageElement = useRef<HTMLImageElement>(null);
   const imageKey = JSON.stringify([asset._tag === "Success" ? asset.url : null, props.attempt]);
@@ -82,7 +84,7 @@ function ComputeFigurePreview(
   const openViewer = () => openStaticArtifactInPanel(props.threadRef, presentation.viewer);
   const imageUrl = async () => {
     const url = await refreshImage();
-    if (url === null) throw new Error("The image is unavailable. Reconnect and try again.");
+    if (url === null) throw new Error(gt("The image is unavailable. Reconnect and try again."));
     return url;
   };
   const nativeDownload = presentation.nativeDownload;
@@ -91,20 +93,20 @@ function ComputeFigurePreview(
   const actions: readonly ScientImageAction[] = [
     {
       id: "float",
-      label: floated ? "Close floating card" : "Floating card",
+      label: floated ? gt("Close floating card") : gt("Floating card"),
       closeViewer: true,
       run: () => toggleStaticArtifactFloating(props.threadRef, presentation.viewer),
     },
     {
       id: "copy",
-      label: "Copy image",
+      label: gt("Copy image"),
       disabled: !loaded,
       requiresUserActivation: true,
       run: () => copyStaticImage(imageUrl()),
     },
     {
       id: "download",
-      label: "Download original",
+      label: gt("Download original"),
       run: async () => downloadStaticImage(await imageUrl(), presentation.inline.fileName),
     },
     ...(nativeDownload === null
@@ -112,11 +114,11 @@ function ComputeFigurePreview(
       : [
           {
             id: "native",
-            label: "Download MATLAB FIG",
+            label: gt("Download MATLAB FIG"),
             run: async () => {
               const url = await refreshNative();
               if (url === null)
-                throw new Error("The FIG file is unavailable. Reconnect and try again.");
+                throw new Error(gt("The FIG file is unavailable. Reconnect and try again."));
               await downloadComputeNativeFigure(url, nativeDownload);
             },
           },
@@ -127,8 +129,8 @@ function ComputeFigurePreview(
           id: `save-${target.format}`,
           label:
             presentation.saveTargets.length > 1
-              ? `Save ${target.format} to project`
-              : "Save to project",
+              ? gt("Save {format} to project", { format: target.format })
+              : gt("Save to project"),
           run: async () => {
             const result = await saveOutput({
               environmentId: props.environmentId,
@@ -143,10 +145,15 @@ function ComputeFigurePreview(
             });
             if (result._tag !== "Success") {
               const error = squashAtomCommandFailure(result);
-              throw error instanceof Error ? error : new Error("The figure could not be saved.");
+              throw error instanceof Error
+                ? error
+                : new Error(gt("The figure could not be saved."));
             }
             toastManager.add(
-              stackedThreadToast({ type: "success", title: `Saved ${result.value.relativePath}` }),
+              stackedThreadToast({
+                type: "success",
+                title: gt("Saved {path}", { path: result.value.relativePath }),
+              }),
             );
           },
         }))),
@@ -162,7 +169,7 @@ function ComputeFigurePreview(
         await action.run();
       })()
         .catch(async (cause) => {
-          setMessage(cause instanceof Error ? cause.message : "The image action failed.");
+          setMessage(cause instanceof Error ? cause.message : gt("The image action failed."));
         })
         .finally(() => {
           running.current = false;
@@ -176,7 +183,7 @@ function ComputeFigurePreview(
         className={`relative inline-flex min-w-24 max-w-full overflow-hidden rounded-md ${loaded ? "bg-white" : "bg-muted/40"}`}
       >
         <span
-          aria-label="Figure actions"
+          aria-label={gt("Figure actions")}
           role="group"
           className="scient-visual-utility-controls absolute top-1 right-1 z-10 flex items-center rounded-md bg-background/85 opacity-0 transition-opacity group-focus-within/figure:opacity-100 group-hover/figure:opacity-100 has-[[data-popup-open]]:opacity-100"
         >
@@ -184,7 +191,7 @@ function ComputeFigurePreview(
             <TooltipTrigger
               render={
                 <Button
-                  aria-label={`Open ${presentation.inline.label} in viewer`}
+                  aria-label={gt("Open {name} in viewer", { name: presentation.inline.label })}
                   disabled={!loaded}
                   onClick={openViewer}
                   size="icon-header"
@@ -195,7 +202,9 @@ function ComputeFigurePreview(
             >
               <Maximize2 className="size-3" strokeWidth={1.5} />
             </TooltipTrigger>
-            <TooltipPopup>Open in viewer</TooltipPopup>
+            <TooltipPopup>
+              <T>Open in viewer</T>
+            </TooltipPopup>
           </Tooltip>
           <ScientImageActionMenu
             actions={actions}
@@ -216,7 +225,7 @@ function ComputeFigurePreview(
           {asset._tag === "Success" ? (
             <button
               type="button"
-              aria-label={`View ${presentation.inline.label}`}
+              aria-label={gt("View {name}", { name: presentation.inline.label })}
               disabled={!loaded}
               onClick={openViewer}
               className="flex max-w-full cursor-zoom-in items-center justify-center outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
@@ -252,13 +261,15 @@ function ComputeFigurePreview(
             >
               {failed ? (
                 <>
-                  <span>Figure unavailable</span>
+                  <span>
+                    <T>Figure unavailable</T>
+                  </span>
                   <Button size="xs" variant="outline" onClick={props.retry}>
-                    Try again
+                    <T>Try again</T>
                   </Button>
                 </>
               ) : (
-                <LoaderCircle className="size-3.5 animate-spin" aria-label="Loading figure" />
+                <LoaderCircle className="size-3.5 animate-spin" aria-label={gt("Loading figure")} />
               )}
             </div>
           ) : null}

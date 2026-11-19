@@ -10,10 +10,12 @@ import {
 } from "@t3tools/contracts";
 
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
+import { msg, T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
 import { Button } from "../../components/ui/button";
+import { m } from "../../i18n/messages";
 import {
   Dialog,
   DialogDescription,
@@ -120,7 +122,8 @@ export function setupInput(
     if (typeof value === "boolean") settings[field.key] = value;
     else if (field.type === "number") {
       const number = Number(value);
-      if (!Number.isFinite(number)) return `${field.title} must be a number.`;
+      if (!Number.isFinite(number))
+        return m(msg("{name} must be a number.", { name: field.title }));
       settings[field.key] = number;
     } else if (field.multiple) {
       settings[field.key] = value
@@ -150,12 +153,13 @@ export function LocalSetupFields({
   readonly keyStatus?: Readonly<Record<string, string>>;
   readonly onChange: (key: string, answer: SetupAnswer) => void;
 }) {
+  const gt = useGT();
   if (fields.length === 0) return null;
   return (
     <div className="grid gap-4">
       {fields.map((field) => {
         const id = `local-setting-${field.key}`;
-        const label = `${field.title}${field.required ? "" : " (optional)"}`;
+        const label = field.required ? field.title : gt("{name} (optional)", { name: field.title });
         const answer = answers[field.key];
         const description = field.description ? (
           <p className="text-xs text-muted-foreground">{field.description}</p>
@@ -167,9 +171,11 @@ export function LocalSetupFields({
             <div key={field.key} className="grid gap-1.5">
               <Label htmlFor={id}>{label}</Label>
               <ApiKeyAccountPicker
-                aria-label={`${field.title} key`}
+                aria-label={gt("{name} key", { name: field.title })}
                 emptyLabel={
-                  keyStatus?.[field.key] ? `Keep ${keyStatus[field.key]}` : "Paste a new key"
+                  keyStatus?.[field.key]
+                    ? gt("Keep {account}", { account: keyStatus[field.key] ?? "" })
+                    : gt("Paste a new key")
                 }
                 value={key.ref}
                 options={accounts.map((account) => ({
@@ -182,7 +188,7 @@ export function LocalSetupFields({
                 <SecretInput
                   id={id}
                   value={key.value}
-                  placeholder={keyStatus?.[field.key] ? "Paste to replace it" : undefined}
+                  placeholder={keyStatus?.[field.key] ? gt("Paste to replace it") : undefined}
                   onChange={(event) => onChange(field.key, { ...key, value: event.target.value })}
                 />
               )}
@@ -214,7 +220,7 @@ export function LocalSetupFields({
                 id={id}
                 rows={3}
                 value={text}
-                placeholder="One per line"
+                placeholder={gt("One per line")}
                 onChange={(event) =>
                   onChange(field.key, { kind: "plain", value: event.target.value })
                 }
@@ -234,8 +240,10 @@ export function LocalSetupFields({
         );
       })}
       <p className="text-xs text-muted-foreground">
-        Keys are saved in Accounts & secrets and reach only this program. Anything left empty can be
-        set up later; agents ask for it when they need it.
+        <T>
+          Keys are saved in Accounts & secrets and reach only this program. Anything left empty can
+          be set up later; agents ask for it when they need it.
+        </T>
       </p>
     </div>
   );
@@ -251,6 +259,7 @@ export function LocalSetupDialog({
   readonly environmentId: EnvironmentId;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const update = useAtomCommand(updateConnector, { reportFailure: false });
   const accounts = useKeyAccounts(environmentId);
   const fields = connector.local.setup.map((item) => item.field);
@@ -298,8 +307,14 @@ export function LocalSetupDialog({
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Set up {connector.displayName}</DialogTitle>
-          <DialogDescription>Saving restarts it with these settings.</DialogDescription>
+          <DialogTitle>
+            <T>
+              Set up <Var>{connector.displayName}</Var>
+            </T>
+          </DialogTitle>
+          <DialogDescription>
+            <T>Saving restarts it with these settings.</T>
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-4">
@@ -313,11 +328,13 @@ export function LocalSetupDialog({
             {signIn !== undefined ? (
               <div className="grid gap-1.5">
                 <Label htmlFor={`${connector.connectorId}-sign-in`}>
-                  Sign-in to {siteHost(signIn.site)}
+                  <T>
+                    Sign-in to <Var>{siteHost(signIn.site)}</Var>
+                  </T>
                 </Label>
                 {signIns.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    None saved. Add it in Settings → Accounts, then come back.
+                    <T>None saved. Add it in Settings → Accounts, then come back.</T>
                   </p>
                 ) : (
                   <NativeSelect
@@ -326,7 +343,7 @@ export function LocalSetupDialog({
                     onChange={(event) => setSignInAccount(event.target.value)}
                   >
                     <option value="" disabled>
-                      Choose a sign-in
+                      {gt("Choose a sign-in")}
                     </option>
                     {signIns.map((account) => (
                       <option key={account.accountId} value={account.accountId}>
@@ -346,10 +363,10 @@ export function LocalSetupDialog({
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button disabled={saving} onClick={() => void save()}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? gt("Saving…") : gt("Save")}
           </Button>
         </DialogFooter>
       </DialogPopup>

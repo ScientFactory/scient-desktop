@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 const INSTANCE_ID = ProviderInstanceId.make("antigravity");
 
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({

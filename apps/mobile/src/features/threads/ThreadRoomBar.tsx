@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   ROOM_PARTICIPANT_LIMIT,
-  ROOM_ROLE_LABEL,
   type RoomAccessDuration,
   type RoomParticipant,
   type RoomRole,
@@ -9,12 +8,14 @@ import {
   type ThreadRoomOwnerAction,
 } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { Share, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { Menu } from "../../components/ui/Menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -23,13 +24,17 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { roomCommandSucceeded } from "./room-command-result";
 import { useThreadRoom } from "./thread-room-state";
 
-const roles: ReadonlyArray<{ id: RoomRole; title: string }> = (["discuss", "agent"] as const).map(
-  (id) => ({ id, title: ROOM_ROLE_LABEL[id] }),
-);
-const durations: ReadonlyArray<{ id: RoomAccessDuration; title: string }> = [
-  { id: "day", title: "1 day" },
-  { id: "week", title: "1 week" },
-  { id: "month", title: "1 month" },
+// The UI's words for each room role.
+const ROLE_TITLES: Record<RoomRole, string> = {
+  watch: msg("Can view"),
+  discuss: msg("Can chat"),
+  agent: msg("Can use agent"),
+};
+const ROLE_IDS = ["discuss", "agent"] as const;
+const DURATION_TITLES: ReadonlyArray<{ id: RoomAccessDuration; title: string }> = [
+  { id: "day", title: msg("1 day") },
+  { id: "week", title: msg("1 week") },
+  { id: "month", title: msg("1 month") },
 ];
 
 export function ThreadRoomBar(props: {
@@ -48,6 +53,13 @@ function RoomBar({
   readonly threadRef: ScopedThreadRef;
   readonly canOperateThread: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const roles = ROLE_IDS.map((id) => ({ id, title: messages(ROLE_TITLES[id]) }));
+  const durations = DURATION_TITLES.map((duration) => ({
+    id: duration.id,
+    title: messages(duration.title),
+  }));
   const room = useThreadRoom(threadRef);
   const canInvite = useAtomValue(
     serverEnvironment.inviteToThreadRoom.permissionAtom(threadRef.environmentId),
@@ -77,7 +89,10 @@ function RoomBar({
     inFlight.current = true;
     setBusy(true);
     await operation().catch((error: unknown) => {
-      Dialog.alert("Room action failed", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(
+        m(msg("Room action failed")),
+        error instanceof Error ? error.message : m(msg("Try again.")),
+      );
     });
     inFlight.current = false;
     setBusy(false);
@@ -114,9 +129,11 @@ function RoomBar({
     });
   const remove = (participant: RoomParticipant) =>
     Dialog.confirm({
-      title: "Remove this person?",
-      message: `${participant.name ?? "This invited person"} will lose access to the room.`,
-      confirmText: "Remove",
+      title: m(msg("Remove this person?")),
+      message: participant.name
+        ? m(msg("{name} will lose access to the room.", { name: participant.name }))
+        : m(msg("This invited person will lose access to the room.")),
+      confirmText: m(msg("Remove", { $context: "verb, removes the person from the room" })),
       destructive: true,
       onConfirm: () => void mutate({ type: "remove", participantId: participant.id }),
     });
@@ -127,10 +144,13 @@ function RoomBar({
         {room ? (
           <Button
             size="compact"
-            label={`Room · ${room.participants.length} people`}
+            label={gt(
+              "{count, plural, one {Room · {count} people} other {Room · {count} people}}",
+              { count: room.participants.length },
+            )}
             tone="text"
             onPress={() => setExpanded(!expanded)}
-            accessibilityHint={expanded ? "Hide room members" : "Show room members"}
+            accessibilityHint={expanded ? gt("Hide room members") : gt("Show room members")}
           />
         ) : null}
         <Menu
@@ -163,26 +183,26 @@ function RoomBar({
         >
           <Button
             size="compact"
-            label="Invite"
+            label={gt("Invite", { $context: "verb, invites someone to the room" })}
             tone="text"
             disabled={
               disabled || !canInvite || (room?.participants.length ?? 0) >= ROOM_PARTICIPANT_LIMIT
             }
             onPress={() => {}}
-            accessibilityHint="Choose a role and how long access lasts"
+            accessibilityHint={gt("Choose a role and how long access lasts")}
           />
         </Menu>
         {room ? (
           <Button
             size="compact"
-            label="Stop sharing"
+            label={gt("Stop sharing")}
             tone="text"
             disabled={disabled}
             onPress={() =>
               Dialog.confirm({
-                title: "Stop sharing this room?",
-                message: "Everyone loses access. All invite links stop working.",
-                confirmText: "Stop sharing",
+                title: m(msg("Stop sharing this room?")),
+                message: m(msg("Everyone loses access. All invite links stop working.")),
+                confirmText: m(msg("Stop sharing")),
                 destructive: true,
                 onConfirm: () => void mutate({ type: "close" }),
               })
@@ -192,17 +212,24 @@ function RoomBar({
       </View>
       {room && !expanded ? (
         <Text numberOfLines={2} className="text-xs text-foreground-muted">
-          {room.participants.map((participant) => participant.name ?? "Invited").join(", ") ||
-            "Nobody has joined yet."}
+          {room.participants
+            .map(
+              (participant) =>
+                participant.name ??
+                gt("Invited", { $context: "a person invited who has not joined" }),
+            )
+            .join(", ") || gt("Nobody has joined yet.")}
         </Text>
       ) : null}
       {room && expanded ? (
         <View className="gap-2">
           {presence.error ? (
-            <Text className="text-xs text-foreground-muted">Presence unavailable</Text>
+            <Text className="text-xs text-foreground-muted">{gt("Presence unavailable")}</Text>
           ) : null}
           {room.participants.length === 0 ? (
-            <Text className="text-xs text-foreground-muted">Nobody has been invited yet.</Text>
+            <Text className="text-xs text-foreground-muted">
+              {gt("Nobody has been invited yet.")}
+            </Text>
           ) : null}
           {room.participants.map((participant) => {
             const pending = participant.joinedAt === null;
@@ -210,15 +237,19 @@ function RoomBar({
             return (
               <View key={participant.id} className="gap-1 rounded-xl border border-border p-2">
                 <Text className="text-sm text-foreground">
-                  {participant.name ?? "Invited"} · {ROOM_ROLE_LABEL[participant.role]} ·{" "}
+                  {participant.name ??
+                    gt("Invited", { $context: "a person invited who has not joined" })}{" "}
+                  · {messages(ROLE_TITLES[participant.role])} ·{" "}
                   {online
-                    ? "Online"
+                    ? gt("Online")
                     : presence.data && !presence.error
-                      ? "Offline"
-                      : "Presence unknown"}
+                      ? gt("Offline")
+                      : gt("Presence unknown")}
                 </Text>
                 <Text className="text-xs text-foreground-muted">
-                  Access until {new Date(participant.expiresAt).toLocaleString()}
+                  {gt("Access until {date}", {
+                    date: new Date(participant.expiresAt).toLocaleString(),
+                  })}
                 </Text>
                 <View className="flex-row flex-wrap gap-1">
                   <Menu
@@ -239,7 +270,7 @@ function RoomBar({
                   >
                     <Button
                       size="compact"
-                      label="Change role"
+                      label={gt("Change role")}
                       tone="text"
                       disabled={disabled}
                       onPress={() => {}}
@@ -249,14 +280,14 @@ function RoomBar({
                     <>
                       <Button
                         size="compact"
-                        label="Copy invite"
+                        label={gt("Copy invite")}
                         tone="text"
                         disabled={disabled || !canGetLink}
                         onPress={() => void pendingLink(participant, true)}
                       />
                       <Button
                         size="compact"
-                        label="Share invite"
+                        label={gt("Share invite")}
                         tone="text"
                         disabled={disabled || !canGetLink}
                         onPress={() => void pendingLink(participant, false)}
@@ -266,7 +297,7 @@ function RoomBar({
                   {pending ? null : (
                     // Access again from now, keeping their permission.
                     <Menu
-                      title="Renew from now for"
+                      title={gt("Renew from now for")}
                       actions={durations.map((duration) => ({
                         ...duration,
                         attributes: { disabled },
@@ -283,7 +314,7 @@ function RoomBar({
                     >
                       <Button
                         size="compact"
-                        label="Renew"
+                        label={gt("Renew", { $context: "verb, renews access" })}
                         tone="text"
                         disabled={disabled}
                         onPress={() => {}}
@@ -292,7 +323,7 @@ function RoomBar({
                   )}
                   <Button
                     size="compact"
-                    label="Remove"
+                    label={gt("Remove", { $context: "verb, removes the person from the room" })}
                     tone="text"
                     disabled={disabled}
                     onPress={() => remove(participant)}

@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileTextIcon, RefreshCwIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import latexLogo from "~/assets/documents/latex.svg";
@@ -101,8 +102,8 @@ const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
 };
 
 const MARKDOWN_VIEWS = [
-  { id: "rich", label: "Rich" },
-  { id: "source", label: "Source" },
+  { id: "rich", label: msg("Rich", { $context: "Markdown editor view" }) },
+  { id: "source", label: msg("Source", { $context: "Markdown editor view" }) },
 ] as const;
 
 function OptionSelect<T extends string>(props: {
@@ -113,6 +114,8 @@ function OptionSelect<T extends string>(props: {
   >;
   readonly onChange: (value: T) => void;
 }) {
+  // Names are `msg()` strings or names that stay English (compilers, citation styles).
+  const messages = useMessages();
   const options = props.groups.flat();
   return (
     <Select
@@ -123,7 +126,9 @@ function OptionSelect<T extends string>(props: {
       }}
     >
       <SelectTrigger size="sm" width="content" aria-label={props.label}>
-        <SelectValue>{options.find((option) => option.id === props.value)?.name}</SelectValue>
+        <SelectValue>
+          {messages(options.find((option) => option.id === props.value)?.name ?? "")}
+        </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false} matchTriggerWidth={false}>
         {props.groups.map((group, index) => (
@@ -133,11 +138,13 @@ function OptionSelect<T extends string>(props: {
               <SelectItem key={option.id} hideIndicator value={option.id}>
                 {option.description ? (
                   <span className="flex flex-col gap-0.5">
-                    <span>{option.name}</span>
-                    <span className="text-xs text-muted-foreground">{option.description}</span>
+                    <span>{messages(option.name)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {messages(option.description)}
+                    </span>
                   </span>
                 ) : (
-                  option.name
+                  messages(option.name)
                 )}
               </SelectItem>
             ))}
@@ -154,6 +161,7 @@ function LatexInstallationRow({
   readonly installation: LatexInstallationController;
 }) {
   const { view, act, report } = installation;
+  const gt = useGT();
   const problem = view.kind === "failed" || view.kind === "unreadable";
   const action =
     view.actionLabel === null ? null : (
@@ -170,17 +178,24 @@ function LatexInstallationRow({
   const download =
     report?.canInstallManaged && (view.actionLabel !== null || view.busy || problem) ? (
       <span className="block">
-        {report.downloadBytes == null
-          ? "Base archive size is unavailable."
-          : `Base archive: ${formatLatexDownloadSize(report.downloadBytes)}.`}{" "}
-        Additional LaTeX packages download during setup and on first use.
+        {report.downloadBytes == null ? (
+          <T>
+            Base archive size is unavailable. Additional LaTeX packages download during setup and on
+            first use.
+          </T>
+        ) : (
+          <T>
+            Base archive: <Var>{formatLatexDownloadSize(report.downloadBytes)}</Var>. Additional
+            LaTeX packages download during setup and on first use.
+          </T>
+        )}
       </span>
     ) : null;
   return (
     <>
       <SettingsRow
         id="latex-installation"
-        title="LaTeX tools"
+        title={gt("LaTeX tools")}
         description={
           <span role={problem && view.additionalDetail === null ? "alert" : "status"}>
             <span className="block">
@@ -195,7 +210,7 @@ function LatexInstallationRow({
       {view.additionalDetail !== null ? (
         <SettingsRow
           id="latex-additional-compilers"
-          title="Additional compilers"
+          title={gt("Additional compilers")}
           description={
             <span className={cn(problem && "text-destructive")} role={problem ? "alert" : "status"}>
               {view.additionalDetail}
@@ -224,31 +239,33 @@ function LatexTechnicalDetails({
 }: {
   readonly installation: LatexInstallationController | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const report = installation?.report ?? null;
   return (
     <FoldedSettingsSection
       id="latex-compilers"
-      title="Technical details"
-      summary="Compiler versions and executable paths."
+      title={gt("Technical details")}
+      summary={gt("Compiler versions and executable paths.")}
       headerPlacement="row"
     >
       <SettingsRow
-        title="PDF build driver"
+        title={gt("PDF build driver")}
         serverScoped
         description={
           report === null ? (
             installation === null ? (
-              "Offline"
+              gt("Offline")
             ) : (
-              "Not checked"
+              gt("Not checked")
             )
           ) : (
             <span className="flex flex-col gap-1">
               <span>
-                {report.kind ?? "Not installed"}
+                {report.kind ?? gt("Not installed")}
                 {report.version ? ` · ${report.version}` : ""}
                 {report.source
-                  ? ` · ${report.source === "scient-managed" ? "Scient-managed TinyTeX" : "System installation"}`
+                  ? ` · ${report.source === "scient-managed" ? gt("Scient-managed TinyTeX") : gt("System installation")}`
                   : ""}
               </span>
               {report.executable ? <ExecutablePath path={report.executable} /> : null}
@@ -260,12 +277,12 @@ function LatexTechnicalDetails({
         if (choice.id === "automatic") return null;
         const availability = report?.compilers.find((item) => item.compiler === choice.id);
         const label = availability?.available
-          ? "Available"
-          : latexCompilerAvailabilityLabel(report, choice.id, installation === null);
+          ? gt("Available", { $context: "a LaTeX compiler is installed" })
+          : latexCompilerAvailabilityLabel(report, choice.id, installation === null, messages);
         return (
           <SettingsRow
             key={choice.id}
-            title={choice.name}
+            title={messages(choice.name)}
             serverScoped
             description={
               <span className="flex flex-col gap-1">
@@ -310,6 +327,8 @@ function LatexPanel(props: {
     DEFAULT_LATEX_PREVIEW_MODE,
     Schema.String,
   );
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <div
       id="documents-latex"
@@ -317,26 +336,26 @@ function LatexPanel(props: {
       hidden={props.hidden}
       className="space-y-6 pt-4"
     >
-      <SettingsSection id="latex-tools" title="Tools" variant="plain">
+      <SettingsSection id="latex-tools" title={gt("Tools")} variant="plain">
         <div className="space-y-3">
           <SettingsGroup>
             {props.installation ? (
               <LatexInstallationRow installation={props.installation} />
             ) : (
-              <OfflineToolRow id="latex-installation" title="LaTeX tools" />
+              <OfflineToolRow id="latex-installation" title={gt("LaTeX tools")} />
             )}
           </SettingsGroup>
           <LatexTechnicalDetails installation={props.installation} />
         </div>
       </SettingsSection>
-      <SettingsSection id="latex-preferences" title="Document preferences">
+      <SettingsSection id="latex-preferences" title={gt("Document preferences")}>
         <TemplatesSettingsRow />
         <SettingsRow
           id="new-document-language"
-          title="Language for new documents"
+          title={gt("Language for new documents")}
           control={
             <OptionSelect
-              label="Language for new documents"
+              label={gt("Language for new documents")}
               value={normalizeNewDocumentLanguage(language)}
               groups={[NEW_DOCUMENT_LANGUAGES]}
               onChange={setLanguage}
@@ -345,10 +364,10 @@ function LatexPanel(props: {
         />
         <SettingsRow
           id="new-document-compiler"
-          title="Default compiler for new documents"
+          title={gt("Default compiler for new documents")}
           control={
             <OptionSelect
-              label="Default compiler for new documents"
+              label={gt("Default compiler for new documents")}
               value={normalizeLatexCompilerChoice(compiler)}
               groups={[LATEX_COMPILER_CHOICES]}
               onChange={setCompiler}
@@ -357,15 +376,15 @@ function LatexPanel(props: {
         />
         <SettingsRow
           id="latex-open-in"
-          title="Open files in"
+          title={gt("Open files in")}
           control={
             <OptionSelect
-              label="Open LaTeX files in"
+              label={gt("Open LaTeX files in")}
               value={normalizeLatexPreviewMode(view)}
               groups={[
                 LATEX_PREVIEW_MODES.map((mode) => ({
                   id: mode,
-                  name: LATEX_PREVIEW_MODE_LABELS[mode],
+                  name: messages(LATEX_PREVIEW_MODE_LABELS[mode]),
                 })),
               ]}
               onChange={setView}
@@ -374,10 +393,10 @@ function LatexPanel(props: {
         />
         <SettingsRow
           id="latex-compilation"
-          title="PDF compilation"
+          title={gt("PDF compilation")}
           control={
             <OptionSelect
-              label="PDF compilation"
+              label={gt("PDF compilation")}
               value={normalizeLatexCompilation(compilation)}
               groups={[LATEX_COMPILATION_OPTIONS]}
               onChange={setCompilation}
@@ -396,6 +415,7 @@ function MarkdownPanel(props: { readonly hidden: boolean }) {
     SCIENT_DEFAULT_RENDER_MARKDOWN,
     Schema.Boolean,
   );
+  const gt = useGT();
   return (
     <SettingsSourcePanel
       id="documents-markdown"
@@ -404,10 +424,10 @@ function MarkdownPanel(props: { readonly hidden: boolean }) {
     >
       <SettingsRow
         id="markdown-open-in"
-        title="Open files in"
+        title={gt("Open files in")}
         control={
           <OptionSelect
-            label="Open Markdown files in"
+            label={gt("Open Markdown files in")}
             value={rich ? "rich" : "source"}
             groups={[MARKDOWN_VIEWS.map((entry) => ({ id: entry.id, name: entry.label }))]}
             onChange={(next) => setRich(next === "rich")}
@@ -420,7 +440,8 @@ function MarkdownPanel(props: { readonly hidden: boolean }) {
 
 /** A server tool's row while no server is connected: the tool is there, just out of reach. */
 function OfflineToolRow(props: { readonly id: string; readonly title: string }) {
-  return <SettingsRow id={props.id} title={props.title} description="Offline" />;
+  const gt = useGT();
+  return <SettingsRow id={props.id} title={props.title} description={gt("Offline")} />;
 }
 
 function WordPanel(props: {
@@ -432,6 +453,7 @@ function WordPanel(props: {
     "default",
     Schema.String,
   );
+  const gt = useGT();
   return (
     <SettingsSourcePanel
       id="documents-word"
@@ -441,15 +463,18 @@ function WordPanel(props: {
       {props.pandoc ? (
         <PandocSettingsRow controller={props.pandoc} />
       ) : (
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
         <OfflineToolRow id="word-export" title="Pandoc" />
       )}
       <SettingsRow
         id="word-citation-style"
-        title="Citation style"
-        description="For Markdown exported to Word. A document's own csl setting and the project's citation style come first."
+        title={gt("Citation style")}
+        description={gt(
+          "For Markdown exported to Word. A document's own csl setting and the project's citation style come first.",
+        )}
         control={
           <OptionSelect
-            label="Citation style"
+            label={gt("Citation style")}
             value={normalizeWordCitationStyle(citationStyle)}
             groups={[WORD_CITATION_STYLES]}
             onChange={setCitationStyle}
@@ -470,6 +495,8 @@ function DocumentsSection(props: {
   readonly server: DocumentsServerTools | null;
   readonly headerAction?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [stored, setStored] = useLocalStorage(SELECTED_FORMAT_STORAGE_KEY, "latex", Schema.String);
   const [collapsed, setCollapsed] = useState(false);
   // A settings-search jump to a row opens that row's tab once; the tabs stay
@@ -499,25 +526,30 @@ function DocumentsSection(props: {
     readonly label: string;
     readonly detail: string;
   }> = [
-    { id: "latex", label: "LaTeX", detail: props.server?.installation.view.summary ?? "Offline" },
-    { id: "markdown", label: "Markdown", detail: "Built in" },
+    {
+      id: "latex",
+      label: "LaTeX",
+      detail: props.server?.installation.view.summary ?? gt("Offline"),
+    },
+    { id: "markdown", label: "Markdown", detail: gt("Built in") },
     {
       id: "word",
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
       label: "Word",
-      detail: props.server ? pandocToolSummary(props.server.pandoc.view) : "Offline",
+      detail: props.server ? pandocToolSummary(props.server.pandoc.view, messages) : gt("Offline"),
     },
   ];
   return (
     <SettingsSection
       id="documents"
-      title="Documents"
+      title={gt("Documents")}
       icon={<FileTextIcon className="size-4 text-muted-foreground" />}
       variant="plain"
       headerAction={props.headerAction}
     >
       <div className="px-3 sm:px-4">
         <SettingsSourceGroup activePanelId={isCollapsed ? null : `documents-${selected}`}>
-          <SettingsSourceStrip label="Document formats">
+          <SettingsSourceStrip label={gt("Document formats")}>
             {items.map((item, index) => (
               <SettingsSourceStripItem
                 key={item.id}
@@ -563,6 +595,7 @@ function EnvironmentDocumentsSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }) {
+  const gt = useGT();
   const installation = useLatexInstallation(props.environmentId);
   const pandoc = usePandocTool(props.environmentId);
   const checking =
@@ -581,7 +614,7 @@ function EnvironmentDocumentsSettings(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     disabled={checking}
-                    aria-label="Check installations again"
+                    aria-label={gt("Check installations again")}
                     onClick={() => {
                       pandoc.refresh();
                       void installation.refresh();
@@ -591,7 +624,9 @@ function EnvironmentDocumentsSettings(props: {
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Check installations again</TooltipPopup>
+              <TooltipPopup side="top">
+                <T>Check installations again</T>
+              </TooltipPopup>
             </Tooltip>
           </div>
         }

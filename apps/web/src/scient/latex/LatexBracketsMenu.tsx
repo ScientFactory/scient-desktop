@@ -10,6 +10,7 @@ import {
   type MathBracket,
   type MathBracketSize,
 } from "./mathBrackets";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 const leftOptions = MATH_BRACKETS.map((bracket) => ({ value: bracket.value, label: bracket.left }));
 const rightOptions = MATH_BRACKETS.map((bracket) => ({
@@ -18,7 +19,12 @@ const rightOptions = MATH_BRACKETS.map((bracket) => ({
 }));
 const sizeOptions = MATH_BRACKET_SIZES.map((size) => ({
   value: size,
-  label: size === "auto" ? "Auto" : size === "normal" ? "Normal" : `\\${size}`,
+  label:
+    size === "auto"
+      ? msg("Auto", { $context: "bracket size" })
+      : size === "normal"
+        ? msg("Normal", { $context: "bracket size" })
+        : `\\${size}`,
 }));
 const defaults = { left: "round", right: "round", size: "auto", match: true } as const;
 
@@ -30,6 +36,8 @@ export function LatexBracketsMenu({
   disabled: boolean;
   onInsert: (tex: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const ownerId = useId();
   const [draft, setDraft] = useState<{
     left: MathBracket;
@@ -45,7 +53,7 @@ export function LatexBracketsMenu({
       }}
     >
       <MenuSubTrigger id={ownerId} disabled={disabled}>
-        Brackets
+        <T>Brackets</T>
       </MenuSubTrigger>
       <MenuSubPopup
         className="w-max min-w-0 max-w-(--available-width)"
@@ -81,14 +89,14 @@ export function LatexBracketsMenu({
         <div
           className="grid min-w-0 gap-2 p-2 text-xs"
           role="group"
-          aria-label="Bracket options"
+          aria-label={gt("Bracket options")}
           dir="ltr"
         >
           <div className="flex min-w-0 flex-wrap gap-2">
             <label className="grid min-w-max flex-1 basis-0 gap-1">
-              Left
+              <T context="left bracket">Left</T>
               <LatexSelect
-                aria-label="Left bracket"
+                aria-label={gt("Left bracket")}
                 size="sm"
                 width="options"
                 value={draft.left}
@@ -104,9 +112,9 @@ export function LatexBracketsMenu({
               />
             </label>
             <label className="grid min-w-max flex-1 basis-0 gap-1">
-              Right
+              <T context="right bracket">Right</T>
               <LatexSelect
-                aria-label="Right bracket"
+                aria-label={gt("Right bracket")}
                 size="sm"
                 width="options"
                 value={draft.right}
@@ -120,14 +128,17 @@ export function LatexBracketsMenu({
           </div>
           <div className="flex min-w-0 flex-wrap gap-2">
             <label className="grid min-w-max flex-1 gap-1">
-              Size
+              <T context="bracket size">Size</T>
               <LatexSelect
-                aria-label="Bracket size"
+                aria-label={gt("Bracket size")}
                 size="sm"
                 width="options"
                 value={draft.size}
                 disabled={disabled}
-                options={sizeOptions}
+                options={sizeOptions.map((option) => ({
+                  ...option,
+                  label: messages(option.label),
+                }))}
                 onValueChange={(value) =>
                   setDraft((current) => ({ ...current, size: value as MathBracketSize }))
                 }
@@ -135,7 +146,9 @@ export function LatexBracketsMenu({
             </label>
             <label className="grid shrink-0 content-start gap-1">
               <span id={`${ownerId}-match`}>
-                Match<span className="sr-only"> brackets</span>
+                <T>
+                  Match<span className="sr-only"> brackets</span>
+                </T>
               </span>
               <span className="flex h-8 items-center sm:h-7">
                 <Switch
@@ -164,7 +177,7 @@ export function LatexBracketsMenu({
               if (template) onInsert(template);
             }}
           >
-            Insert
+            <T context="insert action">Insert</T>
           </DockCommandItem>
         </div>
       </MenuSubPopup>

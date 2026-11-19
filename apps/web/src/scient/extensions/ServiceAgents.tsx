@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
@@ -9,6 +10,7 @@ import {
   type AccountService,
   accountServiceAudience,
   accountServiceRoutes,
+  NOT_SIGNED_IN_REASON,
   nextAccountServiceStep,
 } from "./accountServices";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
@@ -31,10 +33,12 @@ export function useAccountService(service: AccountService) {
   const waiting = useRef(false);
   // Each agent counts once its own inventory arrives; a slow one never holds the others back.
   const finished = ["ready", "partial", "error"].includes(providerInventory.phase);
+  const messages = useMessages();
   const routes = accountServiceRoutes(
     service,
     providerInventory.providers.length > 0 ? providerInventory.providers : providers,
     (provider) => finished || provider.mcpServers !== undefined,
+    messages,
   );
   const step = nextAccountServiceStep(routes);
   useWindowFocusRefresh(() => {
@@ -67,12 +71,12 @@ export function useAccountService(service: AccountService) {
 }
 
 const ROUTE_STATE_TEXT = {
-  connected: "Connected",
-  connect: "Not connected",
-  "sign-in": "Sign-in needed",
-  off: "Off in Codex",
-  checking: "Checking…",
-  update: "Update needed",
+  connected: msg("Connected"),
+  connect: msg("Not connected"),
+  "sign-in": msg("Sign-in needed"),
+  off: msg("Off in Codex"),
+  checking: msg("Checking…"),
+  update: msg("Update needed"),
 };
 
 /** What a person can do for one agent: connect on the provider's page, or sign the agent in. */
@@ -86,41 +90,54 @@ function RouteAction({
   /** Signs the agent in where it is, when it can be; otherwise Settings → Providers. */
   readonly onSignIn?: (() => void) | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   if (route.state === "connect")
     return (
       <Button variant="ghost-primary" size="sm" onClick={() => open(route.page)}>
-        {route.family === "chatgpt" ? "Connect in ChatGPT" : "Connect on claude.ai"}
+        {route.family === "chatgpt" ? gt("Connect in ChatGPT") : gt("Connect on claude.ai")}
       </Button>
     );
   if (route.state === "sign-in" && onSignIn)
     return (
       <Button variant="ghost-primary" size="sm" onClick={onSignIn}>
-        {route.reason === "Not signed in" ? "Sign in with ChatGPT" : "Add ChatGPT"}
+        {route.reason === messages(NOT_SIGNED_IN_REASON)
+          ? gt("Sign in with ChatGPT")
+          : gt("Add ChatGPT")}
       </Button>
     );
   if (route.state === "sign-in")
     return (
       <Button variant="ghost-muted" size="sm" render={<Link to="/settings/providers" />}>
-        Sign in
+        <T>Sign in</T>
       </Button>
     );
   return (
-    <span className="shrink-0 text-xs text-muted-foreground">{ROUTE_STATE_TEXT[route.state]}</span>
+    <span className="shrink-0 text-xs text-muted-foreground">
+      {messages(ROUTE_STATE_TEXT[route.state])}
+    </span>
   );
 }
 
 /** Each agent's place for a service, with its action, as on Gmail's page and plugin pages. */
 export function ServiceAgents({ service }: { readonly service: AccountService }) {
+  const gt = useGT();
   const { routes, open, environmentId, providers, expectReturn } = useAccountService(service);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   if (routes.length === 0)
-    return <MutedLine>None of your agents reaches {service.name} through its account.</MutedLine>;
+    return (
+      <MutedLine>
+        <T>
+          None of your agents reaches <Var>{service.name}</Var> through its account.
+        </T>
+      </MutedLine>
+    );
   // The line under an agent's name, when it says more than the action beside it does.
   const note = (route: (typeof routes)[number]) =>
     route.state === "connected"
       ? route.family === "chatgpt"
-        ? "Through its ChatGPT account"
-        : "Through its Claude account"
+        ? gt("Through its ChatGPT account")
+        : gt("Through its Claude account")
       : route.state === "connect" &&
           (route.family === "chatgpt" || service.claude?.name === service.name)
         ? undefined

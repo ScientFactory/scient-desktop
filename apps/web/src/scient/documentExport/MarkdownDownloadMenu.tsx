@@ -16,6 +16,7 @@ export function MarkdownDownloadMenu(
   return (
     <>
       <DocumentDownloadMenu
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- format name and file extension
         sourceLabel="Markdown (.md)"
         onSaveCopy={props.onSaveCopy}
         pdf={() => void exportPdf()}

@@ -1,4 +1,5 @@
 import { CheckIcon, CopyIcon, PlayIcon, WrapTextIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -34,6 +35,7 @@ export function CodeBlockActions({
   readonly onRunShellCommand?: ((command: string) => void) | undefined;
   readonly isStreaming?: boolean;
 }) {
+  const gt = useGT();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(false);
@@ -45,8 +47,8 @@ export function CodeBlockActions({
       if (timer.current !== null) clearTimeout(timer.current);
     };
   }, []);
-  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
-  const copyLabel = copied ? "Copied" : "Copy code";
+  const wrapLabel = wrapped ? gt("Disable line wrap") : gt("Wrap lines");
+  const copyLabel = copied ? gt("Copied") : gt("Copy code");
   const source = readCode();
   const command = source.trim();
   const canRun =
@@ -81,7 +83,7 @@ export function CodeBlockActions({
     <span
       className="flex shrink-0 items-center gap-0.5"
       role="toolbar"
-      aria-label="Code block actions"
+      aria-label={gt("Code block actions")}
     >
       <Tooltip>
         <TooltipTrigger
@@ -110,13 +112,15 @@ export function CodeBlockActions({
                 variant="ghost-muted"
                 size="icon-xs"
                 onClick={() => onRunShellCommand?.(command)}
-                aria-label="Run in terminal"
+                aria-label={gt("Run in terminal")}
               />
             }
           >
             <PlayIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">Run in terminal</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>Run in terminal</T>
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       <Tooltip>

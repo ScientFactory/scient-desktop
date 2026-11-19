@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type {
   ProviderConnectionMethod,
   ProviderConnectionOperation,
@@ -6,6 +7,7 @@ import type {
   ProviderRuntimeSummary,
   ServerProvider,
 } from "@t3tools/contracts";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 const TERMINAL_CONNECTION_STATUSES = new Set<ProviderConnectionOperation["status"]>([
   "connected",
@@ -19,15 +21,19 @@ const TERMINAL_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
   "cancelled",
 ]);
 
-export type ProviderConnectionPresentation =
-  | { readonly kind: "unavailable"; readonly label: "Unavailable" }
-  | { readonly kind: "not-installed"; readonly label: "Tool not installed" }
-  | { readonly kind: "setting-up"; readonly label: "Setting up" }
-  | { readonly kind: "not-required"; readonly label: "No sign-in needed" }
-  | { readonly kind: "connected"; readonly label: "Connected" }
-  | { readonly kind: "connecting"; readonly label: "Connecting" }
-  | { readonly kind: "not-connected"; readonly label: "Not connected" }
-  | { readonly kind: "unsupported"; readonly label: "Manual setup" };
+/** `label` is in the UI language, from the resolver the caller passes. */
+export type ProviderConnectionPresentation = {
+  readonly kind:
+    | "unavailable"
+    | "not-installed"
+    | "setting-up"
+    | "not-required"
+    | "connected"
+    | "connecting"
+    | "not-connected"
+    | "unsupported";
+  readonly label: string;
+};
 
 export function isActiveProviderConnectionOperation(
   operation: ProviderConnectionOperation | null | undefined,
@@ -90,19 +96,20 @@ export function providerLifecycleFailureMessage(value: unknown, fallback: string
   return fallback;
 }
 
-const RUNTIME_ACTION_NOUNS = {
-  install: "installation",
-  update: "update",
-  repair: "repair",
-  remove: "removal",
+const CANCEL_RUNTIME_ACTION_LABELS = {
+  install: msg("Cancel {provider} installation"),
+  update: msg("Cancel {provider} update"),
+  repair: msg("Cancel {provider} repair"),
+  remove: msg("Cancel {provider} removal"),
 } satisfies Record<ProviderManagedRuntimeAction, string>;
 
 /** The accessible name of a short "Cancel" button that stops a runtime operation. */
 export function cancelRuntimeActionLabel(
   displayName: string,
   action: ProviderManagedRuntimeAction,
+  resolve: MessageResolver = m,
 ): string {
-  return `Cancel ${displayName} ${RUNTIME_ACTION_NOUNS[action]}`;
+  return resolve(CANCEL_RUNTIME_ACTION_LABELS[action], { provider: displayName });
 }
 
 /** The message of a runtime operation that failed while doing `action`. */
@@ -124,20 +131,25 @@ export function managedRuntimeRepairMessage(
   provider: ServerProvider,
   displayName: string,
   operation: ProviderRuntimeOperation | null | undefined = provider.connection?.runtime?.operation,
+  resolve: MessageResolver = m,
 ): string {
   return (
     failedRuntimeOperationMessage(operation, "repair") ??
     provider.message ??
-    `${displayName}’s private runtime could not start.`
+    resolve(msg("{provider}’s private runtime could not start.", { provider: displayName }))
   );
 }
 
-export function providerRuntimeComputerLabel(provider: ServerProvider): string {
+/** "this Mac", a noun phrase the setup sentences take as `{computer}`. */
+export function providerRuntimeComputerLabel(
+  provider: ServerProvider,
+  resolve: MessageResolver = m,
+): string {
   const target = provider.connection?.runtime?.target;
-  if (target?.startsWith("darwin-")) return "this Mac";
-  if (target?.startsWith("win32-")) return "this Windows computer";
-  if (target?.startsWith("linux-")) return "this Linux computer";
-  return "this computer";
+  if (target?.startsWith("darwin-")) return resolve(msg("this Mac"));
+  if (target?.startsWith("win32-")) return resolve(msg("this Windows computer"));
+  if (target?.startsWith("linux-")) return resolve(msg("this Linux computer"));
+  return resolve(msg("this computer"));
 }
 
 export function providerAccountIdentity(provider: ServerProvider): string | null {
@@ -166,29 +178,30 @@ export function isProviderAccountConnected(provider: ServerProvider | undefined)
 
 export function providerConnectionPresentation(
   provider: ServerProvider | undefined,
+  resolve: MessageResolver = m,
 ): ProviderConnectionPresentation {
   if (!provider || !provider.enabled || provider.availability === "unavailable") {
-    return { kind: "unavailable", label: "Unavailable" };
+    return { kind: "unavailable", label: resolve(msg("Unavailable")) };
   }
   if (hasActiveProviderRuntimeOperation(provider)) {
-    return { kind: "setting-up", label: "Setting up" };
+    return { kind: "setting-up", label: resolve(msg("Setting up")) };
   }
   if (!isProviderRuntimePresentedAsInstalled(provider)) {
-    return { kind: "not-installed", label: "Tool not installed" };
+    return { kind: "not-installed", label: resolve(msg("Tool not installed")) };
   }
   if (provider.auth.required === false) {
-    return { kind: "not-required", label: "No sign-in needed" };
+    return { kind: "not-required", label: resolve(msg("No sign-in needed")) };
   }
   if (provider.auth.status === "authenticated") {
-    return { kind: "connected", label: "Connected" };
+    return { kind: "connected", label: resolve(msg("Connected")) };
   }
   if (isActiveProviderConnectionOperation(provider.connection?.operation)) {
-    return { kind: "connecting", label: "Connecting" };
+    return { kind: "connecting", label: resolve(msg("Connecting")) };
   }
   if ((provider.connection?.methods.length ?? 0) > 0) {
-    return { kind: "not-connected", label: "Not connected" };
+    return { kind: "not-connected", label: resolve(msg("Not connected")) };
   }
-  return { kind: "unsupported", label: "Manual setup" };
+  return { kind: "unsupported", label: resolve(msg("Manual setup")) };
 }
 
 export function shouldShowProviderLifecycleSetupInComposer(

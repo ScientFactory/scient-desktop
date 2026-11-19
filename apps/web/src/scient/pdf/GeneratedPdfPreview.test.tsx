@@ -10,6 +10,10 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
+
 vi.mock("./ScientPdfReader", () => ({
   ScientPdfReader: () => <div data-generated-pdf-reader />,
 }));

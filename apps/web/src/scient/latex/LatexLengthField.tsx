@@ -1,5 +1,6 @@
 import { LatexSelect } from "./LatexSelect";
 import { Input } from "~/components/ui/input";
+import { useGT } from "gt-react";
 
 /** User-facing dimensions keep LaTeX units at the adapter boundary. */
 export function LatexLengthField(props: {
@@ -13,6 +14,7 @@ export function LatexLengthField(props: {
   size?: "sm";
   width?: "content";
 }) {
+  const gt = useGT();
   const match =
     /^(\d+(?:\.\d*)?|\.\d+)(mm|cm|in|pt|em|ex|\\(?:linewidth|textwidth|columnwidth))$/u.exec(
       props.value,
@@ -32,7 +34,7 @@ export function LatexLengthField(props: {
         value={amount}
         min={0}
         step="any"
-        placeholder={props.automatic ? "Automatic" : undefined}
+        placeholder={props.automatic ? gt("Automatic") : undefined}
         disabled={props.disabled}
         onChange={(event) => props.onChange(make(event.target.value, unit))}
       />
@@ -43,7 +45,7 @@ export function LatexLengthField(props: {
         value={amount}
         min={0}
         step="any"
-        placeholder={props.automatic ? "Automatic" : undefined}
+        placeholder={props.automatic ? gt("Automatic") : undefined}
         disabled={props.disabled}
         onChange={(event) => props.onChange(make(event.target.value, unit))}
       />
@@ -59,7 +61,7 @@ export function LatexLengthField(props: {
         )}
         <LatexSelect
           size={props.size ?? "default"}
-          aria-label={`${props.label} unit`}
+          aria-label={gt("{label} unit", { label: props.label })}
           value={unit}
           disabled={props.disabled === true}
           width={props.width === "content" ? "options" : "default"}
@@ -74,10 +76,10 @@ export function LatexLengthField(props: {
                   value: `\\${basis}`,
                   label:
                     basis === "textwidth"
-                      ? "% of text"
+                      ? gt("% of text")
                       : basis === "columnwidth"
-                        ? "% of column"
-                        : "% of line",
+                        ? gt("% of column")
+                        : gt("% of line"),
                 }))
               : []),
           ]}

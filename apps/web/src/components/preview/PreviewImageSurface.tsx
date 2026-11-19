@@ -3,6 +3,7 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { cn } from "~/lib/utils";
 
@@ -45,6 +46,7 @@ export function PreviewImageSurface({
   /** Direct web images can display without granting byte access to this origin. */
   readonly crossOrigin?: "anonymous" | null | undefined;
 }) {
+  const gt = useGT();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const zoomHintTimerRef = useRef<number | null>(null);
@@ -219,7 +221,7 @@ export function PreviewImageSurface({
       </div>
       {!imageState.displayed ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background text-xs text-muted-foreground">
-          {imageState.failed ? "Unable to load figure" : "Loading figure…"}
+          {imageState.failed ? gt("Unable to load figure") : gt("Loading figure…")}
         </div>
       ) : null}
       {statusLabel ? (
@@ -234,7 +236,7 @@ export function PreviewImageSurface({
           showZoomHint ? "opacity-100" : "opacity-0",
         )}
       >
-        Pinch or Ctrl-scroll to zoom
+        <T>Pinch or Ctrl-scroll to zoom</T>
       </div>
     </div>
   );

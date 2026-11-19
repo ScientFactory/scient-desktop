@@ -1,5 +1,6 @@
 import type { BrowserHistoryCursor, BrowserHistoryPage, ScopedThreadRef } from "@t3tools/contracts";
 import { useDebouncedValue } from "@tanstack/react-pacer";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { SearchIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -25,6 +26,7 @@ import {
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { pagesByDay } from "./browserHistoryDays";
@@ -50,6 +52,8 @@ export function BrowserHistoryDialog({
   const remove = useAtomCommand(browserHistoryState.remove, QUIET);
   const clear = useAtomCommand(browserHistoryState.clear, QUIET);
 
+  const gt = useGT();
+  const messages = useMessages();
   const [query, setQuery] = useState("");
   const [search] = useDebouncedValue(query.trim(), { wait: SEARCH_DELAY_MS });
   const [found, setFound] = useState<{
@@ -106,7 +110,7 @@ export function BrowserHistoryDialog({
     const result = await remove({ environmentId, input: { profileId, urls: [url] } });
     if (result._tag === "Success") return;
     setFound(before);
-    toastManager.add({ type: "error", title: "Could not remove this from your history" });
+    toastManager.add({ type: "error", title: m(msg("Could not remove this from your history")) });
   };
 
   const clearAll = async () => {
@@ -118,7 +122,7 @@ export function BrowserHistoryDialog({
       setFound({ profileId, pages: [], next: undefined });
       return;
     }
-    toastManager.add({ type: "error", title: "Could not clear your history" });
+    toastManager.add({ type: "error", title: m(msg("Could not clear your history")) });
   };
 
   return (
@@ -130,7 +134,9 @@ export function BrowserHistoryDialog({
     >
       <DialogPopup className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>History</DialogTitle>
+          <DialogTitle>
+            <T context="browsing history">History</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-4">
@@ -141,8 +147,8 @@ export function BrowserHistoryDialog({
               <InputGroupInput
                 autoFocus
                 type="search"
-                aria-label="Search history"
-                placeholder="Search history"
+                aria-label={gt("Search history")}
+                placeholder={gt("Search history")}
                 spellCheck={false}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -151,17 +157,21 @@ export function BrowserHistoryDialog({
             <div className="flex h-[min(60vh,28rem)] flex-col gap-5 overflow-y-auto">
               {failed ? (
                 <div className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
-                  <p>Could not load your history.</p>
+                  <p>
+                    <T>Could not load your history.</T>
+                  </p>
                   <Button size="sm" variant="outline" onClick={() => void load(search, profileId)}>
-                    Try again
+                    <T>Try again</T>
                   </Button>
                 </div>
               ) : pages?.length === 0 ? (
                 <p className="py-10 text-center text-sm text-muted-foreground">
-                  {search ? "No pages match your search." : "Pages you visit will appear here."}
+                  {search
+                    ? gt("No pages match your search.")
+                    : gt("Pages you visit will appear here.")}
                 </p>
               ) : (
-                pagesByDay(pages ?? [], now).map((day) => (
+                pagesByDay(pages ?? [], now, messages).map((day) => (
                   <section key={day.label} className="flex flex-col gap-2">
                     <h3 className="text-sm font-medium text-muted-foreground">{day.label}</h3>
                     <DiscoveryList>
@@ -192,7 +202,7 @@ export function BrowserHistoryDialog({
                   variant="outline"
                   onClick={() => void load(search, profileId, next)}
                 >
-                  Show more
+                  <T>Show more</T>
                 </Button>
               ) : null}
             </div>
@@ -204,23 +214,29 @@ export function BrowserHistoryDialog({
             disabled={!pages || pages.length === 0}
             onClick={() => setConfirmingClear(true)}
           >
-            Clear history
+            <T>Clear history</T>
           </Button>
         </DialogFooter>
       </DialogPopup>
       <AlertDialog open={confirmingClear} onOpenChange={setConfirmingClear}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear your history?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>Clear your history?</T>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This removes every page from this profile&apos;s history. Your Recently used list,
-              cookies and sign-ins stay as they are.
+              <T>
+                This removes every page from this profile&apos;s history. Your Recently used list,
+                cookies and sign-ins stay as they are.
+              </T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="ghost" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="ghost" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             <Button variant="destructive" onClick={() => void clearAll()}>
-              Clear history
+              <T>Clear history</T>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

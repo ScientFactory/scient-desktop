@@ -1,4 +1,7 @@
+import { msg } from "gt-react";
+
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
@@ -89,13 +92,13 @@ const INITIAL_STATE: PdfReaderState = {
 
 function pdfErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    if (error.name === "InvalidPDFException") return "This file is not a valid PDF.";
-    if (error.name === "MissingPDFException") return "The PDF could not be found.";
+    if (error.name === "InvalidPDFException") return m(msg("This file is not a valid PDF."));
+    if (error.name === "MissingPDFException") return m(msg("The PDF could not be found."));
     if (error.name === "UnexpectedResponseException") {
-      return "The PDF could not be loaded from this environment.";
+      return m(msg("The PDF could not be loaded from this environment."));
     }
   }
-  return "The PDF could not be opened.";
+  return m(msg("The PDF could not be opened."));
 }
 
 function isChangedPdfSource(error: unknown): boolean {

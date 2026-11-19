@@ -1,5 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 
 /**
  * "Conversation forked here", linked to the conversation it came from when
@@ -12,6 +13,7 @@ export function ForkMarkerSeparator({
   environmentId: EnvironmentId;
   originThreadId: ThreadId | undefined;
 }) {
+  const gt = useGT();
   return (
     <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
       <div className="h-px flex-1 bg-border/60" />
@@ -24,12 +26,12 @@ export function ForkMarkerSeparator({
               threadId: originThreadId,
             }}
             className="hover:text-foreground hover:underline"
-            aria-label="Open original conversation"
+            aria-label={gt("Open original conversation")}
           >
-            Conversation forked here
+            <T>Conversation forked here</T>
           </Link>
         ) : (
-          "Conversation forked here"
+          <T>Conversation forked here</T>
         )}
       </span>
       <div className="h-px flex-1 bg-border/60" />

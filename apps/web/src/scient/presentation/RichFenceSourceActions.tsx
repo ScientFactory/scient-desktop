@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { Code2Icon } from "lucide-react";
 import { useLayoutEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -23,11 +24,12 @@ export function RichFenceSourceMenuItem(props: {
   readonly onToggleSource: () => void;
   readonly sourceVisible: boolean;
 }) {
+  const gt = useGT();
   const editSource = props.authoringActions?.onEditSource;
   return (
     <MenuItem onClick={editSource ?? props.onToggleSource}>
       <Code2Icon />
-      {editSource ? "Edit source" : props.sourceVisible ? "Hide source" : "Show source"}
+      {editSource ? gt("Edit source") : props.sourceVisible ? gt("Hide source") : gt("Show source")}
     </MenuItem>
   );
 }

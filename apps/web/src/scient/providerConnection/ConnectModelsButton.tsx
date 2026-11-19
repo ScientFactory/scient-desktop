@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { lazy, Suspense, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { PlugIcon } from "lucide-react";
@@ -42,6 +43,7 @@ function ConnectModelsDialog({
   accountContent,
 }: ConnectModelsButtonProps) {
   const [open, setOpen] = useState(false);
+  const gt = useGT();
   const overlay = useContext(ModelPickerOverlayContext);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const setOverlayInstanceId = overlay?.setInstanceId;
@@ -60,7 +62,7 @@ function ConnectModelsDialog({
     <>
       {appearance === "outline" ? (
         <Button size="sm" variant="outline" ref={triggerRef} onClick={() => setDialogOpen(true)}>
-          Connect models
+          <T>Connect models</T>
         </Button>
       ) : (
         <Button
@@ -71,7 +73,7 @@ function ConnectModelsDialog({
           onClick={() => setDialogOpen(true)}
         >
           <PlugIcon aria-hidden />
-          Connect models
+          <T>Connect models</T>
         </Button>
       )}
       <Dialog open={open} onOpenChange={setDialogOpen}>
@@ -85,13 +87,21 @@ function ConnectModelsDialog({
           }
         >
           <DialogHeader>
-            <DialogTitle>{accountContent ? "Connect models" : "Custom models"}</DialogTitle>
-            <DialogDescription className="sr-only">Connect models to this agent.</DialogDescription>
+            <DialogTitle>{accountContent ? gt("Connect models") : gt("Custom models")}</DialogTitle>
+            <DialogDescription className="sr-only">
+              <T>Connect models to this agent.</T>
+            </DialogDescription>
           </DialogHeader>
           {open ? (
             <DialogPanel>
               {accountContent ? <div className="mb-6">{accountContent}</div> : null}
-              <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+              <Suspense
+                fallback={
+                  <p className="text-sm text-muted-foreground">
+                    <T>Loading…</T>
+                  </p>
+                }
+              >
                 <CustomModelsContent environmentId={environmentId} instanceId={instanceId} />
               </Suspense>
             </DialogPanel>

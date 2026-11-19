@@ -11,7 +11,10 @@ import {
   RefreshCwIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { T, msg, useGT, useLocale } from "gt-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+
+import { m } from "~/i18n/messages";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
@@ -84,16 +87,22 @@ function parseSource(
   | { readonly parsed: ParsedPlotlySource; readonly error: null }
   | { readonly parsed: null; readonly error: Error } {
   try {
-    return { parsed: parsePlotlySource(source), error: null };
+    return { parsed: parsePlotlySource(source, m), error: null };
   } catch (cause) {
     return {
       parsed: null,
-      error: cause instanceof Error ? cause : new Error("Unable to parse the Plotly source."),
+      error:
+        cause instanceof Error ? cause : new Error(m(msg("Unable to parse the Plotly source."))),
     };
   }
 }
 
-function chartSource(source: string) {
+/**
+ * Keeps its identity while `source` and `locale` do, so state that follows it settles; a language
+ * switch parses again, with errors in the new language.
+ */
+function chartSource(source: string, locale: string) {
+  void locale;
   const result = parseSource(source);
   const parsed = result.parsed;
   return {
@@ -143,10 +152,12 @@ export function PlotlyChartCard({
   theme,
   title,
 }: PlotlyChartCardProps) {
-  const parsedSource = chartSource(source);
+  const gt = useGT();
+  const locale = useLocale();
+  const parsedSource = chartSource(source, locale);
   const parsed = parsedSource.parsed;
   const fileTitle = title || parsedSource.figureTitle;
-  const displayTitle = fileTitle || "Plotly figure";
+  const displayTitle = fileTitle || gt("Plotly figure");
   const description = parsedSource.description;
   const hasWebGl = parsed?.hasWebGl ?? false;
   const markdownCopy = plotlyMarkdownCopySource(source, language, fenceMeta);
@@ -167,6 +178,8 @@ export function PlotlyChartCard({
   } | null>(null);
   const [activeAction, setActiveAction] = useState<ChartAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Which copy just succeeded: its message is translated, so the checkmark keys on this instead.
+  const [copiedKind, setCopiedKind] = useState<string | null>(null);
   const captureState = useStableCallback(() => {
     const state = controllerRef.current?.getState();
     if (state != null) setTransferredView({ source, state });
@@ -210,12 +223,14 @@ export function PlotlyChartCard({
     [],
   );
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, kind: string | null = null) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
     setActionMessage(message);
+    setCopiedKind(kind);
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
       setActionMessage(null);
+      setCopiedKind(null);
     }, 1_500);
   };
 
@@ -225,6 +240,7 @@ export function PlotlyChartCard({
       messageTimerRef.current = null;
     }
     setActionMessage(message);
+    setCopiedKind(null);
   };
 
   const runControllerAction = (
@@ -252,18 +268,18 @@ export function PlotlyChartCard({
   const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
-      showPersistentMessage("Clipboard access is unavailable.");
+      showPersistentMessage(gt("Clipboard access is unavailable."));
       return;
     }
     setActiveAction("copy-source");
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage("Source copied");
+        showTransientMessage(gt("Source copied"), "source");
       },
       () => {
         setActiveAction(null);
-        showPersistentMessage("Unable to copy the Plotly source.");
+        showPersistentMessage(gt("Unable to copy the Plotly source."));
       },
     );
   });
@@ -325,7 +341,7 @@ export function PlotlyChartCard({
         ) : null}
         {parsed?.hasNetworkContent ? (
           <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            Network content
+            <T>Network content</T>
           </span>
         ) : null}
         {parsed != null && visibleStatus.kind !== "error" ? (
@@ -339,11 +355,11 @@ export function PlotlyChartCard({
             scrollZoom={false}
           />
         ) : null}
-        <VisualCardToolbar label="Plotly actions">
+        <VisualCardToolbar label={gt("Plotly actions")}>
           {ready ? (
             <ChartActionButton
               disabled={activeAction != null}
-              label="Expand interactive figure"
+              label={gt("Expand interactive figure")}
               onClick={handleExpand}
             >
               <Maximize2Icon className="size-3" strokeWidth={1.5} />
@@ -357,7 +373,7 @@ export function PlotlyChartCard({
                   <MenuTrigger
                     render={
                       <Button
-                        aria-label="More Plotly actions"
+                        aria-label={gt("More Plotly actions")}
                         disabled={activeAction != null}
                         size="icon-xs"
                         type="button"
@@ -369,7 +385,9 @@ export function PlotlyChartCard({
               >
                 <EllipsisIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">More Plotly actions</TooltipPopup>
+              <TooltipPopup side="top">
+                <T>More Plotly actions</T>
+              </TooltipPopup>
             </Tooltip>
             <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
               <VisualCardDetails
@@ -377,8 +395,8 @@ export function PlotlyChartCard({
                 detail={parsed?.hasWebGl ? "WebGL" : undefined}
               />
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
-                Copy Plotly JSON
+                {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
+                <T>Copy Plotly JSON</T>
               </MenuItem>
               <RichFenceSourceMenuItem
                 authoringActions={authoringActions}
@@ -387,7 +405,7 @@ export function PlotlyChartCard({
               />
               <MenuItem onClick={() => downloadPlotlySource(source, fileTitle)}>
                 <FileBracesIcon />
-                Download Plotly JSON
+                <T>Download Plotly JSON</T>
               </MenuItem>
               <MenuItem
                 disabled={!ready || activeAction != null}
@@ -395,13 +413,13 @@ export function PlotlyChartCard({
                   runControllerAction(
                     "download-svg",
                     (controller) => downloadPlotlySvg(controller, fileTitle),
-                    parsed?.hasWebGl ? "SVG downloaded; WebGL layers are rasterized" : null,
-                    "Unable to create the SVG image.",
+                    parsed?.hasWebGl ? gt("SVG downloaded; WebGL layers are rasterized") : null,
+                    gt("Unable to create the SVG image."),
                   )
                 }
               >
                 <DownloadIcon />
-                Download current SVG
+                <T>Download current SVG</T>
               </MenuItem>
               <MenuItem
                 disabled={!ready || activeAction != null}
@@ -409,13 +427,13 @@ export function PlotlyChartCard({
                   runControllerAction(
                     "copy-png",
                     copyPlotlyPng,
-                    "Image copied",
-                    "Copy image is unavailable. You can download the PNG instead.",
+                    gt("Image copied"),
+                    gt("Copy image is unavailable. You can download the PNG instead."),
                   )
                 }
               >
                 <ImageIcon />
-                {activeAction === "copy-png" ? "Copying image…" : "Copy current image"}
+                {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy current image")}
               </MenuItem>
               <MenuItem
                 disabled={!ready || activeAction != null}
@@ -424,12 +442,12 @@ export function PlotlyChartCard({
                     "download-png",
                     (controller) => downloadPlotlyPng(controller, fileTitle),
                     null,
-                    "Unable to create the PNG image.",
+                    gt("Unable to create the PNG image."),
                   )
                 }
               >
                 <FileImageIcon />
-                {activeAction === "download-png" ? "Creating PNG…" : "Download current PNG"}
+                {activeAction === "download-png" ? gt("Creating PNG…") : gt("Download current PNG")}
               </MenuItem>
               <VisualCardToolbarMenuItems />
             </VisualCardMenuPopup>
@@ -450,7 +468,9 @@ export function PlotlyChartCard({
         <div className="space-y-3 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-medium text-sm">Unable to render this Plotly figure</p>
+              <p className="font-medium text-sm">
+                <T>Unable to render this Plotly figure</T>
+              </p>
               <p className="mt-1 text-muted-foreground text-xs">{visibleStatus.message}</p>
             </div>
             {parseError == null ? (
@@ -461,7 +481,7 @@ export function PlotlyChartCard({
                 variant="outline"
               >
                 <RefreshCwIcon />
-                Retry
+                <T>Retry</T>
               </Button>
             ) : null}
           </div>
@@ -473,13 +493,13 @@ export function PlotlyChartCard({
         <div className="scient-plotly-stage relative p-2">
           {waitingForSlot ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-              Waiting for graphics resources…
+              <T>Waiting for graphics resources…</T>
             </div>
           ) : visibleStatus.kind !== "ready" ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
               {visibleStatus.kind === "idle"
-                ? "Figure will render when visible"
-                : "Rendering interactive Plotly figure…"}
+                ? gt("Figure will render when visible")
+                : gt("Rendering interactive Plotly figure…")}
             </div>
           ) : null}
           {viewportActive && parsed != null && !expanded ? (
@@ -493,7 +513,7 @@ export function PlotlyChartCard({
               onWebGlContextLost={() =>
                 setStatus({
                   kind: "error",
-                  message: "The graphics context was lost. Retry to recreate this figure.",
+                  message: gt("The graphics context was lost. Retry to recreate this figure."),
                   source,
                 })
               }
@@ -509,9 +529,9 @@ export function PlotlyChartCard({
         <details className="border-t border-border/60 bg-amber-500/5 px-3 py-2 text-xs">
           <summary className="flex cursor-pointer list-none items-center gap-2 text-amber-700 dark:text-amber-300">
             <TriangleAlertIcon className="size-3.5" />
-            {visibleWarnings.length === 1
-              ? "1 figure warning"
-              : `${visibleWarnings.length} figure warnings`}
+            {gt("{count, plural, one {{count} figure warning} other {{count} figure warnings}}", {
+              count: visibleWarnings.length,
+            })}
           </summary>
           <ul className="mt-2 list-disc space-y-1 ps-6 text-muted-foreground">
             {visibleWarnings.map((warning) => (

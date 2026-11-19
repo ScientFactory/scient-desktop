@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Copy } from "lucide-react";
+import { T, useGT } from "gt-react";
 
 import { Button } from "~/components/ui/button";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
@@ -20,12 +21,6 @@ export interface MarkdownRefreshNoticeCopy {
   readonly description: string;
 }
 
-const UNEXPLAINED_REFRESH_FAILURE: MarkdownRefreshNoticeCopy = {
-  title: "This file couldn’t be refreshed",
-  description:
-    "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
-};
-
 /** The text can always leave, whatever is stopping the save: this asks where to put a copy. */
 function saveTextCopy(relativePath: string, text: string) {
   const link = document.createElement("a");
@@ -38,7 +33,7 @@ function saveTextCopy(relativePath: string, text: string) {
 /** Routine persistence is silent. Only an actionable episode is announced. */
 export function ScientMarkdownPersistenceNotice({
   persistence,
-  refreshCopy = UNEXPLAINED_REFRESH_FAILURE,
+  refreshCopy: givenRefreshCopy,
   missingFileChoices = NO_MISSING_FILE_CHOICES,
   onOpenFile,
   onReturnToRich,
@@ -54,6 +49,13 @@ export function ScientMarkdownPersistenceNotice({
   readonly onOpenFile?: (relativePath: string) => void;
   readonly onReturnToRich?: () => void;
 }) {
+  const gt = useGT();
+  const refreshCopy = givenRefreshCopy ?? {
+    title: gt("This file couldn’t be refreshed"),
+    description: gt(
+      "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
+    ),
+  };
   const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
   const pendingInput = useSyncExternalStore(persistence.subscribe, persistence.getPendingInput);
   const titleId = useId();
@@ -73,14 +75,17 @@ export function ScientMarkdownPersistenceNotice({
         : null;
   const failed = issue === "failure";
   const plainReason = failed ? documentFailurePlainReason(snapshot.error) : null;
+  // A plain reason is read only for a failed save.
   const title =
-    (issue === "input"
-      ? "Finish your edit in Rich"
+    issue === "input"
+      ? gt("Finish your edit in Rich")
       : issue === "missing-current"
-        ? "This file is no longer on disk"
+        ? gt("This file is no longer on disk")
         : issue === "refresh"
           ? refreshCopy.title
-          : "Couldn’t save") + (plainReason ? `: ${plainReason}` : "");
+          : plainReason
+            ? gt("Couldn’t save: {reason}", { reason: plainReason })
+            : gt("Couldn’t save");
   const choices =
     issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
 
@@ -88,7 +93,7 @@ export function ScientMarkdownPersistenceNotice({
     issue === "failure" || issue === "refresh" ? documentFailureReason(snapshot.error) : null;
   const code = reason === null ? null : documentFailureCode(snapshot.error);
   // Technical facts stay out of the sentence and are only for bug reports.
-  const details = [reason, code ? `Code: ${code}` : null].filter(
+  const details = [reason, code ? gt("Code: {code}", { code }) : null].filter(
     (line): line is string => line !== null,
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -107,12 +112,12 @@ export function ScientMarkdownPersistenceNotice({
 
   const description =
     issue === "input"
-      ? "It isn’t saved yet. Fix or undo it there before using Source."
+      ? gt("It isn’t saved yet. Fix or undo it there before using Source.")
       : issue === "missing-current"
-        ? "Your text is still here and hasn’t been saved anywhere."
+        ? gt("Your text is still here and hasn’t been saved anywhere.")
         : issue === "refresh"
           ? refreshCopy.description
-          : "Your text is still here, and Scient keeps trying.";
+          : gt("Your text is still here, and Scient keeps trying.");
 
   const run = (operation: () => Promise<boolean>) =>
     createPersistenceNoticeOperation({ regionRef, setBusy })(operation);
@@ -142,7 +147,7 @@ export function ScientMarkdownPersistenceNotice({
               {issue === "input" ? (
                 onReturnToRich ? (
                   <Button size="xs" onClick={onReturnToRich}>
-                    Return to Rich
+                    <T>Return to Rich</T>
                   </Button>
                 ) : null
               ) : issue === "missing-current" ? (
@@ -159,13 +164,15 @@ export function ScientMarkdownPersistenceNotice({
                       const created = await persistence.recreateMissingCurrent();
                       if (!created)
                         setReviewError(
-                          "Couldn’t create the file. Your text is still here; check the folder before trying again.",
+                          gt(
+                            "Couldn’t create the file. Your text is still here; check the folder before trying again.",
+                          ),
                         );
                       return created;
                     })
                   }
                 >
-                  Save it again
+                  <T>Save it again</T>
                 </Button>
               ) : issue === "failure" ? (
                 <Button
@@ -175,7 +182,7 @@ export function ScientMarkdownPersistenceNotice({
                     saveTextCopy(persistence.target.relativePath, snapshot.draftSource)
                   }
                 >
-                  Save a copy
+                  <T>Save a copy</T>
                 </Button>
               ) : (
                 <>
@@ -184,7 +191,7 @@ export function ScientMarkdownPersistenceNotice({
                     disabled={busy}
                     onClick={() => void run(() => persistence.retry())}
                   >
-                    Try again
+                    <T>Try again</T>
                   </Button>
                   {choices.map((choice) => (
                     <Button
@@ -192,7 +199,7 @@ export function ScientMarkdownPersistenceNotice({
                       size="xs"
                       variant="outline"
                       className="max-w-48"
-                      title={`Open ${choice}`}
+                      title={gt("Open {file}", { file: choice })}
                       onClick={() => onOpenFile?.(choice)}
                     >
                       <span className="truncate">{choice}</span>
@@ -207,7 +214,7 @@ export function ScientMarkdownPersistenceNotice({
                   aria-expanded={detailsOpen}
                   onClick={() => setDetailsOpen((open) => !open)}
                 >
-                  Details
+                  <T context="button, shows technical details">Details</T>
                   {detailsOpen ? (
                     <ChevronUp className="size-3" aria-hidden="true" />
                   ) : (
@@ -241,7 +248,7 @@ export function ScientMarkdownPersistenceNotice({
                 }
               >
                 <Copy className="size-3" aria-hidden="true" />
-                {copiedText === detailsText ? "Copied" : "Copy details"}
+                {copiedText === detailsText ? gt("Copied") : gt("Copy details")}
               </Button>
             </div>
           ) : null}
@@ -249,35 +256,37 @@ export function ScientMarkdownPersistenceNotice({
       ) : null}
       {snapshot.restoredDraft ? (
         <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          This is an unsaved draft from an earlier session, and the file has changed since.
+          <T>This is an unsaved draft from an earlier session, and the file has changed since.</T>
           <Button
             size="xs"
             variant="ghost"
             onClick={() => void persistence.resolveRestoredDraft("keep")}
           >
-            Keep my draft
+            <T>Keep my draft</T>
           </Button>
           <Button
             size="xs"
             variant="ghost"
             onClick={() => void persistence.resolveRestoredDraft("file")}
           >
-            Use the file
+            <T>Use the file</T>
           </Button>
         </div>
       ) : null}
       {snapshot.recoverySource !== null ? (
         <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           {snapshot.recoveryFromElsewhere
-            ? "This file also changed elsewhere. Your version was saved."
-            : "Your earlier edits can still be restored."}
+            ? gt("This file also changed elsewhere. Your version was saved.")
+            : gt("Your earlier edits can still be restored.")}
           <Button
             size="xs"
             variant="ghost"
             disabled={pendingInput !== null}
             onClick={() => persistence.restoreRecovery()}
           >
-            {snapshot.recoveryFromElsewhere ? "Use the other version" : "Restore"}
+            {snapshot.recoveryFromElsewhere
+              ? gt("Use the other version")
+              : gt("Restore", { $context: "button, restores earlier edits" })}
           </Button>
         </div>
       ) : null}

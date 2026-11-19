@@ -13,6 +13,7 @@ import {
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -28,16 +29,22 @@ import { Button } from "~/components/ui/button";
  * user problem). Only settled states differentiate.
  */
 const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; label: string }> = {
-  pending: { dotClass: "bg-info", label: "Working" },
-  running: { dotClass: "bg-info", label: "Working" },
-  waiting: { dotClass: "bg-info", label: "Working" },
+  pending: { dotClass: "bg-info", label: msg("Working", { $context: "subagent status" }) },
+  running: { dotClass: "bg-info", label: msg("Working", { $context: "subagent status" }) },
+  waiting: { dotClass: "bg-info", label: msg("Working", { $context: "subagent status" }) },
   // Idle reads as settled (muted, not sky): a resting Codex child looks done
   // unless resumed — live-test: sky idle dots read as stuck in-progress.
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
-  completed: { dotClass: "bg-success", label: "Completed" },
-  failed: { dotClass: "bg-destructive", label: "Failed" },
-  cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-  interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
+  idle: { dotClass: "bg-muted-foreground/50", label: msg("Idle · resumable") },
+  completed: { dotClass: "bg-success", label: msg("Completed", { $context: "subagent status" }) },
+  failed: { dotClass: "bg-destructive", label: msg("Failed", { $context: "subagent status" }) },
+  cancelled: {
+    dotClass: "bg-muted-foreground/60",
+    label: msg("Stopped", { $context: "subagent status" }),
+  },
+  interrupted: {
+    dotClass: "bg-muted-foreground/60",
+    label: msg("Stopped", { $context: "subagent status" }),
+  },
 };
 
 function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
@@ -131,11 +138,13 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 
 /** Flat, non-interactive agent status line. No unfold. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+  const gt = useGT();
+  const messages = useMessages();
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
     agent.status === "idle" && (agent.historical || agent.kind === "subagent_batch")
-      ? "Idle"
-      : visuals.label;
+      ? gt("Idle", { $context: "subagent status" })
+      : messages(visuals.label);
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
   const role =
@@ -145,10 +154,19 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const metadata = [
     modelLabel,
     agent.usage?.totalTokens !== undefined
-      ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
-      : "Unknown tokens",
-    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
-    agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
+      ? gt("{tokens} tok", {
+          tokens: formatSubagentTokenCount(agent.usage.totalTokens),
+          $context: "token count, abbreviated",
+        })
+      : gt("Unknown tokens"),
+    agent.usage?.toolUses !== undefined
+      ? gt("{count, plural, one {{count} tool} other {{count} tools}}", {
+          count: agent.usage.toolUses,
+        })
+      : null,
+    agent.activationCount > 1
+      ? gt("run {number}", { number: agent.activationCount, $context: "subagent run number" })
+      : null,
   ].filter((value): value is string => value !== null);
 
   return (
@@ -159,7 +177,9 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
         <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
         {agent.historical ? (
-          <span className="text-3xs text-muted-foreground">Historical</span>
+          <span className="text-3xs text-muted-foreground">
+            <T>Historical</T>
+          </span>
         ) : null}
         {role ? (
           <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-3xs text-muted-foreground">
@@ -274,6 +294,7 @@ function WorkflowScriptView({
   scriptPath: string;
   onClose: () => void;
 }) {
+  const gt = useGT();
   const result = useAtomValue(
     orchestrationEnvironment.workflowScript({ environmentId, input: { threadId, scriptPath } }),
   );
@@ -288,7 +309,7 @@ function WorkflowScriptView({
           size="icon-micro"
           variant="ghost-muted"
           onClick={onClose}
-          aria-label="Close script"
+          aria-label={gt("Close script")}
           className="ml-auto"
         >
           <X aria-hidden className="size-3" />
@@ -298,12 +319,16 @@ function WorkflowScriptView({
         {result._tag === "Success" ? (
           <pre className="whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-foreground/90">
             {result.value.contents}
-            {result.value.truncated ? "\n… (truncated)" : ""}
+            {result.value.truncated ? `\n${gt("… (truncated)")}` : ""}
           </pre>
         ) : result._tag === "Failure" ? (
-          <p className="text-xs text-destructive-foreground">Could not load the script.</p>
+          <p className="text-xs text-destructive-foreground">
+            <T>Could not load the script.</T>
+          </p>
         ) : (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <p className="text-xs text-muted-foreground">
+            <T>Loading…</T>
+          </p>
         )}
       </div>
     </div>
@@ -322,6 +347,7 @@ function PhaseSection({
   phase: AgentPanelWorkflowGroup["phases"][number];
   defaultOpen?: boolean;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
   const previousState = useRef(phase.state);
 
@@ -357,10 +383,13 @@ function PhaseSection({
         <span>{phase.title}</span>
         <span className="font-normal normal-case text-muted-foreground/70">
           {phase.state === "pending" && phase.members.length === 0
-            ? "pending"
+            ? gt("pending", { $context: "workflow phase not started" })
             : phase.state === "done"
-              ? `${phase.settledCount} done`
-              : `${phase.activeCount} active · ${phase.settledCount} done`}
+              ? gt("{count} done", { count: phase.settledCount })
+              : gt("{active} active · {settled} done", {
+                  active: phase.activeCount,
+                  settled: phase.settledCount,
+                })}
         </span>
         {!open && phase.members.length > 0 ? (
           <span className="ml-auto flex items-center gap-0.5">
@@ -387,6 +416,7 @@ function ExpandedWorkflowSection({
   threadId: ThreadId | null;
   onCollapse: () => void;
 }) {
+  const gt = useGT();
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
   const settled = members.filter(
@@ -419,17 +449,17 @@ function ExpandedWorkflowSection({
             )}
             aria-expanded={scriptOpen}
           >
-            {"{}"} script
+            {"{}"} <T context="workflow script">script</T>
           </button>
         ) : null}
         <span className="ml-auto font-mono normal-case text-muted-foreground/80">
-          {settled}/{members.length} settled
+          {gt("{settled}/{total} settled", { settled, total: members.length })}
         </span>
         <Button
           size="icon-micro"
           variant="ghost-muted"
           onClick={onCollapse}
-          aria-label="Collapse workflow"
+          aria-label={gt("Collapse workflow")}
         >
           <ChevronDown aria-hidden className="size-3" />
         </Button>
@@ -467,6 +497,7 @@ function CollapsedWorkflowSection({
   group: AgentPanelWorkflowGroup;
   onExpand: () => void;
 }) {
+  const gt = useGT();
   const members = workflowMembers(group);
   const failed = members.filter((member) => member.status === "failed").length;
   // Coordinator usage may already aggregate members (panel-footer rule):
@@ -493,10 +524,24 @@ function CollapsedWorkflowSection({
           {group.workflow.workflowName ?? group.workflow.title}
         </span>
         <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-muted-foreground/80">
-          {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
-          <span>{members.length} agents</span>
+          {failed > 0 ? (
+            <span className="text-destructive-foreground">
+              {gt("{count} failed", { count: failed })}
+            </span>
+          ) : null}
+          <span>
+            {gt("{count, plural, one {{count} agent} other {{count} agents}}", {
+              count: members.length,
+            })}
+          </span>
           <span className="tabular-nums">
-            · {totalTokens === null ? "Unknown" : formatSubagentTokenCount(totalTokens)} tok
+            ·{" "}
+            {totalTokens === null
+              ? gt("Unknown tok", { $context: "token count unknown, abbreviated" })
+              : gt("{tokens} tok", {
+                  tokens: formatSubagentTokenCount(totalTokens),
+                  $context: "token count, abbreviated",
+                })}
           </span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
@@ -538,14 +583,19 @@ export function AgentsPanel({
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
 }) {
+  const gt = useGT();
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <Bot aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No agents yet</p>
+        <p className="text-sm font-medium">
+          <T>No agents yet</T>
+        </p>
         <p className="max-w-56 text-xs text-muted-foreground">
-          When this thread spawns subagents or runs a workflow, they show up here with live status,
-          activity, and token usage.
+          <T>
+            When this thread spawns subagents or runs a workflow, they show up here with live
+            status, activity, and token usage.
+          </T>
         </p>
       </div>
     );
@@ -566,7 +616,7 @@ export function AgentsPanel({
           {model.directAgents.length > 0 ? (
             <section>
               <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
+                <T>Direct spawns</T>
               </div>
               {model.directAgents.map((agent) => (
                 <AgentRow key={agent.id} agent={agent} />
@@ -579,15 +629,24 @@ export function AgentsPanel({
         <span className="flex items-center gap-2">
           {model.runningCount + model.waitingCount > 0 ? (
             <span className="text-info-foreground">
-              ● {model.runningCount + model.waitingCount} working
+              ● {gt("{count} working", { count: model.runningCount + model.waitingCount })}
             </span>
           ) : null}
-          {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-          {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
+          {model.idleCount > 0 ? (
+            <span>{gt("{count} idle", { count: model.idleCount })}</span>
+          ) : null}
+          {model.settledCount > 0 ? (
+            <span>{gt("{count} settled", { count: model.settledCount })}</span>
+          ) : null}
         </span>
         <span className="tabular-nums">
-          Σ {model.totalTokens === null ? "Unknown" : formatSubagentTokenCount(model.totalTokens)}{" "}
-          tok
+          Σ{" "}
+          {model.totalTokens === null
+            ? gt("Unknown tok", { $context: "token count unknown, abbreviated" })
+            : gt("{tokens} tok", {
+                tokens: formatSubagentTokenCount(model.totalTokens),
+                $context: "token count, abbreviated",
+              })}
         </span>
       </footer>
     </div>

@@ -4,6 +4,7 @@ import type {
   ScientSourcesJoinDifferences,
   ScientSourcesLibraryOrganizeAction,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -58,6 +59,8 @@ export function JoinDifferencesDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, root, joinId } = props;
+  const gt = useGT();
+  const m = useMessages();
   /** The pages read so far, in order; each knows where it starts and where the next does. */
   const [pages, setPages] = useState<ReadonlyArray<Page>>([]);
   const [missing, setMissing] = useState(false);
@@ -151,7 +154,7 @@ export function JoinDifferencesDialog(props: {
     );
   };
 
-  const otherName = listed ? otherLibraryName(listed) : "";
+  const otherName = listed ? otherLibraryName(listed, m) : "";
   return (
     <Dialog
       open
@@ -161,8 +164,8 @@ export function JoinDifferencesDialog(props: {
     >
       <DialogPopup className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{JOIN_DIFFERENCES_LABELS.title}</DialogTitle>
-          <DialogDescription>{listed ? differencesIntro(listed) : ""}</DialogDescription>
+          <DialogTitle>{m(JOIN_DIFFERENCES_LABELS.title)}</DialogTitle>
+          <DialogDescription>{listed ? differencesIntro(listed, m) : ""}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {error ? (
@@ -172,12 +175,12 @@ export function JoinDifferencesDialog(props: {
           ) : null}
           {missing ? (
             <p className="text-sm text-muted-foreground">
-              The record of that addition is no longer in this Library.
+              <T>The record of that addition is no longer in this Library.</T>
             </p>
           ) : null}
           {listed && !listed.available ? (
             <p role="status" className="mb-2 text-sm break-words text-muted-foreground">
-              {differencesAway(listed)}
+              {differencesAway(listed, m)}
             </p>
           ) : null}
           {notice ? (
@@ -186,12 +189,12 @@ export function JoinDifferencesDialog(props: {
             </p>
           ) : null}
           {listed && rows.length === 0 && nextOffset === null ? (
-            <p className="text-sm text-muted-foreground">{JOIN_DIFFERENCES_LABELS.empty}</p>
+            <p className="text-sm text-muted-foreground">{m(JOIN_DIFFERENCES_LABELS.empty)}</p>
           ) : null}
           <ul className="divide-y divide-border text-sm">
             {rows.map((row) => {
               const { here, other } = row;
-              const title = rowTitle(row);
+              const title = rowTitle(row, m);
               const offer = props.canChange && other !== null && listed?.available === true;
               const lackingPdfs = other
                 ? other.pdfs.filter(
@@ -202,19 +205,33 @@ export function JoinDifferencesDialog(props: {
                 <li key={row.otherSourceId} className="py-3">
                   <p className="font-medium break-words">{title}</p>
                   <p className="text-xs text-muted-foreground">
-                    {[here?.by ?? other?.by, relationLabel(row)].filter(Boolean).join(" · ")}
+                    {[here?.by ?? other?.by, relationLabel(row, m)].filter(Boolean).join(" · ")}
                   </p>
                   {!other ? (
-                    <p className="mt-1 text-xs text-muted-foreground">{recordedParts(row)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{recordedParts(row, m)}</p>
                   ) : null}
                   {other && (row.relation === "possibly-same" || row.relation === "not-here") ? (
                     <div className="mt-2 flex items-start justify-between gap-2">
                       <p className="min-w-0 text-xs break-words">
-                        {otherName}: “{other.title ?? JOIN_DIFFERENCES_LABELS.untitled}”
-                        {other.by ? ` (${other.by})` : ""}.{" "}
                         {row.relation === "not-here"
-                          ? "It was not added then, because it looked like a paper that was here. No paper here looks like it now."
-                          : "It was not added, because it may be a paper you already have."}
+                          ? gt(
+                              "{library}: “{title}”{hasBy, select, yes { ({by})} other {}}. It was not added then, because it looked like a paper that was here. No paper here looks like it now.",
+                              {
+                                library: otherName,
+                                title: other.title ?? m(JOIN_DIFFERENCES_LABELS.untitled),
+                                hasBy: other.by ? "yes" : "no",
+                                by: other.by ?? "",
+                              },
+                            )
+                          : gt(
+                              "{library}: “{title}”{hasBy, select, yes { ({by})} other {}}. It was not added, because it may be a paper you already have.",
+                              {
+                                library: otherName,
+                                title: other.title ?? m(JOIN_DIFFERENCES_LABELS.untitled),
+                                hasBy: other.by ? "yes" : "no",
+                                by: other.by ?? "",
+                              },
+                            )}
                       </p>
                       {offer ? (
                         <Button
@@ -222,20 +239,22 @@ export function JoinDifferencesDialog(props: {
                           size="xs"
                           variant="outline"
                           disabled={working}
-                          aria-label={`${JOIN_DIFFERENCES_LABELS.addSeparately}: ${title}`}
+                          aria-label={gt("Add separately: {title}", { title })}
                           onClick={() => take(row, { kind: "add-separately" })}
                         >
-                          {JOIN_DIFFERENCES_LABELS.addSeparately}
+                          {m(JOIN_DIFFERENCES_LABELS.addSeparately)}
                         </Button>
                       ) : null}
                     </div>
                   ) : null}
                   {other && here && row.parts.includes("note") ? (
                     <Sides
-                      label="Note"
+                      label={gt("Note", {
+                        $context: "a paper's note, compared between two Libraries",
+                      })}
                       here={here.note}
                       other={other.note}
-                      hereName={JOIN_DIFFERENCES_LABELS.here}
+                      hereName={m(JOIN_DIFFERENCES_LABELS.here)}
                       otherName={otherName}
                     >
                       {offer ? (
@@ -243,25 +262,34 @@ export function JoinDifferencesDialog(props: {
                           size="xs"
                           variant="outline"
                           disabled={working}
-                          aria-label={`${here.note ? JOIN_DIFFERENCES_LABELS.addNote : JOIN_DIFFERENCES_LABELS.useNote}: ${title}`}
+                          aria-label={
+                            here.note
+                              ? gt("Add to my note: {title}", { title })
+                              : gt("Use this note: {title}", { title })
+                          }
                           onClick={() => take(row, { kind: "note" })}
                         >
                           {here.note
-                            ? JOIN_DIFFERENCES_LABELS.addNote
-                            : JOIN_DIFFERENCES_LABELS.useNote}
+                            ? m(JOIN_DIFFERENCES_LABELS.addNote)
+                            : m(JOIN_DIFFERENCES_LABELS.useNote)}
                         </Button>
                       ) : null}
                     </Sides>
                   ) : null}
                   {other && here && row.parts.includes("pdfs") ? (
                     <div className="mt-2">
-                      <p className="text-xs font-medium">PDFs only in the other Library</p>
+                      <p className="text-xs font-medium">
+                        <T>PDFs only in the other Library</T>
+                      </p>
                       <ul className="mt-1 space-y-1 text-xs">
                         {lackingPdfs.map((pdf) => (
                           <li key={pdf.sha256} className="flex items-center justify-between gap-2">
                             <span className="min-w-0 break-words">
-                              {pdf.fileName}
-                              {pdf.available ? "" : " (the file is not in that folder)"}
+                              {pdf.available
+                                ? pdf.fileName
+                                : gt("{fileName} (the file is not in that folder)", {
+                                    fileName: pdf.fileName,
+                                  })}
                             </span>
                             {offer && pdf.available ? (
                               <Button
@@ -269,10 +297,13 @@ export function JoinDifferencesDialog(props: {
                                 size="xs"
                                 variant="outline"
                                 disabled={working}
-                                aria-label={`${JOIN_DIFFERENCES_LABELS.attach} ${pdf.fileName}: ${title}`}
+                                aria-label={gt("Attach {fileName}: {title}", {
+                                  fileName: pdf.fileName,
+                                  title,
+                                })}
                                 onClick={() => take(row, { kind: "pdf", sha256: pdf.sha256 })}
                               >
-                                {JOIN_DIFFERENCES_LABELS.attach}
+                                {m(JOIN_DIFFERENCES_LABELS.attach)}
                               </Button>
                             ) : null}
                           </li>
@@ -282,18 +313,18 @@ export function JoinDifferencesDialog(props: {
                   ) : null}
                   {other && here && row.parts.includes("tags") ? (
                     <Sides
-                      label="Tags"
+                      label={gt("Tags", { $context: "noun" })}
                       here={here.tags.join(", ")}
                       other={other.tags.join(", ")}
-                      hereName={JOIN_DIFFERENCES_LABELS.here}
+                      hereName={m(JOIN_DIFFERENCES_LABELS.here)}
                       otherName={otherName}
                     />
                   ) : null}
                   {other && here && row.parts.includes("reading") ? (
                     <p className="mt-2 text-xs">
                       {[
-                        other.read && !here.read ? "Read there, not here." : "",
-                        other.starred && !here.starred ? "Starred there, not here." : "",
+                        other.read && !here.read ? gt("Read there, not here.") : "",
+                        other.starred && !here.starred ? gt("Starred there, not here.") : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
@@ -301,8 +332,10 @@ export function JoinDifferencesDialog(props: {
                   ) : null}
                   {other && here && row.parts.includes("highlights") ? (
                     <p className="mt-2 text-xs">
-                      The highlights on a PDF differ. They are not brought over; this Library's
-                      stay.
+                      <T>
+                        The highlights on a PDF differ. They are not brought over; this Library's
+                        stay.
+                      </T>
                     </p>
                   ) : null}
                   {row.details.map((detail) => (
@@ -311,7 +344,7 @@ export function JoinDifferencesDialog(props: {
                       label={detail.field}
                       here={detail.here}
                       other={detail.other}
-                      hereName={JOIN_DIFFERENCES_LABELS.here}
+                      hereName={m(JOIN_DIFFERENCES_LABELS.here)}
                       otherName={otherName}
                     />
                   ))}
@@ -321,7 +354,7 @@ export function JoinDifferencesDialog(props: {
           </ul>
           {!listed && loading && !missing && !error ? (
             <p role="status" className="text-sm text-muted-foreground">
-              {JOIN_DIFFERENCES_LABELS.loading}
+              {m(JOIN_DIFFERENCES_LABELS.loading)}
             </p>
           ) : null}
           {nextOffset !== null ? (
@@ -332,17 +365,22 @@ export function JoinDifferencesDialog(props: {
               disabled={working || loading}
               onClick={() => void load([nextOffset])}
             >
-              {loading ? JOIN_DIFFERENCES_LABELS.loading : JOIN_DIFFERENCES_LABELS.more}
+              {loading ? m(JOIN_DIFFERENCES_LABELS.loading) : m(JOIN_DIFFERENCES_LABELS.more)}
             </Button>
           ) : null}
           {listed && listed.removedHere.length > 0 ? (
             <div className="mt-4">
-              <p className="text-xs font-medium">{JOIN_DIFFERENCES_LABELS.removedHere}</p>
+              <p className="text-xs font-medium">{m(JOIN_DIFFERENCES_LABELS.removedHere)}</p>
               <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                 {listed.removedHere.map((entry) => (
                   <li key={entry.otherSourceId} className="break-words">
-                    {entry.title ?? JOIN_DIFFERENCES_LABELS.untitled} ·{" "}
-                    {entry.state === "trash" ? "in this Library's Trash" : "deleted here"}
+                    {entry.state === "trash"
+                      ? gt("{title} · in this Library's Trash", {
+                          title: entry.title ?? m(JOIN_DIFFERENCES_LABELS.untitled),
+                        })
+                      : gt("{title} · deleted here", {
+                          title: entry.title ?? m(JOIN_DIFFERENCES_LABELS.untitled),
+                        })}
                   </li>
                 ))}
               </ul>

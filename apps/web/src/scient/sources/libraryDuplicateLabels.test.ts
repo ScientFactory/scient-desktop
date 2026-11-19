@@ -1,6 +1,8 @@
 import { ScientSourcesDuplicateReason } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { m } from "~/i18n/messages";
+
 import {
   DUPLICATE_LABELS,
   differsLabel,
@@ -21,7 +23,7 @@ describe("possible-duplicate labels", () => {
   it("use none of the engine's words", () => {
     const fields = ["title", "creators", "containerTitle", "identifiers", "url"];
     const shown = [
-      ...Object.values(DUPLICATE_LABELS),
+      ...Object.values(DUPLICATE_LABELS).map((text) => m(text)),
       differsLabel(DUPLICATE_FIELDS),
       differsLabel([]),
       keptDifferentLabel(fields) ?? "",

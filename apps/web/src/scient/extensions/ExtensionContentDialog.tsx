@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { type LucideIcon, XIcon } from "lucide-react";
 import { type ReactNode, useRef } from "react";
 import { Button } from "../../components/ui/button";
@@ -36,7 +37,16 @@ export function ExtensionContentDialog({
   readonly framed?: boolean | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const gt = useGT();
   const popupRef = useRef<HTMLDivElement>(null);
+  const kindLabel =
+    kind === "Skill"
+      ? gt("Skill")
+      : kind === "Tool"
+        ? gt("Tool", { $context: "a connector's tool" })
+        : gt("App", { $context: "a ChatGPT app" });
+  const closeLabel =
+    kind === "Skill" ? gt("Close skill") : kind === "Tool" ? gt("Close tool") : gt("Close app");
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogPopup
@@ -58,20 +68,14 @@ export function ExtensionContentDialog({
             <div className="flex items-center gap-1">
               {actions}
               <DialogClose
-                render={
-                  <Button
-                    size="icon-sm"
-                    variant="ghost-muted"
-                    aria-label={`Close ${kind.toLowerCase()}`}
-                  />
-                }
+                render={<Button size="icon-sm" variant="ghost-muted" aria-label={closeLabel} />}
               >
                 <XIcon aria-hidden />
               </DialogClose>
             </div>
           </div>
           <DialogTitle>
-            {name} <span className="font-normal text-muted-foreground">{kind}</span>
+            {name} <span className="font-normal text-muted-foreground">{kindLabel}</span>
           </DialogTitle>
           <DialogDescription className={kind === "App" ? "whitespace-pre-line" : undefined}>
             {kind === "App" ? description : <span className="line-clamp-3">{description}</span>}

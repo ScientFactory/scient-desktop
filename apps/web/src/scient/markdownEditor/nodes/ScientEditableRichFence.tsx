@@ -1,7 +1,9 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useLayoutEffect } from "react";
 import { useEffect, useRef, useState } from "react";
+import { msg, T } from "gt-react";
 
+import { m } from "~/i18n/messages";
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import type {
   ScientRichFenceAuthoringActions,
@@ -36,7 +38,7 @@ interface RichFenceValidationRequest {
 function richFenceErrorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.trim().length > 0
     ? cause.message
-    : "The current source cannot be rendered yet.";
+    : m(msg("The current source cannot be rendered yet."));
 }
 
 async function validateRichFence(
@@ -214,7 +216,9 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
       />
       {isRetained ? (
         <div className="scient-markdown-rich-fence-retained" role="status">
-          <strong>Preview kept at the last valid version.</strong>
+          <strong>
+            <T>Preview kept at the last valid version.</T>
+          </strong>
           <span>{retainedError}</span>
         </div>
       ) : null}

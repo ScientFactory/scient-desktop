@@ -3,6 +3,9 @@ import {
   type ScientSourcesBulkChange,
 } from "@scientfactory/scient-sources";
 import type { ScientSourcesBulkResult } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 /**
  * Sources per bulk edit request once a selection is larger than one request takes. A part of
@@ -190,22 +193,49 @@ export interface PartsAnnouncement {
 }
 
 const count = (value: number) => value.toLocaleString();
-const sources = (value: number) => `${count(value)} ${value === 1 ? "source" : "sources"}`;
-const others = (value: number, verb: string) =>
-  value === 1
-    ? `1 other source was not ${verb}.`
-    : `${count(value)} other sources were not ${verb}.`;
-const noAnswer = (value: number, noun: string, verb: string) =>
-  `No answer came back for ${count(value)} ${value === 1 ? noun : `${noun}s`}, so whether ${
-    value === 1 ? "it was" : "they were"
-  } ${verb} is unknown.`;
+type PartsVerb = "changed" | "added";
+const others = (value: number, verb: PartsVerb) =>
+  verb === "changed"
+    ? m(
+        msg(
+          "{count, plural, one {{shown} other source was not changed.} other {{shown} other sources were not changed.}}",
+          { count: value, shown: count(value) },
+        ),
+      )
+    : m(
+        msg(
+          "{count, plural, one {{shown} other source was not added.} other {{shown} other sources were not added.}}",
+          { count: value, shown: count(value) },
+        ),
+      );
+const noAnswer = (value: number, verb: PartsVerb) =>
+  verb === "changed"
+    ? m(
+        msg(
+          "{count, plural, one {No answer came back for {shown} source, so whether it was changed is unknown.} other {No answer came back for {shown} sources, so whether they were changed is unknown.}}",
+          { count: value, shown: count(value) },
+        ),
+      )
+    : m(
+        msg(
+          "{count, plural, one {No answer came back for {shown} source, so whether it was added is unknown.} other {No answer came back for {shown} sources, so whether they were added is unknown.}}",
+          { count: value, shown: count(value) },
+        ),
+      );
+const noAnswerUndone = (value: number) =>
+  m(
+    msg(
+      "{count, plural, one {No answer came back for {shown} change, so whether it was undone is unknown.} other {No answer came back for {shown} changes, so whether they were undone is unknown.}}",
+      { count: value, shown: count(value) },
+    ),
+  );
 const sentences = (...parts: ReadonlyArray<string | null>) =>
   parts.filter((part): part is string => Boolean(part)).join(" ");
 
 /** What happened past the parts that were answered; null when every part was. */
 function partsDetail(
   outcome: PartsOutcome<unknown>,
-  verb: string,
+  verb: PartsVerb,
   message: (error: unknown) => string,
 ): string | null {
   const { end } = outcome;
@@ -214,14 +244,11 @@ function partsDetail(
     case "done":
       return null;
     case "stopped":
-      return sentences("Stopped.", others(notSent, verb));
+      return sentences(m(msg("Stopped.")), others(notSent, verb));
     case "failed":
       return sentences(outcome.answered > 0 ? others(notSent, verb) : null, message(end.error));
     case "lost":
-      return sentences(
-        noAnswer(end.unknown, "source", verb),
-        notSent > 0 ? others(notSent, verb) : null,
-      );
+      return sentences(noAnswer(end.unknown, verb), notSent > 0 ? others(notSent, verb) : null);
   }
 }
 
@@ -242,7 +269,12 @@ export function bulkPartsAnnouncement(input: {
   if (input.changed > 0) {
     return {
       type: clean ? "success" : "warning",
-      title: `Changed ${sources(input.changed)}`,
+      title: m(
+        msg("{count, plural, one {Changed {shown} source} other {Changed {shown} sources}}", {
+          count: input.changed,
+          shown: count(input.changed),
+        }),
+      ),
       ...description,
     };
   }
@@ -264,7 +296,7 @@ export function collectionPartsAnnouncement(input: {
   if (!detail) return null;
   return {
     type: input.outcome.end.kind === "stopped" ? "info" : "warning",
-    title: `Not every source was added to “${input.name}”`,
+    title: m(msg("Not every source was added to “{name}”", { name: input.name })),
     description: detail,
   };
 }
@@ -277,37 +309,51 @@ export function undoPartsAnnouncement(
   const { result, end, unavailable } = outcome;
   const failed = result ? failedEntries(result) : 0;
   const couldNot = (value: number) =>
-    value === 1 ? "1 change could not be undone." : `${count(value)} changes could not be undone.`;
+    m(
+      msg(
+        "{count, plural, =1 {1 change could not be undone.} other {{shown} changes could not be undone.}}",
+        { count: value, shown: count(value) },
+      ),
+    );
   const why = outcome.unavailableMessage ?? null;
   // What Undo left on purpose is said with a failure too, not only when all else went well.
   const keptCount = result?.conflicts?.length ?? 0;
   const kept =
     keptCount === 0
       ? null
-      : keptCount === 1
-        ? "1 later change was kept."
-        : `${count(keptCount)} later changes were kept.`;
+      : m(
+          msg(
+            "{count, plural, =1 {1 later change was kept.} other {{shown} later changes were kept.}}",
+            { count: keptCount, shown: count(keptCount) },
+          ),
+        );
   if (end.kind === "lost") {
     return {
       type: "warning",
-      title: "Undo did not finish",
+      title: m(msg("Undo did not finish")),
       description: sentences(
         failed + unavailable > 0 ? couldNot(failed + unavailable) : null,
         why,
         kept,
-        noAnswer(outcome.unanswered, "change", "undone"),
+        noAnswerUndone(outcome.unanswered),
       ),
     };
   }
   if (end.kind === "failed" && result === null && unavailable === 0) {
-    return { type: "error", title: "Changes were not undone", description: message(end.error) };
+    return {
+      type: "error",
+      title: m(msg("Changes were not undone")),
+      description: message(end.error),
+    };
   }
   const notUndone = failed + outcome.unanswered + unavailable;
   if (notUndone > 0) {
     const nothingUndone = result === null && outcome.unanswered === 0;
     return {
       type: "warning",
-      title: nothingUndone ? "Changes were not undone" : "Some changes were not undone",
+      title: nothingUndone
+        ? m(msg("Changes were not undone"))
+        : m(msg("Some changes were not undone")),
       description: sentences(
         nothingUndone ? null : couldNot(notUndone),
         why,
@@ -321,10 +367,17 @@ export function undoPartsAnnouncement(
   const undidNothing = result.sources.length === 0 && result.collections.length === 0;
   return {
     type: "warning",
-    title: undidNothing ? "Changes were not undone" : "Some later changes were kept",
+    title: undidNothing
+      ? m(msg("Changes were not undone"))
+      : m(msg("Some later changes were kept")),
     description:
       conflicts.length === 1
         ? conflicts[0]!.message
-        : `${conflicts[0]!.message} ${conflicts.length - 1} more were kept as well.`,
+        : m(
+            msg("{first} {more} more were kept as well.", {
+              first: conflicts[0]!.message,
+              more: conflicts.length - 1,
+            }),
+          ),
   };
 }

@@ -3,6 +3,7 @@ import type { Editor } from "@tiptap/core";
 import { LatexTextField, restoredLatexFieldDraft } from "./LatexTextField";
 import { LatexProsePreview } from "./LatexProsePreview";
 import { latexProseCaretOffset } from "./latexProseCaret";
+import { useGT } from "gt-react";
 
 /** Optional object titles activate in the footer and edit at their printed location. */
 export function LatexStatementTitle(props: {
@@ -17,6 +18,7 @@ export function LatexStatementTitle(props: {
   onChange: (title: string) => void;
   onExit: () => void;
 }) {
+  const gt = useGT();
   const root = useRef<HTMLSpanElement>(null);
   const clickedOffset = useRef<number | null>(null);
   const [measuredTitle, setMeasuredTitle] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export function LatexStatementTitle(props: {
       </span>
       {props.editing && (
         <LatexTextField
-          aria-label={props.label ?? "Scientific statement title"}
+          aria-label={props.label ?? gt("Scientific statement title")}
           rows={1}
           value={props.value}
           draftKey={props.draftKey}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CustomModelError,
@@ -62,7 +63,8 @@ import {
   connectionKeyMissing,
   customModelPresetId,
   defaultModelAgents,
-  modelConnectionStatus,
+  modelConnectionStatusKind,
+  modelConnectionStatusLabel,
   modelTestAgents,
   modelUnavailableHint,
   namedTestFailure,
@@ -109,7 +111,7 @@ export function CustomModelsContent(props: ContentProps) {
   if (!environment || environment.connection.phase !== "connected")
     return (
       <p className="text-sm text-muted-foreground">
-        Connect this execution environment to manage models.
+        <T>Connect this execution environment to manage models.</T>
       </p>
     );
   if (environment.entry.target._tag === "PrimaryConnectionTarget")
@@ -122,6 +124,7 @@ export function CustomModelsContent(props: ContentProps) {
 }
 
 function PrimaryCustomModelsContent(props: ContentProps) {
+  const gt = useGT();
   const session = useEnvironmentSessionState(props.environmentId);
   const access = resolvePrimaryOperateAccess({
     isPrimary: true,
@@ -134,11 +137,12 @@ function PrimaryCustomModelsContent(props: ContentProps) {
     <EditableCustomModelsContent {...props} />
   ) : (
     <p className="text-sm text-muted-foreground">
-      {access === "pending" ? "Checking access…" : "Model setup requires edit access."}
+      {access === "pending" ? gt("Checking access…") : gt("Model setup requires edit access.")}
     </p>
   );
 }
 function RemoteCustomModelsContent(props: ContentProps) {
+  const gt = useGT();
   const session = useEnvironmentSessionState(props.environmentId);
   const access = resolveRemoteOperateAccess({
     session: session.data,
@@ -149,12 +153,14 @@ function RemoteCustomModelsContent(props: ContentProps) {
     <EditableCustomModelsContent {...props} />
   ) : (
     <p className="text-sm text-muted-foreground">
-      {access === "pending" ? "Checking access…" : "Model setup requires edit access."}
+      {access === "pending" ? gt("Checking access…") : gt("Model setup requires edit access.")}
     </p>
   );
 }
 
 function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: ContentProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const [editor, setEditor] = useState<{
@@ -197,7 +203,12 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     }, 4000);
     return () => window.clearTimeout(timeout);
   }, [notice]);
-  if (!settings) return <p className="text-sm text-muted-foreground">Connecting…</p>;
+  if (!settings)
+    return (
+      <p className="text-sm text-muted-foreground">
+        <T>Connecting…</T>
+      </p>
+    );
   const catalog = settings.customModels;
   if (addRequest !== handledAddRequest) {
     setHandledAddRequest(addRequest);
@@ -262,7 +273,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         setNotice({
           key: connection.id + ":" + model.id,
           revision: catalog.revision,
-          text: error instanceof Error ? error.message : "Could not check this model.",
+          text: error instanceof Error ? error.message : gt("Could not check this model."),
           error: true,
         });
       }
@@ -299,7 +310,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         setNotice({
           key,
           revision: catalog.revision,
-          text: name + " · Test passed",
+          text: gt("{agent} · Test passed", { agent: name }),
           error: false,
           agent: target,
         });
@@ -307,7 +318,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         setNotice({
           key,
           revision: catalog.revision,
-          text: namedTestFailure(name, cause instanceof Error ? cause.message : "Test failed."),
+          text: namedTestFailure(name, cause instanceof Error ? cause.message : gt("Test failed.")),
           error: true,
           agent: target,
         });
@@ -326,7 +337,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         <div className="flex justify-end">
           <Button size="xs" variant="outline" onClick={openAdd}>
             <PlusIcon />
-            Add model
+            <T>Add model</T>
           </Button>
         </div>
       ) : null}
@@ -336,16 +347,20 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
             <EmptyMedia variant="icon">
               <BrainCircuitIcon />
             </EmptyMedia>
-            <EmptyTitle size="compact">No custom models yet</EmptyTitle>
+            <EmptyTitle size="compact">
+              <T>No custom models yet</T>
+            </EmptyTitle>
             <EmptyDescription size="compact">
-              Connect a model through an API key or a local endpoint, then choose which agents can
-              use it.
+              <T>
+                Connect a model through an API key or a local endpoint, then choose which agents can
+                use it.
+              </T>
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <Button size="sm" variant="outline" onClick={openAdd}>
               <PlusIcon />
-              Add model
+              <T>Add model</T>
             </Button>
           </EmptyContent>
         </Empty>
@@ -361,7 +376,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={"Add model to " + connection.name}
+                aria-label={gt("Add model to {connection}", { connection: connection.name })}
                 disabled={busy}
                 onClick={() => setEditor({ target: { connection }, settings: catalog })}
               >
@@ -370,7 +385,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={"Manage " + connection.name}
+                aria-label={gt("Manage {connection}", { connection: connection.name })}
                 disabled={busy}
                 onClick={() => setManaging({ connection, revision: catalog.revision })}
               >
@@ -380,7 +395,9 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
           </div>
           <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
             {connection.models.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-muted-foreground">No models yet.</p>
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                <T>No models yet.</T>
+              </p>
             ) : null}
             {connection.models.map((model) => {
               const testAgents = modelTestAgents({
@@ -391,8 +408,12 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
               });
               const agentNames =
                 model.instanceIds
-                  .map((id) => agents.find((a) => a.id === id)?.name ?? `${id} (removed)`)
-                  .join(", ") || "Not connected";
+                  .map(
+                    (id) =>
+                      agents.find((a) => a.id === id)?.name ??
+                      gt("{agent} (removed)", { agent: id }),
+                  )
+                  .join(", ") || gt("Not connected");
               const rowKey = connection.id + ":" + model.id;
               const attachments = model.instanceIds.map((id) => {
                 const provider = providers?.find((entry) => entry.instanceId === id);
@@ -404,8 +425,10 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                 );
                 const agent = agents.find((entry) => entry.id === id);
                 const name = agent?.name ?? id;
-                const label = modelConnectionStatus(provider, assessment);
-                return { id, name, label, assessment, driver: agent?.driver };
+                const kind = modelConnectionStatusKind(provider, assessment);
+                const label =
+                  kind === undefined ? undefined : modelConnectionStatusLabel(kind, messages);
+                return { id, name, kind, label, assessment, driver: agent?.driver };
               });
               const rowNotice =
                 notice && notice.key === rowKey && notice.revision === catalog.revision
@@ -428,11 +451,11 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                             (entry) =>
                               entry.name +
                               " · " +
-                              entry.label +
-                              (entry.label === "Needs setup" &&
+                              (entry.kind === "needs-setup" &&
+                              entry.label !== undefined &&
                               entry.assessment?.reason === "model_unavailable"
-                                ? modelUnavailableHint(entry.driver)
-                                : ""),
+                                ? modelUnavailableHint(entry.driver, entry.label, messages)
+                                : entry.label),
                           )
                           .join("; ")}
                       </p>
@@ -446,23 +469,31 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                               aria-hidden="true"
                               className="size-3 group-data-panel-open:rotate-90"
                             />
-                            Model limits
+                            <T>Model limits</T>
                           </CollapsibleTrigger>
                           <CollapsiblePanel>
                             {attachments.map(({ id, name, assessment }) =>
                               assessment?.state === "available" ? (
                                 assessment.contextWindow ? (
                                   <p key={id}>
-                                    {name}: {assessment.contextWindow.toLocaleString()} context
                                     {assessment.maxOutputTokens
-                                      ? ", " +
-                                        assessment.maxOutputTokens.toLocaleString() +
-                                        " output"
-                                      : ""}
+                                      ? gt("{agent}: {context} context, {output} output", {
+                                          agent: name,
+                                          context: assessment.contextWindow.toLocaleString(),
+                                          output: assessment.maxOutputTokens.toLocaleString(),
+                                        })
+                                      : gt("{agent}: {context} context", {
+                                          agent: name,
+                                          context: assessment.contextWindow.toLocaleString(),
+                                        })}
                                     {assessment.source ? " · " + assessment.source : ""}
                                   </p>
                                 ) : (
-                                  <p key={id}>{name}: agent defaults · limits not reported</p>
+                                  <p key={id}>
+                                    <T>
+                                      <Var>{name}</Var>: agent defaults · limits not reported
+                                    </T>
+                                  </p>
                                 )
                               ) : null,
                             )}
@@ -474,7 +505,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                   <CustomModelRowActions
                     busy={busy}
                     testing={testing === rowKey}
-                    statuses={attachments.map((entry) => entry.label)}
+                    statuses={attachments.map((entry) => entry.kind)}
                     keyMissing={keyMissing(connection)}
                     testAgents={testAgents}
                     notice={rowNotice}
@@ -485,7 +516,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label={"Edit " + model.name}
+                    aria-label={gt("Edit {model}", { model: model.name })}
                     disabled={busy}
                     onClick={() => setEditor({ target: { connection, model }, settings: catalog })}
                   >
@@ -494,7 +525,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label={"Remove model " + model.name}
+                    aria-label={gt("Remove model {model}", { model: model.name })}
                     disabled={busy}
                     onClick={() => {
                       setRemoveError(null);
@@ -541,11 +572,17 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>Remove {removing?.model?.name ?? removing?.connection.name}?</DialogTitle>
+            <DialogTitle>
+              {gt("Remove {name}?", {
+                name: removing?.model?.name ?? removing?.connection.name ?? "",
+              })}
+            </DialogTitle>
             <DialogDescription>
               {removing?.model
-                ? "Removes this model from connected agents. The connection and key are kept."
-                : "Removes this connection, its saved key and its models from connected agents."}
+                ? gt("Removes this model from connected agents. The connection and key are kept.")
+                : gt(
+                    "Removes this connection, its saved key and its models from connected agents.",
+                  )}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -556,7 +593,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
             ) : null}
             <div className="flex justify-end gap-2">
               <Button variant="ghost" disabled={busy} onClick={() => setRemoving(null)}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button
                 variant="destructive"
@@ -593,13 +630,13 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                     })
                     .catch((cause) =>
                       setRemoveError(
-                        cause instanceof Error ? cause.message : "Could not remove connection.",
+                        cause instanceof Error ? cause.message : gt("Could not remove connection."),
                       ),
                     )
                     .finally(() => setBusy(false));
                 }}
               >
-                Remove
+                <T context="button, removes the model or connection">Remove</T>
               </Button>
             </div>
           </DialogPanel>
@@ -610,6 +647,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
 }
 
 export function CustomModelsPanel() {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const primary = usePrimaryEnvironmentId();
   const [selected, setSelected] = useState<string | null>(null);
@@ -619,7 +657,7 @@ export function CustomModelsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Custom models"
+        title={gt("Custom models")}
         id="custom-models"
         variant="plain"
         icon={<BrainCircuitIcon className="size-4 text-muted-foreground" />}
@@ -631,14 +669,14 @@ export function CustomModelsPanel() {
             onClick={() => setAddRequest((n) => n + 1)}
           >
             <PlusIcon />
-            Add model
+            <T>Add model</T>
           </Button>
         }
       >
         {environments.length > 1 ? (
           <div className="mb-5 max-w-xs">
             <Choice
-              label="Execution environment"
+              label={gt("Execution environment")}
               value={environment?.environmentId ?? ""}
               onChange={setSelected}
             >
@@ -658,7 +696,7 @@ export function CustomModelsPanel() {
           />
         ) : (
           <p className="text-sm text-muted-foreground">
-            Connect an execution environment to add models.
+            <T>Connect an execution environment to add models.</T>
           </p>
         )}
       </SettingsSection>

@@ -10,6 +10,8 @@ import type {
 import { clampScientSplitFraction } from "~/scient/layout/scientSplitFraction";
 
 import { isActiveLatexInstall } from "./latexToolchainSetupModel";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /**
  * Scient-owned browser storage keeps the `scient.` prefix and a camelCase
@@ -23,10 +25,11 @@ export const LATEX_SPLIT_RATIO_STORAGE_KEY = "scient.latexSplitRatio";
 export const LATEX_PREVIEW_MODES = ["source", "split", "visual", "pdf"] as const;
 export type ScientLatexPreviewMode = (typeof LATEX_PREVIEW_MODES)[number];
 
+/** `msg()` strings: resolve them with `useMessages()` where they are shown. */
 export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, string>> = {
-  source: "Source",
-  split: "Split",
-  visual: "Visual",
+  source: msg("Source", { $context: "LaTeX view mode" }),
+  split: msg("Split", { $context: "LaTeX view mode" }),
+  visual: msg("Visual", { $context: "LaTeX view mode" }),
   pdf: "PDF",
 };
 
@@ -48,9 +51,12 @@ const LATEX_SPLIT_BOUNDS = {
   fallback: DEFAULT_LATEX_SPLIT_FRACTION,
 } as const;
 
-export const LATEX_TOOLCHAIN_MISSING_TITLE = "No LaTeX toolchain found";
-export const LATEX_TOOLCHAIN_MISSING_HINT = "Install TeX Live, MiKTeX, or Tectonic to build PDFs.";
-const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
+/** `msg()` strings: resolve them with `useMessages()` where they are shown. */
+export const LATEX_TOOLCHAIN_MISSING_TITLE = msg("No LaTeX toolchain found");
+export const LATEX_TOOLCHAIN_MISSING_HINT = msg(
+  "Install TeX Live, MiKTeX, or Tectonic to build PDFs.",
+);
+const LATEX_INSTALLING_LABEL = msg("Installing TinyTeX…");
 
 /** Past this many names the count says more than the list the strip can show. */
 const MAX_NAMED_INSTALLING_PACKAGES = 2;
@@ -65,26 +71,48 @@ const MAX_NAMED_FIRST_BUILD_PACKAGES = 6;
  * Name missing packages so the compiler-independent pause does not look stalled. Lead long lists
  * with the count because ellipsis removes the tail of the single-line strip.
  */
-function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
+function latexInstallingPackagesLabel(
+  packages: ReadonlyArray<string>,
+  resolve: MessageResolver,
+): string {
   if (packages.length <= MAX_NAMED_INSTALLING_PACKAGES) {
-    return `Installing LaTeX packages: ${packages.join(", ")}…`;
+    return resolve(
+      msg("Installing LaTeX packages: {packages}…", { packages: packages.join(", ") }),
+    );
   }
   const named = packages.slice(0, MAX_NAMED_INSTALLING_PACKAGES).join(", ");
-  return `Installing ${String(packages.length)} LaTeX packages: ${named}…`;
+  return resolve(
+    msg(
+      "{count, plural, one {Installing {count} LaTeX package: {named}…} other {Installing {count} LaTeX packages: {named}…}}",
+      { count: packages.length, named },
+    ),
+  );
 }
 
 /**
  * The first managed-distribution build may spend minutes fetching preamble packages; say so to
  * distinguish that wait from a hung app. Later builds use ordinary progress copy.
  */
-function latexFirstBuildInstallingLabel(packages: ReadonlyArray<string>): string {
-  const named =
-    packages.length <= MAX_NAMED_FIRST_BUILD_PACKAGES
-      ? packages.join(", ")
-      : `${packages.slice(0, MAX_NAMED_FIRST_BUILD_PACKAGES).join(", ")} and ${String(
-          packages.length - MAX_NAMED_FIRST_BUILD_PACKAGES,
-        )} more`;
-  return `First build: installing LaTeX packages (this can take a few minutes): ${named}`;
+function latexFirstBuildInstallingLabel(
+  packages: ReadonlyArray<string>,
+  resolve: MessageResolver,
+): string {
+  if (packages.length <= MAX_NAMED_FIRST_BUILD_PACKAGES) {
+    return resolve(
+      msg("First build: installing LaTeX packages (this can take a few minutes): {packages}", {
+        packages: packages.join(", "),
+      }),
+    );
+  }
+  return resolve(
+    msg(
+      "{count, plural, one {First build: installing LaTeX packages (this can take a few minutes): {packages} and {count} more} other {First build: installing LaTeX packages (this can take a few minutes): {packages} and {count} more}}",
+      {
+        packages: packages.slice(0, MAX_NAMED_FIRST_BUILD_PACKAGES).join(", "),
+        count: packages.length - MAX_NAMED_FIRST_BUILD_PACKAGES,
+      },
+    ),
+  );
 }
 
 export function normalizeLatexPreviewMode(
@@ -371,28 +399,29 @@ export function latexSnapshotsEqual(
   );
 }
 
-function buildLabel(state: ScientLatexBuildState): string {
+function buildLabel(state: ScientLatexBuildState, resolve: MessageResolver): string {
   switch (state) {
     case "queued":
-      return "Queued…";
+      return resolve(msg("Queued…"));
     case "running":
-      return "Building…";
+      return resolve(msg("Building…"));
     case "publishing":
-      return "Publishing…";
+      return resolve(msg("Publishing…"));
     case "succeeded":
-      return "Built";
+      return resolve(msg("Built", { $context: "LaTeX build status" }));
     case "failed":
-      return "Build failed";
+      return resolve(msg("Build failed"));
     case "cancelled":
-      return "Build cancelled";
+      return resolve(msg("Build cancelled"));
     case "idle":
-      return "Not built yet";
+      return resolve(msg("Not built yet"));
   }
 }
 
 export function latexStatusStripModel(
   status: LatexBuildStatus,
   workspaceRoot: string | null = null,
+  resolve: MessageResolver = m,
 ): LatexStatusStripModel {
   const snapshot = status.snapshot;
   const state = snapshot?.state ?? "idle";
@@ -414,23 +443,23 @@ export function latexStatusStripModel(
     state,
     busy,
     label: installing
-      ? LATEX_INSTALLING_LABEL
+      ? resolve(LATEX_INSTALLING_LABEL)
       : installingPackages.length > 0
         ? // No descriptor means this document has never produced a PDF here, so
           // this fetch is the one standing between the reader and their first
           // one — and the only one worth setting expectations for.
           descriptor === null
-          ? latexFirstBuildInstallingLabel(installingPackages)
-          : latexInstallingPackagesLabel(installingPackages)
+          ? latexFirstBuildInstallingLabel(installingPackages, resolve)
+          : latexInstallingPackagesLabel(installingPackages, resolve)
         : toolchainMissing
-          ? LATEX_TOOLCHAIN_MISSING_TITLE
+          ? resolve(LATEX_TOOLCHAIN_MISSING_TITLE)
           : busy
-            ? buildLabel(status.requesting && !active ? "running" : state)
+            ? buildLabel(status.requesting && !active ? "running" : state, resolve)
             : offline
-              ? "Build status unavailable"
+              ? resolve(msg("Build status unavailable"))
               : generated?.bindingStatus === "stale" && state === "idle"
-                ? "Rebuild required"
-                : buildLabel(state),
+                ? resolve(msg("Rebuild required"))
+                : buildLabel(state, resolve),
     errorCount: counts.errors,
     warningCount: counts.warnings,
     stale: generated?.bindingStatus === "stale",

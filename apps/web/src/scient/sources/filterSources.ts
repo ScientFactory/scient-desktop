@@ -8,15 +8,7 @@ import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
-export const SCIENT_SOURCE_SORT_OPTIONS = [
-  { value: "last-added", label: "Last added" },
-  { value: "publication-year", label: "Publication year" },
-  { value: "journal", label: "Journal" },
-  { value: "title", label: "Title" },
-  { value: "author", label: "Author" },
-] as const;
-
-export type ScientSourceSort = (typeof SCIENT_SOURCE_SORT_OPTIONS)[number]["value"];
+export type ScientSourceSort = "last-added" | "publication-year" | "journal" | "title" | "author";
 
 export interface ScientSourceSearchEntry {
   readonly source: SourceSummary;

@@ -9,6 +9,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, useMessages } from "gt-react";
 import { LoaderCircle, MessageSquarePlus, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -67,6 +68,7 @@ function ConsoleCode(props: {
   readonly open: boolean;
   readonly onToggle: () => void;
 }) {
+  const gt = useGT();
   const { code, open } = props;
   const lines = code.split("\n");
   const long = lines.length > CONSOLE_CODE_LINES;
@@ -81,7 +83,7 @@ function ConsoleCode(props: {
           className="cursor-pointer text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
           onClick={props.onToggle}
         >
-          {open ? "Show less" : `Show all ${lines.length} lines`}
+          {open ? gt("Show less") : gt("Show all {count} lines", { count: lines.length })}
         </button>
       ) : null}
     </div>
@@ -90,6 +92,8 @@ function ConsoleCode(props: {
 
 /** One run in a Results feed: what ran, how it went, and everything it printed or displayed. */
 export function ComputeRunEntry(props: ComputeRunEntryProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const { execution, session } = props;
   const persisted = useEnvironmentQuery(
@@ -160,14 +164,14 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
       },
     });
     if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
-      reportComputeFailure("Unable to cancel this run", result);
+      reportComputeFailure(gt("Unable to cancel this run"), result);
     }
   };
 
   const source = execution.request.source;
   const status = execution.result?.status ?? null;
   const failed = status === "failed" || status === "lost";
-  const label = computeSourceLabel(source, { includePath: props.includeSourcePath });
+  const label = computeSourceLabel(source, { includePath: props.includeSourcePath }, messages);
   const quotePlace = {
     sessionId: session.sessionId,
     executionId: execution.request.executionId,
@@ -186,7 +190,7 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
       ref={article}
       {...computeRunAttributes(quotePlace)}
       className="group/run min-w-0 px-3 py-2"
-      aria-label={`${label} run`}
+      aria-label={gt("{label} run", { label })}
     >
       <header className="flex min-h-5 items-start gap-1.5 text-[11px] text-muted-foreground">
         {source._tag === "console" ? (
@@ -210,18 +214,24 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
             )}
           </ScientTooltip>
         )}
-        {props.fresh ? <span className="shrink-0 text-muted-foreground/70">Fresh</span> : null}
+        {props.fresh ? (
+          <span className="shrink-0 text-muted-foreground/70">
+            {gt("Fresh", { $context: "a run in a fresh session" })}
+          </span>
+        ) : null}
         {execution.request.actor?._tag === "agent" ? (
-          <span className="shrink-0 text-muted-foreground/70">Agent</span>
+          <span className="shrink-0 text-muted-foreground/70">
+            {gt("Agent", { $context: "the run was started by an agent" })}
+          </span>
         ) : null}
         {source._tag === "console" ? null : <span className="flex-1" />}
         {terminal && ask !== null ? (
           <span className="opacity-0 transition-opacity group-hover/run:opacity-100 focus-within:opacity-100">
-            <ScientTooltip content="Ask in chat">
+            <ScientTooltip content={gt("Ask in chat")}>
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Ask in chat"
+                aria-label={gt("Ask in chat")}
                 onClick={() => {
                   if (article.current === null) return;
                   ask({
@@ -239,14 +249,16 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
         {!terminal ? (
           <>
             {status === "queued" ? (
-              <span className="shrink-0">{computeExecutionStatusLabel(execution.result)}</span>
+              <span className="shrink-0">
+                {computeExecutionStatusLabel(execution.result, messages)}
+              </span>
             ) : (
-              <LoaderCircle className="size-3 shrink-0 animate-spin" aria-label="Running" />
+              <LoaderCircle className="size-3 shrink-0 animate-spin" aria-label={gt("Running")} />
             )}
             <Button
               size="icon-xs"
               variant="ghost-muted"
-              aria-label="Cancel run"
+              aria-label={gt("Cancel run")}
               onClick={() => void cancel()}
             >
               <Square className="size-3" />
@@ -254,7 +266,7 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
           </>
         ) : status !== "succeeded" && !explained ? (
           <span className={cn("shrink-0", failed && "text-destructive")}>
-            {computeExecutionStatusLabel(execution.result)}
+            {computeExecutionStatusLabel(execution.result, messages)}
           </span>
         ) : null}
       </header>
@@ -262,7 +274,9 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
         <p className="mt-1 text-xs text-destructive">{execution.result.failureReason}</p>
       ) : null}
       {outputs.length === 0 && persisted.error ? (
-        <p className="text-xs text-destructive">Couldn&apos;t load this run&apos;s output</p>
+        <p className="text-xs text-destructive">
+          <T>Couldn&apos;t load this run&apos;s output</T>
+        </p>
       ) : (
         <div className="mt-1 empty:hidden">
           <ComputeOutputView

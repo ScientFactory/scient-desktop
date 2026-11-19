@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { BrowserProfileId, type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import { openUrlInPreview } from "~/browser/openFileInPreview";
@@ -6,6 +7,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useScratchThread } from "./useScratchThread";
+import { m } from "~/i18n/messages";
 
 /** Opens a site in a Scient browser tab, beside a conversation or in a new one. */
 export function useAccountBrowser(environmentId: EnvironmentId) {
@@ -28,7 +30,7 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
       ...(profileId === undefined ? {} : { profileId: BrowserProfileId.make(profileId) }),
     });
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not open the site" });
+      toastManager.add({ type: "error", title: m(msg("Could not open the site")) });
       return false;
     }
     return true;

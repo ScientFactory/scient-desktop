@@ -1,6 +1,5 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import {
-  ROOM_ROLE_LABEL,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
   type RoomGuestView,
@@ -11,6 +10,7 @@ import {
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { createQuestionHistoryProjector } from "@t3tools/client-runtime/state/thread-requests";
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import { createContext, use, useRef, useState } from "react";
 
@@ -45,6 +45,7 @@ import {
   createRoomAttachmentUrls,
   formatRoomExpiry,
   roomAttachmentUrl,
+  roomRoleLabel,
   roomUrl,
 } from "./roomGuest.logic";
 import { postRoom } from "./roomGuestApi";
@@ -85,6 +86,8 @@ export function RoomThread({
   readonly projection: OrchestrationV2ThreadProjection;
   readonly historyControls: MessagesTimelineHistoryControls | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const participantId = view.me.participantId;
   const viewer = { kind: "guest", participantId } as const;
   const [error, setError] = useState<string | null>(null);
@@ -187,11 +190,11 @@ export function RoomThread({
             <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{view.title}</h1>
             <RoomFaces
               view={view}
-              expiry={formatRoomExpiry(view.expiresAt, Date.parse(`${nowMinute}Z`))}
+              expiry={formatRoomExpiry(view.expiresAt, Date.parse(`${nowMinute}Z`), messages)}
             />
             {role === "agent" && isWorking ? (
               <Button size="xs" variant="outline" disabled={stopping} onClick={() => void stop()}>
-                Stop agent
+                <T>Stop agent</T>
               </Button>
             ) : null}
           </header>
@@ -201,7 +204,10 @@ export function RoomThread({
             </p>
           ) : null}
           <div className="relative flex min-h-0 flex-1">
-            <section aria-label="Thread" className="flex min-w-0 flex-1 flex-col">
+            <section
+              aria-label={gt("Thread", { $context: "the conversation" })}
+              className="flex min-w-0 flex-1 flex-col"
+            >
               <div className="relative min-h-0 flex-1">
                 <HostImageUrlContext value={hostImageUrl}>
                   <MessagesTimeline
@@ -248,7 +254,7 @@ export function RoomThread({
                         variant="glass"
                       >
                         <ChevronDownIcon className="size-3.5" />
-                        Scroll to end
+                        <T>Scroll to end</T>
                       </Button>
                     </div>
                   </div>
@@ -257,7 +263,7 @@ export function RoomThread({
               {role !== "watch" ? (
                 <div className="chat-content-lane shrink-0 px-4 pb-4">
                   <RoomComposeBox
-                    placeholder={direct ? "Message the agent" : "Message everyone"}
+                    placeholder={direct ? gt("Message the agent") : gt("Message everyone")}
                     onSubmit={post}
                     agentSwitch={
                       role === "agent" ? (
@@ -288,10 +294,14 @@ const initialsOf = (name: string) =>
 
 /** Who is here: one face per person, with their permission on hover. */
 function RoomFaces({ view, expiry }: { readonly view: RoomGuestView; readonly expiry: string }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
-    <ul aria-label="People" className="flex shrink-0 -space-x-1">
+    <ul aria-label={gt("People")} className="flex shrink-0 -space-x-1">
       {view.participants.map((person) => {
         const me = person.participantId === view.me.participantId;
+        const name = me ? gt("{name} (you)", { name: person.name }) : person.name;
+        const role = roomRoleLabel(person.role, messages);
         return (
           <li key={person.participantId}>
             <Tooltip>
@@ -308,12 +318,13 @@ function RoomFaces({ view, expiry }: { readonly view: RoomGuestView; readonly ex
               >
                 {initialsOf(person.name)}
                 <span className="sr-only">
-                  {me ? `${person.name} (you)` : person.name}, {ROOM_ROLE_LABEL[person.role]}
-                  {person.online ? ", here now" : ""}
+                  {person.online
+                    ? gt("{name}, {role}, here now", { name, role })
+                    : gt("{name}, {role}", { name, role })}
                 </span>
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                {me ? `${person.name} (you)` : person.name} · {ROOM_ROLE_LABEL[person.role]}
+                {name} · {role}
                 {me ? ` · ${expiry}` : ""}
               </TooltipPopup>
             </Tooltip>

@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronLeftIcon, ExternalLinkIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
@@ -27,6 +28,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { computeRuntimeText } from "./computeContractCopy";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
 import {
   AddLocationForm,
@@ -58,11 +60,12 @@ export function useComputeSettingsEnvironment(requested: EnvironmentId | undefin
 }
 
 export function ComputeSettingsUnavailable() {
+  const gt = useGT();
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Scientific Computing">
+      <SettingsSection title={gt("Scientific Computing")}>
         <p className="text-sm text-muted-foreground">
-          This server is unavailable. Reconnect it to manage scientific runtimes.
+          <T>This server is unavailable. Reconnect it to manage scientific runtimes.</T>
         </p>
       </SettingsSection>
     </SettingsPageContainer>
@@ -151,10 +154,16 @@ function LanguageHeader({
             {name}
           </h1>
           {comingSoon ? (
-            <span className="shrink-0 text-sm text-muted-foreground">Coming soon</span>
+            <span className="shrink-0 text-sm text-muted-foreground">
+              <T>Coming soon</T>
+            </span>
           ) : null}
         </div>
-        {checking ? <p className="text-sm text-muted-foreground">Checking…</p> : null}
+        {checking ? (
+          <p className="text-sm text-muted-foreground">
+            <T>Checking…</T>
+          </p>
+        ) : null}
       </div>
     </header>
   );
@@ -181,6 +190,8 @@ function FoundPrograms({
   onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
   onRefresh: () => Promise<void>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const setup = language.descriptor.setup;
@@ -189,7 +200,15 @@ function FoundPrograms({
   const [open, setOpen] = useState(false);
   const chosen = preference.executable.trim();
   const label = (tool: (typeof tools)[number]) =>
-    [tool.name, tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ");
+    [
+      tool.name,
+      tool.version,
+      tool.origin === null
+        ? gt("System", { $context: "where a runtime comes from" })
+        : computeRuntimeText(tool.origin, messages),
+    ]
+      .filter(Boolean)
+      .join(" · ");
   const chosenTool = tools.find((tool) => tool.executable === chosen);
   const route = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === languageId);
   const runnable = route === undefined ? [] : computeRunnableTools(route, tools);
@@ -197,7 +216,7 @@ function FoundPrograms({
     chosenTool === undefined || runnable.includes(chosenTool)
       ? runnable
       : [...runnable, chosenTool];
-  const automatic = `Automatic · ${runnable[0]?.name ?? name}`;
+  const automatic = gt("Automatic · {name}", { name: runnable[0]?.name ?? name });
   // A saved choice keeps the picker, which is the way back to Automatic.
   const onlyChoice = choices.length === 1 && !chosen ? choices[0] : undefined;
   return (
@@ -205,7 +224,7 @@ function FoundPrograms({
       {choices.length === 0 ? null : (
         <SettingsRow
           id={`${languageId}-runs-with`}
-          title="Runs with"
+          title={gt("Runs with")}
           control={
             onlyChoice ? (
               <span className="text-xs text-muted-foreground">{label(onlyChoice)}</span>
@@ -221,7 +240,11 @@ function FoundPrograms({
                   });
                 }}
               >
-                <SelectTrigger size="sm" className="w-auto max-w-64" aria-label={`${name} program`}>
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto max-w-64"
+                  aria-label={gt("{name} program", { name })}
+                >
                   <SelectValue>
                     {chosenTool === undefined ? automatic : label(chosenTool)}
                   </SelectValue>
@@ -251,7 +274,7 @@ function FoundPrograms({
       )}
       <FoundRow
         languageId={languageId}
-        label={unknown ? "Couldn't check" : foundCountLabel(tools.length)}
+        label={unknown ? gt("Couldn't check") : foundCountLabel(tools.length, messages)}
         onOpen={() => setOpen(true)}
         refresh={<RefreshRuntimesButton busy={busy} onRefresh={onRefresh} />}
       />
@@ -274,7 +297,7 @@ function FoundPrograms({
                       disabled={busy}
                       onClick={() => void onChange({ ...preference, executable: "" })}
                     >
-                      Remove
+                      <T>Remove</T>
                     </Button>
                   ) : undefined
                 }
@@ -284,7 +307,7 @@ function FoundPrograms({
         >
           <AddLocationForm
             name={name}
-            action="Add"
+            action={gt("Add", { $context: "verb, adds a program location" })}
             path={path}
             onPathChange={setPath}
             disabled={busy}
@@ -295,7 +318,7 @@ function FoundPrograms({
       {setup === undefined && url === undefined ? null : (
         <SettingsRow
           id={`${languageId}-installation-missing`}
-          title="Needs"
+          title={gt("Needs", { $context: "what a language needs installed" })}
           description={setup?.needs ?? name}
           control={
             url ? (
@@ -304,7 +327,7 @@ function FoundPrograms({
                 variant="outline"
                 render={<a href={url} target="_blank" rel="noreferrer" />}
               >
-                Get <ExternalLinkIcon />
+                {gt("Get", { $context: "verb, download a language" })} <ExternalLinkIcon />
               </Button>
             ) : undefined
           }
@@ -360,6 +383,7 @@ function LanguageDetail({
   environmentId: EnvironmentId;
   languageId: string;
 }) {
+  const gt = useGT();
   const inventory = useComputeLanguages(environmentId);
   const [toolkitChange, setToolkitChange] = useState<ToolkitChange | null>(null);
   const language = inventory.languages.find(
@@ -376,7 +400,7 @@ function LanguageDetail({
         render={<Link to="/settings/scientific-computing" search={{ environmentId }} />}
       >
         <ChevronLeftIcon aria-hidden />
-        Scientific Computing
+        {gt("Scientific Computing")}
       </Button>
     </div>
   );

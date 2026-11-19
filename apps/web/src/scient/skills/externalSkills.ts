@@ -1,4 +1,5 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { msg } from "gt-react";
 import {
   isGlobalProviderSkill,
   isScientManagedSkill,
@@ -10,6 +11,8 @@ import {
   type ServerProvider,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface ExternalSkillItem {
   readonly skill: ServerProviderSkill;
@@ -48,30 +51,36 @@ export function compactExternalSkillDescription(
   return `${firstSentence.slice(0, end).trimEnd()}…`;
 }
 
-export const externalSkillSourceLabel = (source: ProviderSkillSourceKind): string => {
+export const externalSkillSourceLabel = (
+  source: ProviderSkillSourceKind,
+  resolve: MessageResolver = m,
+): string => {
   switch (source) {
     case "app":
-      return "Provider bundled";
+      return resolve(msg("Provider bundled"));
     case "personal":
-      return "Personal";
+      return resolve(msg("Personal", { $context: "skill source" }));
     case "system":
-      return "System";
+      return resolve(msg("System", { $context: "skill source" }));
     case "other":
-      return "Provider managed";
+      return resolve(msg("Provider managed"));
     case "repo":
     case "project":
-      return "Project";
+      return resolve(msg("Project", { $context: "skill source" }));
   }
 };
 
 export function externalSkillStatus(
   skill: Pick<ServerProviderSkill, "canSetEnabled" | "enabled" | "enabledReadOnlyReason">,
   source: ProviderSkillSourceKind,
+  resolve: MessageResolver = m,
 ): string {
   return [
-    externalSkillSourceLabel(source),
-    ...(skill.enabled ? [] : ["Deactivated"]),
-    ...(skill.canSetEnabled === true ? [] : [skill.enabledReadOnlyReason ?? "Read-only in Scient"]),
+    externalSkillSourceLabel(source, resolve),
+    ...(skill.enabled ? [] : [resolve(msg("Deactivated"))]),
+    ...(skill.canSetEnabled === true
+      ? []
+      : [skill.enabledReadOnlyReason ?? resolve(msg("Read-only in Scient"))]),
   ].join(" · ");
 }
 

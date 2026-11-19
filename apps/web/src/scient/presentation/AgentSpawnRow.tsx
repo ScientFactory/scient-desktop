@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { memo, type ComponentType, type ReactElement, type ReactNode } from "react";
 import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
 import {
@@ -95,15 +96,11 @@ export function renderSubagentRosterGroup(
           return childThreadId === null
             ? []
             : [
-                <button
+                <OpenSubagentThreadButton
                   key={member.id}
-                  type="button"
-                  aria-label="Open child thread"
-                  onClick={() => ctx.onOpenThread(childThreadId)}
-                  className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Open {member.title ?? "subagent"} thread ›
-                </button>,
+                  title={member.title ?? null}
+                  onOpen={() => ctx.onOpenThread(childThreadId)}
+                />,
               ];
         })}
     </WorkLogBlock>
@@ -111,6 +108,25 @@ export function renderSubagentRosterGroup(
 }
 
 /** One tool row per batch, with member results available on expansion. */
+function OpenSubagentThreadButton(props: {
+  readonly title: string | null;
+  readonly onOpen: () => void;
+}) {
+  const gt = useGT();
+  return (
+    <button
+      type="button"
+      aria-label={gt("Open child thread")}
+      onClick={props.onOpen}
+      className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
+    >
+      {props.title === null
+        ? gt("Open subagent thread ›")
+        : gt("Open {title} thread ›", { title: props.title })}
+    </button>
+  );
+}
+
 const AgentSpawnRow = memo(function AgentSpawnRow(
   props: {
     entryId: string;
@@ -122,6 +138,8 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
     onOpenThread?: ((threadId: SubagentItem["threadId"]) => void) | undefined;
   } & AgentSpawnRowRenderers,
 ) {
+  const gt = useGT();
+  const messages = useMessages();
   const { entryId, spawn, LiveActivityRow, WorkingTimer } = props;
   const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow, onOpenAgents } = props.context;
   const expanded = expandedSpawnEntryIds.has(entryId);
@@ -156,11 +174,14 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
     agents.length,
     Math.max(memberIds.size - (spawn.workflowId ? 1 : 0), 0),
   );
-  const summary = deriveAgentSpawnSummary({
-    agents,
-    agentCount,
-    coordinatorStatus: workflowGroup?.workflow.status,
-  });
+  const summary = deriveAgentSpawnSummary(
+    {
+      agents,
+      agentCount,
+      coordinatorStatus: workflowGroup?.workflow.status,
+    },
+    messages,
+  );
   const { live } = summary;
   const failed = summary.tone === "failed";
   const workflowName =
@@ -224,11 +245,13 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
                           childThreadId && props.onOpenThread ? (
                             <button
                               type="button"
-                              aria-label={`Open ${compactScientAgentLabel(agent.title)} thread`}
+                              aria-label={gt("Open {agent} thread", {
+                                agent: compactScientAgentLabel(agent.title),
+                              })}
                               onClick={() => props.onOpenThread?.(childThreadId)}
                               className="mb-1 ms-1 max-w-full self-start rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
                             >
-                              Open child thread ›
+                              <T>Open child thread ›</T>
                             </button>
                           ) : null,
                       }
@@ -246,7 +269,7 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
             onClick={onOpenAgents}
             className="mt-1 self-start rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground"
           >
-            Open Agents panel ›
+            <T>Open Agents panel ›</T>
           </button>
         </div>
       ) : null}

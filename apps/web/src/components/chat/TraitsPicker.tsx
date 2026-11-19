@@ -147,6 +147,8 @@ function getSelectedTraits(
   const nativeModelControl = getAntigravityReasoningControl(
     getAntigravityModelGroups(provider, models),
     model,
+    // SCIENT-FORK: Antigravity's reasoning control in the active language.
+    resolve,
   );
   const allDescriptors = nativeModelControl
     ? [nativeModelControl]

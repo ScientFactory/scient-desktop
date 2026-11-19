@@ -1,4 +1,5 @@
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { cloneElement, useState, type ReactElement } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
@@ -66,6 +67,7 @@ export function AddForAgents({
   /** Called with the chosen agents; undefined when every agent was chosen. */
   readonly onAdd: (agents: ReadonlyArray<ProviderInstanceId> | undefined) => void;
 }) {
+  const gt = useGT();
   const agents = useConnectorAgents();
   const [open, setOpen] = useState(false);
   const [chosen, setChosen] = useState<ReadonlySet<ProviderInstanceId>>(new Set());
@@ -93,11 +95,15 @@ export function AddForAgents({
         align="end"
         sideOffset={6}
         padding="comfortable"
-        aria-label={`Add ${name} for`}
+        aria-label={gt("Add {name} for", { name })}
         className="w-64"
       >
         <div className="grid gap-3">
-          <p className="text-sm font-medium text-foreground">Add {name} for</p>
+          <p className="text-sm font-medium text-foreground">
+            <T>
+              Add <Var>{name}</Var> for
+            </T>
+          </p>
           <ul className="grid gap-1">
             {agents.map((agent) => {
               const checked = chosen.has(agent.instanceId);
@@ -123,7 +129,9 @@ export function AddForAgents({
               onAdd(chosenAgents(agents, chosen));
             }}
           >
-            {chosen.size === 0 ? "Choose an agent" : "Add"}
+            {chosen.size === 0
+              ? gt("Choose an agent")
+              : gt("Add", { $context: "verb, adds an extension" })}
           </Button>
         </div>
       </PopoverPopup>

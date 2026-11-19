@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   validateCustomModelConnection,
   customModelImageInput,
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import { ChevronRightIcon } from "lucide-react";
+import type { MessageResolver } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -44,6 +46,7 @@ import {
   droidDefaultReasoningLevels,
   droidDefaultReasoningNote,
   droidReasoningNote,
+  reasoningLevelName,
 } from "./customModels";
 
 const DEFAULT_CUSTOM_MODEL_PRESET = CUSTOM_MODEL_PRESETS[0]!;
@@ -54,8 +57,8 @@ const CONTEXT_WINDOW_RANGE = { min: 1024, max: 10_000_000 } as const;
 const MAX_OUTPUT_TOKENS_RANGE = { min: 1, max: 1_000_000 } as const;
 const limitInRange = (value: number | undefined, range: { min: number; max: number }) =>
   value !== undefined && Number.isInteger(value) && value >= range.min && value <= range.max;
-const PENDING_DETECTION = "Detected from the provider after saving.";
-const NOT_DETECTED = "Not detected yet.";
+const PENDING_DETECTION = msg("Detected from the provider after saving.");
+const NOT_DETECTED = msg("Not detected yet.");
 
 /**
  * Labelled control. With `action` the label row also hosts a small text
@@ -127,16 +130,16 @@ function Row({
   );
 }
 
-function reuseOptionLabel(connection: CustomModelConnection, presetId: string): string {
+function reuseOptionLabel(
+  connection: CustomModelConnection,
+  presetId: string,
+  resolve: MessageResolver,
+): string {
   const head = connection.credentialId
-    ? `Use saved key •••${connection.apiKeySuffix ?? ""}`
-    : "Use existing connection";
+    ? resolve(msg("Use saved key •••{suffix}", { suffix: connection.apiKeySuffix ?? "" }))
+    : resolve(msg("Use existing connection"));
   const tail = presetId === "custom" ? ` · ${connection.baseUrl}` : "";
   return `${head} · ${connection.name}${tail}`;
-}
-
-function reasoningLevelLabel(level: string): string {
-  return level === "xhigh" ? "Extra-high" : level.charAt(0).toUpperCase() + level.slice(1);
 }
 
 function formatTokens(count: number): string {
@@ -145,32 +148,49 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
-function limitsSummary(detected: ModelReasoningMetadata | undefined, editing: boolean): string {
-  if (detected?.contextWindow === undefined) return editing ? NOT_DETECTED : PENDING_DETECTION;
-  return (
-    "Detected: " +
-    [
-      `${formatTokens(detected.contextWindow)} context`,
-      ...(detected.maxOutputTokens !== undefined
-        ? [`${formatTokens(detected.maxOutputTokens)} output`]
-        : []),
-    ].join(" · ")
-  );
+function limitsSummary(
+  detected: ModelReasoningMetadata | undefined,
+  editing: boolean,
+  resolve: MessageResolver,
+): string {
+  if (detected?.contextWindow === undefined)
+    return editing ? resolve(NOT_DETECTED) : resolve(PENDING_DETECTION);
+  return detected.maxOutputTokens !== undefined
+    ? resolve(
+        msg("Detected: {context} context · {output} output", {
+          context: formatTokens(detected.contextWindow),
+          output: formatTokens(detected.maxOutputTokens),
+        }),
+      )
+    : resolve(
+        msg("Detected: {context} context", { context: formatTokens(detected.contextWindow) }),
+      );
 }
 
-function reasoningSummary(detected: ModelReasoningMetadata | undefined, editing: boolean): string {
-  if (detected?.status !== "known") return editing ? NOT_DETECTED : PENDING_DETECTION;
-  if (!detected.supported) return "Detected: not supported";
+function reasoningSummary(
+  detected: ModelReasoningMetadata | undefined,
+  editing: boolean,
+  resolve: MessageResolver,
+): string {
+  if (detected?.status !== "known")
+    return editing ? resolve(NOT_DETECTED) : resolve(PENDING_DETECTION);
+  if (!detected.supported) return resolve(msg("Detected: not supported"));
   const levels = detected.levels.filter((level) => level !== "off");
-  return "Detected: " + (levels.length ? levels.map(reasoningLevelLabel).join(" · ") : "supported");
+  return levels.length
+    ? resolve(
+        msg("Detected: {levels}", {
+          levels: levels.map((level) => reasoningLevelName(level, resolve)).join(" · "),
+        }),
+      )
+    : resolve(msg("Detected: supported"));
 }
 
 /** A connection saved without a name is labelled by its host. */
-function hostLabel(baseUrl: string): string {
+function hostLabel(baseUrl: string, resolve: MessageResolver): string {
   try {
-    return new URL(baseUrl).host || "Custom endpoint";
+    return new URL(baseUrl).host || resolve(msg("Custom endpoint"));
   } catch {
-    return "Custom endpoint";
+    return resolve(msg("Custom endpoint"));
   }
 }
 /** Native select keeps the platform option menu while matching the shared select field. */
@@ -218,6 +238,9 @@ export function ModelConnectionEditor({
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const reasoningLevelLabel = (level: string) => reasoningLevelName(level, messages);
   // This dialog opens programmatically, so retain its invoking control for closure.
   const [opener] = useState(() => {
     if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
@@ -368,33 +391,43 @@ export function ModelConnectionEditor({
       ? droidDefaultReasoningLevels({ protocol, modelId, levels: preferenceLevels })
       : preferenceLevels;
   const droidDefaultNote = droidAttached
-    ? droidDefaultReasoningNote({
-        protocol,
-        modelId,
-        levels: preferenceLevels,
-        defaultLevel: defaultReasoningLevel,
-        metadataDefault: reasoningOverride
-          ? reasoningOverride.defaultLevel
-          : detected?.defaultLevel,
-      })
+    ? droidDefaultReasoningNote(
+        {
+          protocol,
+          modelId,
+          levels: preferenceLevels,
+          defaultLevel: defaultReasoningLevel,
+          metadataDefault: reasoningOverride
+            ? reasoningOverride.defaultLevel
+            : detected?.defaultLevel,
+        },
+        messages,
+      )
     : undefined;
   const droidNote = droidAttached
-    ? droidReasoningNote({
-        protocol,
-        // A manual override means adaptive thinking on Messages and effort elsewhere.
-        mode: reasoningOverride
-          ? protocol === "anthropic-messages"
-            ? "adaptive"
-            : "effort"
-          : detected?.mode,
-        modelId,
-        levels: preferenceLevels,
-      })
+    ? droidReasoningNote(
+        {
+          protocol,
+          // A manual override means adaptive thinking on Messages and effort elsewhere.
+          mode: reasoningOverride
+            ? protocol === "anthropic-messages"
+              ? "adaptive"
+              : "effort"
+            : detected?.mode,
+          modelId,
+          levels: preferenceLevels,
+        },
+        messages,
+      )
     : undefined;
   // One selector carries the default level; "manual" unfolds the capability override.
   const reasoningValue = defaultReasoningLevel ?? (reasoningOverride ? "manual" : "");
   const reasoningValueLabel = (value: string) =>
-    value === "" ? "Automatic" : value === "manual" ? "Set manually" : reasoningLevelLabel(value);
+    value === ""
+      ? gt("Automatic", { $context: "model setting chosen automatically" })
+      : value === "manual"
+        ? gt("Set manually")
+        : reasoningLevelLabel(value);
   const chooseReasoning = (value: string | null) => {
     if (value === null) return;
     if (value === "manual") {
@@ -429,7 +462,7 @@ export function ModelConnectionEditor({
     };
     const connection = {
       id: existing?.id ?? randomUUID(),
-      name: reusing ? existing!.name : connectionName.trim() || hostLabel(baseUrl.trim()),
+      name: reusing ? existing!.name : connectionName.trim() || hostLabel(baseUrl.trim(), messages),
       baseUrl: reusing ? existing!.baseUrl : baseUrl.trim(),
       protocol: reusing ? existing!.protocol : protocol,
       models: target.model
@@ -454,7 +487,7 @@ export function ModelConnectionEditor({
         setApiKey("");
         onClose();
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Could not save this model.");
+        setError(cause instanceof Error ? cause.message : gt("Could not save this model."));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -463,7 +496,7 @@ export function ModelConnectionEditor({
     if (actionFailure) throw actionFailure.cause;
   };
   const baseUrlField = (placeholder?: string) => (
-    <Field label="Base URL">
+    <Field label={gt("Base URL")}>
       <Input
         required
         type="url"
@@ -478,9 +511,9 @@ export function ModelConnectionEditor({
     </Field>
   );
   const apiFormatField = (
-    <Field label="API format">
+    <Field label={gt("API format")}>
       <Choice
-        label="API format"
+        label={gt("API format")}
         value={protocol}
         onChange={(id) => {
           setProtocol(CUSTOM_MODEL_PROTOCOLS.find((p) => p.id === id)!.id);
@@ -513,9 +546,9 @@ export function ModelConnectionEditor({
         }
       >
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit model" : "Add custom model"}</DialogTitle>
+          <DialogTitle>{editing ? gt("Edit model") : gt("Add custom model")}</DialogTitle>
           <DialogDescription className="sr-only">
-            Set up a model and choose which agents can use it.
+            <T>Set up a model and choose which agents can use it.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -528,17 +561,21 @@ export function ModelConnectionEditor({
           >
             <fieldset disabled={busy} className="space-y-4">
               {!editing ? (
-                <Field label="Model provider">
-                  <Choice label="Model provider" value={presetId} onChange={choosePreset}>
+                <Field label={gt("Model provider")}>
+                  <Choice label={gt("Model provider")} value={presetId} onChange={choosePreset}>
                     {CUSTOM_MODEL_PRESETS.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name}
+                        {messages(p.name)}
                       </option>
                     ))}
                   </Choice>
                 </Field>
               ) : (
-                <p className="text-sm text-muted-foreground">Connection · {existing?.name}</p>
+                <p className="text-sm text-muted-foreground">
+                  <T>
+                    Connection · <Var>{existing?.name}</Var>
+                  </T>
+                </p>
               )}
               {newCustomConnection ? (
                 <>
@@ -546,7 +583,7 @@ export function ModelConnectionEditor({
                   {apiFormatField}
                 </>
               ) : null}
-              <Field label="Model ID">
+              <Field label={gt("Model ID")}>
                 <Input
                   required
                   autoFocus
@@ -556,19 +593,19 @@ export function ModelConnectionEditor({
                     setModelId(e.target.value);
                     setReasoningOverride(undefined);
                   }}
-                  placeholder="Model identifier"
+                  placeholder={gt("Model identifier")}
                 />
               </Field>
               {reusing ? (
-                <Field label="API key">
-                  <Choice label="API key" value={connectionId} onChange={chooseConnection}>
+                <Field label={gt("API key")}>
+                  <Choice label={gt("API key")} value={connectionId} onChange={chooseConnection}>
                     {matchingConnections.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {reuseOptionLabel(c, presetId)}
+                        {reuseOptionLabel(c, presetId, messages)}
                       </option>
                     ))}
                     <option value="">
-                      {presetId === "custom" ? "New connection" : "Enter a new API key"}
+                      {presetId === "custom" ? gt("New connection") : gt("Enter a new API key")}
                     </option>
                   </Choice>
                 </Field>
@@ -576,34 +613,38 @@ export function ModelConnectionEditor({
                 <Field
                   label={
                     existing?.credentialId
-                      ? "API key · saved"
+                      ? gt("API key · saved")
                       : !existing && presetId !== "custom"
-                        ? "API key"
-                        : "API key (optional)"
+                        ? gt("API key")
+                        : gt("API key (optional)")
                   }
                   action={
                     !editing && matchingConnections.length > 0 ? (
                       <FieldAction onClick={() => chooseConnection(matchingConnections[0]!.id)}>
-                        {presetId === "custom" ? "Use existing connection" : "Use existing key"}
+                        {presetId === "custom"
+                          ? gt("Use existing connection")
+                          : gt("Use existing key")}
                       </FieldAction>
                     ) : undefined
                   }
                 >
                   <Input
                     type="password"
-                    aria-label="API key"
+                    aria-label={gt("API key")}
                     required={!existing && presetId !== "custom"}
                     autoComplete="off"
                     spellCheck={false}
                     maxLength={16384}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={existing?.credentialId ? "Leave blank to keep" : "API key"}
+                    placeholder={existing?.credentialId ? gt("Leave blank to keep") : gt("API key")}
                   />
                 </Field>
               )}
               <fieldset>
-                <legend className="mb-1.5 text-sm/4 font-medium text-foreground">Use with</legend>
+                <legend className="mb-1.5 text-sm/4 font-medium text-foreground">
+                  <T>Use with</T>
+                </legend>
                 <div className="divide-y divide-border overflow-hidden rounded-[var(--control-radius)] border border-input bg-background">
                   {agents.map((agent) => {
                     const AgentIcon = agent.driver
@@ -639,11 +680,11 @@ export function ModelConnectionEditor({
                     >
                       <span aria-hidden className="size-4 shrink-0" />
                       <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                        {id} (removed)
+                        {gt("{agent} (removed)", { agent: id })}
                       </span>
                       <Switch
                         size="sm"
-                        aria-label={`Use with ${id} (removed)`}
+                        aria-label={gt("Use with {agent} (removed)", { agent: id })}
                         checked={instanceIds.includes(id)}
                         onCheckedChange={(checked) =>
                           setInstanceIds((ids) =>
@@ -663,25 +704,27 @@ export function ModelConnectionEditor({
               >
                 <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-md py-1 pr-2 text-sm/4 font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
                   <ChevronRightIcon className="size-4 text-icon-muted transition-transform duration-200 group-data-panel-open:rotate-90" />
-                  Advanced
+                  <T context="advanced settings section">Advanced</T>
                 </CollapsibleTrigger>
                 <CollapsiblePanel keepMounted>
                   <div className="mt-4 space-y-4 border-l border-border pl-4 text-sm">
-                    <Field label="Display name">
+                    <Field label={gt("Display name")}>
                       <Input
                         maxLength={256}
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        placeholder={modelId.trim() || "Same as model ID"}
+                        placeholder={modelId.trim() || gt("Same as model ID")}
                       />
                     </Field>
                     {!reusing ? (
-                      <Field label="Connection name">
+                      <Field label={gt("Connection name")}>
                         <Input
                           maxLength={256}
                           value={connectionName}
                           onChange={(e) => setConnectionName(e.target.value)}
-                          placeholder={newCustomConnection ? hostLabel(baseUrl.trim()) : undefined}
+                          placeholder={
+                            newCustomConnection ? hostLabel(baseUrl.trim(), messages) : undefined
+                          }
                         />
                       </Field>
                     ) : null}
@@ -692,21 +735,31 @@ export function ModelConnectionEditor({
                       </>
                     ) : null}
                     <Row
-                      label="Limits"
-                      description={limitsSummary(detected, editing)}
+                      label={gt("Limits", { $context: "model context and output limits" })}
+                      description={limitsSummary(detected, editing, messages)}
                       control={
                         <Select value={configurationMode} onValueChange={chooseLimitsMode}>
-                          <SelectTrigger size="sm" className="w-36 shrink-0" aria-label="Limits">
+                          <SelectTrigger
+                            size="sm"
+                            className="w-36 shrink-0"
+                            aria-label={gt("Limits", {
+                              $context: "model context and output limits",
+                            })}
+                          >
                             <SelectValue>
-                              {configurationMode === "manual" ? "Set manually" : "Automatic"}
+                              {configurationMode === "manual"
+                                ? gt("Set manually")
+                                : gt("Automatic", {
+                                    $context: "model setting chosen automatically",
+                                  })}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectPopup align="end" alignItemWithTrigger={false}>
                             <SelectItem hideIndicator value="automatic">
-                              Automatic
+                              <T context="model setting chosen automatically">Automatic</T>
                             </SelectItem>
                             <SelectItem hideIndicator value="manual">
-                              Set manually
+                              <T>Set manually</T>
                             </SelectItem>
                           </SelectPopup>
                         </Select>
@@ -715,7 +768,7 @@ export function ModelConnectionEditor({
                       {configurationMode === "manual" ? (
                         <div className="space-y-3">
                           <div className="grid grid-cols-2 gap-3">
-                            <Field label="Context window">
+                            <Field label={gt("Context window")}>
                               <Input
                                 required
                                 type="number"
@@ -729,7 +782,7 @@ export function ModelConnectionEditor({
                                 }
                               />
                             </Field>
-                            <Field label="Max output tokens">
+                            <Field label={gt("Max output tokens")}>
                               <Input
                                 required
                                 type="number"
@@ -748,7 +801,7 @@ export function ModelConnectionEditor({
                       ) : null}
                     </Row>
                     <Row
-                      label="Image input"
+                      label={gt("Image input")}
                       control={
                         <Select
                           value={imageInput}
@@ -759,46 +812,54 @@ export function ModelConnectionEditor({
                           <SelectTrigger
                             size="sm"
                             className="w-36 shrink-0"
-                            aria-label="Image input"
+                            aria-label={gt("Image input")}
                           >
                             <SelectValue>
                               {imageInput === "automatic"
-                                ? "Automatic"
+                                ? gt("Automatic", {
+                                    $context: "model setting chosen automatically",
+                                  })
                                 : imageInput === "enabled"
-                                  ? "Enabled"
-                                  : "Disabled"}
+                                  ? gt("Enabled", { $context: "model image input setting" })
+                                  : gt("Disabled", { $context: "model image input setting" })}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectPopup align="end" alignItemWithTrigger={false}>
                             <SelectItem hideIndicator value="automatic">
-                              Automatic
+                              <T context="model setting chosen automatically">Automatic</T>
                             </SelectItem>
                             <SelectItem hideIndicator value="enabled">
-                              Enabled
+                              <T context="model image input setting">Enabled</T>
                             </SelectItem>
                             <SelectItem hideIndicator value="disabled">
-                              Disabled
+                              <T context="model image input setting">Disabled</T>
                             </SelectItem>
                           </SelectPopup>
                         </Select>
                       }
                     />
                     <Row
-                      label="Reasoning"
-                      description={reasoningSummary(detected, editing)}
+                      label={gt("Reasoning", { $context: "model reasoning setting" })}
+                      description={reasoningSummary(detected, editing, messages)}
                       control={
                         <Select value={reasoningValue} onValueChange={chooseReasoning}>
-                          <SelectTrigger size="sm" className="w-36 shrink-0" aria-label="Reasoning">
+                          <SelectTrigger
+                            size="sm"
+                            className="w-36 shrink-0"
+                            aria-label={gt("Reasoning", { $context: "model reasoning setting" })}
+                          >
                             <SelectValue>{reasoningValueLabel(reasoningValue)}</SelectValue>
                           </SelectTrigger>
                           <SelectPopup align="end" alignItemWithTrigger={false}>
                             <SelectItem hideIndicator value="">
-                              Automatic
+                              <T context="model setting chosen automatically">Automatic</T>
                             </SelectItem>
                             {defaultReasoningLevel &&
                             !defaultLevels.includes(defaultReasoningLevel) ? (
                               <SelectItem hideIndicator disabled value={defaultReasoningLevel}>
-                                {reasoningLevelLabel(defaultReasoningLevel)} (unavailable)
+                                {gt("{level} (unavailable)", {
+                                  level: reasoningLevelLabel(defaultReasoningLevel),
+                                })}
                               </SelectItem>
                             ) : null}
                             {defaultLevels.map((level) => (
@@ -810,7 +871,7 @@ export function ModelConnectionEditor({
                               <>
                                 <SelectSeparator />
                                 <SelectItem hideIndicator value="manual">
-                                  Set manually
+                                  <T>Set manually</T>
                                 </SelectItem>
                               </>
                             ) : null}
@@ -834,15 +895,22 @@ export function ModelConnectionEditor({
                                 setDefaultReasoningLevel(undefined);
                               }}
                             />
-                            Model supports reasoning
+                            <T>Model supports reasoning</T>
                           </label>
                           {reasoningOverride.supported ? (
                             <>
                               <p className="text-xs text-muted-foreground">
-                                Select the levels supported by your endpoint.
-                                {protocol === "anthropic-messages"
-                                  ? " Requires adaptive thinking with effort support."
-                                  : " Requires effort parameter support."}
+                                {protocol === "anthropic-messages" ? (
+                                  <T>
+                                    Select the levels supported by your endpoint. Requires adaptive
+                                    thinking with effort support.
+                                  </T>
+                                ) : (
+                                  <T>
+                                    Select the levels supported by your endpoint. Requires effort
+                                    parameter support.
+                                  </T>
+                                )}
                               </p>
                               <div className="flex flex-wrap gap-3">
                                 {REASONING_LEVELS.map((level) => (
@@ -883,10 +951,10 @@ export function ModelConnectionEditor({
             ) : null}
             <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
               <span className="text-xs text-muted-foreground">
-                Saved on this execution environment.
+                <T>Saved on this execution environment.</T>
               </span>
               <Button type="submit" disabled={busy}>
-                {busy ? "Saving…" : "Save model"}
+                {busy ? gt("Saving…") : gt("Save model")}
               </Button>
             </div>
           </form>

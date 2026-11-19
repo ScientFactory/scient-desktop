@@ -1,7 +1,9 @@
+import { msg } from "gt-react";
 import { Selection, TextSelection } from "prosemirror-state";
 import { useEffect, useState, type KeyboardEvent } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { ScientMarkdownDocument } from "~/scient/markdownEditor/ScientMarkdownDocument";
 import { ScientMarkdownEditorView } from "~/scient/markdownEditor/prosemirror/view";
 import type { NotebookCaret } from "./notebookController";
@@ -19,7 +21,7 @@ export default function NotebookTextEditor(props: {
       new ScientMarkdownEditorView({
         source: props.source,
         revision: "notebook-cell",
-        ariaLabel: "Text cell",
+        ariaLabel: m(msg("Text cell")),
         onUserSourceChange: (source) => onChange(source),
         // Typed math reads back differently from plain text; the cell keeps what was typed.
         onWritebackRefusal: (pending) => {

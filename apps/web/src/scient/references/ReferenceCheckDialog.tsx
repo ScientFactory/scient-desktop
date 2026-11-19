@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import type {
   ScientReferenceCheckReport,
   ScientReferenceCheckTarget,
@@ -53,6 +54,8 @@ export function ReferenceCheckDialog(props: {
   readonly onOpenSource?: (sourceId: string) => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { environmentId, root, onClose } = props;
   const canChange = useCanChangeLibrary(environmentId);
   const [target, setTarget] = useState(
@@ -188,7 +191,9 @@ export function ReferenceCheckDialog(props: {
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {state.kind === "fixed" ? (
-            <span className="px-2 text-muted-foreground text-xs">Fixed</span>
+            <span className="px-2 text-muted-foreground text-xs">
+              <T context="state of a finding">Fixed</T>
+            </span>
           ) : (
             <>
               {finding.fix && !isIgnored(finding) ? (
@@ -198,7 +203,7 @@ export function ReferenceCheckDialog(props: {
                   disabled={state.kind === "busy" || !canChange}
                   onClick={() => void apply([finding])}
                 >
-                  Apply
+                  <T context="verb, applies a fix">Apply</T>
                 </Button>
               ) : null}
               {finding.related ? (
@@ -212,7 +217,7 @@ export function ReferenceCheckDialog(props: {
               ) : null}
               {canOpen(finding) ? (
                 <Button size="xs" variant="ghost" onClick={() => open(finding)}>
-                  Open
+                  <T context="verb, button">Open</T>
                 </Button>
               ) : null}
               <Button
@@ -221,7 +226,9 @@ export function ReferenceCheckDialog(props: {
                 disabled={state.kind === "busy" || !canChange}
                 onClick={() => void toggleIgnored(finding)}
               >
-                {isIgnored(finding) ? "Restore" : "Ignore"}
+                {isIgnored(finding)
+                  ? gt("Restore", { $context: "verb, button" })
+                  : gt("Ignore", { $context: "verb, hides a finding" })}
               </Button>
             </>
           )}
@@ -230,7 +237,7 @@ export function ReferenceCheckDialog(props: {
     );
   };
 
-  const summary = report ? referenceCheckSummary(report, active) : null;
+  const summary = report ? referenceCheckSummary(report, active, m) : null;
 
   return (
     <Dialog
@@ -241,10 +248,14 @@ export function ReferenceCheckDialog(props: {
     >
       <DialogPopup className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Check references</DialogTitle>
+          <DialogTitle>
+            <T>Check references</T>
+          </DialogTitle>
           <DialogDescription>
-            Compares each reference with its registry record. It does not judge whether a source
-            supports the text.
+            <T>
+              Compares each reference with its registry record. It does not judge whether a source
+              supports the text.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -255,30 +266,38 @@ export function ReferenceCheckDialog(props: {
                 if (typeof value === "string") setTarget(value);
               }}
             >
-              <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label="What to check">
-                <SelectValue>{(value: string | null) => targetLabel(value ?? LIBRARY)}</SelectValue>
+              <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label={gt("What to check")}>
+                <SelectValue>
+                  {(value: string | null) => targetLabel(value ?? LIBRARY, m)}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false}>
                 {[LIBRARY, ...documents.paths.filter((path) => path !== LIBRARY)].map((option) => (
                   <SelectItem hideIndicator key={option} value={option}>
-                    {targetLabel(option)}
+                    {targetLabel(option, m)}
                   </SelectItem>
                 ))}
               </SelectPopup>
             </Select>
             <Button size="sm" variant="outline" disabled={running} onClick={() => void run(target)}>
-              {running ? "Checking…" : "Check"}
+              {running
+                ? gt("Checking…")
+                : gt("Check", { $context: "verb, runs the reference check" })}
             </Button>
           </div>
           {documents.truncated ? (
             <p className="text-muted-foreground mt-1 text-xs">
-              Only the first {documents.paths.length} documents are listed. To check another, choose
-              Check references in that document's menu.
+              <T>
+                Only the first <Var>{documents.paths.length}</Var> documents are listed. To check
+                another, choose Check references in that document's menu.
+              </T>
             </p>
           ) : null}
           <div className="mt-3 min-h-10" role="status">
             {running && !report ? (
-              <p className="text-muted-foreground text-sm">Checking references…</p>
+              <p className="text-muted-foreground text-sm">
+                <T>Checking references…</T>
+              </p>
             ) : null}
             {error ? <p className="text-destructive text-sm">{error}</p> : null}
             {summary ? (
@@ -294,16 +313,21 @@ export function ReferenceCheckDialog(props: {
           </div>
           {report && findings.length > 0 ? (
             <ScrollArea className="mt-2 max-h-[55vh]">
-              {findingGroups(active).map((group) => (
+              {findingGroups(active, m).map((group) => (
                 <section key={group.title} aria-label={group.title} className="mt-2 first:mt-0">
                   <h3 className="text-muted-foreground text-xs font-medium">{group.title}</h3>
                   <ul className="divide-y">{group.findings.map(renderFinding)}</ul>
                 </section>
               ))}
               {hidden.length > 0 ? (
-                <section aria-label="Ignored" className="mt-2">
+                <section
+                  aria-label={gt("Ignored", { $context: "state of a finding" })}
+                  className="mt-2"
+                >
                   <Button size="xs" variant="ghost" onClick={() => setShowIgnored(!showIgnored)}>
-                    {showIgnored ? "Hide ignored" : `Show ${hidden.length} ignored`}
+                    {showIgnored
+                      ? gt("Hide ignored")
+                      : gt("Show {count} ignored", { count: hidden.length })}
                   </Button>
                   {showIgnored ? <ul className="divide-y">{hidden.map(renderFinding)}</ul> : null}
                 </section>
@@ -318,10 +342,14 @@ export function ReferenceCheckDialog(props: {
               disabled={!canChange}
               onClick={() => void apply(pendingFixes)}
             >
-              Apply {pendingFixes.length} fixes
+              <T>
+                Apply <Var>{pendingFixes.length}</Var> fixes
+              </T>
             </Button>
           ) : null}
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={onClose}>
+            <T>Done</T>
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

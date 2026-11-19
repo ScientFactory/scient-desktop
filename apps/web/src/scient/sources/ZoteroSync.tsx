@@ -1,3 +1,6 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import type { MessageResolver } from "~/i18n/messages";
 import type {
   EnvironmentId,
   ScientSourceZoteroRefreshField,
@@ -30,24 +33,24 @@ import {
 import { settleAfter } from "./settleAfter";
 
 const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
-  type: "Type",
-  customType: "Type",
-  title: "Title",
-  creators: "Creators",
-  issuedRaw: "Date",
-  issuedYear: "Year",
-  identifiers: "Identifiers",
-  abstract: "Abstract",
-  containerTitle: "Journal or publication",
-  more: "More details",
-  publisher: "Publisher",
-  volume: "Volume",
-  issue: "Issue",
-  pages: "Pages",
-  language: "Language",
+  type: msg("Type", { $context: "a source field" }),
+  customType: msg("Type", { $context: "a source field" }),
+  title: msg("Title", { $context: "a source field" }),
+  creators: msg("Creators", { $context: "a source field" }),
+  issuedRaw: msg("Date", { $context: "a source field" }),
+  issuedYear: msg("Year", { $context: "a source field" }),
+  identifiers: msg("Identifiers", { $context: "a source field" }),
+  abstract: msg("Abstract", { $context: "a source field" }),
+  containerTitle: msg("Journal or publication", { $context: "a source field" }),
+  more: msg("More details", { $context: "a source field" }),
+  publisher: msg("Publisher", { $context: "a source field" }),
+  volume: msg("Volume", { $context: "a source field" }),
+  issue: msg("Issue", { $context: "a source field" }),
+  pages: msg("Pages", { $context: "a source field" }),
+  language: msg("Language", { $context: "a source field" }),
   url: "URL",
-  tags: "Tags",
-  note: "Note",
+  tags: msg("Tags", { $context: "a source field" }),
+  note: msg("Note", { $context: "a source field" }),
 };
 
 type RefreshState =
@@ -69,6 +72,7 @@ export function useZoteroSync(input: {
   readonly allLibrary: boolean;
   readonly onChanged: () => Promise<void> | void;
 }) {
+  const gt = useGT();
   const [refresh, setRefresh] = useState<RefreshState | null>(null);
   const [resolving, setResolving] = useState<string | null>(null);
   const [writableGroups, setWritableGroups] = useState<ReadonlyArray<ZoteroGroup>>([]);
@@ -168,7 +172,7 @@ export function useZoteroSync(input: {
         } catch (cause) {
           toastManager.add({
             type: "error",
-            title: "Zotero could not be read",
+            title: gt("Zotero could not be read"),
             description: errorText(cause),
           });
         }
@@ -185,13 +189,15 @@ export function useZoteroSync(input: {
       if (status.state !== "ready" || !canWrite) {
         toastManager.add({
           type: "warning",
-          title: "Not sent to Zotero",
+          title: gt("Not sent to Zotero"),
           description:
             status.state !== "ready"
               ? status.message
               : groupId
-                ? "The Zotero key in Accounts cannot write to this group."
-                : "The Zotero key in Accounts can only read. Save a zotero.org key that can write.",
+                ? gt("The Zotero key in Accounts cannot write to this group.")
+                : gt(
+                    "The Zotero key in Accounts can only read. Save a zotero.org key that can write.",
+                  ),
         });
         return;
       }
@@ -222,18 +228,18 @@ export function useZoteroSync(input: {
             : "warning",
         title:
           item?.outcome === "created"
-            ? "Added to Zotero"
+            ? gt("Added to Zotero")
             : item?.outcome === "updated"
-              ? "Updated in Zotero"
+              ? gt("Updated in Zotero")
               : item?.outcome === "unchanged"
-                ? "Zotero already has this source"
-                : "Not sent to Zotero",
+                ? gt("Zotero already has this source")
+                : gt("Not sent to Zotero"),
         description: description || undefined,
       });
     } catch (cause) {
       toastManager.add({
         type: "error",
-        title: "Not sent to Zotero",
+        title: gt("Not sent to Zotero"),
         description: errorText(cause),
       });
     }
@@ -256,17 +262,20 @@ export function useZoteroSync(input: {
   };
 }
 
-function refreshSummary(result: ScientSourceZoteroRefreshResult): string {
+function refreshSummary(result: ScientSourceZoteroRefreshResult, resolve: MessageResolver): string {
   const updated = result.items.filter((item) => item.outcome === "updated").length;
-  if (result.items.length === 0) return "No sources here came from Zotero.";
+  if (result.items.length === 0) return resolve(msg("No sources here came from Zotero."));
   if (updated === 0) {
     return result.items.some((item) => item.notBrought)
-      ? "Nothing new came from Zotero."
-      : "Everything matches Zotero.";
+      ? resolve(msg("Nothing new came from Zotero."))
+      : resolve(msg("Everything matches Zotero."));
   }
-  return updated === 1
-    ? "Updated 1 source from Zotero."
-    : `Updated ${updated} sources from Zotero.`;
+  return resolve(
+    msg(
+      "{count, plural, =1 {Updated 1 source from Zotero.} other {Updated {count} sources from Zotero.}}",
+      { count: updated },
+    ),
+  );
 }
 
 export function ZoteroRefreshDialog(props: {
@@ -281,6 +290,8 @@ export function ZoteroRefreshDialog(props: {
     side: "zotero" | "local",
   ) => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const state = props.state;
   const done = state?.phase === "done" ? state.result : null;
   const conflicts = (done?.items ?? []).flatMap((item) =>
@@ -294,16 +305,24 @@ export function ZoteroRefreshDialog(props: {
     <Dialog open={state !== null} onOpenChange={(open) => (open ? undefined : props.onClose())}>
       <DialogPopup className="w-[min(520px,calc(100vw-32px))]">
         <DialogHeader>
-          <DialogTitle>Refresh from Zotero</DialogTitle>
+          <DialogTitle>
+            <T>Refresh from Zotero</T>
+          </DialogTitle>
           <DialogDescription>
             {state?.phase === "running"
               ? state.checked !== undefined && state.total !== undefined
-                ? `Reading your Zotero library… ${state.checked.toLocaleString()} of ${state.total.toLocaleString()} sources checked. Closing stops here; what was read is kept.`
-                : "Reading your Zotero library…"
+                ? gt(
+                    "Reading your Zotero library… {checked} of {total} sources checked. Closing stops here; what was read is kept.",
+                    {
+                      checked: state.checked.toLocaleString(),
+                      total: state.total.toLocaleString(),
+                    },
+                  )
+                : gt("Reading your Zotero library…")
               : state?.phase === "problem"
                 ? state.message
                 : done
-                  ? refreshSummary(done)
+                  ? refreshSummary(done, m)
                   : null}
           </DialogDescription>
         </DialogHeader>
@@ -313,19 +332,25 @@ export function ZoteroRefreshDialog(props: {
               {conflicts.length > 0 ? (
                 <div className="grid gap-3">
                   <p className="text-muted-foreground">
-                    Changed both here and in Zotero. Your version was kept.
+                    <T>Changed both here and in Zotero. Your version was kept.</T>
                   </p>
                   {conflicts.map(({ item, conflict }) => {
                     const key = `${item.sourceId}\0${conflict.field}`;
                     return (
                       <div key={key} className="grid gap-1 border-t border-border pt-3">
                         <div className="truncate font-medium">
-                          {item.title ?? "Untitled source"} · {FIELD_LABELS[conflict.field]}
+                          {item.title ?? gt("Untitled source")} · {m(FIELD_LABELS[conflict.field])}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          <div className="line-clamp-2">Here: {conflict.local || "empty"}</div>
                           <div className="line-clamp-2">
-                            In Zotero: {conflict.zotero || "empty"}
+                            {gt("Here: {value}", {
+                              value: conflict.local || gt("empty", { $context: "no value" }),
+                            })}
+                          </div>
+                          <div className="line-clamp-2">
+                            {gt("In Zotero: {value}", {
+                              value: conflict.zotero || gt("empty", { $context: "no value" }),
+                            })}
                           </div>
                         </div>
                         <div className="mt-1 flex gap-1">
@@ -335,7 +360,7 @@ export function ZoteroRefreshDialog(props: {
                             disabled={props.resolving !== null}
                             onClick={() => props.onResolve(item.sourceId, conflict.field, "local")}
                           >
-                            Keep mine
+                            <T>Keep mine</T>
                           </Button>
                           <Button
                             size="xs"
@@ -346,7 +371,7 @@ export function ZoteroRefreshDialog(props: {
                             {props.resolving === key ? (
                               <LoaderCircle className="animate-spin" />
                             ) : null}
-                            Use Zotero's
+                            <T>Use Zotero's</T>
                           </Button>
                         </div>
                       </div>
@@ -358,7 +383,9 @@ export function ZoteroRefreshDialog(props: {
                 <div className="grid gap-1">
                   {problems.map((item) => (
                     <div key={item.sourceId} className="flex min-w-0 gap-2 text-xs">
-                      <span className="min-w-0 truncate">{item.title ?? "Untitled source"}</span>
+                      <span className="min-w-0 truncate">
+                        {item.title ?? gt("Untitled source")}
+                      </span>
                       <span className="shrink-0 text-muted-foreground">{item.message}</span>
                     </div>
                   ))}
@@ -366,7 +393,7 @@ export function ZoteroRefreshDialog(props: {
               ) : null}
               {notBrought.length > 0 ? (
                 <div className="grid gap-1 text-xs">
-                  <div className="font-medium">{NOT_BROUGHT_LABELS.heading}</div>
+                  <div className="font-medium">{m(NOT_BROUGHT_LABELS.heading)}</div>
                   <ul className="space-y-0.5">
                     {notBrought.map((line) => (
                       <li key={`${line.kind}:${line.name ?? ""}`} className="break-words">
@@ -382,11 +409,11 @@ export function ZoteroRefreshDialog(props: {
         ) : null}
         <DialogFooter>
           <Button size="sm" variant="ghost" onClick={props.onClose}>
-            {state?.phase === "running" ? "Close" : "Done"}
+            {state?.phase === "running" ? gt("Close") : gt("Done")}
           </Button>
           {state?.phase === "problem" ? (
             <Button size="sm" onClick={props.onCheckAgain}>
-              Check again
+              <T>Check again</T>
             </Button>
           ) : null}
         </DialogFooter>

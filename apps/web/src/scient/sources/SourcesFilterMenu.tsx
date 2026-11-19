@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import {
   scientSourceCategoryCounts,
   scientSourceCollectionMemberIds,
@@ -68,6 +69,7 @@ function TagChoices(props: {
   readonly organize: SourcesOrganize;
   readonly tags: ReadonlyArray<{ readonly tag: string; readonly count: number }>;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const selected = new Set((props.organize.filter.tags ?? []).map(scientSourceTagKey));
   const needle = query.trim().toLocaleLowerCase();
@@ -81,12 +83,14 @@ function TagChoices(props: {
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search tags"
-          aria-label="Search tags"
+          placeholder={gt("Search tags")}
+          aria-label={gt("Search tags")}
         />
       ) : null}
       {visible.length === 0 ? (
-        <MenuItem disabled>{props.tags.length === 0 ? "No tags yet" : "No matching tags"}</MenuItem>
+        <MenuItem disabled>
+          {props.tags.length === 0 ? gt("No tags yet") : gt("No matching tags")}
+        </MenuItem>
       ) : null}
       {visible.map((entry) => (
         <MenuCheckboxItem
@@ -108,6 +112,7 @@ function TopicChoices(props: {
   readonly organize: SourcesOrganize;
   readonly topics: ReadonlyArray<{ readonly topic: string; readonly count: number }>;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const { filter } = props.organize;
   const needle = query.trim().toLocaleLowerCase();
@@ -122,8 +127,8 @@ function TopicChoices(props: {
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search topics"
-          aria-label="Search topics"
+          placeholder={gt("Search topics")}
+          aria-label={gt("Search topics")}
         />
       ) : null}
       <MenuRadioGroup
@@ -135,8 +140,14 @@ function TopicChoices(props: {
           })
         }
       >
-        <MenuRadioItem value={ALL}>Any topic</MenuRadioItem>
-        {visible.length === 0 ? <MenuItem disabled>No matching topics</MenuItem> : null}
+        <MenuRadioItem value={ALL}>
+          <T>Any topic</T>
+        </MenuRadioItem>
+        {visible.length === 0 ? (
+          <MenuItem disabled>
+            <T>No matching topics</T>
+          </MenuItem>
+        ) : null}
         {visible.map((entry) => (
           <MenuRadioItem
             key={scientSourceTopicKey(entry.topic)}
@@ -162,6 +173,8 @@ export function SourcesFilterMenu(props: {
   /** Present when reading-state filters are available. */
   readonly scopes?: ScientSourcesOverviewResult["scopes"];
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const { organize, scopes } = props;
   const { filter, organization } = organize;
   const tags = scientSourceTagCounts(props.records);
@@ -187,8 +200,8 @@ export function SourcesFilterMenu(props: {
   const canSave = organize.filterActive || props.query.trim().length > 0;
   const newCollection = () =>
     props.onRequestName({
-      title: "New collection",
-      label: "Collection name",
+      title: gt("New collection"),
+      label: gt("Collection name"),
       initialName: "",
       action: "Create",
       onSubmit: async (name) => {
@@ -199,8 +212,8 @@ export function SourcesFilterMenu(props: {
     });
   const saveSearch = () =>
     props.onRequestName({
-      title: "Save search",
-      label: "Search name",
+      title: gt("Save search"),
+      label: gt("Search name"),
       initialName: organize.savedSearch?.name ?? "",
       action: "Save",
       onSubmit: async (name) => (await organize.saveSearch(name)) !== null,
@@ -218,7 +231,7 @@ export function SourcesFilterMenu(props: {
                   size="icon-xs"
                   variant="ghost"
                   className="shrink-0"
-                  aria-label="Filter sources"
+                  aria-label={gt("Filter sources")}
                 />
               }
             />
@@ -226,14 +239,18 @@ export function SourcesFilterMenu(props: {
         >
           <ListFilterIcon />
         </TooltipTrigger>
-        <TooltipPopup>Filter sources</TooltipPopup>
+        <TooltipPopup>
+          <T>Filter sources</T>
+        </TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom" className="min-w-52">
         <MenuSub>
           <MenuSubTrigger>
             <FolderIcon aria-hidden className="size-3.5" />
-            <span className="flex-1">Collection</span>
-            <SubmenuValue>{organize.collection?.name ?? "All sources"}</SubmenuValue>
+            <span className="flex-1">
+              <T context="noun, a collection of sources">Collection</T>
+            </span>
+            <SubmenuValue>{organize.collection?.name ?? gt("All sources")}</SubmenuValue>
           </MenuSubTrigger>
           {/* A long name would stretch the submenu over its parent menu; it truncates instead. */}
           <MenuSubPopup className="max-w-64">
@@ -246,7 +263,7 @@ export function SourcesFilterMenu(props: {
               <MenuRadioItem value={ALL}>
                 <span className="flex min-w-0 items-center gap-2">
                   <LayersIcon aria-hidden className="size-3.5" />
-                  All sources
+                  <T>All sources</T>
                   <Count value={props.records.length} />
                 </span>
               </MenuRadioItem>
@@ -302,16 +319,20 @@ export function SourcesFilterMenu(props: {
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem disabled={!organize.canChange} onClick={newCollection}>
-              New collection…
+              <T>New collection…</T>
             </MenuItem>
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
           <MenuSubTrigger>
             <TagIcon aria-hidden className="size-3.5" />
-            <span className="flex-1">Tags</span>
+            <span className="flex-1">
+              <T context="noun">Tags</T>
+            </span>
             <SubmenuValue>
-              {selectedTagCount === 0 ? "Any" : `${selectedTagCount} selected`}
+              {selectedTagCount === 0
+                ? gt("Any", { $context: "filter, no restriction" })
+                : `${selectedTagCount} selected`}
             </SubmenuValue>
           </MenuSubTrigger>
           <MenuSubPopup>
@@ -321,9 +342,13 @@ export function SourcesFilterMenu(props: {
         <MenuSub>
           <MenuSubTrigger>
             <ShapesIcon aria-hidden className="size-3.5" />
-            <span className="flex-1">Type</span>
+            <span className="flex-1">
+              <T context="a source's type">Type</T>
+            </span>
             <SubmenuValue>
-              {filter.type ? SCIENT_SOURCE_TYPE_LABELS[filter.type] : "Any"}
+              {filter.type
+                ? m(SCIENT_SOURCE_TYPE_LABELS[filter.type])
+                : gt("Any", { $context: "filter, no restriction" })}
             </SubmenuValue>
           </MenuSubTrigger>
           <MenuSubPopup>
@@ -334,10 +359,12 @@ export function SourcesFilterMenu(props: {
                 organize.setFilter({ ...filter, type });
               }}
             >
-              <MenuRadioItem value={ALL}>Any type</MenuRadioItem>
+              <MenuRadioItem value={ALL}>
+                <T>Any type</T>
+              </MenuRadioItem>
               {types.map((type) => (
                 <MenuRadioItem key={type} value={type}>
-                  {SCIENT_SOURCE_TYPE_LABELS[type]}
+                  {m(SCIENT_SOURCE_TYPE_LABELS[type])}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
@@ -347,9 +374,13 @@ export function SourcesFilterMenu(props: {
           <MenuSub>
             <MenuSubTrigger>
               <FlaskConicalIcon aria-hidden className="size-3.5" />
-              <span className="flex-1">Study design</span>
+              <span className="flex-1">
+                <T>Study design</T>
+              </span>
               <SubmenuValue>
-                {filter.studyDesign ? SCIENT_SOURCE_STUDY_DESIGN_LABELS[filter.studyDesign] : "Any"}
+                {filter.studyDesign
+                  ? m(SCIENT_SOURCE_STUDY_DESIGN_LABELS[filter.studyDesign])
+                  : gt("Any", { $context: "filter, no restriction" })}
               </SubmenuValue>
             </MenuSubTrigger>
             <MenuSubPopup>
@@ -364,12 +395,14 @@ export function SourcesFilterMenu(props: {
                   })
                 }
               >
-                <MenuRadioItem value={ALL}>Any design</MenuRadioItem>
+                <MenuRadioItem value={ALL}>
+                  <T>Any design</T>
+                </MenuRadioItem>
                 {categories.studyDesigns.map((entry) => (
                   <MenuRadioItem key={entry.studyDesign} value={entry.studyDesign}>
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="min-w-0 flex-1 truncate">
-                        {SCIENT_SOURCE_STUDY_DESIGN_LABELS[entry.studyDesign]}
+                        {m(SCIENT_SOURCE_STUDY_DESIGN_LABELS[entry.studyDesign])}
                       </span>
                       <Count value={entry.count} />
                     </span>
@@ -383,8 +416,12 @@ export function SourcesFilterMenu(props: {
           <MenuSub>
             <MenuSubTrigger>
               <HashIcon aria-hidden className="size-3.5" />
-              <span className="flex-1">Topic</span>
-              <SubmenuValue>{filter.topic ?? "Any"}</SubmenuValue>
+              <span className="flex-1">
+                <T>Topic</T>
+              </span>
+              <SubmenuValue>
+                {filter.topic ?? gt("Any", { $context: "filter, no restriction" })}
+              </SubmenuValue>
             </MenuSubTrigger>
             <MenuSubPopup>
               <TopicChoices organize={organize} topics={categories.topics} />
@@ -396,7 +433,11 @@ export function SourcesFilterMenu(props: {
             <FileTextIcon aria-hidden className="size-3.5" />
             <span className="flex-1">PDF</span>
             <SubmenuValue>
-              {filter.hasPdf === undefined ? "Any" : filter.hasPdf ? "With PDF" : "Without PDF"}
+              {filter.hasPdf === undefined
+                ? gt("Any", { $context: "filter, no restriction" })
+                : filter.hasPdf
+                  ? gt("With PDF")
+                  : gt("Without PDF")}
             </SubmenuValue>
           </MenuSubTrigger>
           <MenuSubPopup>
@@ -409,9 +450,15 @@ export function SourcesFilterMenu(props: {
                 })
               }
             >
-              <MenuRadioItem value={ALL}>Any</MenuRadioItem>
-              <MenuRadioItem value="yes">With PDF</MenuRadioItem>
-              <MenuRadioItem value="no">Without PDF</MenuRadioItem>
+              <MenuRadioItem value={ALL}>
+                <T context="filter, no restriction">Any</T>
+              </MenuRadioItem>
+              <MenuRadioItem value="yes">
+                <T>With PDF</T>
+              </MenuRadioItem>
+              <MenuRadioItem value="no">
+                <T>Without PDF</T>
+              </MenuRadioItem>
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
@@ -429,7 +476,7 @@ export function SourcesFilterMenu(props: {
             >
               <span className="flex min-w-0 items-center gap-2">
                 <span aria-hidden className="size-1.5 rounded-full bg-sky-500" />
-                {LIBRARY_LABELS.unread}
+                {m(LIBRARY_LABELS.unread)}
               </span>
             </MenuCheckboxItem>
             <MenuCheckboxItem
@@ -443,7 +490,7 @@ export function SourcesFilterMenu(props: {
             >
               <span className="flex min-w-0 items-center gap-2">
                 <StarIcon aria-hidden className="size-3.5" />
-                {LIBRARY_LABELS.starred}
+                {m(LIBRARY_LABELS.starred)}
               </span>
             </MenuCheckboxItem>
           </>
@@ -452,11 +499,15 @@ export function SourcesFilterMenu(props: {
         <MenuSub>
           <MenuSubTrigger>
             <SearchIcon aria-hidden className="size-3.5" />
-            <span className="flex-1">Saved searches</span>
+            <span className="flex-1">
+              <T>Saved searches</T>
+            </span>
           </MenuSubTrigger>
           <MenuSubPopup>
             {organization.savedSearches.length === 0 ? (
-              <MenuItem disabled>No saved searches</MenuItem>
+              <MenuItem disabled>
+                <T>No saved searches</T>
+              </MenuItem>
             ) : (
               organization.savedSearches
                 .toSorted((left, right) =>
@@ -476,7 +527,7 @@ export function SourcesFilterMenu(props: {
             )}
             <MenuSeparator />
             <MenuItem disabled={!canSave || !organize.canChange} onClick={saveSearch}>
-              Save this search…
+              <T>Save this search…</T>
             </MenuItem>
           </MenuSubPopup>
         </MenuSub>

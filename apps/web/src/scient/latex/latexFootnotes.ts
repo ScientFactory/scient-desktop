@@ -10,6 +10,8 @@ import {
   latexEquationReferencesKey,
   navigateToFootnote,
 } from "./latexEquationReferences";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 /** The notes of one top-level block, shown beneath it. */
 interface FootnoteBand {
@@ -51,7 +53,7 @@ function band(notes: FootnoteBand["notes"]) {
     element.className = "scient-latex-footnotes";
     element.contentEditable = "false";
     element.setAttribute("role", "group");
-    element.setAttribute("aria-label", "Footnotes");
+    element.setAttribute("aria-label", m(msg("Footnotes")));
     Object.defineProperty(element, "scientFootnoteEnd", { get: getPos });
     // Returns to the marker of the note at `index` in this band's block.
     const returnTo = (index: number) => {
@@ -69,7 +71,10 @@ function band(notes: FootnoteBand["notes"]) {
       row.className = "scient-latex-footnote";
       row.tabIndex = 0;
       row.setAttribute("role", "button");
-      row.setAttribute("aria-label", `Return to footnote ${note.number ?? ""} marker`);
+      row.setAttribute(
+        "aria-label",
+        m(msg("Return to footnote {number} marker", { number: note.number ?? "" })),
+      );
       const marker = document.createElement("sup");
       marker.textContent = note.number ?? "*";
       const text = document.createElement("span");

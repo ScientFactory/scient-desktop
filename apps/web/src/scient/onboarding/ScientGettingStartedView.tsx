@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ArrowLeftIcon, PlusIcon } from "lucide-react";
 import { type ComponentType, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
@@ -31,9 +32,9 @@ import {
 import type { ScientOnboardingStep } from "./policy";
 
 const ONBOARDING_STEP_LABELS: Readonly<Record<ScientOnboardingStep, string>> = {
-  agent: "Connect",
-  preferences: "Your work",
-  start: "Start",
+  agent: msg("Connect", { $context: "onboarding step: connect an AI" }),
+  preferences: msg("Your work"),
+  start: msg("Start", { $context: "onboarding step: start working" }),
 };
 
 export function ScientGettingStartedShell(props: {
@@ -44,6 +45,8 @@ export function ScientGettingStartedShell(props: {
   readonly onBack: () => void;
   readonly onSkip: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const currentIndex = Math.max(0, props.journey.indexOf(props.currentStep));
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -56,7 +59,7 @@ export function ScientGettingStartedShell(props: {
             <ScientSymbol className="pointer-events-none absolute right-6 top-16 z-0 size-48 opacity-[0.045] [mask-image:linear-gradient(to_right,black_0%,black_88%,transparent_100%)] sm:right-12 sm:top-12 sm:size-60 dark:opacity-[0.065]" />
             <div className="relative z-10">
               <p className="mx-auto w-fit text-center text-sm font-medium tracking-[-0.015em] text-foreground">
-                Getting started with Scient
+                <T>Getting started with Scient</T>
               </p>
               <div className="mt-1 grid min-h-7 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
                 <Button
@@ -67,10 +70,10 @@ export function ScientGettingStartedShell(props: {
                   type="button"
                   variant="ghost-muted"
                 >
-                  <ArrowLeftIcon aria-hidden /> Back
+                  <ArrowLeftIcon aria-hidden /> <T>Back</T>
                 </Button>
                 <ol
-                  aria-label="Getting started steps"
+                  aria-label={gt("Getting started steps")}
                   className="flex w-fit items-center gap-4 text-[11px]"
                 >
                   {props.journey.map((step, index) => {
@@ -86,7 +89,7 @@ export function ScientGettingStartedShell(props: {
                         }
                       >
                         <span className="me-1 tabular-nums">{index + 1}</span>
-                        {ONBOARDING_STEP_LABELS[step]}
+                        {messages(ONBOARDING_STEP_LABELS[step])}
                       </li>
                     );
                   })}
@@ -98,7 +101,7 @@ export function ScientGettingStartedShell(props: {
                   type="button"
                   variant="ghost-muted"
                 >
-                  Skip
+                  <T context="skip onboarding">Skip</T>
                 </Button>
               </div>
               <div className="mt-2">{props.children}</div>
@@ -146,6 +149,7 @@ export function GettingStartedAgentStep(props: {
   readonly onContinue: () => void;
   readonly canContinue: boolean;
 }) {
+  const gt = useGT();
   const providerListId = useId();
   const [managedEntryId, setManagedEntryId] = useState<string | null>(null);
   const managedEntry = props.choices.find(
@@ -156,8 +160,10 @@ export function GettingStartedAgentStep(props: {
     return (
       <div>
         <GettingStartedStepHeading
-          description="Use the provider’s existing secure setup. Your password never passes through Scient."
-          title="Choose an AI"
+          description={gt(
+            "Use the provider’s existing secure setup. Your password never passes through Scient.",
+          )}
+          title={gt("Choose an AI")}
         />
         <div
           className="mt-5 border-t border-border/70 pt-5 [&_[data-antigravity-setup-surface=true]]:min-h-0 [&_[data-antigravity-setup-surface=true]]:items-start [&_[data-antigravity-setup-surface=true]]:px-0 [&_[data-antigravity-setup-surface=true]]:py-1 [&_[data-antigravity-setup-surface=true]]:text-left [&_[data-provider-onboarding-view]]:px-0 [&_[data-provider-onboarding-view]]:pb-0"
@@ -171,7 +177,7 @@ export function GettingStartedAgentStep(props: {
         {props.canContinue ? (
           <div className="mt-7 flex justify-end">
             <Button onClick={props.onContinue} size="sm" type="button">
-              Continue
+              <T>Continue</T>
             </Button>
           </div>
         ) : null}
@@ -182,13 +188,13 @@ export function GettingStartedAgentStep(props: {
   return (
     <div>
       <GettingStartedStepHeading
-        description="Use a ChatGPT, Claude, or Google subscription you already have."
-        title="Choose an AI"
+        description={gt("Use a ChatGPT, Claude, or Google subscription you already have.")}
+        title={gt("Choose an AI")}
       />
       <div
         id={providerListId}
         role="region"
-        aria-label="AI providers"
+        aria-label={gt("AI providers")}
         tabIndex={0}
         className="mt-3 max-h-[14rem] overflow-y-auto overscroll-y-contain divide-y divide-border/70 border-t border-border/70"
       >
@@ -224,7 +230,7 @@ export function GettingStartedAgentStep(props: {
                 type="button"
                 variant="ghost-muted"
               >
-                Manage
+                <T context="verb, manage the provider">Manage</T>
               </Button>
             )}
           </div>
@@ -244,7 +250,7 @@ export function GettingStartedAgentStep(props: {
       {props.canContinue ? (
         <div className="mt-1 flex justify-end">
           <Button onClick={props.onContinue} size="sm" type="button">
-            Continue
+            <T>Continue</T>
           </Button>
         </div>
       ) : null}
@@ -277,9 +283,9 @@ const WORK_KIND_LABELS: ReadonlyArray<{
   readonly value: ScientWorkKind;
   readonly label: string;
 }> = [
-  { value: "scientific", label: "Research & science" },
-  { value: "code", label: "Coding & development" },
-  { value: "academic", label: "Academic work" },
+  { value: "scientific", label: msg("Research & science") },
+  { value: "code", label: msg("Coding & development") },
+  { value: "academic", label: msg("Academic work") },
 ];
 
 const capitalizeInitialLowercase = (value: string) =>
@@ -298,6 +304,8 @@ export function GettingStartedPreferencesStep(props: {
   readonly onOtherWorkChange: (value: string) => void;
   readonly onContinue: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const otherInputRef = useRef<HTMLInputElement>(null);
   const wasOtherSelectedRef = useRef(props.otherSelected);
 
@@ -311,11 +319,13 @@ export function GettingStartedPreferencesStep(props: {
   return (
     <div>
       <GettingStartedStepHeading
-        description="Choose any that fit. You can change this later."
-        title="How will you use Scient?"
+        description={gt("Choose any that fit. You can change this later.")}
+        title={gt("How will you use Scient?")}
       />
       <fieldset className="mt-5 max-w-md">
-        <legend className="sr-only">Kinds of work</legend>
+        <legend className="sr-only">
+          <T>Kinds of work</T>
+        </legend>
         {WORK_KIND_LABELS.map((option) => {
           const selected = props.workKinds.includes(option.value);
           return (
@@ -327,7 +337,7 @@ export function GettingStartedPreferencesStep(props: {
                 checked={selected}
                 onCheckedChange={() => props.onToggleWorkKind(option.value)}
               />
-              <span>{option.label}</span>
+              <span>{messages(option.label)}</span>
             </label>
           );
         })}
@@ -337,12 +347,14 @@ export function GettingStartedPreferencesStep(props: {
               checked={props.otherSelected}
               onCheckedChange={(checked) => props.onOtherSelectedChange(checked === true)}
             />
-            <span>Other</span>
+            <span>
+              <T context="another kind of work">Other</T>
+            </span>
           </label>
           {props.otherSelected ? (
             <input
               ref={otherInputRef}
-              aria-label="Describe how you use Scient"
+              aria-label={gt("Describe how you use Scient")}
               autoCapitalize="sentences"
               className="h-8.5 min-w-28 flex-1 rounded-none border-0 border-b border-border/60 bg-transparent px-0 leading-8.5 text-foreground outline-none placeholder:text-placeholder transition-colors focus:border-primary/75 sm:h-7.5 sm:leading-7.5"
               maxLength={SCIENT_OTHER_WORK_MAX_LENGTH}
@@ -354,7 +366,7 @@ export function GettingStartedPreferencesStep(props: {
                   ),
                 )
               }
-              placeholder="Tell us what you do"
+              placeholder={gt("Tell us what you do")}
               type="text"
               value={props.otherWork}
             />
@@ -363,14 +375,14 @@ export function GettingStartedPreferencesStep(props: {
       </fieldset>
       <div className="mt-5 grid max-w-md gap-3 sm:grid-cols-2">
         <GettingStartedChoice
-          label="Your field"
+          label={gt("Your field")}
           labels={SCIENT_FIELD_LABELS}
           onChange={props.onFieldChange}
           value={props.field}
           values={SCIENT_FIELD_VALUES}
         />
         <GettingStartedChoice
-          label="Your role"
+          label={gt("Your role")}
           labels={SCIENT_ROLE_LABELS}
           onChange={props.onRoleChange}
           value={props.role}
@@ -379,7 +391,7 @@ export function GettingStartedPreferencesStep(props: {
       </div>
       <div className="mt-7 flex justify-end">
         <Button onClick={props.onContinue} size="sm" type="button">
-          Continue
+          <T>Continue</T>
         </Button>
       </div>
     </div>
@@ -393,6 +405,7 @@ function GettingStartedChoice<Value extends string>(props: {
   readonly value: Value | undefined;
   readonly onChange: (value: Value) => void;
 }) {
+  const messages = useMessages();
   const labelId = useId();
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
@@ -409,16 +422,18 @@ function GettingStartedChoice<Value extends string>(props: {
         <SelectTrigger aria-labelledby={labelId} size="sm">
           <SelectValue>
             {props.value === undefined ? (
-              <span className="text-muted-foreground">Choose</span>
+              <span className="text-muted-foreground">
+                <T context="pick an option">Choose</T>
+              </span>
             ) : (
-              props.labels[props.value]
+              messages(props.labels[props.value])
             )}
           </SelectValue>
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           {props.values.map((value) => (
             <SelectItem key={value} value={value}>
-              {props.labels[value]}
+              {messages(props.labels[value])}
             </SelectItem>
           ))}
         </SelectPopup>
@@ -431,15 +446,16 @@ export function GettingStartedStartStep(props: {
   readonly onAddProject: () => void;
   readonly importAction?: React.ReactNode;
 }) {
+  const gt = useGT();
   return (
     <div>
       <GettingStartedStepHeading
-        description="Add a project to give your tasks a workspace."
-        title="Start working"
+        description={gt("Add a project to give your tasks a workspace.")}
+        title={gt("Start working")}
       />
       <div className="mt-7 flex flex-wrap items-center gap-2">
         <Button onClick={props.onAddProject} size="sm" type="button">
-          <PlusIcon aria-hidden /> Add project
+          <PlusIcon aria-hidden /> <T>Add project</T>
         </Button>
         {props.importAction}
       </div>

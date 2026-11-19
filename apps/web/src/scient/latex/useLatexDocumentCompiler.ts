@@ -4,6 +4,8 @@ import { createMarkdownPersistenceTransport } from "../markdownEditor/persistenc
 import { markdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { readLatexToolchain } from "./client";
 import type { LatexBuildTarget } from "./latexBuildStore";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 /** Read the root and environment capabilities without acquiring another document writer. */
 export function useLatexDocumentCompiler(input: {
@@ -46,7 +48,7 @@ export function useLatexDocumentCompiler(input: {
           key,
           source: disk.truncated ? null : (owned?.draftSource ?? disk.source),
           error: disk.truncated
-            ? "The root document was only partially read. Open it to review its compiler."
+            ? m(msg("The root document was only partially read. Open it to review its compiler."))
             : null,
         });
       } catch (error) {
@@ -54,7 +56,8 @@ export function useLatexDocumentCompiler(input: {
           setRoot({
             key,
             source: null,
-            error: error instanceof Error ? error.message : "Could not read the root document.",
+            error:
+              error instanceof Error ? error.message : m(msg("Could not read the root document.")),
           });
       }
     };
@@ -99,7 +102,7 @@ export function useLatexDocumentCompiler(input: {
             error:
               error instanceof Error
                 ? error.message
-                : "Compiler availability could not be checked.",
+                : m(msg("Compiler availability could not be checked.")),
           });
       }
     })();

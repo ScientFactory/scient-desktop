@@ -3,7 +3,9 @@ import type {
   ComputeOutput,
   ComputeSessionRecord,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
+import { m } from "~/i18n/messages";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
 
 import {
@@ -147,7 +149,7 @@ export function reconcileComputeFigureTarget(input: {
   const match = matchComputeFigureOutput(input.reference, outputs);
   const descriptor =
     match === null
-      ? { ...input.artifact, statusLabel: "Previous figure" }
+      ? { ...input.artifact, statusLabel: m(msg("Previous figure")) }
       : computeFigureDescriptorForRevision({
           cwd: input.cwd,
           reference: input.reference,

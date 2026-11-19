@@ -5,8 +5,10 @@ import { databaseReclaimMinutes, type EnvironmentId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
 
 import { toastManager } from "../../components/ui/toast";
+import { m } from "../../i18n/messages";
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentSummaries } from "../../state/presentation";
@@ -50,12 +52,22 @@ export function startDatabaseStorageReminders(router: AnyRouter): () => void {
         };
         const minutes = databaseReclaimMinutes(status);
         const id = toastManager.add({
-          title: `Scient can free ${formatGiB(status.reclaimableBytes)} on ${label}`,
-          description: `Cleaned-up history left unused space in its database. Reclaiming it restarts Scient, which is unavailable for about ${minutes} ${minutes === 1 ? "minute" : "minutes"}. You choose when.`,
+          title: m(
+            msg("Scient can free {size} on {computer}", {
+              size: formatGiB(status.reclaimableBytes),
+              computer: label,
+            }),
+          ),
+          description: m(
+            msg(
+              "{minutes, plural, one {Cleaned-up history left unused space in its database. Reclaiming it restarts Scient, which is unavailable for about {minutes} minute. You choose when.} other {Cleaned-up history left unused space in its database. Reclaiming it restarts Scient, which is unavailable for about {minutes} minutes. You choose when.}}",
+              { minutes },
+            ),
+          ),
           timeout: 0,
           onClose: persistDismissal,
           actionProps: {
-            children: "Open Storage",
+            children: m(msg("Open Storage")),
             onClick: () => {
               dismiss();
               void router.navigate({ to: "/settings/storage" });
@@ -63,7 +75,7 @@ export function startDatabaseStorageReminders(router: AnyRouter): () => void {
           },
           data: {
             actionLayout: "stacked-end",
-            secondaryActionProps: { children: "Not now", onClick: dismiss },
+            secondaryActionProps: { children: m(msg("Not now")), onClick: dismiss },
             secondaryActionVariant: "ghost",
           },
         });
