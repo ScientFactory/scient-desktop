@@ -18,6 +18,7 @@ import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeMana
 import * as ProviderRuntimeRecovery from "./providerLifecycle/ProviderRuntimeRecovery.ts";
 import * as ProviderRuntimeRequests from "./providerLifecycle/ProviderRuntimeRequests.ts";
 import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import * as ProviderModelFreshness from "./providerLifecycle/ProviderModelFreshness.ts";
 import * as ScientAgentBackgroundRuntime from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
@@ -103,6 +104,7 @@ export const ScientProviderLifecycleLive = Layer.mergeAll(
       ProviderConnectionManager.layer,
       ProviderRuntimeManager.layer,
       ManagedRuntimeCatalogReconciler.layer,
+      ProviderModelFreshness.layer,
     ),
   ),
   Layer.provideMerge(ProviderRuntimeRequests.layer),

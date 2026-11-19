@@ -184,6 +184,7 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import { ScientAgentBackgroundRuntime } from "./scient/providerLifecycle/ScientAgentBackgroundRuntime.ts";
+import { ProviderModelFreshness } from "./scient/providerLifecycle/ProviderModelFreshness.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 // SCIENT-FORK:END
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
@@ -855,6 +856,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProviderConnectionManager.ProviderConnectionManager)({}),
   Layer.mock(ProviderRuntimeManager.ProviderRuntimeManager)({}),
   Layer.mock(ScientAgentBackgroundRuntime)({}),
+  Layer.mock(ProviderModelFreshness)({ refreshStale: Effect.void }),
   Layer.mock(WorkspaceBindingResolver)({}),
   Layer.mock(ExtensionsServices.ConnectorRuntime)({}),
   Layer.mock(ExtensionsServices.ExtensionDeliveryReceipts)({}),
