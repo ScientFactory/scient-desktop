@@ -317,7 +317,7 @@ function RecordsTab(props: {
   const detail = props.reviews.detail!;
   const reviewId = detail.review.reviewId;
   const [logging, setLogging] = useState(false);
-  const title = (sourceId: string) => props.records.get(sourceId)?.title ?? "Untitled source";
+  const title = (sourceId: string) => props.records.get(sourceId)?.title ?? gt("Untitled source");
   const addInBatches = async (sourceIds: ReadonlyArray<string>) => {
     for (let start = 0; start < sourceIds.length; start += 500) {
       const result = await props.reviews.change(

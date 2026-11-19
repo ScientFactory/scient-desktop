@@ -100,6 +100,7 @@ export function LatexAlgorithmView({
         root={root}
         selected={selected}
         label={gt("Algorithm tools")}
+        name={gt("Algorithm")}
         inline
       >
         <LatexAlgorithmControls

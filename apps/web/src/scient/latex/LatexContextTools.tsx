@@ -39,9 +39,7 @@ export function LatexContextTools(props: {
       const toolbar = object ?? fallback ?? null;
       onPositionChange?.(toolbar?.getAttribute("data-context-position") ?? null);
       setInline(toolbar?.getAttribute("data-context-presentation") === "inline");
-      const name =
-        toolbar?.getAttribute("data-context-name") ?? toolbar?.getAttribute("aria-label");
-      setLabel(name ? name.replace(/ (options|tools)$/i, "") : null);
+      setLabel(toolbar?.getAttribute("data-context-name") ?? null);
       if (toolbar !== selectedToolbar) {
         selectedToolbar = toolbar;
         setOpen(false);
@@ -59,12 +57,7 @@ export function LatexContextTools(props: {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: [
-        "aria-label",
-        "data-context-name",
-        "data-context-presentation",
-        "data-context-position",
-      ],
+      attributeFilter: ["data-context-name", "data-context-presentation", "data-context-position"],
     });
     selectionChanged();
     const outside = (event: Event) => {

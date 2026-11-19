@@ -1307,7 +1307,7 @@ function LatexMathView({
           className="scient-latex-context-toolbar scient-latex-math-bar"
           role="toolbar"
           aria-label={gt("Math tools")}
-          data-context-name={display ? "Equation" : "Inline math"}
+          data-context-name={display ? gt("Equation") : gt("Inline math")}
           data-context-presentation="inline"
           onClick={(event) => event.stopPropagation()}
         >
@@ -2216,6 +2216,17 @@ function LatexInlineCommandView({
                 : name === "label"
                   ? gt("Label", { $context: "LaTeX object" })
                   : gt("Reference", { $context: "LaTeX object" })
+        }
+        name={
+          isLink
+            ? gt("Link", { $context: "LaTeX object" })
+            : citation
+              ? gt("Citation", { $context: "LaTeX object" })
+              : name === "footnote"
+                ? gt("Footnote", { $context: "LaTeX object" })
+                : name === "label"
+                  ? gt("Reference label")
+                  : gt("Cross-reference")
         }
         label={
           isLink
@@ -3521,6 +3532,7 @@ function LatexRichPreviewView({
           root={objectRoot}
           selected={selected}
           label={gt("Part tools")}
+          name={gt("Part", { $context: "LaTeX object" })}
           position={gt("Part", { $context: "LaTeX object" })}
           inline
         >
@@ -3633,6 +3645,7 @@ function LatexRichPreviewView({
               root={objectRoot}
               selected={selected}
               label={gt("Code tools")}
+              name={gt("Code", { $context: "LaTeX object" })}
               position={gt("Code", { $context: "LaTeX object" })}
               inline
             >
@@ -3933,6 +3946,7 @@ function LatexRichPreviewView({
           root={objectRoot}
           selected={selected}
           label={gt("Figure tools")}
+          name={gt("Figure", { $context: "LaTeX object" })}
           position={gt("Figure", { $context: "LaTeX object" })}
           inline
         >
@@ -4347,6 +4361,7 @@ function LatexRichPreviewView({
             root={objectRoot}
             selected={selected}
             label={gt("Description list tools")}
+            name={gt("Description list", { $context: "LaTeX object" })}
             position={gt("List", { $context: "LaTeX object" })}
             inline
           >
@@ -5305,6 +5320,7 @@ function LatexScientificView(props: NodeViewProps) {
             root={root}
             selected={selected}
             label={gt("Figure tools")}
+            name={gt("Figure", { $context: "LaTeX object" })}
             position={gt("Figure", { $context: "LaTeX object" })}
             inline
           >
@@ -5372,6 +5388,11 @@ function LatexScientificView(props: NodeViewProps) {
           root={root}
           selected={selected}
           position={
+            layout.kind === "columns"
+              ? gt("Columns", { $context: "LaTeX object" })
+              : gt("Panel", { $context: "LaTeX object" })
+          }
+          name={
             layout.kind === "columns"
               ? gt("Columns", { $context: "LaTeX object" })
               : gt("Panel", { $context: "LaTeX object" })
@@ -5570,7 +5591,8 @@ function LatexScientificStatementView({
         editor={editor}
         root={root}
         selected={selected}
-        label={`${displayTitle} tools`}
+        name={displayTitle}
+        label={gt("{displayTitle} tools", { displayTitle })}
         position={displayTitle}
         inline
       >

@@ -214,6 +214,7 @@ export function LatexFigureToolbar(props: {
       ref={bar}
       role="toolbar"
       aria-label={gt("Figure tools")}
+      data-context-name={gt("Figure", { $context: "LaTeX object" })}
       data-context-presentation="inline"
       className="scient-latex-context-toolbar"
       onPointerDown={(event) => event.stopPropagation()}

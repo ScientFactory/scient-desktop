@@ -62,6 +62,7 @@ export function LatexListControls({ editor }: { editor: Editor }) {
     <div
       role="toolbar"
       aria-label={gt("List options")}
+      data-context-name={gt("List", { $context: "LaTeX list object" })}
       data-context-fallback=""
       data-context-presentation="inline"
       data-context-position={gt("List", { $context: "LaTeX list object" })}

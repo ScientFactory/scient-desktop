@@ -118,6 +118,7 @@ export function LatexTableToolbar(props: Props) {
       data-context-presentation="inline"
       role="toolbar"
       aria-label={gt("Table tools")}
+      data-context-name={gt("Table", { $context: "LaTeX object" })}
       onClick={(event) => event.stopPropagation()}
     >
       <DockMenu

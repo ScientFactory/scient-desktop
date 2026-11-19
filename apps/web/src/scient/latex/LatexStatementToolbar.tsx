@@ -38,6 +38,7 @@ export function LatexStatementToolbar(props: {
       ref={bar}
       role="toolbar"
       aria-label={props.proof ? gt("Proof tools") : gt("Statement tools")}
+      data-context-name={props.proof ? gt("Proof") : gt("Statement")}
       data-context-presentation="inline"
       data-context-position={props.environment}
       className="scient-latex-context-toolbar"

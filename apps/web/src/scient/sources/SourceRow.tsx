@@ -116,7 +116,7 @@ export function RowStar(props: {
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label={`${label}: ${props.title ?? "Untitled source"}`}
+          aria-label={`${label}: ${props.title ?? m(msg("Untitled source"))}`}
           aria-pressed={props.starred}
           disabled={pending}
           onClick={() => {

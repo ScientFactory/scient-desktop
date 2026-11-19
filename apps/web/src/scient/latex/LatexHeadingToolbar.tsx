@@ -48,6 +48,7 @@ export function LatexHeadingToolbar({
     <div
       role="toolbar"
       aria-label={gt("Heading options")}
+      data-context-name={gt("Heading")}
       data-context-fallback=""
       data-context-presentation="inline"
       className="scient-latex-context-toolbar scient-latex-heading-bar"

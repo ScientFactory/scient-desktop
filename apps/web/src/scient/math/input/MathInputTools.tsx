@@ -2,7 +2,7 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import { matchingMathCommands } from "./catalog";
+import { matchingMathCommands, MATH_GROUP_LABELS } from "./catalog";
 import type { MathInputController } from "./controller";
 import { MATRIX_ENVIRONMENTS, type MatrixEnvironment } from "./matrix";
 import {
@@ -55,7 +55,7 @@ export function MathInputTools({
   const trigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const symbols = useRef<HTMLSpanElement>(null);
-  const matches = matchingMathCommands(panel.query);
+  const matches = matchingMathCommands(panel.query, messages);
   const run = (id: string) => {
     if (controller.execute(id)) controller.close();
     else setError(gt("This command is unavailable at the current selection."));
@@ -70,7 +70,7 @@ export function MathInputTools({
       {anchor ? null : (
         <ScientTooltip
           content={
-            "Math and symbols" +
+            gt("Math and symbols") +
             (shortcutLabel("math.palette") ? " (" + shortcutLabel("math.palette") + ")" : "")
           }
         >
@@ -189,16 +189,21 @@ export function MathInputTools({
                   else buttons[Math.min(next, buttons.length - 1)]?.focus();
                 }}
               >
-                {matches.map((command) => (
-                  <ScientTooltip
-                    key={command.id}
-                    content={`${command.group}: ${command.label}${shortcutLabel(command.id) ? " · " + shortcutLabel(command.id) : ""}`}
-                  >
-                    <button type="button" onClick={() => run(command.id)}>
-                      {command.label}
-                    </button>
-                  </ScientTooltip>
-                ))}
+                {matches.map((command) => {
+                  const group = messages(MATH_GROUP_LABELS[command.group]);
+                  const label = messages(command.label);
+                  const shortcut = shortcutLabel(command.id);
+                  return (
+                    <ScientTooltip
+                      key={command.id}
+                      content={`${group}: ${label}${shortcut ? " · " + shortcut : ""}`}
+                    >
+                      <button type="button" onClick={() => run(command.id)}>
+                        {label}
+                      </button>
+                    </ScientTooltip>
+                  );
+                })}
               </span>
               <span className="scient-math-matrix-picker">
                 <label>

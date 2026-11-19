@@ -1,4 +1,4 @@
-import { T, useGT, useMessages, Var } from "gt-react";
+import { decodeMsg, msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
@@ -52,39 +52,40 @@ const COMMON_SOURCE_TYPES: ReadonlyArray<Metadata["type"]> = [
 
 /** Creator roles as the source records them (Zotero's spelling), under the words people use. */
 const CREATOR_ROLES: ReadonlyArray<readonly [token: string, label: string]> = [
-  ["author", "Author"],
-  ["editor", "Editor"],
-  ["translator", "Translator"],
-  ["contributor", "Contributor"],
-  ["bookAuthor", "Book author"],
-  ["seriesEditor", "Series editor"],
-  ["reviewedAuthor", "Reviewed author"],
-  ["presenter", "Presenter"],
-  ["programmer", "Programmer"],
-  ["inventor", "Inventor"],
-  ["interviewer", "Interviewer"],
-  ["interviewee", "Interviewee"],
-  ["director", "Director"],
-  ["producer", "Producer"],
-  ["performer", "Performer"],
-  ["artist", "Artist"],
-  ["cartographer", "Cartographer"],
-  ["sponsor", "Sponsor"],
+  ["author", msg("Author", { $context: "bibliographic creator role" })],
+  ["editor", msg("Editor", { $context: "bibliographic creator role" })],
+  ["translator", msg("Translator", { $context: "bibliographic creator role" })],
+  ["contributor", msg("Contributor", { $context: "bibliographic creator role" })],
+  ["bookAuthor", msg("Book author", { $context: "bibliographic creator role" })],
+  ["seriesEditor", msg("Series editor", { $context: "bibliographic creator role" })],
+  ["reviewedAuthor", msg("Reviewed author", { $context: "bibliographic creator role" })],
+  ["presenter", msg("Presenter", { $context: "bibliographic creator role" })],
+  ["programmer", msg("Programmer", { $context: "bibliographic creator role" })],
+  ["inventor", msg("Inventor", { $context: "bibliographic creator role" })],
+  ["interviewer", msg("Interviewer", { $context: "bibliographic creator role" })],
+  ["interviewee", msg("Interviewee", { $context: "bibliographic creator role" })],
+  ["director", msg("Director", { $context: "bibliographic creator role" })],
+  ["producer", msg("Producer", { $context: "bibliographic creator role" })],
+  ["performer", msg("Performer", { $context: "bibliographic creator role" })],
+  ["artist", msg("Artist", { $context: "bibliographic creator role" })],
+  ["cartographer", msg("Cartographer", { $context: "bibliographic creator role" })],
+  ["sponsor", msg("Sponsor", { $context: "bibliographic creator role" })],
 ];
-const CREATOR_ROLE_LABELS = CREATOR_ROLES.map(([, label]) => label);
 
 /** A known role under its name; any other role as it was written. */
-function creatorRoleLabel(token: string): string {
+function creatorRoleLabel(token: string, translate: (label: string) => string): string {
   const lower = token.toLowerCase();
-  return CREATOR_ROLES.find(([known]) => known.toLowerCase() === lower)?.[1] ?? token;
+  const role = CREATOR_ROLES.find(([known]) => known.toLowerCase() === lower);
+  return role ? translate(role[1]) : token;
 }
 
 /** What was typed or picked, as the role to store: a known name or token becomes its token. */
-function creatorRoleFromText(text: string): string {
+function creatorRoleFromText(text: string, translate: (label: string) => string): string {
   const lower = text.trim().toLowerCase();
-  const known = CREATOR_ROLES.find(
-    ([token, label]) => label.toLowerCase() === lower || token.toLowerCase() === lower,
-  );
+  const known =
+    CREATOR_ROLES.find(([token]) => token.toLowerCase() === lower) ??
+    CREATOR_ROLES.find(([, label]) => translate(label).toLowerCase() === lower) ??
+    CREATOR_ROLES.find(([, label]) => decodeMsg(label).toLowerCase() === lower);
   return known ? known[0] : text;
 }
 
@@ -173,7 +174,13 @@ export function SourceEditor(props: {
   readonly onSaved: (record: SourceRecord) => void;
 }) {
   const m = useMessages();
+  const locale = useLocale();
+  const creatorRoles = CREATOR_ROLES.map(([token, label]) => ({ token, label: m(label) }));
   const gt = useGT();
+  const creatorRoleInSentence = (token: string) => {
+    const label = creatorRoleLabel(token, m);
+    return locale === "en" ? label.toLowerCase() : label;
+  };
   const originalMetadata = metadataFromRecord(props.record);
   // An uncommon type the source already has is offered too, before Other source.
   const sourceTypeItems = (
@@ -443,8 +450,8 @@ export function SourceEditor(props: {
               <div key={role} className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="min-w-0 flex-1 text-muted-foreground">
                   <T>
-                    The <Var>{creatorRoleLabel(role).toLowerCase()}</Var> list ends with “and
-                    others”, so references end it with “et al.”.
+                    The <Var>{creatorRoleInSentence(role)}</Var> list ends with “and others”, so
+                    references end it with “et al.”.
                   </T>
                 </span>
                 <Button
@@ -461,7 +468,7 @@ export function SourceEditor(props: {
                   }
                 >
                   <T>
-                    The <Var>{creatorRoleLabel(role).toLowerCase()}</Var> list is complete
+                    The <Var>{creatorRoleInSentence(role)}</Var> list is complete
                   </T>
                 </Button>
               </div>
@@ -477,13 +484,13 @@ export function SourceEditor(props: {
                       <T context="a creator's role">Role</T>
                     </FieldLabel>
                     <Autocomplete
-                      items={CREATOR_ROLE_LABELS}
+                      items={creatorRoles.map(({ label }) => label)}
                       mode="none"
                       openOnInputClick
-                      value={creatorRoleLabel(creator.creatorType)}
+                      value={creatorRoleLabel(creator.creatorType, m)}
                       onValueChange={(text) => {
                         const creators = [...metadata.creators];
-                        creators[index] = { ...creator, creatorType: creatorRoleFromText(text) };
+                        creators[index] = { ...creator, creatorType: creatorRoleFromText(text, m) };
                         setMetadata((current) => ({ ...current, creators }));
                       }}
                     >
@@ -496,8 +503,8 @@ export function SourceEditor(props: {
                       />
                       <AutocompletePopup>
                         <AutocompleteList className="max-h-60">
-                          {CREATOR_ROLE_LABELS.map((label) => (
-                            <AutocompleteItem key={label} value={label}>
+                          {creatorRoles.map(({ token, label }) => (
+                            <AutocompleteItem key={token} value={label}>
                               {label}
                             </AutocompleteItem>
                           ))}

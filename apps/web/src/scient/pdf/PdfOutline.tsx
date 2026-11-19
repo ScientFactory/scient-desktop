@@ -1,4 +1,4 @@
-import { T } from "gt-react";
+import { T, useGT } from "gt-react";
 import { ExternalLink } from "lucide-react";
 
 import type { PDFOutline, PDFOutlineItem } from "./pdfRuntime";
@@ -10,7 +10,8 @@ function OutlineItem(props: {
   readonly onDestination: (destination: string | Array<unknown>) => void;
   readonly onExternalUrl: (url: string) => void;
 }) {
-  const label = props.item.title.trim() || "Untitled section";
+  const gt = useGT();
+  const label = props.item.title.trim() || gt("Untitled section");
   const content = (
     <span className="scient-pdf-outline-label" style={{ paddingInlineStart: props.depth * 12 }}>
       <span className="truncate">{label}</span>

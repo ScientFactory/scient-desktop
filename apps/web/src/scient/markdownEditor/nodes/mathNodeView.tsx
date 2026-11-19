@@ -117,7 +117,7 @@ class ScientMathNodeView implements NodeView {
     this.mathInput = controller;
     this.retainedNotice = document.createElement("span");
     this.retainedNotice.className = "scient-markdown-math-retained";
-    this.retainedNotice.textContent = "Preview kept at the last valid equation.";
+    this.retainedNotice.textContent = m(msg("Preview kept at the last valid equation."));
     this.retainedNotice.setAttribute("role", "status");
     this.retainedNotice.hidden = true;
     this.dom.append(this.retainedNotice);

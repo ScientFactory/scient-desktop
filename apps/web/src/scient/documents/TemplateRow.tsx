@@ -278,6 +278,7 @@ function MoreTemplate(props: {
   readonly onActions: (position: { x: number; y: number }) => void;
   readonly onExpand: (returnFocus: HTMLElement | null) => void;
 }) {
+  const gt = useGT();
   // Only the pointer drag: the sortable's role and keyboard attributes would
   // replace the element's own (a radio on the page, a menu item in More).
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -308,7 +309,7 @@ function MoreTemplate(props: {
         <button
           type="button"
           className="scient-template-actions"
-          aria-label={`${props.name} options`}
+          aria-label={gt("{label} options", { label: props.name })}
           onPointerDown={keepToItself}
           onMouseUp={keepToItself}
           onClick={(event) => {

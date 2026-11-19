@@ -328,7 +328,7 @@ class ScientReferenceNodeView implements NodeView {
       backlink.textContent = "↩";
       const tooltip = document.createElement("span");
       tooltip.className = "scient-markdown-footnote-backlink-tooltip";
-      tooltip.textContent = "Back to text";
+      tooltip.textContent = m(msg("Back to text"));
       tooltip.setAttribute("aria-hidden", "true");
       backlink.append(tooltip);
       backlink.setAttribute(

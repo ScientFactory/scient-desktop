@@ -100,6 +100,7 @@ export function LatexColorBoxView({
         root={root}
         selected={selected}
         label={gt("Box tools")}
+        name={gt("Box", { $context: "LaTeX colored box object" })}
         position={gt("Box", { $context: "LaTeX colored box object" })}
         inline
       >

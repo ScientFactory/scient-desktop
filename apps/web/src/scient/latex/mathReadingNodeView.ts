@@ -342,10 +342,10 @@ export function mathReadingNodeView(
       delete dom.dataset.mathEditorAdmission;
       hint.remove();
       if (failed && !disposed) {
-        hint.textContent = "Equation editor unavailable. ";
+        hint.textContent = m(msg("Equation editor unavailable.")) + " ";
         const retry = dom.ownerDocument.createElement("button");
         retry.type = "button";
-        retry.textContent = "Retry";
+        retry.textContent = m(msg("Retry"));
         retry.addEventListener("pointerdown", (event) => event.stopPropagation());
         retry.addEventListener("click", (event) => {
           event.stopPropagation();

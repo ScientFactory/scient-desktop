@@ -14,26 +14,26 @@ export interface SurfaceCommand {
   readonly defaultKeys: readonly string[];
 }
 const markdownActions = [
-  "bold",
-  "italic",
-  "inlineCode",
-  "strike",
-  "link",
-  "find",
-  "paragraph",
-  "heading1",
-  "heading2",
-  "heading3",
-  "heading4",
-  "heading5",
-  "heading6",
-  "orderedList",
-  "bulletList",
-  "taskList",
-  "clearFormatting",
-  "moveBlockUp",
-  "moveBlockDown",
-  "duplicateBlock",
+  ["bold", msg("Bold")],
+  ["italic", msg("Emphasis / italic")],
+  ["inlineCode", msg("Inline code")],
+  ["strike", msg("Strikethrough")],
+  ["link", msg("Link")],
+  ["find", msg("Find")],
+  ["paragraph", msg("Normal paragraph")],
+  ["heading1", msg("Heading 1")],
+  ["heading2", msg("Heading 2")],
+  ["heading3", msg("Heading 3")],
+  ["heading4", msg("Heading 4")],
+  ["heading5", msg("Heading 5")],
+  ["heading6", msg("Heading 6")],
+  ["orderedList", msg("Numbered list")],
+  ["bulletList", msg("Bullet list")],
+  ["taskList", msg("Task list")],
+  ["clearFormatting", msg("Clear formatting")],
+  ["moveBlockUp", msg("Move block up")],
+  ["moveBlockDown", msg("Move block down")],
+  ["duplicateBlock", msg("Duplicate block")],
 ] as const;
 const commandCache = new Map<boolean, readonly SurfaceCommand[]>();
 export function surfaceCommands(mac: boolean): readonly SurfaceCommand[] {
@@ -68,9 +68,9 @@ export function surfaceCommands(mac: boolean): readonly SurfaceCommand[] {
       scope: "table" as const,
       defaultKeys,
     })),
-    ...markdownActions.map((id) => ({
+    ...markdownActions.map(([id, label]) => ({
       id: "markdown." + id,
-      label: id.replace(/([A-Z0-9])/gu, " $1"),
+      label,
       scope: "markdown" as const,
       defaultKeys: SHORTCUTS[id].bindings.map((binding) =>
         [
