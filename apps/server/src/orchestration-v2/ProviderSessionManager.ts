@@ -62,8 +62,8 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -3530,13 +3530,15 @@ export const layerWithOptions = (
         };
       };
 
-      const startEventPump = (entry: LiveSessionEntry) => {
+      const startEventPump = (entry: LiveSessionEntry, sessionClosed: Deferred.Deferred<void>) => {
         let stoppedByProvider = false;
         let lastSessionStatus = entry.runtime.providerSession.status;
         const retryStalls = makeRetryStallWatch(entry);
         // SCIENT-FORK:START — the pump reads the native stream, including text batches.
         return (entry.runtime.textSnapshots?.events ?? entry.runtime.events).pipe(
           // SCIENT-FORK:END
+          // Several adapters never end their event stream, and a parked pump retains the whole session.
+          Stream.interruptWhen(Deferred.await(sessionClosed)),
           Stream.runForEach((nativeEvent) => {
             if (shutdownSignal.received) return Effect.void;
             // SCIENT-FORK:START — running-fork text batches go only to their exact consumer.
@@ -4050,6 +4052,12 @@ export const layerWithOptions = (
                   return yield* Effect.uninterruptibleMask((restore) =>
                     Effect.gen(function* () {
                       const sessionScope = yield* Scope.make();
+                      // Added before the adapter's finalizers so it runs after them: the pump drains shutdown events first.
+                      const sessionClosed = yield* Deferred.make<void>();
+                      yield* Scope.addFinalizer(
+                        sessionScope,
+                        Deferred.done(sessionClosed, Exit.void),
+                      );
                       let published = false;
                       // SCIENT-FORK:START — layer-owned opening authority and physical close.
                       cleanupOpening = dropReservation.pipe(
@@ -4249,7 +4257,7 @@ export const layerWithOptions = (
                               }).pipe(Effect.ignore),
                             ),
                           );
-                          yield* startEventPump(entry);
+                          yield* startEventPump(entry, sessionClosed);
                           yield* scheduleIdleRelease(input.providerSessionId);
                           return exposedRuntime;
                         }),

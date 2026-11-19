@@ -594,6 +594,8 @@ export function buildAntigravityAcpSpawnInput(input: {
   return {
     command: input.installation.executablePath,
     // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
+    // The harness can survive a failed local agent and return end_turn; its native
+    // logs are the failure signal, so the transport must receive them.
     args:
       input.installation.harnessPath === null
         ? [
@@ -604,9 +606,7 @@ export function buildAntigravityAcpSpawnInput(input: {
             // The CLI joins this beneath gemini-dir, including when the value is absolute.
             "antigravity-acp",
           ]
-        : input.profile.platform === "linux"
-          ? ["--uid="]
-          : [],
+        : [...(input.profile.platform === "linux" ? ["--uid="] : []), "--alsologtostderr"],
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(
@@ -726,6 +726,10 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
+// glog records from the managed harness after which its ACP process can no longer run a turn.
+const ANTIGRAVITY_HARNESS_FAILURE_LOG =
+  /^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ (?:local_connection\.py:\d+\] harness stderr: Agent run failed:|server\.py:\d+\] (?:Failed to rebuild agent for session |Agent connection lost for session ))/;
+
 // SCIENT-FORK:START — bounded stderr and fatal malformed authorization markers.
 export function makeAntigravityStderrHandler(
   input: {
@@ -736,18 +740,25 @@ export function makeAntigravityStderrHandler(
 ) {
   let pending = "";
   let discardingLine = false;
-  const handleLine = (line: string) => {
+  // Untraced: with native logs on stderr this runs for every harness log line.
+  const handleLine = Effect.fnUntraced(function* (line: string) {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
+    if (ANTIGRAVITY_HARNESS_FAILURE_LOG.test(message)) {
+      return yield* new AcpErrors.AcpTransportError({
+        method: "session/prompt",
+        detail:
+          "Antigravity's local agent connection failed. Send a follow-up to resume with a fresh process.",
+        cause: undefined,
+      });
+    }
     if (
       !message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX) &&
       !message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
     ) {
-      return Effect.void;
+      return;
     }
     if (message.length > maxBrowserHelperLineLength) {
-      return Effect.fail(
-        authSupportError("Antigravity sent a Google sign-in marker that is too large."),
-      );
+      return yield* authSupportError("Antigravity sent a Google sign-in marker that is too large.");
     }
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
@@ -756,7 +767,7 @@ export function makeAntigravityStderrHandler(
             authSupportError("Antigravity returned an invalid Google sign-in marker."),
           ),
         );
-    return url.pipe(
+    yield* url.pipe(
       Effect.flatMap(parseAntigravityAuthorizationUrl),
       Effect.flatMap((request) =>
         input.onAuthorizationUrl
@@ -764,7 +775,7 @@ export function makeAntigravityStderrHandler(
           : Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)),
       ),
     );
-  };
+  });
 
   return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
     let offset = 0;

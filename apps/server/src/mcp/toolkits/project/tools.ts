@@ -50,6 +50,7 @@ const shared = {
     ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
+    ServerSettings.ServerSettingsService,
     SecureRandom.SecureRandom,
   ],
 };

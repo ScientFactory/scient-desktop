@@ -502,24 +502,20 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     assert.deepStrictEqual(commands, [
       // Local status first reads whether config hides untracked files.
       { args: ["config", "--get", "status.showUntrackedFiles"] },
-      { args: ["rev-parse", "--git-path", "index"], language: "C" },
-      { args: ["rev-parse", "--git-common-dir"], language: "C" },
-      { args: ["status", "--porcelain=2", "--branch", "-z"], language: "C" },
-      { args: ["diff-index", "-M", "--numstat", "-z", "HEAD", "--"], language: "C" },
-      // Status lookups that run beside `git status` are discarded for a non-repository.
+      // One batched path lookup finds the index, common dir and root; a non-repository ends here.
       {
         args: [
           "rev-parse",
-          "--verify",
-          "--quiet",
-          "--symbolic-full-name",
-          "refs/remotes/origin/HEAD",
+          "--path-format=absolute",
+          "--git-path",
+          "index",
+          "--git-common-dir",
+          "--show-toplevel",
         ],
+        language: "C",
       },
-      { args: ["remote"] },
-      // Without origin/HEAD, the default branch lookup lists remotes for another one.
-      { args: ["remote"] },
       { args: ["rev-parse", "--symbolic-full-name", "HEAD"], language: "C" },
+      { args: ["rev-parse", "--git-common-dir"], language: "C" },
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -541,6 +537,22 @@ it.effect.each(["origin", "github"] as const)(
 
       assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, true);
       assert.equal((yield* driver.listRefs({ cwd })).hasPrimaryRemote, true);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "refreshes remote status after external init while refs still cache a non-repository",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.realPath(yield* makeTmpDir());
+      assert.isFalse((yield* driver.listRefs({ cwd })).isRepo);
+      yield* git(cwd, ["init"]);
+
+      assert.isFalse((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
+      yield* driver.ensureRemote({ cwd, preferredName: "origin", url: cwd });
+      assert.isTrue((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
     }).pipe(Effect.provide(layerTest)),
 );
 
@@ -2064,6 +2076,11 @@ it.effect.each(
         stderr: "error: fetching ref refs/remotes/origin/main failed: reference already exists",
         expected: "could not update a local reference",
         attempts: 2,
+      },
+      {
+        name: "broken local ref",
+        stderr: "fatal: bad object refs/remotes/origin/dev 2",
+        expected: "broken local ref",
       },
       {
         name: "unrelated remote chatter",
@@ -5032,7 +5049,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "nested/untracked.txt", "one\ntwo\n");
         yield* writeTextFile(cwd, "new [1].txt", "literal\n");
 
-        const status = yield* driver.statusDetailsLocal(pathService.join(cwd, "nested"), {
+        const nested = pathService.join(cwd, "nested");
+        const alias = pathService.join(yield* makeTmpDir(), "alias");
+        const platform = yield* HostProcess.Platform;
+        yield* Effect.promise(() =>
+          NodeFS.promises.symlink(nested, alias, platform === "win32" ? "junction" : "dir"),
+        );
+        const status = yield* driver.statusDetailsLocal(alias, {
           includeBranchChanges: true,
         });
         assert.deepStrictEqual(status.branchChanges, {
@@ -5040,6 +5063,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           insertions: 4,
           deletions: 0,
         });
+        yield* driver.ensureRemote({ cwd: alias, preferredName: "origin", url: cwd });
+        assert.isTrue((yield* driver.statusDetailsLocal(alias)).hasOriginRemote);
         assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).branchChanges);
       }),
     );

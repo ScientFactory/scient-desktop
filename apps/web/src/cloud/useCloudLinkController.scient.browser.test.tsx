@@ -1,4 +1,5 @@
 import {
+  AuthRelayConfigureScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   EnvironmentId,
@@ -66,6 +67,7 @@ vi.mock(import("../state/relay"), async (original) => {
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: (_environmentId, scope) => testState.scopes.has(scope),
+  readEnvironmentCanConfigureRelay: () => testState.scopes.has(AuthRelayConfigureScope),
 }));
 vi.mock(import("../state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -140,7 +142,8 @@ async function mountController() {
 }
 
 function setup() {
-  testState.scopes = new Set([AuthRelayReadScope, AuthRelayWriteScope]);
+  // The desktop's own session holds every relay scope, including the new relay:configure.
+  testState.scopes = new Set([AuthRelayReadScope, AuthRelayWriteScope, AuthRelayConfigureScope]);
   testState.snapshot = linkedState;
   testState.renderedSnapshot = linkedState;
   testState.relayProviderKind = null;

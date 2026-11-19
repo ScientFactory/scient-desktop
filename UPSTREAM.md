@@ -707,6 +707,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`0317d4f4e5d7d3b5aba37bed0d61c304fb24d7ae` is recorded in
+[the 2026-11-19 0226239a41 receipt](docs/internals/t3-upstream-sync-20261119-0226239a41.md).
+Literal merge `52bd8cf7bccbb78bde2af1e22937478e0f1695c0` has owned base
+`10eee98aca9ed033f2ccb06055f765dff321551f` and the frozen official target as parents, retaining
+the 121 official commits after `0226239a41`. The range lowers server memory use, keeps
+Antigravity threads working while background commands and subagents run, keeps a steer Claude
+had not read for Resume, gives agents pull request and CI tools, and makes setting up a Scient
+Connect link need the `relay:configure` permission. T3's migration 99 is Scient's 103. The
+alignment is Scient PR #1029. Release remains separate.
+
+The previous committed alignment through
 `0226239a41e1fd0649fdd2562421d8950db7f39c` is recorded in
 [the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md),
 whose 2026-11-19 extension adds the 41 official commits after `8cf97b5f06` in literal merge
@@ -719,7 +730,7 @@ languages, adding Swedish; Scient's wording inside T3's screens is translated wi
 Scient's own modules stay English. Fixes include service-worker pages identifying as Chrome and
 Run now keeping a paused one-time task. The alignment is Scient PR #1021. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `42763ff8b12bfb534363df4dd5f8f5f759f54990` is recorded in
 [the 2026-11-18 42763ff8b1 receipt](docs/internals/t3-upstream-sync-20261118-42763ff8b1.md).
 Literal merge `07c3ec51f70ae063b45fadadeccd7df07e45befd` has owned base

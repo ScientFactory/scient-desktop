@@ -175,6 +175,7 @@ function layerProjectionStore(
       getRollbackAttachmentOwners: () => Effect.die("unused prune query"),
       hasRunInterruptRequest: () => Effect.die("unused stop read"),
       getRunProviderRecords: () => Effect.die("unused run provider read"),
+      getRunCardRecords: () => Effect.die("unused run card read"),
       getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
       searchThread: () => Effect.die("unused"),
       searchThreadStream: () => Stream.empty,

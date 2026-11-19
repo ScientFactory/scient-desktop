@@ -30,6 +30,7 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
   return {
     cwd: path.join(temporaryDirectory, "workspace"),
     userHome: path.join(temporaryDirectory, "home"),
+    profileDirectory: path.join(temporaryDirectory, "profile"),
   };
 });
 
@@ -47,15 +48,21 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         "---\nname: project-review\n---\n",
       );
 
-      assert.deepEqual(yield* discoverAntigravitySkills({ userHome: input.userHome }), [
-        {
-          name: "global-review",
-          description: "Review everywhere.",
-          path: globalPath,
-          scope: "user",
-          enabled: true,
-        },
-      ]);
+      assert.deepEqual(
+        yield* discoverAntigravitySkills({
+          userHome: input.userHome,
+          profileDirectory: input.profileDirectory,
+        }),
+        [
+          {
+            name: "global-review",
+            description: "Review everywhere.",
+            path: globalPath,
+            scope: "user",
+            enabled: true,
+          },
+        ],
+      );
     }),
   );
 
@@ -171,6 +178,71 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
+    }),
+  );
+
+  it.effect("reads skills from enabled plugins in the instance's Antigravity profile", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const profileDirectory = path.join(workspace.userHome, "t3", "providers", "antigravity", "p");
+      const plugins = path.join(profileDirectory, "config", "plugins");
+      for (const plugin of ["demo", "off"]) {
+        yield* writeSkill(
+          path.join(plugins, plugin, "skills", `${plugin}-skill`),
+          `---\nname: ${plugin}-skill\ndescription: From ${plugin}.\n---\n`,
+        );
+        // SCIENT-FORK: Antigravity plugins carry a manifest; Scient namespaces skills by its name.
+        yield* fileSystem.writeFileString(
+          path.join(plugins, plugin, "plugin.json"),
+          JSON.stringify({ name: plugin }),
+        );
+      }
+      yield* fileSystem.writeFileString(
+        path.join(profileDirectory, "config", "config.json"),
+        JSON.stringify({ plugins: { off: { enabled: false } } }),
+      );
+      yield* fileSystem.writeFileString(path.join(plugins, ".DS_Store"), "x");
+      const input = { ...workspace, profileDirectory };
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
+        ["demo:demo-skill"],
+      );
+    }),
+  );
+
+  // SCIENT-FORK: a profile config Scient cannot read leaves out only the profile's plugins.
+  it.effect("keeps other skills when the profile's plugin config is too large", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const profileDirectory = path.join(workspace.userHome, "t3", "providers", "antigravity", "p");
+      const plugins = path.join(profileDirectory, "config", "plugins");
+      yield* writeSkill(
+        path.join(plugins, "demo", "skills", "demo-skill"),
+        "---\nname: demo-skill\ndescription: From demo.\n---\n",
+      );
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "demo", "plugin.json"),
+        JSON.stringify({ name: "demo" }),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(profileDirectory, "config", "config.json"),
+        `{"padding":"${"x".repeat(1_000_000)}"}`,
+      );
+      yield* writeSkill(
+        path.join(workspace.cwd, ".agents", "skills", "review"),
+        "---\nname: review\ndescription: Project skill.\n---\n",
+      );
+      const input = { ...workspace, profileDirectory };
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
+        ["review"],
+      );
     }),
   );
 

@@ -4,8 +4,8 @@ import {
   formatThreadLink,
   parseThreadLinkHref,
   percentDecodedThreadLinkId,
-  relabelThreadLinks,
 } from "./threadLinks.ts";
+import { relabelThreadLinks } from "./threadLinksCopy.ts";
 
 const local = EnvironmentId.make("local");
 

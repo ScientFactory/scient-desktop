@@ -1,3 +1,4 @@
+import { isElectron } from "~/env";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 // SCIENT-FORK:START — the phone-app switch.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
@@ -54,7 +55,6 @@ import {
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 // SCIENT-FORK:START — scient/connect
 import { describeScientConnectHost, useScientConnectHost } from "~/scient/connect/connectHost";
@@ -65,7 +65,11 @@ import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
 import { readEnvironmentScope } from "~/state/session";
-import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
+import {
+  type EnvironmentPresentation,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "~/state/environments";
 import { APP_VERSION } from "~/branding";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -588,6 +592,7 @@ function ConfiguredCloudLinkRow({
     holdWebhooksWhileOffline,
     operationError,
     tunnelLimit,
+    needsRelayConfiguration,
     reconcileCloudState,
   } = useCloudLinkController(environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
@@ -599,11 +604,15 @@ function ConfiguredCloudLinkRow({
     messages,
   );
   const turnOn = useT3ConnectTurnOn(environmentId);
-  // Turning on links from this desktop's own backend only; turning off works from anywhere.
-  const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
   // SCIENT-FORK:START — scient/connect: on the desktop's own computer, signing in turns Scient
   // Connect on; the switch shows the person's choice and the line below what setup is doing.
   const connectHost = useScientConnectHost(environmentId);
+  // Turning on needs relay configuration permission; turning off works from anywhere. The
+  // desktop app always shows its own computer's switch: only it can turn Scient Connect back on.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const ownComputer = isElectron && environmentId === primaryEnvironmentId;
+  const showSwitch =
+    (ownComputer && connectHost !== null) || turnOn.kind !== "on-host" || managedTunnelActive;
   const hostSwitchOn =
     connectHost !== null && !connectHost.off && connectHost.block?.reason !== "revoked";
   const hostDescription =
@@ -626,6 +635,17 @@ function ConfiguredCloudLinkRow({
     cloudLinkState.data === null ||
     cloudLinkState.isPending ||
     isBusy;
+  const configureReason = gt(
+    "This connection needs the relay configuration permission to configure Scient Connect.",
+  );
+  const tunnelNeedsConfigure = needsRelayConfiguration({
+    managedTunnel: !managedTunnelActive,
+    publish: publishAgentActivity,
+  });
+  const publishNeedsConfigure = needsRelayConfiguration({
+    managedTunnel: managedTunnelActive,
+    publish: !publishAgentActivity,
+  });
   // `isSignedIn` is undefined until Clerk loads. Signed out, one row shows a
   // sign-in button instead of its switch; the onboarding dialog that opens after
   // a fresh sign-in offers both linking and publishing.
@@ -779,8 +799,8 @@ function ConfiguredCloudLinkRow({
                 // SCIENT-FORK:START — scient/connect: the person's choice, not setup progress.
                 checked={connectHost !== null ? hostSwitchOn : managedTunnelActive}
                 // SCIENT-FORK:END
-                disabled={switchDisabled}
-                disabledReason={disabledReason}
+                disabled={switchDisabled || tunnelNeedsConfigure}
+                disabledReason={disabledReason ?? (tunnelNeedsConfigure ? configureReason : null)}
                 onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
               />
             )
@@ -804,12 +824,12 @@ function ConfiguredCloudLinkRow({
             "This environment was removed from Scient Connect. Run `scient connect link` on the host to link it again.",
           )}
         />
-      ) : isElectron ? (
+      ) : (
         <SettingsRow
           title={setting("t3-connect").title}
           description={gt("Run `scient connect link` on the host, then restart Scient there.")}
         />
-      ) : null}
+      )}
       {/* SCIENT-FORK:START — publishing feeds the phone app, which Scient has not shipped. */}
       {(signedOut && showSwitch) || !SCIENT_DESKTOP_IDENTITY.mobileAppEnabled ? null : (
         /* SCIENT-FORK:END */
@@ -830,8 +850,8 @@ function ConfiguredCloudLinkRow({
               <CloudLinkSwitch
                 ariaLabel={gt("Publish agent activity to mobile clients")}
                 checked={publishAgentActivity}
-                disabled={switchDisabled}
-                disabledReason={disabledReason}
+                disabled={switchDisabled || publishNeedsConfigure}
+                disabledReason={disabledReason ?? (publishNeedsConfigure ? configureReason : null)}
                 onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
               />
             )
