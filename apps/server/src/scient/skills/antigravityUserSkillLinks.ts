@@ -8,6 +8,16 @@ import * as NodeFSP from "node:fs/promises";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
+
+class EmptySkillDirectoryRemoveError extends Schema.TaggedError<EmptySkillDirectoryRemoveError>()(
+  "EmptySkillDirectoryRemoveError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not remove the empty skill directory ${this.path}.`;
+  }
+}
 
 /**
  * Remove only dangling links when the target is absent or empty real directories when it exists.
@@ -26,9 +36,12 @@ export const prepareAntigravitySkillLink = Effect.fn("prepareAntigravitySkillLin
     if (targetIsDirectory) {
       // Only a real directory, never a link or junction to one; rmdir refuses a
       // directory with anything in it, so no content can be lost.
-      yield* Effect.tryPromise(async () => {
-        const info = await NodeFSP.lstat(input.link);
-        if (info.isDirectory() && !info.isSymbolicLink()) await NodeFSP.rmdir(input.link);
+      yield* Effect.tryPromise({
+        try: async () => {
+          const info = await NodeFSP.lstat(input.link);
+          if (info.isDirectory() && !info.isSymbolicLink()) await NodeFSP.rmdir(input.link);
+        },
+        catch: (cause) => new EmptySkillDirectoryRemoveError({ path: input.link, cause }),
       }).pipe(Effect.ignore);
       return false;
     }

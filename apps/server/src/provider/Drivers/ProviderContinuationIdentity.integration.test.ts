@@ -13,11 +13,11 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
+import * as ProviderInstallationGate from "../ProviderInstallationGate.ts";
 import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
@@ -37,6 +37,7 @@ import { ScientAgentDriver } from "./ScientAgentDriver.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
 import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 
 const noProcess = () => Effect.die("Continuation identity must not start a provider process");
 const baseLayer = ServerConfig.layerTest(process.cwd(), {
@@ -52,11 +53,6 @@ const providerDependenciesLayer = baseLayer.pipe(
     ),
   ),
   Layer.provideMerge(
-    Layer.succeed(CursorKeychain.CursorKeychain, {
-      accessToken: Effect.die("Continuation identity must not read real Keychain credentials"),
-    }),
-  ),
-  Layer.provideMerge(
     Layer.succeed(CursorSdk.CursorSdk, {
       load: () => {
         throw new Error("Continuation identity must not load the real SDK");
@@ -67,10 +63,12 @@ const providerDependenciesLayer = baseLayer.pipe(
     }),
   ),
   Layer.provideMerge(OmpExecutableGate.layer),
+  Layer.provideMerge(ProviderInstallationGate.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(baseLayer))),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ResetCreditCoordinator.layerTest),
+  Layer.provideMerge(PortScanner.layerTest),
   Layer.provideMerge(
     Layer.mock(CodexInstallation.CodexInstallation)({
       managedDirectory: "unused-managed-installation",

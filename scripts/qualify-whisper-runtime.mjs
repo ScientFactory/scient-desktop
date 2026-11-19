@@ -6,12 +6,16 @@
 //
 //   node scripts/qualify-whisper-runtime.mjs <runtime-directory>
 
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { LocalWhisperRuntime } from "../packages/scient-voice/src/whisperRuntime.ts";
+import {
+  LocalWhisperRuntime,
+  resolveWhisperInferenceTimeoutMs,
+} from "../packages/scient-voice/src/whisperRuntime.ts";
 import {
   assertWindowsRuntimeSelfContained,
   downloadVerified,
@@ -33,6 +37,8 @@ export const QUALIFICATION_RECORDING = {
   url: `https://raw.githubusercontent.com/ggml-org/whisper.cpp/${WHISPER_CPP_COMMIT}/samples/jfk.wav`,
 };
 
+const QUALIFICATION_DURATION_MS = 11_000;
+
 export const EXPECTED_PHRASE = "ask not what your country can do for you";
 
 export function normalizeTranscript(text) {
@@ -47,6 +53,92 @@ function hostPlatform() {
   if (process.platform === "darwin") return "mac";
   if (process.platform === "win32") return "win";
   return "linux";
+}
+
+/**
+ * Records what the runtime owner's server and requests did, for a failure to explain itself:
+ * when each request and its body ended, when a stop was asked for, how the server exited, and
+ * the end of its output.
+ */
+export function traceRuntime({ spawn = NodeChildProcess.spawn, fetch = globalThis.fetch } = {}) {
+  const startedAt = performance.now();
+  const at = () => `${((performance.now() - startedAt) / 1000).toFixed(1)} s`;
+  const events = [];
+  const exits = [];
+  let output = "";
+  return {
+    spawn(command, args, options) {
+      const child = spawn(command, args, options);
+      events.push(`${at()} spawned server (pid ${child.pid ?? "none"})`);
+      const keep = (chunk) => {
+        output = (output + chunk).slice(-8192);
+      };
+      child.stdout.on("data", keep);
+      child.stderr.on("data", keep);
+      const kill = child.kill.bind(child);
+      child.kill = (signal) => {
+        events.push(`${at()} stop requested (${signal ?? "SIGTERM"})`);
+        return kill(signal);
+      };
+      exits.push(
+        new Promise((resolve) =>
+          child.once("exit", (code, signal) => {
+            events.push(`${at()} server exited (code ${code}, signal ${signal})`);
+            resolve();
+          }),
+        ),
+      );
+      return child;
+    },
+    async fetch(url, init) {
+      const request = `${init?.method ?? "GET"} ${new URL(url).pathname.split("/").pop()}`;
+      const sent = at();
+      let response;
+      try {
+        response = await fetch(url, init);
+      } catch (error) {
+        events.push(`${sent} → ${at()} ${request}: ${error instanceof Error ? error.name : error}`);
+        throw error;
+      }
+      events.push(`${sent} → ${at()} ${request}: ${response.status}`);
+      // Headers can arrive long before the transcript; the runtime reads the body as JSON.
+      const json = response.json.bind(response);
+      response.json = () =>
+        json().then(
+          (body) => {
+            events.push(`${at()} ${request} body read`);
+            return body;
+          },
+          (error) => {
+            events.push(`${at()} ${request} body: ${error instanceof Error ? error.name : error}`);
+            throw error;
+          },
+        );
+      return response;
+    },
+    /** Resolves once every server has exited, or after `timeoutMs`. */
+    async settled(timeoutMs) {
+      let timer;
+      await Promise.race([
+        Promise.all(exits),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+      clearTimeout(timer);
+    },
+    report(inferenceDeadlineMs) {
+      // Readiness polls every 100 ms; keep the first and last few.
+      const shown =
+        events.length > 24 ? [...events.slice(0, 8), "…", ...events.slice(-16)] : events;
+      return [
+        `[voice-qualify] ${NodeOS.cpus().length} CPUs, ${Math.round(NodeOS.freemem() / 2 ** 20)} MiB free, inference deadline ${inferenceDeadlineMs / 1000} s`,
+        ...shown.map((event) => `[voice-qualify] ${event}`),
+        "[voice-qualify] Server output (last 8192 characters):",
+        output.trimEnd() || "(none)",
+      ].join("\n");
+    },
+  };
 }
 
 async function qualify(runtimeDirectory) {
@@ -66,7 +158,14 @@ async function qualify(runtimeDirectory) {
   if (platform === "win") await assertWindowsRuntimeSelfContained(directory);
 
   const workspace = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-voice-qualify-"));
-  const runtime = new LocalWhisperRuntime({ runtimeDirectory: directory, idleTimeoutMs: 60_000 });
+  const trace = traceRuntime();
+  const runtime = new LocalWhisperRuntime({
+    runtimeDirectory: directory,
+    idleTimeoutMs: 60_000,
+    spawnImpl: trace.spawn,
+    fetchImpl: trace.fetch,
+  });
+  let failed = false;
   try {
     const modelPath = NodePath.join(workspace, QUALIFICATION_MODEL.fileName);
     const recordingPath = NodePath.join(workspace, QUALIFICATION_RECORDING.fileName);
@@ -79,7 +178,7 @@ async function qualify(runtimeDirectory) {
         audioBytes: await NodeFSP.readFile(recordingPath),
         mimeType: "audio/wav",
         sampleRateHz: 16_000,
-        durationMs: 11_000,
+        durationMs: QUALIFICATION_DURATION_MS,
       },
       { signal: AbortSignal.timeout(5 * 60_000), language: "en" },
     );
@@ -88,9 +187,21 @@ async function qualify(runtimeDirectory) {
     if (!normalizeTranscript(result.text).includes(EXPECTED_PHRASE)) {
       throw new Error(`The transcript does not contain "${EXPECTED_PHRASE}".`);
     }
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await runtime.dispose();
-    await NodeFSP.rm(workspace, { recursive: true, force: true });
+    try {
+      await runtime.dispose();
+    } finally {
+      if (failed) {
+        // After cleanup, so the report shows how the server ended. Only the reference
+        // recording runs here, so the server's own output is safe to show.
+        await trace.settled(10_000);
+        console.error(trace.report(resolveWhisperInferenceTimeoutMs(QUALIFICATION_DURATION_MS)));
+      }
+      await NodeFSP.rm(workspace, { recursive: true, force: true });
+    }
   }
 }
 

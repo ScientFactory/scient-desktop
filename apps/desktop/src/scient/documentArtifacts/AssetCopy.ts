@@ -7,20 +7,29 @@ import type {
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 
-class AssetCopyReadError extends Error {}
-class AssetCopyWriteError extends Error {}
-class AssetCopyOperationError extends Data.TaggedError("AssetCopyOperationError")<{
-  readonly cause: unknown;
-}> {}
+class AssetCopyReadError extends Schema.TaggedError<AssetCopyReadError>()("AssetCopyReadError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+class AssetCopyWriteError extends Schema.TaggedError<AssetCopyWriteError>()("AssetCopyWriteError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+class AssetCopyOperationError extends Schema.TaggedError<AssetCopyOperationError>()(
+  "AssetCopyOperationError",
+  { cause: Schema.Defect() },
+) {}
+
+const isAssetCopyReadError = Schema.is(AssetCopyReadError);
 
 function failed(
   reason: Extract<DesktopAssetCopyResult, { _tag: "failed" }>["reason"],
@@ -68,7 +77,10 @@ async function writeResponseAtomically(
     try {
       handle = await NodeFSP.open(temporaryPath, "wx");
     } catch (cause) {
-      throw new AssetCopyWriteError("Could not create the temporary destination.", { cause });
+      throw new AssetCopyWriteError({
+        message: "Could not create the temporary destination.",
+        cause,
+      });
     }
 
     reader = response.body.getReader();
@@ -78,7 +90,7 @@ async function writeResponseAtomically(
       try {
         next = await reader.read();
       } catch (cause) {
-        throw new AssetCopyReadError("The asset stream ended unexpectedly.", { cause });
+        throw new AssetCopyReadError({ message: "The asset stream ended unexpectedly.", cause });
       }
       if (next.done) {
         streamCompleted = true;
@@ -100,7 +112,7 @@ async function writeResponseAtomically(
           chunkOffset += result.bytesWritten;
           filePosition += result.bytesWritten;
         } catch (cause) {
-          throw new AssetCopyWriteError("Could not write the destination.", { cause });
+          throw new AssetCopyWriteError({ message: "Could not write the destination.", cause });
         }
       }
     }
@@ -111,11 +123,11 @@ async function writeResponseAtomically(
       handle = null;
       await NodeFSP.rename(temporaryPath, destinationPath);
     } catch (cause) {
-      throw new AssetCopyWriteError("Could not publish the saved copy.", { cause });
+      throw new AssetCopyWriteError({ message: "Could not publish the saved copy.", cause });
     }
     return { _tag: "saved", path: destinationPath };
   } catch (cause) {
-    return failed(cause instanceof AssetCopyReadError ? "network-failed" : "write-failed");
+    return failed(isAssetCopyReadError(cause) ? "network-failed" : "write-failed");
   } finally {
     if (reader !== null) {
       if (!streamCompleted) await reader.cancel().catch(() => undefined);

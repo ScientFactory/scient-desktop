@@ -11,7 +11,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import { piContextExtension } from "./contextExtension.ts";
-import { makePiMcpExtensionSource, PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import {
+  makePiMcpExtensionSource,
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, materializePiT3McpExtension } from "./mcpInjection.ts";
 // SCIENT-FORK:START — Scient Extensions connectors: connector tool registrations.
 import { loadMcpBridge, type RegisteredTool } from "./mcpBridge.testkit.ts";
@@ -166,6 +170,11 @@ describe("Pi orchestration prompt section", () => {
 
     assert.isUndefined(await hook(event, ctx));
     assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    // Every schema is loaded on completion gateways, so an empty search must not read as "no bash".
+    assert.include(
+      sections.t3_code_orchestration,
+      "tool_search finds only tools that are not loaded yet",
+    );
     assert.equal(event.systemPrompt, "base");
     assert.include(bridge.getActiveTools(), "preview_snapshot");
 
@@ -646,9 +655,12 @@ describe("Pi tool discovery permissions", () => {
         },
       },
     };
-    assert.isUndefined(
-      await toolCall!({ toolName: "tool_search", input: { query: "preview_snapshot" } }, ctx),
-    );
+    for (const builtinPath of ["builtin:tool-search", "<builtin:tool-search>"]) {
+      searchPath = builtinPath;
+      assert.isUndefined(
+        await toolCall!({ toolName: "tool_search", input: { query: "preview_snapshot" } }, ctx),
+      );
+    }
     assert.equal(confirmations.length, 0);
     const result = await toolCall!({ toolName: "preview_snapshot", input: {} }, ctx);
     assert.equal(result?.block, true);
@@ -658,6 +670,37 @@ describe("Pi tool discovery permissions", () => {
     const replaced = await toolCall!({ toolName: "tool_search", input: {} }, ctx);
     assert.equal(replaced?.block, true);
     assert.equal(confirmations.at(-1), "Allow tool_search?");
+  });
+
+  it("gives long inputs that differ past the shown text different confirmation details", async () => {
+    const bridge = await loadMcpBridge({ runtimeMode: "approval-required" });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: {
+        // SCIENT-FORK: Scient blocks instead of confirming when Pi has no UI.
+        hasUI: boolean;
+        ui: { confirm: (title: string, detail: string) => Promise<boolean> };
+      },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const details: string[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        confirm: async (_title: string, detail: string) => {
+          details.push(detail);
+          return true;
+        },
+      },
+    };
+    const filler = "a".repeat(4_100);
+    await hook({ toolName: "bash", input: { command: filler + "\necho one" } }, ctx);
+    await hook({ toolName: "bash", input: { command: filler + "\necho two" } }, ctx);
+    await hook({ toolName: "bash", input: { command: "ls" } }, ctx);
+    const [first, second, short] = details;
+    assert.equal(first!.slice(0, 4_000), second!.slice(0, 4_000));
+    assert.notEqual(first, second);
+    assert.match(first!, /\n\.\.\. \d+ more characters not shown \(sha256 [0-9a-f]{64}\)$/);
+    assert.equal(short, JSON.stringify({ command: "ls" }, null, 2));
   });
 });
 
@@ -1184,6 +1227,60 @@ async function loadRequestHook(): Promise<RequestHook> {
   };
 }
 
+type ServiceTierRequestHook = (
+  event: { payload: unknown },
+  ctx: { model: { provider: string; serviceTiers?: ReadonlyArray<{ id: string }> } },
+) => Record<string, unknown> | undefined;
+type CommandHandler = (args: string) => Promise<void>;
+
+async function loadServiceTierHook() {
+  const handlers = new Map<string, ServiceTierRequestHook>();
+  const commands = new Map<string, CommandHandler>();
+  const source = NodeModule.stripTypeScriptTypes(
+    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+      "export default async function",
+      "async function",
+    ),
+  );
+  await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+    process: { env: {} },
+    pi: {
+      on: (name: string, handler: ServiceTierRequestHook) => handlers.set(name, handler),
+      registerCommand: (name: string, options: { handler: CommandHandler }) =>
+        commands.set(name, options.handler),
+    },
+  });
+  const hook = handlers.get("before_provider_request");
+  const setServiceTier = commands.get(PI_T3_SERVICE_TIER_COMMAND);
+  assert.isDefined(hook);
+  assert.isDefined(setServiceTier);
+  return Object.assign(hook!, { setServiceTier: setServiceTier! });
+}
+
+describe("Pi service tier", () => {
+  it("sends only a tier the active model advertises, until Standard clears it", async () => {
+    const hook = await loadServiceTierHook();
+    const sol = {
+      provider: "columbia-codex",
+      serviceTiers: [{ id: "priority" }, { id: "ultrafast" }],
+    };
+    const payload = { model: "gpt-6.1-sol", reasoning: { effort: "high" } };
+    assert.isUndefined(hook({ payload }, { model: sol }));
+
+    await hook.setServiceTier("priority");
+    assert.deepEqual(hook({ payload }, { model: sol }), { ...payload, service_tier: "priority" });
+
+    await hook.setServiceTier("ultrafast");
+    assert.equal(hook({ payload }, { model: sol })?.service_tier, "ultrafast");
+    const fastOnly = { provider: "columbia-codex", serviceTiers: [{ id: "priority" }] };
+    assert.isUndefined(hook({ payload }, { model: fastOnly }));
+    assert.isUndefined(hook({ payload }, { model: { provider: "anthropic" } }));
+
+    await hook.setServiceTier("");
+    assert.isUndefined(hook({ payload }, { model: sol }));
+  });
+});
+
 describe("Pi upstream output-budget workaround", () => {
   it.each(["max_tokens", "max_completion_tokens"])(
     "caps %s without changing the conversation or tools",
@@ -1353,7 +1450,7 @@ describe("loaded native Pi serialized request guard", () => {
         assert.notProperty(launch.env, "T3_MCP_BEARER_TOKEN");
         assert.include(launch.args, extensionPath);
         const source = yield* fs.readFileString(extensionPath);
-        const h = yield* Effect.tryPromise(() => loadContextGuard(source));
+        const h = yield* Effect.promise(() => loadContextGuard(source));
         h.setNativeTokens(80_000);
         assert.equal(
           decodeBudget(h.request({ messages: [], max_tokens: 50_000 })).max_tokens,

@@ -21,7 +21,7 @@ describe("provider-native model catalogs", () => {
   }
   async function render(_fixture: _Fixture, driver: string, unavailableReason?: string) {
     const kind = ProviderDriverKind.make(driver);
-    const onChange = vi.fn();
+    const onChange = vi.fn(async () => true);
     const onFavoriteModelsChange = vi.fn();
     const onToggleFavorite = vi.fn();
     await act(

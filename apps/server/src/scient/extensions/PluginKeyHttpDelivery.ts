@@ -14,6 +14,7 @@ import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ConnectorRuntimeShape, EligibleConnector } from "./ExtensionsServices.ts";
 import type { PluginKeyBindings } from "./PluginKeyBindings.ts";
 import { readLocalPluginContents, readLocalPluginKeyHttpServers } from "./LocalPluginContents.ts";
+import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 import { pluginKeyHttpOrigins } from "./PluginKeyHttpServers.ts";
 import type { PluginKeyHttpServer } from "./PluginKeyHttpServers.ts";
 import { listPluginKeyRoots } from "./PluginKeyStartup.ts";
@@ -56,7 +57,7 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
     };
-    const servers = yield* Effect.tryPromise(() => readLocalPluginKeyHttpServers(root));
+    const servers = yield* tryLocalPluginRead(() => readLocalPluginKeyHttpServers(root));
     const initialEligibility = yield* bindings.list(
       target,
       policy.requiredKeys,
@@ -119,10 +120,10 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
           (plugin) => plugin.id === policy.bindingPluginId && plugin.enabled,
         );
         if (current?.root !== root) return yield* denied();
-        const contents = yield* Effect.tryPromise(() => readLocalPluginContents(root));
+        const contents = yield* tryLocalPluginRead(() => readLocalPluginContents(root));
         if (!(yield* bindings.checkBindings(target, contents.requiredKeys, expectedRefs)))
           return yield* denied();
-        const fresh = (yield* Effect.tryPromise(() => readLocalPluginKeyHttpServers(root))).find(
+        const fresh = (yield* tryLocalPluginRead(() => readLocalPluginKeyHttpServers(root))).find(
           (candidate) => candidate.name === server.name,
         );
         if (

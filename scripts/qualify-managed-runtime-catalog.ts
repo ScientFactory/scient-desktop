@@ -371,27 +371,38 @@ const artifactData = release.artifacts[targetKey];
 if (!artifactData) {
   throw new Error(`${provider} catalog does not contain approved native target ${targetKey}.`);
 }
-const artifact = hydrateManagedRuntimeArtifact(policy, {
-  provider,
-  version: release.version,
-  ...(release.supersedes ? { supersedes: release.supersedes } : {}),
-  target,
-  ...artifactData,
-  catalogRevision: [
-    "managed-runtime",
+const artifact = hydrateManagedRuntimeArtifact(
+  policy,
+  {
     provider,
-    `contract-${release.contractRevision}`,
-    release.version,
-    targetKey,
-    artifactData.checksum.algorithm,
-    artifactData.checksum.digest,
-  ].join(":"),
-});
+    version: release.version,
+    ...(release.supersedes ? { supersedes: release.supersedes } : {}),
+    target,
+    ...artifactData,
+    catalogRevision: [
+      "managed-runtime",
+      provider,
+      `contract-${release.contractRevision}`,
+      release.version,
+      targetKey,
+      artifactData.checksum.algorithm,
+      artifactData.checksum.digest,
+    ].join(":"),
+  },
+  artifactData.compressed,
+);
 if (!artifact) throw new Error(`${provider} ${targetKey} violates app-owned runtime policy.`);
+if (artifactData.compressed && !artifact.compressed) {
+  throw new Error(`${provider} ${targetKey} names a compressed copy this app cannot use.`);
+}
 
 process.stdout.write(
-  `Qualifying ${provider} ${artifact.version} on ${targetKey}, contract ${release.contractRevision}.\n`,
+  `Qualifying ${provider} ${artifact.version} on ${targetKey}, contract ${release.contractRevision}${artifact.compressed ? ", from its compressed copy" : ""}.\n`,
 );
+// The app falls back to the raw binary quietly; qualification must not.
+const onCompressedFallback = (cause: unknown) => {
+  throw new Error(`${provider} ${targetKey}'s compressed copy failed to install.`, { cause });
+};
 
 const root = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), `scient-${provider}-qualification-`),
@@ -410,7 +421,12 @@ try {
             verifyRpc(provider, executablePath, installed.version, signal),
         }
       : {};
-  await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000), ...qualification });
+  await runtime.install({
+    artifact,
+    signal: AbortSignal.timeout(15 * 60_000),
+    onCompressedFallback,
+    ...qualification,
+  });
   const status = await runtime.status(artifact);
   if (!status.installed || !status.selected || status.activeVersion !== artifact.version) {
     throw new Error(`${provider} ${targetKey} did not activate the qualified release.`);
@@ -423,7 +439,12 @@ try {
   }
   if (provider === "omp") await verifyRpc(provider, status.launchPath, artifact.version);
   if (process.argv.includes("--repair")) {
-    await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000), ...qualification });
+    await runtime.install({
+      artifact,
+      signal: AbortSignal.timeout(15 * 60_000),
+      onCompressedFallback,
+      ...qualification,
+    });
     const repaired = await runtime.status(artifact);
     if (!repaired.installed || !repaired.selected || repaired.activeVersion !== artifact.version) {
       throw new Error(`${provider} ${targetKey} did not repair the qualified release.`);

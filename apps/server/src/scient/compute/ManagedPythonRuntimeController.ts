@@ -28,6 +28,8 @@ import {
   MANAGED_PYTHON_VERSION,
 } from "./ManagedPythonProvisioner.ts";
 
+const isManagedPythonEnvironmentError = Schema.is(ManagedPythonEnvironmentError);
+
 type ManagedPythonManager = ReturnType<typeof makeManagedPythonEnvironmentManager>;
 const isComputeOperationError = Schema.is(ComputeOperationError);
 
@@ -71,7 +73,7 @@ function managedRuntimeFailure(
 ): ComputeManagedRuntimeFailure {
   const detail = shortMessage(value);
   const reason =
-    value instanceof ManagedPythonEnvironmentError && value.reason !== "cancelled"
+    isManagedPythonEnvironmentError(value) && value.reason !== "cancelled"
       ? value.reason
       : "operation-failed";
   const summary = (() => {
@@ -471,7 +473,7 @@ export function makeManagedPythonRuntimeController(input: {
       catch: (cause) =>
         isComputeOperationError(cause)
           ? cause
-          : cause instanceof ManagedPythonEnvironmentError
+          : isManagedPythonEnvironmentError(cause)
             ? operationError(shortMessage(cause), cause)
             : operationError(`Unable to manage ${displayName}.`, cause),
     });

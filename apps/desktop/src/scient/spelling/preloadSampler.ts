@@ -1,8 +1,9 @@
-/** Enough text to recognise a language; detection reads no further. */
+/** Enough text to find the alphabets being written; the main process reads no further. */
 const SAMPLE_LENGTH = 2_000;
 /** Chromium checks a field when it gains focus and again as the user types. */
 const TYPING_PAUSE_MS = 1_500;
-const MIN_SAMPLE_LENGTH = 20;
+/** One word of two letters is enough to show an alphabet. */
+const MIN_SAMPLE_LENGTH = 2;
 const BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, figcaption, dd, dt";
 
 type EditableField = HTMLTextAreaElement | HTMLInputElement | HTMLElement;

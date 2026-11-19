@@ -146,10 +146,16 @@ export class PdfEditSession {
       frame: { pages, selection: this.snapshot.frame.selection.filter((id) => valid.has(id)) },
     });
   }
-  start = (getBytes: () => Promise<Uint8Array>, pageNumber: number) =>
+  /** `getOriginal` gives the file's own bytes when editing starts from others, such as a filled form. */
+  start = (
+    getBytes: () => Promise<Uint8Array>,
+    pageNumber: number,
+    getOriginal: (() => Promise<Uint8Array>) | null = null,
+  ) =>
     this.run(async () => {
       if (this.snapshot.active) return;
       const bytes = await getBytes();
+      const original = getOriginal ? await getOriginal() : bytes;
       const result = await this.request({ kind: "load", sourceId: createPdfEditId(), bytes });
       if (result.kind !== "loaded") throw new Error("Could not open this PDF for editing.");
       this.baseBytes = bytes;
@@ -159,7 +165,8 @@ export class PdfEditSession {
         id: previous.pages[index]?.id ?? page.id,
       }));
       this.basePages = pages;
-      this.revision = revisionForBytes(bytes);
+      // The server checks a save against the file as it is on disk.
+      this.revision = revisionForBytes(original);
       this.focusedId = pages[pageNumber - 1]?.id ?? pages[0]!.id;
       this.update({
         active: true,

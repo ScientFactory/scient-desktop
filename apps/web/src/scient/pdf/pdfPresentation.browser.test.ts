@@ -49,6 +49,7 @@ function fixture(_fixture: _Fixture) {
     pagesRotation: 0,
     update: vi.fn(),
     getPageView: () => view,
+    _getVisiblePages: () => ({ views: [{ id: 1, view }] }),
   };
   const runtime = {
     viewer,

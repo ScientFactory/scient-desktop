@@ -262,7 +262,7 @@ await import(${encodeString(mockAgentPath)});`,
     instanceId,
     selfInvocation: yield* resolveSelfInvocation(),
     withProcess: (_stop, task) => task,
-    defaultModel: Effect.succeed(undefined),
+    defaultModel: Effect.undefined,
     makeRuntime: (input) =>
       makeAntigravityAcpRuntime({
         ...input,

@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import type * as Scope from "effect/Scope";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { MigrationError } from "effect/sql/Migrator";
 import type { SqlError } from "effect/sql/SqlError";
@@ -57,6 +58,7 @@ import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegis
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
@@ -101,13 +103,13 @@ export function makeReplayServerConfig(
 ): Effect.Effect<
   ServerConfig.ServerConfig["Service"],
   PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path
+  FileSystem.FileSystem | Path.Path | Scope.Scope
 > {
   const safeScenario = scenario.replace(/[^a-z0-9_-]+/gi, "-");
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectory({
+    const baseDir = yield* fs.makeTempDirectoryScoped({
       prefix: `t3-orchestration-v2-replay-${safeScenario}-`,
     });
     const stateDir = path.join(baseDir, "userdata");
@@ -167,6 +169,7 @@ export function makeReplayServerConfig(
       settingsPath: path.join(stateDir, "settings.json"),
       providerStatusCacheDir,
       worktreesDir,
+      worktreeCheckoutCacheDir: path.join(providerStatusCacheDir, "worktree-checkouts"),
       attachmentsDir,
       browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
       environmentThemesDir,
@@ -352,10 +355,6 @@ export function layerWithRegistry<Error>(
     readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
     /** Observe or gate the real canonical writer without replacing its SQL transaction. */
     readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
-    /** Observe real projection reads without replacing their SQL implementation. */
-    readonly decorateProjectionStore?: (
-      store: ProjectionStore.ProjectionStoreV2Shape,
-    ) => ProjectionStore.ProjectionStoreV2Shape;
     /** Gate actual Git capture without replacing publication or admission. */
     readonly decorateForkCheckpointBaseline?: (
       baseline: ScientForkCheckpointBaselineShape,
@@ -396,6 +395,10 @@ export function layerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
+    /** Lets a test hold a projection read open to order concurrent dispatches. */
+    readonly wrapProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Layer.Layer<
@@ -415,6 +418,7 @@ export function layerWithRegistry<Error>(
   | ProjectStore.ProjectStoreV2
   | McpProviderSessions.McpProviderSessions
   | CommandOutputRecorder.CommandOutputRecorder
+  | ThreadCommandExecutor.ThreadCommandExecutor
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -472,19 +476,23 @@ export function layerWithRegistry<Error>(
       ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
       : Layer.empty,
   );
+  const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const wrapProjectionStore = options.wrapProjectionStore;
   const layerProjectionStore =
-    options.decorateProjectionStore === undefined
+    wrapProjectionStore === undefined
       ? ProjectionStore.layer
       : Layer.effect(
           ProjectionStore.ProjectionStoreV2,
-          Effect.map(ProjectionStore.ProjectionStoreV2, options.decorateProjectionStore),
+          Effect.gen(function* () {
+            return wrapProjectionStore(yield* ProjectionStore.ProjectionStoreV2);
+          }),
         ).pipe(Layer.provide(ProjectionStore.layer));
   const layerStores = Layer.mergeAll(
     EventStore.layer,
     layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
-    EffectOutbox.layer,
+    layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const actualEventSink = EventSink.layerFromStores.pipe(
@@ -579,6 +587,7 @@ export function layerWithRegistry<Error>(
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
         layerStores,
+        ProviderInstallationGate.layer,
       ),
     ),
   );
@@ -596,7 +605,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
-      ),
+      ).pipe(Layer.provideMerge(ThreadCommandExecutor.layer)),
     ),
   );
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
@@ -620,7 +629,13 @@ export function layerWithRegistry<Error>(
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerServerConfig),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        McpAppModelContext.layerEmpty,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerServerConfig,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -661,50 +676,6 @@ export function layerWithRegistry<Error>(
       }),
     }),
   );
-  const layerOrchestratorProvided = Orchestrator.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerServerConfig,
-        layerCheckpointServiceProvided,
-        CommandPolicy.layer,
-        layerContextHandoffServiceProvided,
-        layerPersistence,
-        layerProvidedRegistry,
-        layerContinuationRequests,
-        layerRuntime,
-        layerProviderSessionManagerProvided,
-        layerProviderSwitchServiceProvided,
-        layerRunExecutionServiceProvided,
-        layerServerSettings,
-        ThreadForkService.layer,
-      ),
-    ),
-  );
-  const layerThreadManagementProvided = Layer.unwrap(
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      return Layer.mock(ThreadManagementService.ThreadManagementService)({
-        dispatch: orchestrator.dispatch,
-        getThreadRecords: orchestrator.getThreadRecords,
-        getThreadProjection: orchestrator.getThreadProjection,
-        recoverDelegatedTask: orchestrator.recoverDelegatedTask,
-        delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
-        ...options.threads,
-      });
-    }),
-  ).pipe(Layer.provide(layerOrchestratorProvided));
-  const layerContinuationWorkerProvided =
-    options.runContinuationWorker === true
-      ? ProviderContinuationService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              layerContinuationRequests,
-              layerThreadManagementProvided,
-              IdAllocator.layer,
-            ),
-          ),
-        )
-      : Layer.empty;
   const conversationForkProvided = ConversationForks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -725,6 +696,53 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(layerCheckpointStore, layerServerConfig, VcsProcess.layer, layerDatabase),
     ),
   );
+  const layerOrchestratorProvided = Orchestrator.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerServerConfig,
+        layerCheckpointServiceProvided,
+        CommandPolicy.layer,
+        layerContextHandoffServiceProvided,
+        layerPersistence,
+        layerProvidedRegistry,
+        layerContinuationRequests,
+        layerRuntime,
+        layerProviderSessionManagerProvided,
+        layerProviderSwitchServiceProvided,
+        layerRunExecutionServiceProvided,
+        layerServerSettings,
+        ThreadForkService.layer,
+        conversationForkProvided,
+      ),
+    ),
+  );
+  const layerThreadManagementProvided = Layer.unwrap(
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return Layer.mock(ThreadManagementService.ThreadManagementService)({
+        dispatch: orchestrator.dispatch,
+        getThreadRecords: orchestrator.getThreadRecords,
+        getThreadProjection: orchestrator.getThreadProjection,
+        recoverDelegatedTask: orchestrator.recoverDelegatedTask,
+        cancelDelegatedTask: orchestrator.cancelDelegatedTask,
+        delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+        streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
+        ...options.threads,
+      });
+    }),
+  ).pipe(Layer.provide(layerOrchestratorProvided));
+  const layerContinuationWorkerProvided =
+    options.runContinuationWorker === true
+      ? ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerContinuationRequests,
+              layerThreadManagementProvided,
+              IdAllocator.layer,
+            ),
+          ),
+        )
+      : Layer.empty;
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -756,6 +774,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerThreadManagementProvided,
         conversationForkProvided,
+        layerStores,
       ),
     ),
   );
@@ -772,6 +791,7 @@ export function layerWithRegistry<Error>(
     layerServerConfig,
     conversationForkProvided,
     layerStores,
+    layerEffectOutboxProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerProviderTurnStartServiceProvided,
@@ -786,7 +806,8 @@ export function layerWithRegistry<Error>(
         (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(layerServerConfig)),
       ),
     ),
-    Layer.provide(layerThreadCommandExecutor),
+    // SCIENT-FORK: one step below the runtime, so its layers see the executor it also exports.
+    Layer.provideMerge(layerThreadCommandExecutor),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );

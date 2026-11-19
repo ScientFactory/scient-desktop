@@ -17,6 +17,7 @@ import {
   readLocalPluginKeyCommandLineBlocked,
   readLocalPluginRequiredKeys,
 } from "./LocalPluginContents.ts";
+import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 
 const decodePath = Schema.decodeUnknownOption(Schema.Struct({ path: Schema.String }));
 
@@ -66,9 +67,9 @@ export const listPluginKeyRoots = (
 const pluginKeyPolicy = Effect.fnUntraced(function* (codex: boolean, plugin: ProviderPluginRoot) {
   const root = plugin.root;
   if (!root) return undefined;
-  const declaredKeys = yield* Effect.tryPromise(() => readLocalPluginRequiredKeys(root));
+  const declaredKeys = yield* tryLocalPluginRead(() => readLocalPluginRequiredKeys(root));
   if (!declaredKeys?.length) return undefined;
-  const contents = yield* Effect.tryPromise(() => readLocalPluginContents(root));
+  const contents = yield* tryLocalPluginRead(() => readLocalPluginContents(root));
   if (!contents.requiredKeys?.length) return undefined;
   return {
     pluginId: codex ? plugin.id : plugin.name,
@@ -131,9 +132,9 @@ export const readPluginKeyTransport = Effect.fn("PluginKeyStartup.readTransport"
   return root
     ? {
         origins: pluginKeyHttpOrigins(
-          yield* Effect.tryPromise(() => readLocalPluginKeyHttpServers(root)),
+          yield* tryLocalPluginRead(() => readLocalPluginKeyHttpServers(root)),
         ),
-        commandLineBlocked: yield* Effect.tryPromise(() =>
+        commandLineBlocked: yield* tryLocalPluginRead(() =>
           readLocalPluginKeyCommandLineBlocked(root),
         ),
       }

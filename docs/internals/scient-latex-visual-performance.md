@@ -192,4 +192,25 @@ document on every transaction or frame:
   cost per transaction grows (slices grow with the loaded document);
 - toolbars searching the workspace on every render (only the active one does);
 - attribute writes to ProseMirror-owned blocks without pausing its DOM observer,
-  which makes it redraw the block.
+  which makes it redraw the block;
+- a layout pass for every `content-visibility` reveal. A reveal now starts one
+  only when the block's rendered size differs from its skipped size (Chromium
+  reports that resize before the reveal event);
+- republishing spacers from positions read back from layout, which drift by
+  fractions of a pixel: within the 1 px that needs no spacer, a pass keeps the
+  published value, so an unchanged layout publishes identical decorations;
+- comparing intrinsic sizes as strings, which never matched the style's
+  six-digit serialization and rewrote every block's style on every pass;
+- reading block origins across work slices: a block revealed between slices
+  moved the blocks read after it, misplacing whole pages until the next pass.
+
+Scrolling the 61-page synthetic manuscript at 4× CPU throttle, these took long
+frames from about 13 s to about 1 s per 15 s, and at 1× from about 4 s to none.
+
+Sibling `:has(+ …)` rules on document blocks made each top-level insertion or
+removal restyle every block Chromium marked as affected by `:has()`, up to about
+4,000 elements in that manuscript. `latexBlockNeighbours.ts` now marks a block by
+the block after it in the document (`data-latex-before-display`,
+`data-latex-run-in`), and a test forbids sibling `:has()` in Scient styles. That
+cut the long frames of showing the manuscript's tab from about 6.1 s to about
+2.9 s at 4×. Most of what remains is the style and layout of the inserted content.

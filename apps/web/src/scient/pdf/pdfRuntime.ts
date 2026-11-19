@@ -71,11 +71,21 @@ export interface ScientPdfRuntime {
   readonly eventBus: EventBus;
   readonly findController: PDFFindController;
   readonly linkService: PDFLinkService;
-  readonly loadingTask: PDFDocumentLoadingTask;
   readonly viewer: PDFViewer;
   cancelContainerSizeRefresh: () => void;
   destroy: () => Promise<void>;
   refreshForContainerSize: () => void;
+  /** Hidden but kept: drawing stops, and only the pages in view stay drawn. */
+  park: () => void;
+  /** Shown again: drawing resumes where it stopped. */
+  unpark: () => void;
+}
+
+// The parts of pdf.js's viewer a parked reader uses; `_getVisiblePages` is the viewer's own measure.
+interface ParkableViewer {
+  readonly renderingQueue: { renderHighestPriority: (visible?: object) => void };
+  getCachedPageViews(): Set<{ readonly id: number; destroy(): void }>;
+  _getVisiblePages(): { readonly ids: Set<number> };
 }
 
 function pdfAssetRoot(): string {
@@ -95,6 +105,9 @@ export function startPdfDocumentLoad(
     standardFontDataUrl: `${assetRoot}standard_fonts/`,
     wasmUrl: `${assetRoot}wasm/`,
     enableXfa: true,
+    // Without this, pdf.js asks for canvases it can read back, which Chromium keeps in
+    // software: every page then draws on the CPU.
+    enableHWA: true,
     useSystemFonts: true,
     disableAutoFetch: false,
     disableRange: false,
@@ -116,7 +129,6 @@ export function startPdfDocumentLoad(
 export function createPdfRuntime(input: {
   readonly container: HTMLDivElement;
   readonly document: PDFDocumentProxy;
-  readonly loadingTask: PDFDocumentLoadingTask;
   readonly onContainerResize?: ((viewer: PDFViewer) => void) | undefined;
   readonly sourceUrl: string;
   readonly viewerElement: HTMLDivElement;
@@ -148,13 +160,11 @@ export function createPdfRuntime(input: {
     annotationEditorMode: AnnotationEditorType.NONE,
     enableAutoLinking: true,
     enableDetailCanvas: true,
-    enableOptimizedPartialRendering: true,
     enablePermissions: true,
     enablePrintAutoRotate: true,
     enableSelectionRendering: true,
     imageResourcesPath: `${pdfAssetRoot()}images/`,
     maxCanvasDim: 8_192,
-    maxCanvasPixels: 16_777_216,
     // Page margins come from the container's border; see scientPdfReader.css.
     removePageBorders: true,
     supportsPinchToZoom: true,
@@ -195,15 +205,37 @@ export function createPdfRuntime(input: {
     { box: "border-box" },
   );
 
+  // A page left drawing would draw the next once done (pdf.js's queue), so the queue pauses first.
+  const parkable = viewer as unknown as ParkableViewer;
+  const renderHighestPriority = parkable.renderingQueue.renderHighestPriority;
+  let parked = false;
+  const park = () => {
+    if (destroyed || parked) return;
+    parked = true;
+    parkable.renderingQueue.renderHighestPriority = () => undefined;
+    const { ids } = parkable._getVisiblePages();
+    for (const view of parkable.getCachedPageViews()) if (!ids.has(view.id)) view.destroy();
+  };
+  const unpark = () => {
+    if (!parked) return;
+    parked = false;
+    parkable.renderingQueue.renderHighestPriority = renderHighestPriority;
+    // The pages in view are drawn; the rest can wait until the view has shown (update measures it).
+    requestAnimationFrame(() => {
+      if (!destroyed && !parked) viewer.update();
+    });
+  };
+
   return {
     document: input.document,
     eventBus,
     findController,
     linkService,
-    loadingTask: input.loadingTask,
     viewer,
     cancelContainerSizeRefresh: resizeSettlement.cancel,
     refreshForContainerSize,
+    park,
+    unpark,
     destroy: async () => {
       if (destroyed) return;
       destroyed = true;
@@ -215,7 +247,7 @@ export function createPdfRuntime(input: {
       // currently omits that runtime-supported branch.
       (viewer.setDocument as (document: PDFDocumentProxy | null) => void)(null);
       input.viewerElement.replaceChildren();
-      await input.loadingTask.destroy();
+      // The document stays open: its owner (see pdfDocuments.ts) keeps or closes it.
     },
   };
 }

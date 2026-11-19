@@ -1,4 +1,5 @@
-import type { BrowserImportSourceId } from "../browserImport.ts";
+import type { BrowserImportResult, BrowserImportSourceId } from "../browserImport.ts";
+import type { SessionCookie } from "./accounts.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
 export interface DesktopSourceProfileDetails {
@@ -21,13 +22,18 @@ export interface DesktopProfileSignedInSite {
   readonly cookies: number;
 }
 
-/** A sign-in the user submitted in a desktop browser tab. */
+/** A sign-in the user submitted in a desktop browser tab: the step that sent a password. */
 export interface DesktopCapturedSignIn {
   readonly tabId: string;
   readonly profileId: string;
   readonly url: string;
+  /** The page's path when it was sent. */
+  readonly path: string;
+  readonly step: "password";
   readonly username: string;
   readonly password: string;
+  /** The username came from an earlier step of the same sign-in, in this tab and origin. */
+  readonly usernameFrom: "form" | "earlier-step";
 }
 
 export interface DesktopLoginForm {
@@ -41,6 +47,16 @@ export interface DesktopLoginForm {
   readonly userEdited: boolean;
   readonly hasPassword: boolean;
   readonly hasValues: boolean;
+  /** The page's username box, then its second one: what each accepts. */
+  readonly boxes: ReadonlyArray<DesktopLoginBox>;
+}
+
+/** What a username box accepts: an email or not, and its own length and pattern limits. */
+export interface DesktopLoginBox {
+  readonly email: boolean;
+  readonly minLength: number;
+  readonly maxLength: number;
+  readonly pattern: string;
 }
 
 export interface DesktopSignInFill {
@@ -52,6 +68,8 @@ export interface DesktopSignInFill {
   /** Submit a complete sign-in after filling it. */
   readonly submit?: boolean;
   readonly username?: string;
+  /** Another saved username for the page's second box: an email beside an ID, or the reverse. */
+  readonly otherUsername?: string;
   readonly password?: string;
   readonly otp?: string;
 }
@@ -61,6 +79,121 @@ export interface DesktopGoogleSession {
   readonly email: string;
   /** False when Google remembers the account but no longer accepts its session. */
   readonly valid: boolean;
+}
+
+/** What a copy of one unit did; `restore-failed` left it refused until the user signs out there. */
+export type DesktopUnitOutcome =
+  | "copied"
+  | "same"
+  | "conflict"
+  | "blocked"
+  | "busy"
+  | "failed"
+  | "restore-failed";
+
+/** What a copy into Main did to each unit; never any cookie value. */
+export interface DesktopFillMainResult {
+  readonly units: ReadonlyArray<{
+    readonly sites: ReadonlyArray<string>;
+    /** `busy`: a page wrote the unit meanwhile; its newer cookies were left and nothing copied. */
+    readonly outcome: DesktopUnitOutcome;
+  }>;
+  /** Cookies Scient can't carry exactly, such as opaque partitions; left out. */
+  readonly unsupported: number;
+  /**
+   * For an import into Main: the import's cookie rows, before the copy judged them by site.
+   * Cookie counts, never added to the units' site counts.
+   */
+  readonly importSummary?: Pick<BrowserImportResult, "imported" | "skipped" | "skippedByReason">;
+}
+
+/**
+ * A copy into Main. The app window decides which profiles may give Main their sign-ins, from the
+ * server's profile record; the desktop refuses only Main and Incognito as sources.
+ */
+export interface DesktopFillMainInput {
+  /** Omit for the primary local environment. */
+  readonly environmentId?: string;
+  /** A Scient profile, or another browser's profile to import into Main. */
+  readonly from:
+    | string
+    | { readonly importSourceId: BrowserImportSourceId; readonly sourceProfileDirectory: string };
+  /** Absent: the whole jar, one unit per registrable site. */
+  readonly units?: ReadonlyArray<ReadonlyArray<string>>;
+  /** For a whole jar: multi-site sign-ins whose sites are copied as one unit. */
+  readonly join?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly mode: "fill" | "fill-or-replace";
+  /** Site → when Main's row for it was seen signed out. */
+  readonly replaceAllowedSince?: Readonly<Record<string, string>>;
+  /** Google may be replaced too: Google has signed Main out, so Main has no session to keep. */
+  readonly replaceGoogle?: boolean;
+  /** Sites the user signed out of in Main; never copied. */
+  readonly skipSites: ReadonlyArray<string>;
+}
+
+/** A sign-in in a window of the person's own Chromium browser, then copied into a Scient profile. */
+export interface DesktopChromeSignInInput {
+  /** Omit for the primary local environment. */
+  readonly environmentId?: string;
+  readonly profileId: string;
+  /** An https page, or a loopback http one. */
+  readonly url: string;
+  /** Required for Main: what the copy may do, as for an import into Main. */
+  readonly main?: Pick<
+    DesktopFillMainInput,
+    "mode" | "replaceAllowedSince" | "replaceGoogle" | "skipSites"
+  >;
+}
+
+/**
+ * Google's answer right after a copy of its cookies: `accepted` means it takes the session now, not
+ * that it will keep doing so; `unknown` means it couldn't be asked.
+ */
+export type DesktopGoogleCopyCheck = "accepted" | "rejected" | "unknown";
+
+export type DesktopChromeSignInResult =
+  | { readonly outcome: "no-browser" }
+  /** `nothing`: the window held no sign-in when it closed. */
+  | { readonly outcome: "busy" | "failed" | "cancelled" | "nothing"; readonly browser?: string }
+  | {
+      /** Cookies copied, not a sign-in proven; into Main, `main` says what each unit did. */
+      readonly outcome: "copied";
+      readonly browser: string;
+      readonly sites: ReadonlyArray<string>;
+      /** Into Main: what the copy did to each site. */
+      readonly main?: DesktopFillMainResult;
+      /** Present only when Google's cookies were written. */
+      readonly google?: DesktopGoogleCopyCheck;
+      /** Google already accepted a session in the profile before the copy wrote over it. */
+      readonly googleHeldBefore?: true;
+    };
+
+/**
+ * A shareable profile's sign-ins in the desktop's own jar, for other computers. The app window
+ * decides which profiles may be read, from the server's profile record; the desktop doesn't.
+ */
+export interface DesktopReadSessionsInput {
+  readonly profileId: string;
+  /** Absent: the whole jar, one unit per registrable site. */
+  readonly units?: ReadonlyArray<ReadonlyArray<string>>;
+  /** For a whole jar: multi-site sign-ins whose sites are one unit. */
+  readonly join?: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+/** Each unit's live cookies; the values reach only the app window that asked. */
+export interface DesktopReadSessionsResult {
+  readonly units: ReadonlyArray<{
+    readonly sites: ReadonlyArray<string>;
+    readonly cookies: ReadonlyArray<SessionCookie>;
+  }>;
+}
+
+/** One case of the dev-only session-copy qualification. */
+export interface DesktopQualifyCase {
+  readonly case: number;
+  readonly name: string;
+  readonly ok: boolean;
+  readonly detail?: string;
 }
 
 export interface DesktopAccountsBridge {
@@ -111,4 +244,48 @@ export interface DesktopAccountsBridge {
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
   readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
+  /** The one writer of Scient's copies into Main; null when refused. Optional for older desktops. */
+  readonly fillMain?: (input: DesktopFillMainInput) => Promise<DesktopFillMainResult | null>;
+  /** Accounts' Sign out on Main, under the same lock as every copy into it. */
+  readonly signOutMainSite?: (site: string, environmentId?: string) => Promise<boolean>;
+  /**
+   * Removes from Main what a restricted profile's copies wrote there, unit by unit, where Main
+   * still holds exactly that; the units removed, or null when Main can't be opened.
+   */
+  /**
+   * Whether this window runs Accounts' background work, now and whenever that changes. One app
+   * window does; the role moves when it closes.
+   */
+  readonly onAccountsOwner?: (listener: (owner: boolean) => void) => () => void;
+  readonly withdrawFromMain?: (input: {
+    readonly from: string;
+    readonly environmentId?: string;
+    /** Lists the units Main holds from `from`, removing nothing. */
+    readonly heldOnly?: true;
+  }) => Promise<{ readonly units: ReadonlyArray<ReadonlyArray<string>> } | null>;
+  /** Reads the primary environment's jar under the Main lock; null when refused. */
+  readonly readSessions?: (
+    input: DesktopReadSessionsInput,
+  ) => Promise<DesktopReadSessionsResult | null>;
+  /**
+   * The browser a sign-in window opens in ("Chrome", "Edge"…), or null when none is installed.
+   * `canQuit`: Done can quit it; elsewhere the person closes the window themselves.
+   */
+  readonly chromeSignInBrowser?: () => Promise<{
+    readonly name: string;
+    readonly canQuit: boolean;
+  } | null>;
+  /**
+   * Whether a browser that imports through itself (`BrowserImportSource.connection`) has remote
+   * debugging turned on; null when refused. Never asks the person anything.
+   */
+  readonly browserConnection?: (
+    sourceId: BrowserImportSourceId,
+  ) => Promise<{ readonly on: boolean } | null>;
+  /** Resolves once the window closed and its sign-in was copied, or with why not. */
+  readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
+  /** Done (`keep`) quits the open sign-in window, Cancel stops it. False when none is open. */
+  readonly endChromeSignIn?: (keep: boolean) => Promise<boolean>;
+  /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
+  readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

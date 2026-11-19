@@ -35,20 +35,21 @@ shown as unpriced rather than guessed.
 Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
 the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
+The server keeps scanned usage history for 92 days by default. Claude Code deletes its own
+transcripts after 30 days, so for older Claude usage this history is the only record left. To keep
+it longer, set `usageHistoryRetentionDays` in `~/.scient-next/userdata/settings.json` to a number of days
+such as `365`, or to `"unlimited"`. Usage views still show at most 90 days. Lowering the value
+prunes older history on the next refresh, and raising it again does not bring pruned history back.
+While `settings.json` cannot be read, nothing is pruned.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including Scient-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on
 the server to read a different data directory; comma-separated paths read multiple directories.
 
-Cursor reads account usage from Cursor's API for the account you signed in with in Scient or set
-as `CURSOR_API_KEY`, or otherwise the CLI login saved on the server. This includes headless Scient
-sessions and desktop usage across machines; the same account counts once across connected
-environments. Without any of these, Scient shows a notice instead of incomplete local totals.
-Scient does not estimate missing tokens from conversation text. On macOS without a Scient sign-in,
-choose **Enable Cursor usage** on Usage to allow Scient to read your existing CLI login from
-Keychain. Nothing is read from Keychain until you enable it there, and you can turn it off again in
-**Settings → Providers → Usage providers**. macOS then asks you to allow access on the server Mac;
-choose **Always Allow** so it does not ask again. It stays allowed when Scient updates, and macOS
-asks once more only after you sign in to Cursor again.
+Cursor reads account usage from Cursor's API for the account you signed in with in Scient or set as
+`CURSOR_API_KEY`. This includes headless Scient sessions and desktop usage across machines; the same
+account counts once across connected environments. Scient does not estimate missing tokens from
+conversation text.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
@@ -197,24 +198,51 @@ in OpenCode with an API key. A Console browser sign-in alone does not report the
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
-otherwise for the account you signed in with in Scient or set as `CURSOR_API_KEY`, otherwise for the CLI
-login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,
-and Keychain login report limits only with Cursor's default API endpoint. If you configure a custom
-Cursor endpoint, use an explicit token or file-based CLI login for limits.
+otherwise for the account you signed in with in Scient or set as `CURSOR_API_KEY`.
+Sign-in and API keys report limits only with Cursor's default API endpoint. If you configure a custom
+Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
+Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
+Until then it shows no limits. Readings are not kept across a server restart.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
+
+## Subscription quota fallback
+
+For a new turn that needs a quota fallback and the explicit resume-after-limit action,
+Scient first tries your explicitly configured fallback, including another account of the
+same provider, a custom model, or an API connection you chose. A saved fallback remains
+eligible when only the default list hides it; explicitly hiding it in your provider
+settings disables it as a fallback. The model must be available, enabled for the project,
+able to generate text, and not out of quota. Saved aliases use the underlying model's limits.
+
+If that fallback cannot be used, Scient considers eligible subscription accounts connected
+inside Scient Agent in this order: **OpenAI → Anthropic →
+Antigravity → Muse Code**, using each subscription's
+[preferred model](./providers.md#model-visibility-and-subscription-defaults), not catalog order.
+It skips hidden or unavailable models, signed-out accounts, exhausted quota, and models
+the provider reports as unsuitable for text generation.
+
+This automatic chain also applies when the limited thread uses a standalone provider;
+standalone providers are destinations only when explicitly configured as the fallback.
+Automatic candidates never silently route work to a metered API account. If no eligible
+subscription choice remains, choose a model or account explicitly or wait for quota to refill.
+Resuming a limited conversation remains an explicit action; the policy does not silently
+resume it or rewrite its saved model. Subscription defaults also leave existing threads,
+explicit selections, and your global default unchanged.
 
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
 environment that will connect to the hub and enter its URL and management key.
 
-The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
+The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
+accounts for other providers are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure

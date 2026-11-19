@@ -61,8 +61,12 @@ const DRIVER_KIND = ProviderDriverKind.make("pi");
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
+  mise: { tool: "pi" },
   nativeUpdate: { args: ["update", "--self"] },
 });
+// SCIENT-FORK:START — a host keeps its private Pi runtime out of this rule.
+export const piMaintenanceResolver = UPDATE;
+// SCIENT-FORK:END
 
 export type PiDriverEnv =
   | PiAdapterV2DriverEnv
@@ -226,15 +230,18 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
         effectiveEnvironment,
         makeRpcClient,
       );
-      const checkProvider = checkPiProviderStatus(
-        effectiveConfig,
-        effectiveEnvironment,
-        host.paths.cwd,
-        makeRpcClient,
-      ).pipe(
-        Effect.map(stampSnapshot),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
+      // Pi runs extensions' session_start in its cwd; the server's cwd is $HOME on packaged desktop.
+      const probeCwd = path.join(host.paths.providerStatusCacheDir, "pi-status-probe");
+      const checkProvider = fileSystem
+        .makeDirectory(probeCwd, { recursive: true })
+        .pipe(
+          Effect.ignore,
+          Effect.andThen(
+            checkPiProviderStatus(effectiveConfig, effectiveEnvironment, probeCwd, makeRpcClient),
+          ),
+          Effect.map(stampSnapshot),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
       const mapSettings = (settings: ServerSettings) => ({
         provider: effectiveConfig,
         enableProviderUpdateChecks: settings.enableProviderUpdateChecks,

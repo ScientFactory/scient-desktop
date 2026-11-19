@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { NonNullableUsage, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -196,6 +197,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         Effect.sync(() => {
           opened.push(input);
           return {
+            renameSession: () => Effect.void,
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
@@ -243,6 +245,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         }),
       forkSession: () => Effect.die("No fork in reading preservation"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      subagentModel: () => Effect.succeed(null),
       assertComplete: Effect.void,
     },
   });
@@ -265,7 +268,7 @@ function onPrompt(message) {
             enabled: true,
             binaryPath: droid.binaryPath,
           }),
-          environment: { PATH: process.env.PATH },
+          environment: { PATH: (yield* HostProcess.Environment).PATH },
           sensitiveEnvironmentValues: [],
           makeRuntime: (input) =>
             makeDroidAcpRuntime(input).pipe(

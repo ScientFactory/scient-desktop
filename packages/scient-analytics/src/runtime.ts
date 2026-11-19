@@ -3,17 +3,16 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import {
-  type AnalyticsConsent,
   type AnalyticsPriority,
-  consentAllows,
   type NormalizationContext,
   normalizeInheritedEvent,
 } from "./contract.ts";
-import type {
-  AnalyticsEventDraft,
-  AnalyticsWorkerCommand,
-  AnalyticsWorkerInput,
-  AnalyticsWorkerResponse,
+import {
+  FLUSH_DEADLINE_MS,
+  type AnalyticsEventDraft,
+  type AnalyticsWorkerCommand,
+  type AnalyticsWorkerInput,
+  type AnalyticsWorkerResponse,
 } from "./workerProtocol.ts";
 
 const DEFAULT_ENDPOINT = "https://events.scientfactory.com/v1/events";
@@ -23,6 +22,9 @@ const MAX_IN_FLIGHT_BATCHES = 2;
 const WRITE_COALESCE_MS = 100;
 const CONTROL_TIMEOUT_MS = 3_500;
 const LOCAL_SHUTDOWN_BUDGET_MS = 300;
+const RECORDED_EVENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const RECORDED_EVENT_MAX_AGE_MS = 30 * 86_400_000;
+const RECORDED_EVENT_MAX_SKEW_MS = 86_400_000;
 
 const PRIORITY_RANK: Readonly<Record<AnalyticsPriority, number>> = {
   critical: 0,
@@ -32,25 +34,33 @@ const PRIORITY_RANK: Readonly<Record<AnalyticsPriority, number>> = {
 
 export interface AnalyticsRuntimeOptions extends NormalizationContext {
   readonly enabled: boolean;
-  readonly consent: AnalyticsConsent;
   readonly outboxPath: string;
   readonly endpoint?: string;
   readonly workerUrl?: URL;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
-  /** A user-requested deletion may authenticate while collection stays off. */
-  readonly purpose?: "collection" | "deletion";
   /** How long a control request waits for the worker; tests shorten it. */
   readonly controlTimeoutMs?: number;
+}
+
+/** An event another Scient process recorded; it keeps its own id, time and release. */
+export interface RecordedAnalyticsEvent extends NormalizationContext {
+  readonly id: string;
+  readonly name: string;
+  readonly occurredAt: string;
+  readonly properties: Readonly<Record<string, unknown>>;
 }
 
 export interface AnalyticsRuntime {
   readonly enabled: boolean;
   readonly record: (name: string, properties?: Readonly<Record<string, unknown>>) => boolean;
+  /**
+   * True once the outbox holds these events or none of them may be sent (shape, age);
+   * false when that is unconfirmed, so the caller keeps them to offer again.
+   */
+  readonly ingest: (events: ReadonlyArray<RecordedAnalyticsEvent>) => Promise<boolean>;
   readonly flush: () => Promise<number>;
-  readonly setConsent: (consent: AnalyticsConsent) => Promise<number>;
   readonly pendingCount: () => Promise<number>;
-  readonly deleteData: () => Promise<boolean>;
   readonly close: () => Promise<void>;
 }
 
@@ -58,10 +68,9 @@ function disabledRuntime(): AnalyticsRuntime {
   return {
     enabled: false,
     record: () => false,
+    ingest: async () => true,
     flush: async () => 0,
-    setConsent: async () => 0,
     pendingCount: async () => 0,
-    deleteData: async () => false,
     close: async () => undefined,
   };
 }
@@ -81,10 +90,7 @@ function waitForCondition(satisfied: () => boolean, deadline: number): Promise<v
 }
 
 export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): AnalyticsRuntime {
-  const purpose = options.purpose ?? "collection";
-  if (!options.enabled || (options.consent === "off" && purpose !== "deletion")) {
-    return disabledRuntime();
-  }
+  if (!options.enabled) return disabledRuntime();
 
   const now = options.now ?? (() => new Date());
   const controlTimeoutMs = options.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
@@ -96,23 +102,20 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       workerData: {
         outboxPath: options.outboxPath,
         endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
-        consent: options.consent,
-        purpose,
       } satisfies AnalyticsWorkerInput,
     },
   );
   worker.unref();
 
-  let consent: AnalyticsConsent = options.consent;
   let ready = false;
   let available = true;
   let closed = false;
-  let deleting = false;
   let writeTimer: ReturnType<typeof setTimeout> | null = null;
   let nextBatchId = 1;
   let nextRequestId = 1;
   const queue: AnalyticsEventDraft[] = [];
   const inFlight = new Map<number, ReadonlyArray<AnalyticsEventDraft>>();
+  const ingestions = new Map<number, (persisted: boolean) => void>();
   const requests = new Map<
     number,
     {
@@ -142,6 +145,8 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     }
     queue.length = 0;
     inFlight.clear();
+    for (const settle of ingestions.values()) settle(false);
+    ingestions.clear();
     settleRequests();
   };
 
@@ -158,7 +163,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const drain = () => {
-    if (!ready || !available || closed || deleting) return;
+    if (!ready || !available || closed) return;
     if (writeTimer !== null) {
       clearTimeout(writeTimer);
       writeTimer = null;
@@ -210,12 +215,16 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       case "diagnostics":
         record("app.diagnostics", {
           queuedCount: response.queuedCount,
+          droppedCount: response.droppedCount,
           retryCount: response.retryCount,
+          oldestEventAgeMs: response.oldestEventAgeMs,
           deliveryClass: response.deliveryClass,
         });
         return;
       case "persisted":
         inFlight.delete(response.batchId);
+        ingestions.get(response.batchId)?.(true);
+        ingestions.delete(response.batchId);
         drain();
         return;
       case "result": {
@@ -253,18 +262,17 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const record: AnalyticsRuntime["record"] = (name, properties) => {
-    if (closed || deleting || !available || consent === "off" || purpose === "deletion") {
-      return false;
-    }
+    if (closed || !available) return false;
     const normalized = normalizeInheritedEvent(name, properties, options);
-    if (!normalized || !consentAllows(consent, normalized.privacyLevel)) return false;
+    if (!normalized) return false;
     const accepted = admit({
       id: randomUUID(),
       name: normalized.name,
       session_id: sessionId,
       occurred_at: now().toISOString(),
       privacy_level: normalized.privacyLevel,
-      consent_level: consent,
+      // The gateway still reads a consent level; analytics is always on at the full level.
+      consent_level: "diagnostic",
       properties: {
         appVersion: options.appVersion,
         buildChannel: options.buildChannel,
@@ -276,42 +284,79 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     return accepted;
   };
 
+  const recordedDraft = (event: RecordedAnalyticsEvent): AnalyticsEventDraft | null => {
+    const occurredAt = Date.parse(event.occurredAt);
+    const nowMs = now().valueOf();
+    if (
+      !RECORDED_EVENT_ID.test(event.id) ||
+      !Number.isFinite(occurredAt) ||
+      occurredAt > nowMs + RECORDED_EVENT_MAX_SKEW_MS ||
+      occurredAt < nowMs - RECORDED_EVENT_MAX_AGE_MS
+    ) {
+      return null;
+    }
+    const normalized = normalizeInheritedEvent(event.name, event.properties, {
+      appVersion: event.appVersion,
+      buildChannel: event.buildChannel,
+    });
+    if (!normalized) return null;
+    return {
+      id: event.id,
+      name: normalized.name,
+      session_id: sessionId,
+      occurred_at: new Date(occurredAt).toISOString(),
+      privacy_level: normalized.privacyLevel,
+      // Same constant `record` sends: the gateway still reads a consent level.
+      consent_level: "diagnostic",
+      properties: normalized.properties,
+      priority: normalized.priority,
+    };
+  };
+
+  const ingest: AnalyticsRuntime["ingest"] = async (events) => {
+    if (closed || !available) return false;
+    const drafts = events.flatMap((event) => recordedDraft(event) ?? []);
+    if (drafts.length === 0) return true;
+    await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
+    if (!ready || !available || closed) return false;
+    const batchId = nextBatchId++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        ingestions.delete(batchId);
+        resolve(false);
+      }, controlTimeoutMs);
+      timer.unref();
+      ingestions.set(batchId, (persisted) => {
+        clearTimeout(timer);
+        resolve(persisted);
+      });
+      inFlight.set(batchId, drafts);
+      if (!post({ type: "enqueue", batchId, events: drafts })) {
+        inFlight.delete(batchId);
+        ingestions.delete(batchId);
+        clearTimeout(timer);
+        resolve(false);
+      }
+    });
+  };
+
   return {
     get enabled() {
       return available && !closed;
     },
     record,
+    ingest,
     flush: async () => {
-      if (closed || deleting || !available || consent === "off" || purpose === "deletion") return 0;
+      if (closed || !available) return 0;
       await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
       if (!ready || !available) return 0;
       drain();
-      return (await request((requestId) => ({ type: "flush", requestId }))) ?? 0;
-    },
-    setConsent: async (nextConsent) => {
-      consent = nextConsent;
-      let purged = 0;
-      for (let index = queue.length - 1; index >= 0; index -= 1) {
-        const event = queue[index];
-        if (event && !consentAllows(nextConsent, event.privacy_level)) {
-          queue.splice(index, 1);
-          purged += 1;
-        }
-      }
-      // Worker messages queue even before startup. Never silently leave a
-      // higher persisted consent active because readiness was slow.
-      const acknowledged = await request((requestId) => ({
-        type: "set-consent",
-        requestId,
-        consent: nextConsent,
-      }));
-      if (acknowledged === null) {
-        disable();
-        await worker.terminate().catch(() => undefined);
-        throw new Error("Analytics consent was not acknowledged");
-      }
-      drain();
-      return purged + acknowledged;
+      return (
+        (await request(
+          (requestId) => ({ type: "flush", requestId }),
+          FLUSH_DEADLINE_MS + controlTimeoutMs,
+        )) ?? 0
+      );
     },
     pendingCount: async () => {
       if (closed || !available) return bufferedCount();
@@ -321,30 +366,6 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       return (
         queue.length + ((await request((requestId) => ({ type: "pending-count", requestId }))) ?? 0)
       );
-    },
-    deleteData: async () => {
-      if (closed || deleting || !available) return false;
-      deleting = true;
-      try {
-        await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
-        if (!ready || !available) return false;
-        // Already-posted enqueues precede deletion on the worker's message port.
-        // Hold all remaining batches until its result, including persisted ACKs.
-        const result = await request((requestId) => ({ type: "delete-data", requestId }));
-        if (result === null) {
-          // An ambiguous response may follow identity rotation; never replay the
-          // old memory buffer under that identity.
-          disable();
-          await worker.terminate().catch(() => undefined);
-          return false;
-        }
-        const deleted = result === 1;
-        if (deleted) queue.length = 0;
-        return deleted;
-      } finally {
-        deleting = false;
-        drain();
-      }
     },
     close: async () => {
       if (closed) return;

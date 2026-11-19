@@ -5,7 +5,7 @@ import { MathfieldElement, type MacroDictionary } from "mathlive";
 import { readLocalApi } from "~/localApi";
 import { showContextMenuFallback } from "~/contextMenuFallback";
 import { toastManager } from "~/components/ui/toast";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { observeMathFieldReadiness } from "./mathFieldReadiness";
 import {
   MATH_FORMATTING_ARGUMENTS,
@@ -690,7 +690,7 @@ export const LatexMathField = forwardRef<
               const source = clipboardSource();
               const selection = selectionKey();
               const cells = rectangle;
-              const copied = await writeTextToClipboard(source, "math", {
+              const copied = await writeTextToClipboard(source, namedClipboardTarget("math"), {
                 "application/x-latex": source,
               });
               // Clipboard permissions may take time. Never cut a later selection.

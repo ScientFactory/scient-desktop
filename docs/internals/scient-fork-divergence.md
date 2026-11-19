@@ -6,10 +6,11 @@ small set of T3-owned seams that an upstream merge may touch.
 
 ## Product behavior
 
-From the Fork action beside either a sent user message or a completed assistant
-response, a user can create a new conversation at that exact point. The origin
-conversation continues independently. `/fork` captures the running turn when
-one is active, otherwise it selects the latest completed assistant response.
+One click on the Fork action beside either a sent user message or a completed assistant
+response creates a new conversation at that exact point, in the current workspace. The menu
+beside it offers **Fork into a new worktree**. The origin conversation continues independently.
+`/fork` captures the running turn when one is active, otherwise it selects the latest completed
+assistant response.
 
 - Forking an assistant response retains the transcript through that response.
   The destination waits for the user's next message. A finished response inside a
@@ -22,20 +23,17 @@ one is active, otherwise it selects the latest completed assistant response.
   The server never sends the clicked message. The origin answer and all later
   history are excluded.
 
-Every path opens one confirmation form. It proposes the server's next automatic
-fork title, which the user may replace. Leaving the proposal untouched keeps
-title allocation on the server, so concurrent forks still receive a
-collision-safe number. The preview includes active and archived siblings in the
-origin project and uses captured fork lineage to recognize generated numbering.
-**New worktree** is off by default. Turning it on creates
-a dedicated Git worktree at the selected historical checkpoint, or a frozen
-current-file snapshot for a running-turn fork. It is available only when that
-baseline can be captured safely. Leaving it off
-keeps the conversation branch independent while using the origin project's
-current workspace; it does not rewind local files.
+There is no confirmation form. The server names every fork with the next collision-safe
+number among the origin project's siblings (`Title (2)`, `Title (3)`), using captured fork
+lineage to recognize generated numbering; a caller-supplied title (MCP) is kept. **Fork into a
+new worktree** creates a dedicated Git worktree at the selected historical checkpoint, or a
+frozen current-file snapshot for a running-turn fork; the server refuses it when that baseline
+cannot be captured safely. An ordinary fork keeps the conversation branch independent while
+using the origin project's current workspace; it does not rewind local files. When it works in
+the project folder because the original worktree was removed, a notice says so.
 
 A fork in the current workspace never refuses for a workspace reason it can work around. When the
-original worktree was removed, the fork works in the project folder and the form says so in one
+original worktree was removed, the fork works in the project folder and a notice says so in one
 line. A fork whose own new-worktree setup is still pending or failed can itself be forked in the
 folder it shows. When the fork's checkpoint cannot be saved, it continues without a restore point
 (it cannot rewind files to its start). A new worktree still requires its checkpoint.
@@ -137,14 +135,29 @@ merge resolution.
   `ChatView.tsx`. If upstream reworks the composer or task items, that is a new
   decision for the owner.
 
+- **Rooms replace T3's guest links (decided 2026-11-13).** Scient's thread rooms
+  (several people, roles, people-only messages kept in place, sending a message to the
+  agent later) are built beside T3's guest share, which stays unchanged and dormant:
+  Scient's share commands open the room dialog, and T3's own routes and page still
+  serve a share opened before the upgrade. Port T3 fixes to guest read routes
+  (`apps/server/src/guest/GuestShareService.ts`) into `ThreadRoomService.ts` when they
+  apply. See [Thread rooms](./thread-rooms.md).
+
 ## Native V2 reliability model
 
-The message-boundary RPC enters
-[`ConversationForkService`](../../apps/server/src/orchestration-v2/scient-fork/ConversationForkService.ts).
-It hydrates legacy source facts through `LegacyV1ThreadImporter`, then uses
+Every fork, from web, mobile and MCP, is T3's `thread.fork` through the Orchestrator. Scient's
+choices ride on it as `scient: { boundary, workspaceMode }` (`scientConversationFork.ts`): the
+boundary is an assistant response, a user message or a running turn. A command without them
+(mobile, MCP) forks after the settled run its source point names. The Orchestrator's one mount
+hands every fork that is not a side chat to
+[`ConversationForkDispatch`](../../apps/server/src/orchestration-v2/scient-fork/ConversationForkDispatch.ts):
+[`ConversationForkService.admit`](../../apps/server/src/orchestration-v2/scient-fork/ConversationForkService.ts)
+hydrates legacy source facts through `LegacyV1ThreadImporter` and uses
 [`ConversationForkPlan`](../../apps/server/src/orchestration-v2/scient-fork/ConversationForkPlan.ts)
-to freeze the exact retained prefix. Native/MCP `thread.fork` enters `ThreadForkService` and uses
-the same planner. Native run-fork and Scient's checkpoint/worktree choice are distinct policies.
+to freeze the exact retained prefix; T3's `ThreadForkService` builds the thread and transfer; the
+frozen facts replace T3's live source link. Side chats stay T3's live view and carry none of a
+parent's fork state. A mobile or MCP fork whose project or folder is unavailable works in T3's
+folder without a restore point, as before; a web fork requires its project.
 
 1. The service checks the owning project, source message/run, actual workspace, retained
    attachments, and checkpoint eligibility. Source and destination thread locks use a stable
@@ -159,15 +172,25 @@ the same planner. Native run-fork and Scient's checkpoint/worktree choice are di
    historical facts. Retained files are shared, not copied.
 3. `EventSink` commits the destination, its history list, the copies, lineage/context-transfer
    facts and the command receipt together, plus a `scient-fork.provision` outbox effect for a new
-   worktree. `conversationFork` metadata owns provisioning status; the old Scient lineage
-   table/reactor is not the live authority.
+   worktree, through the Orchestrator's ordinary commit. A Scient fence around that commit
+   allocates the title under the global title lock, rechecks the folder, and holds any running
+   capture. The fork's setup state (workspace mode, folder, checkpoint, retained files, provisioning
+   status) is Scient's own record in `scient_conversation_forks`
+   (`scient-fork/ConversationForkRecords.ts`), written in the same transaction as the fork's thread
+   events and read through `ProjectionStore.getConversationFork`; T3's thread record does not carry
+   it, so threads built from a fork (side chats, delegated tasks) cannot copy it. Scient migration 30
+   moved existing forks' state there. `forkLineage` (origin, baseline answer, import provenance)
+   stays on the thread for now: shells, exports and V1 imports read it. A refused conversation fork
+   leaves no receipt, so its identity stays retryable after its cause is repaired; side chats keep
+   T3's rejection receipts.
 4. For a new worktree, the V2 effect worker calls `ConversationForkService.provision` to create
    and verify the worktree from the frozen checkpoint. Deterministic identities allow recovery and
    retry. A changed existing worktree is not adopted or erased. Setup errors reach clients as plain
    messages; Git output and workspace paths stay in the server log.
-5. Only a verified worktree produces `ready`. Dispatch waits on persisted metadata/events before
-   returning the attachment-ID map. A transient failure remains retryable with the same command;
-   retry schedules provisioning again. Terminal failure records abandonment/deletion and releases
+5. Only a verified worktree produces `ready`. `orchestration.awaitFork` waits on persisted
+   metadata/events before returning the attachment-ID map; the dispatch receipt alone is not
+   readiness. A transient failure remains retryable with the same command: repeating an accepted
+   fork schedules its failed provisioning again. Terminal failure records abandonment/deletion and releases
    what deleting the fork would. Process-loss recovery requeues safe provisioning effects; live
    events are wakeups, not authority.
 6. Turn admission rejects an unready destination. First provider delivery lazily resolves the
@@ -207,10 +230,11 @@ Ordinary execution baselines, completed-turn checkpoints, and running-worktree f
 same bounded capture substrate. Changed paths are consumed incrementally with backpressure:
 128 MiB of listing bytes, 250,000 records (including rename sources), and 1 MiB per record.
 The 512 MiB per-file, 1 GiB changed-byte, and 90-second whole-capture limits remain. Diagnostic
-buffer truncation is independent of enumeration completeness. Publication transfers only objects
-new to the private staging repository, preserves Git's loose/packed transfer policy and object
-format, and checks connectivity before publishing the ref. Private indexes and staging files are
-scoped resources. These limits do not make a workspace containing tens of gigabytes eligible;
+buffer truncation is independent of enumeration completeness. Capture follows T3: objects are
+written to a private object directory and linked into the repository before the ref is written,
+so an interrupted capture leaves no ref; objects it already linked are unreachable until Git's
+maintenance prunes them. Private indexes and object
+directories are scoped resources. These limits do not make a workspace containing tens of gigabytes eligible;
 workspace ignore rules and maintenance remain separate user decisions.
 
 ### Client operation identity and eligibility
@@ -222,16 +246,17 @@ text and prepared images in the composer store and flushes draft persistence bef
 dispatching the attempt. An uncertain outcome retains the draft; a dispatched attempt discards
 it only on confirmed rejection or abandonment.
 
-`orchestration.getForkOptions` is a read-authorized, capability-gated query
-(`threadForkRecovery`). It resolves either a specified user/assistant message
+`orchestration.getForkOptions` and `orchestration.awaitFork` are read-authorized queries; a server
+that takes Scient's options on `thread.fork` advertises `threadForkOptions`, and a client refuses
+to fork on one that does not. It resolves either a specified user/assistant message
 or, when neither is supplied, the latest completed assistant boundary. It
 checks retained attachment availability and distinguishes an existing local
 workspace from a resolvable Git checkpoint. Both the preview and submission
 use this query; V2 admission and the provisioning service remain the final authority
 because dependencies can change after a preview.
 
-`forkAttempt.ts` journals the exact command, environment, destination, display
-title, and handoff milestones under `scient:fork-attempt:v1:` in client storage.
+`forkAttempt.ts` journals the exact command, environment, destination and handoff milestones
+under `scient:fork-attempt:v2:` in client storage (v1 entries held the former command).
 The key includes environment, original thread, and fork entry point. A retry
 uses the saved command even if a caller supplies different options. No prompts,
 file bytes, or authorized asset URLs are duplicated into this journal; drafts
@@ -239,26 +264,19 @@ remain in the existing composer store. Journal writes must succeed before
 dispatch. Origin-scoped in-memory ownership survives hook remounts, with Web
 Locks preventing concurrent operations in other tabs of the same profile.
 
-Fork dispatch errors carry an optional `forkDisposition`. `rejected` means a
-known command rejection; `abandoned` means terminal compensation; `failed`
+Readiness errors carry an optional `forkDisposition`, and T3's dispatch marks a refused command
+with `commandDisposition: "rejected"`. `rejected` means a known command rejection; `abandoned` means terminal compensation; `failed`
 means provisioning is retryable; `pending`/`provisioning` mean work exists;
 `ready` proves completion. Missing evidence is `unknown`, never rejection.
 Transport errors without this field preserve both the command and draft.
 Once ready, retry only performs the client handoff and navigation. Optional
 panel continuity cannot turn a ready fork into a failed creation.
 
-After provisioning succeeds, the source dialog removes its subtree before the
-draft handoff and navigation. A layout commit confirms that removal; navigation
-does not depend on an animation-completion callback or a fixed delay. Leaving
-the source or unmounting cancels the pending navigation, while a navigation
-failure reopens the same retry form.
-
-Errors and retries stay inside the existing confirmation form. Title and
-workspace inputs are locked while resuming an unresolved operation. Navigating
-elsewhere or unmounting the hook does not cancel accepted server work and does
-not allow its completion to steal navigation. An unfinished client handoff is
-resumed from the same Fork action; deliberate new forks are possible after the
-previous handoff has completed.
+Errors show as a toast. Forking from the same point again resumes an unresolved operation with
+its saved command, whatever workspace was chosen the second time. Navigating elsewhere or
+unmounting the hook does not cancel accepted server work and does not allow its completion to
+steal navigation. Unreadable images in a user-message fork are omitted only after the shared
+confirmation dialog; deliberate new forks are possible after the previous handoff has completed.
 
 Automatic names remain server-allocated and custom titles remain authored
 command data. Renaming either thread never changes lineage identity. The
@@ -291,19 +309,19 @@ Git availability for valid non-Git local workspaces.
 
 ## Implementation and protected seams
 
-| Owner                                                                                                         | Current role                                                                |
-| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `orchestration-v2/scient-fork/ConversationForkService.ts`                                                     | Message-boundary options, durable admission, provisioning, retry, readiness |
-| `orchestration-v2/scient-fork/ConversationForkPlan.ts`                                                        | Exact retained prefix: history list, copies and shared files                |
-| `orchestration-v2/scient-fork/ConversationForkNativeSource.ts`                                                | Frozen native ownership and boundary proof                                  |
-| `orchestration-v2/scient-fork/ForkHistory.ts`, `ForkCheckpointBaseline.ts`                                    | History list reads and writes; checkpoint/worktree substrate                |
-| `orchestration-v2/ThreadForkService.ts`, `Orchestrator.ts`                                                    | Native run-fork, lineage/context transfer, admission, merge-back            |
-| `orchestration-v2/EventSink.ts`, `ProjectionStore.ts`, `EffectWorker.ts`                                      | Atomic persistence, read models, provisioning execution                     |
-| `orchestration-v2/ProviderTurnStartService.ts`, `ProviderSessionManager.ts`                                   | Native clone or portable context, exact-session delivery and recovery       |
-| `orchestration-v2/ContextHandoffBudget.ts`, `ContextHandoffDelivery.ts`                                       | Whole-item selection, target allowance, delivery evidence                   |
-| `orchestration-v2/legacy/`, `persistence/Sqlite.ts`                                                           | Legacy hydration and immutable migration compatibility                      |
-| `ws.ts`, `packages/client-runtime/src/operations/commands.ts`                                                 | Retained message-boundary wire routing and client operation                 |
-| `apps/web/src/components/scient-fork/forkAttempt.ts`, fork hooks/dialog, timeline and right-panel integration | Dialog, draft journal, navigation, and safe continuity                      |
+| Owner                                                                                                  | Current role                                                          |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `orchestration-v2/scient-fork/ConversationForkDispatch.ts`, `ConversationForkService.ts`               | Admission on T3's fork, commit fence, provisioning, retry, readiness  |
+| `orchestration-v2/scient-fork/ConversationForkPlan.ts`                                                 | Exact retained prefix: history list, copies and shared files          |
+| `orchestration-v2/scient-fork/ConversationForkNativeSource.ts`                                         | Frozen native ownership and boundary proof                            |
+| `orchestration-v2/scient-fork/ForkHistory.ts`, `ForkCheckpointBaseline.ts`                             | History list reads and writes; checkpoint/worktree substrate          |
+| `orchestration-v2/ThreadForkService.ts`, `Orchestrator.ts`                                             | Native run-fork, lineage/context transfer, admission, merge-back      |
+| `orchestration-v2/EventSink.ts`, `ProjectionStore.ts`, `EffectWorker.ts`                               | Atomic persistence, read models, provisioning execution               |
+| `orchestration-v2/ProviderTurnStartService.ts`, `ProviderSessionManager.ts`                            | Native clone or portable context, exact-session delivery and recovery |
+| `orchestration-v2/ContextHandoffBudget.ts`, `ContextHandoffDelivery.ts`                                | Whole-item selection, target allowance, delivery evidence             |
+| `orchestration-v2/legacy/`, `persistence/Sqlite.ts`                                                    | Legacy hydration and immutable migration compatibility                |
+| `ConversationForkRpcHandlers.ts`, `packages/client-runtime/src/operations/commands.ts`                 | Fork options and readiness queries; the client's fork command         |
+| `apps/web/src/components/scient-fork/forkAttempt.ts`, fork hooks, timeline and right-panel integration | One-click fork, draft journal, navigation, and safe continuity        |
 
 Server paths above are relative to `apps/server/src/`. Extend these live services, not V1
 `forkDecider`, `OrchestrationEngine`, `ProjectionPipeline`, `ScientForkReactor`, or
@@ -351,17 +369,18 @@ These hosts are under `apps/server/src/orchestration-v2/`. The extracted policy 
 [`scient-fork/`](../../apps/server/src/orchestration-v2/scient-fork/), alongside the fork service,
 repositories, independent schema/migrator and context-history helpers.
 
-| Host mount                                                            | Extracted owners                                                                                                                                                  | Boundary to preserve                                                                                             |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `EventSink.ts`                                                        | `CommitPublication.ts`, `NativeModelContextWindow.ts`, `PendingStartOwner.ts`, `sourcePlanConsumption.ts`, `committedQuestionAnswers.ts`, `runningForkSource.ts`  | Transactional current-owner checks, canonical append/projection/outbox, masked commit and both publication buses |
-| `Orchestrator.ts`                                                     | `RunStartDecisions.ts`, `SettingExecutionOwner.ts`, `ProviderWorkAdmission.ts`, `DroidHeldSteer.ts`, `CheckpointRollbackCompletion.ts`, `ConversationForkPlan.ts` | Thread-lock admission, captured queued modes, busy-owner preservation, held-steer and rollback ordering          |
-| `ProviderTurnStartService.ts`                                         | `PortableTurnStart.ts`, `PendingStartOwner.ts`, `NativeModelContextWindow.ts`                                                                                     | Stop-before-offer checks and frozen native-or-portable history delivery                                          |
-| `Orchestrator.ts`, `EffectOutbox.ts`, `ProviderTurnControlService.ts` | `PendingStartInterrupt.ts`                                                                                                                                        | Receipt-aware Stop planning and its private request; native identity comes only from observed receipts           |
-| `RunExecutionService.ts`                                              | `RunExecutionFinalization.ts`, `NativeWorkflowOwnership.ts`, `PendingStartOwner.ts`, `runningForkSource.ts`                                                       | Cancellable local preparation, exact finalization, subscriptions and transferred workflow ownership              |
-| `ThreadForkService.ts`                                                | `ConversationForkPlan.ts`, `ConversationForkNativeSource.ts`, `ConversationForkBoundaryItem.ts`                                                                   | Destination-owned prefix and exact native boundary proof                                                         |
-| `ThreadManagementService.ts`                                          | `ThreadDispatchCloneGuard.ts`                                                                                                                                     | Reject unavailable clone state before hydration/native dispatch                                                  |
-| `ProjectionStore.ts`, `EffectWorker.ts`                               | `RollbackAttachmentRetention.ts`, `ConversationForkService.ts`                                                                                                    | Retained attachment references and durable provisioning, not a second execution authority                        |
-| `ContextHandoffBudget.ts`, `ScientContextHandoffPolicy.ts`            | `context/historicalItems.ts`, `context/handoffBudget.ts`                                                                                                          | Whole-item history selection and Scient preset allowance                                                         |
+| Host mount                                                            | Extracted owners                                                                                                                                                      | Boundary to preserve                                                                                             |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `EventSink.ts`                                                        | `CommitPublication.ts`, `NativeModelContextWindow.ts`, `PendingStartOwner.ts`, `sourcePlanConsumption.ts`, `committedQuestionAnswers.ts`, `runningForkSource.ts`      | Transactional current-owner checks, canonical append/projection/outbox, masked commit and both publication buses |
+| `Orchestrator.ts`                                                     | `RunStartDecisions.ts`, `SettingExecutionOwner.ts`, `ProviderWorkAdmission.ts`, `DroidHeldSteer.ts`, `CheckpointRollbackCompletion.ts`, `ConversationForkDispatch.ts` | Thread-lock admission, captured queued modes, busy-owner preservation, held-steer and rollback ordering          |
+| `Orchestrator.ts`, `EffectWorker.ts`                                  | `SteerInputRefusal.ts`                                                                                                                                                | A user's steer over the input limit settles once, with one error child of the steer; its run keeps going         |
+| `ProviderTurnStartService.ts`                                         | `PortableTurnStart.ts`, `PendingStartOwner.ts`, `NativeModelContextWindow.ts`                                                                                         | Stop-before-offer checks and frozen native-or-portable history delivery                                          |
+| `Orchestrator.ts`, `EffectOutbox.ts`, `ProviderTurnControlService.ts` | `PendingStartInterrupt.ts`                                                                                                                                            | Receipt-aware Stop planning and its private request; native identity comes only from observed receipts           |
+| `RunExecutionService.ts`                                              | `RunExecutionFinalization.ts`, `NativeWorkflowOwnership.ts`, `PendingStartOwner.ts`, `runningForkSource.ts`                                                           | Cancellable local preparation, exact finalization, subscriptions and transferred workflow ownership              |
+| `ThreadForkService.ts`                                                | resets only (rooms, source work, Scient fork facts on side chats); `ConversationForkDispatch.ts` overlays the frozen facts                                            | T3 builds every fork; Scient owns the prefix and exact native boundary proof                                     |
+| `ThreadManagementService.ts`                                          | `ThreadDispatchCloneGuard.ts`                                                                                                                                         | Reject unavailable clone state before hydration/native dispatch                                                  |
+| `ProjectionStore.ts`, `EffectWorker.ts`                               | `RollbackAttachmentRetention.ts`, `ConversationForkService.ts`                                                                                                        | Retained attachment references and durable provisioning, not a second execution authority                        |
+| `ContextHandoffBudget.ts`, `ScientContextHandoffPolicy.ts`            | `context/historicalItems.ts`, `context/handoffBudget.ts`                                                                                                              | Whole-item history selection and Scient preset allowance                                                         |
 
 `scient/orchestration/TerminalQueueHold.ts` remains the server terminal hold policy mounted by the
 orchestrator. `scient/skills/ScientV2SkillTurn.ts` and `ScientSkillSession.ts` own trusted skill
@@ -381,6 +400,15 @@ The adapter still owns its native provider protocol.
 | `Adapters/ClaudeAdapterV2.ts`, package-owned OpenCode adapters | `ClaudeWorkflowMemberPresentation.ts`, `provider/OpenCodeDriverComposition.ts`, package-owned `turnAcceptance.ts`            | Coordinator-owned workflow observations and provider-confirmed prompt boundaries                      |
 | Package-owned Pi adapter                                       | `provider/PiDriverComposition.ts`, package-owned `inputCapabilities.ts` and `nativeSelection.ts`, `NativeTurnReceipts.ts`    | Native input eligibility and confirmed selection without moving Pi protocol/FS reads                  |
 | `Adapters/NativeSessionAdapterV2.ts`, `OmpAdapterV2.ts`        | `NativeProducerLifecycle.ts`, `NativeTurnReceipts.ts`, `OmpProcessOwnership.ts`                                              | Retained native producers and OMP process ownership; Pi remains a separate protocol                   |
+
+[`AntigravityTurnOutcome.ts`](../../apps/server/src/provider/acp/AntigravityTurnOutcome.ts) keeps
+its trajectory reads and Google API error mapping, with marked `httpStatus` fields. One marked
+mount hands any other error step to
+[`AntigravityHarnessFailure.ts`](../../apps/server/src/scient/providerLifecycle/AntigravityHarnessFailure.ts),
+which names a tool server that failed to start and passes the harness text through
+[`providerFailureText.ts`](../../apps/server/src/scient/providerLifecycle/providerFailureText.ts)
+before bounding it. The shared ACP adapter's inactivity watchdog adds its `prompt_inactivity` code
+inside its existing marked Scient message region.
 
 Provider packages own native protocol, selection, and executable probing. Scient composes its
 policy in [`AppProviderDriverComposition.ts`](../../apps/server/src/provider/AppProviderDriverComposition.ts),
@@ -436,13 +464,18 @@ transport schemas. Preserve public encoding, endpoint registration and current e
 
 #### Keep-awake
 
-The server answers which threads are working (`apps/server/src/scient/keepAwake/`), from the
-thread shells and `isLive`, with no upstream changes. The desktop process polls its primary backend
-and owns the one sleep request (`apps/desktop/src/scient/keepAwake/`), so closing a window doesn't
-end it. The setting is the client setting `keepComputerAwake`; "until done" choices stay in memory,
-because quitting ends the work they cover. Upstream files only carry marked mounts: the HTTP group,
-the client setting, `main.ts`, `DesktopIpcHandlers.ts`, `DesktopLocalEnvironmentAuth.ts`,
-`preload.ts`, `channels.ts`, `SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx` and `threadActionMenu.logic.ts`.
+The app-wide hold is T3's `apps/server/src/background/KeepAwake.ts` and its server setting
+`keepAwakeWhileAgentsWork`. One marked seam there swaps T3's run-status query for Scient's work
+(`apps/server/src/scient/keepAwake/`: executing threads with a live provider session or inside the
+start grace, not monitors, PR watches or threads waiting on a person or another thread), re-read on
+any thread event (batched) and each minute; another names the inhibitor "Scient". `server.ts` wires
+the service in. The per-thread "Keep computer awake until done" stays on the desktop
+(`apps/desktop/src/scient/keepAwake/`): it polls the same work endpoint and holds Electron's
+`powerSaveBlocker` for chosen threads only; choices stay in memory, because quitting ends the work
+they cover, and the menu item hides while the app-wide setting is on. Upstream files only carry
+marked mounts: `KeepAwake.ts`, `server.ts`, the HTTP group, `main.ts`, `DesktopIpcHandlers.ts`,
+`DesktopLocalEnvironmentAuth.ts`, `preload.ts`, `channels.ts`, `Sidebar.tsx` and
+`threadActionMenu.logic.ts`.
 
 #### Web and desktop surfaces
 
@@ -453,15 +486,18 @@ not a requirement to relocate the whole host.
 | Host surface                                                    | Current extracted owners                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ChatView.tsx`                                                  | `fork/chatViewFork.tsx`, `chat/` request-error/agent-panel/token-limit/revert diagnostics, `rightPanel/`, `skills/useEffectiveActiveProviderSkills.ts`, `compute/useComputeOwnedSurfaces.ts` and `chatComputeFigureFollower.tsx`, `fileSurfaces/useChatSurfaceSaveGuards.ts`, `threadTasks/ThreadTasksBar.tsx`                                                                                                                                                                                                                                                                                                                      |
-| Composer/session queue mounts                                   | `threadQueue/` submission, extracted-intent send, edit session, native edit item, optimistic presentation, the queue control's Scient parts (`useScientQueueParts.tsx`) and the pre-native recovery notice; `sessionLogic/providerOptions.ts` and `skills/` policies                                                                                                                                                                                                                                                                                                                                                                |
+| Composer/session queue mounts                                   | `threadQueue/` submission identity, optimistic presentation, the queue control's Scient parts (`useScientQueueParts.tsx`) and the pre-native recovery notice; `sessionLogic/providerOptions.ts` and `skills/` policies                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `ChatView.tsx` / `chat/MessagesTimeline.tsx` reading and follow | Scient-only files inside upstream's `components/chat/`, not under `scient/`: `readerScrollPolicy.ts`, `readerScrolling.ts`, `readingPositionStore.ts`, `responseFollow.ts`, `useBoundedAnswerFollow.ts`, `liveFollowOffset.ts`, `useTimelineEndControl.ts`, `unreadTimelineMessages.ts`; `timelineScrollAnchoring.ts` keeps upstream's in-memory map with marked storage calls; ChatView's reader navigation stays in marked regions (shared refs with upstream's anchor callbacks)                                                                                                                                                 |
 | Chat streaming and motion                                       | `components/chat/useStreamingBlockEntrance.ts`, `liveActivity.tsx`, `workingRowExit.ts`, `ThinkingRowFade.tsx`, `timelineWorkingState.ts`, `timelineEntranceMotion.ts`; `presentation/scient-live-activity.css` and `scient-streamed-reveal.css` (one marked import in `index.css`); mounted in `ChatMarkdown.tsx`, `MessagesTimeline.tsx` and `ChatView.tsx`; Stop through `chat/useStopGeneration.ts`                                                                                                                                                                                                                             |
 | `chat/MessagesTimeline.tsx` / `.logic.ts` timeline rows         | `threadTimeline/keptAnswers.ts` (rule in `@scientfactory/conversation/answer-visibility`; earlier real answers of a settled turn stay visible, the terminal-message rule is unchanged) and `postHandoffSetup.ts`; `fork/forkTimelineMarkers.ts`, `ForkMarkerSeparator.tsx`, `historicalTimelineTurns.ts`, `forkCheckpointMessages.ts`; `presentation/traceIconSet.tsx` and `traceIcons.ts` (consulted before upstream's `WorkEntryIcon` switch), `compactPathLabel.ts`, `TracePathLabel.tsx`, `ScientTraceSymbol.tsx`, `subagentRowGroups.ts`, `AgentSpawnRow.tsx`; `components/chat/liveActivity.tsx`, `unreadTimelineMessages.ts` |
-| Markdown/message rendering                                      | `markdown/` (`scientMarkdownPipeline.ts`), `math/`, `bidi/`, `images/`, `presentation/` (`MarkdownCodeBlock.tsx`, a copy of T3's code block whose upstream fixes are ported by hand; `ScientRichFence.tsx`), `clipboard/` (`chatMarkdownPipeline.ts`, `mathClipboard.ts`), `fileOpening/` and `markdownEditor/FileCitationHoverCard.tsx`; `ChatMarkdown.tsx` keeps upstream's layout and renderer names, and generic Markdown image classification/context/direct-media/workspace fallback remains there, with every Scient edit in a marked region                                                                                 |
+| Markdown/message rendering                                      | `markdown/` (`scientMarkdownPipeline.ts`), `math/`, `bidi/`, `images/`, `presentation/` (`ScientRichFence.tsx`; chat code blocks are T3's `chat/MarkdownCodeBlock.tsx` with a `dir` prop), `clipboard/` (`chatMarkdownPipeline.ts`, `mathClipboard.ts`), `fileOpening/` and `markdownEditor/FileCitationHoverCard.tsx`; `ChatMarkdown.tsx` keeps upstream's layout and renderer names, and generic Markdown image classification/context/direct-media/workspace fallback remains there, with every Scient edit in a marked region                                                                                                   |
 | File/editor/viewer mounts                                       | `fileSurfaces/` editor bindings, lazy surfaces, read recovery and viewer refresh; `fileOpening/`, `files/`, `markdownEditor/`, `pdf/` and `latex/`; upstream file/runtime helpers remain with their hosts                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Command palette/sidebar mounts                                  | `commandPalette/scientCommandPalette.tsx`, `sidebar/` and `sections/`; retain the complete await → currentness check → side-effect continuation in the owning callback                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Settings mounts                                                 | `settings/` navigation/visibility and feature-owned settings rows under `skills/`, `providerConnection/`, `analytics/`, `bidi/`, `keyboard/`, `typography/`, `wordExport/` and `onboarding/`                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Desktop settings/backend/window mounts                          | [`settings/scientDesktopSettings.ts`](../../apps/desktop/src/settings/scientDesktopSettings.ts), `backend/scientAnalyticsMetadata.ts`, `backend/scientBackendLaunch.ts`, `window/scientMainWindowSizing.ts`; native launch and window lifecycle stay in their desktop hosts                                                                                                                                                                                                                                                                                                                                                         |
+
+`threadTimeline/messageRefusals.ts` places an error whose parent is a user message, such as a
+steer the provider-input limit refused, right after that message and outside folded work.
 
 `images/useWorkspaceImageRefresh.ts` is the shared pending-edit invalidation policy
 for upstream inline assets and Scient standalone image cards. Keep ordinary chat
@@ -530,6 +566,18 @@ legacy handoff bodies before hydration; bounded source readers preserve old embe
 and summary-only text. The existing V2 event transaction, delivery receipts and pending-delivery
 uncertainty own execution. See [context handoffs](./context-handoffs.md).
 
+Archived bodies are stored once. Before the 2026-10-13 reference change, handoffs copied whole
+conversations into the archive, once per status event; on one real database 1.6M archived
+messages were copies of 279k distinct bodies. A background pass at 10% duty
+(`shareLegacyContextHistories`, started by `DatabaseStorage`) moves each verified source to the
+content-addressed `scient_history_bodies` table, recording it in `scient_handoff_shared_sources`
+and `scient_handoff_shared_messages`. Hashes cover the stored bytes and bodies are copied inside
+SQLite, so readers return byte-identical text; a source that does not verify stays inline. A
+large `summary` on a handoff timeline item that equals its own source's summary keeps a 960-char
+inline prefix (all the delta summarizer reads) and a private `scientSummaryBody` reference that
+wire and detail reads never return. Freed pages return to disk only through the offline repair
+in Settings > Storage; databases copied from V1 keep `auto_vacuum = NONE` until then.
+
 Cleanup acceptance must cover the actual default Scient composition and resource use, alongside
 native/portable continuity and frozen visibility. Testing an unused budget formula or forcing the
 generic fixture policy does not establish Scient's behavior. Check serialized bytes fetched,
@@ -569,7 +617,10 @@ approval, or question state is copied only as history. A native clone needs a co
 boundary, so a running cut takes the portable path. Source execution continues independently.
 
 A running fork never refuses for a reason inside the source run. Live text capture (Codex only)
-adds the reply text not yet saved. When the capture is unavailable, fails, times out, or the run
+adds the reply text not yet saved. `scient-fork/RunningTurnFork.ts` owns it on the fork side: it
+chooses the live owner (`runningTurnCaptureTarget`), captures before the Orchestrator takes the
+fork's thread locks, and fences the commit; `scient-provider/ProviderTextSnapshots.ts` owns the
+session-manager registry of live owners, run consumers and waiters. When the capture is unavailable, fails, times out, or the run
 moves on before the fork is saved (it finishes, stops, or its session is replaced), the fork keeps
 the history saved at that moment, logged as `Running fork forks saved history without live text`.
 A run that settled before planning forks through its saved end; a run that saved nothing yet forks
@@ -611,7 +662,7 @@ for context capacity without deleting app history.
 The client journals the command/destination identity before dispatch. An uncertain transport
 outcome retains that identity and the unsent draft; retry reads the durable command receipt and
 provisioning status. Once the server is ready, retry resumes only client handoff/navigation.
-Closing the dialog cannot cancel committed server work or let its completion steal navigation.
+Leaving the conversation cannot cancel committed server work or let its completion steal navigation.
 
 ## Omitted-history recovery
 
@@ -696,8 +747,11 @@ Qualify through live V2 owners, not tests of the removed V1 engine or provider s
 - `ContextHandoffBudget.test.ts`, `ContextHandoffService.test.ts`, `EffectWorker.test.ts`, and
   `ProviderTurnStartService.test.ts`: whole-item budgeting, uncertain delivery, provisioning recovery,
   durable receipts, and first-turn readiness.
-- Client-runtime and web fork tests: single-form errors/retry, staged unsent draft, ownership through
-  remount/reload, route visibility, safe panels, and independent PDF reading state.
+- `ConversationForkDispatch.test.ts`: mobile/MCP forks on the frozen path, numbered titles, side
+  chats without fork state, rooms left behind, refusals without a receipt.
+- Client-runtime and web fork tests: toast errors and resumed attempts, readiness before navigation,
+  staged unsent draft, ownership through remount/reload, route visibility, safe panels, and
+  independent PDF reading state.
 
 Preserve immutable migration/import tests separately. Synthetic/replay coverage does not establish
 real-provider compatibility, packaged-platform support, or the user's visual acceptance.

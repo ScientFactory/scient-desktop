@@ -84,9 +84,25 @@ palette:
 Any of the roles shown in the theme editor's advanced view can be published this way; roles left
 out keep their generated value. A role this version of Scient does not know is ignored rather
 than rejected, so publishing a role added by a newer release is safe. An `id` inside the file is
-ignored — the filename decides.
+ignored — the filename decides. An optional `css` string adds
+[custom CSS](./appearance.md#custom-css).
 
 A theme with no usable colors is not listed on that client.
+
+### Background image
+
+A published theme can have a full-size background image. Ask an agent, for example "use
+~/Pictures/wallpaper.jpg as Scient's background", or save a JPEG, PNG, or WebP file of up to
+16 MB beside the theme file: `nightfall.jpg` beside `nightfall.json`. The theme's CSS decides
+where the image shows:
+
+```css
+[data-workspace-area="conversation"] {
+  background: var(--theme-background-image) center / cover no-repeat;
+}
+```
+
+Delete the image file to remove it.
 
 Write each file atomically — write a temporary file beside it and rename — so Scient never reads
 a half-written theme. An unreadable or invalid file is simply not published; the machine's other

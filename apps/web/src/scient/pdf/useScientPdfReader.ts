@@ -2,10 +2,11 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
+import { useShelfPlace } from "../documentShelf/ScientDocumentShelf";
+import { acquirePdfDocument } from "./pdfDocuments";
 import {
   createPdfRuntime,
   FindState,
-  startPdfDocumentLoad,
   type PDFOutline,
   type PdfPasswordChallenge,
   type ScientPdfRuntime,
@@ -54,6 +55,17 @@ export interface RequestedPdfPresentation {
   readonly documentKey: string;
   readonly revisionId: string | null;
   readonly sourceUrl: string;
+  /** What the bytes are known by apart from the URL (`pdfContentKey`); null when unknown. */
+  readonly contentKey: string | null;
+}
+
+/** A URL renewed for unchanged bytes serves the same PDF, so the loaded one stays. */
+type SourceIdentity = Pick<RequestedPdfPresentation, "sourceUrl" | "contentKey">;
+function sameSource(presented: SourceIdentity, requested: SourceIdentity) {
+  return (
+    presented.sourceUrl === requested.sourceUrl ||
+    (requested.contentKey !== null && presented.contentKey === requested.contentKey)
+  );
 }
 
 export interface PresentedPdfSource extends RequestedPdfPresentation {
@@ -119,6 +131,7 @@ export function useScientPdfReader(input: {
   readonly onSourceInvalidated: () => void;
   readonly revisionId: string | null;
   readonly sourceUrl: string;
+  readonly contentKey: string | null;
   /** Authorization must settle before admitting a candidate, including retries. */
   readonly candidateReady: boolean;
   readonly loadAttempt: number;
@@ -126,6 +139,7 @@ export function useScientPdfReader(input: {
   readonly viewerElement: HTMLDivElement | null;
 }) {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
+  const shelfPlace = useShelfPlace();
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
   const [presentation, setPresentation] = useState<PresentedPdfSource | null>(null);
   // Mirrors presentationRef for render: the request whose PDF is painted, or null.
@@ -135,6 +149,7 @@ export function useScientPdfReader(input: {
     readonly documentKey: string;
     readonly revisionId: string | null;
     readonly sourceUrl: string;
+    readonly contentKey: string | null;
     readonly loadAttempt: number;
   } | null>(null);
   const presentsRequest =
@@ -143,7 +158,7 @@ export function useScientPdfReader(input: {
     presentedRequest.viewerElement === input.viewerElement &&
     presentedRequest.documentKey === input.documentKey &&
     presentedRequest.revisionId === input.revisionId &&
-    presentedRequest.sourceUrl === input.sourceUrl &&
+    sameSource(presentedRequest, input) &&
     presentedRequest.loadAttempt === input.loadAttempt;
   const loadInputs = [
     input.container,
@@ -151,6 +166,7 @@ export function useScientPdfReader(input: {
     input.documentKey,
     input.revisionId,
     input.sourceUrl,
+    input.contentKey,
     input.candidateReady,
     input.loadAttempt,
   ] as const;
@@ -275,13 +291,22 @@ export function useScientPdfReader(input: {
     if (!input.container || !input.viewerElement) return;
     // Render already moved the reader state: cleared, settled or updating.
     if (!input.candidateReady) return;
+    const presented = presentationRef.current;
     if (
-      presentationRef.current?.documentKey === input.documentKey &&
-      presentationRef.current.revisionId === input.revisionId &&
-      presentationRef.current.sourceUrl === input.sourceUrl &&
-      presentationRef.current.loadAttempt === input.loadAttempt
-    )
+      presented?.documentKey === input.documentKey &&
+      presented.revisionId === input.revisionId &&
+      sameSource(presented, { sourceUrl: input.sourceUrl, contentKey: input.contentKey }) &&
+      presented.loadAttempt === input.loadAttempt
+    ) {
+      if (presented.sourceUrl !== input.sourceUrl) {
+        // Actions such as Save a copy use the renewed URL; pdf.js keeps the bytes it has.
+        const renewed = { ...presented, sourceUrl: input.sourceUrl };
+        presentationRef.current = renewed;
+        setPresentation(renewed);
+        setPresentedRequest((request) => request && { ...request, sourceUrl: input.sourceUrl });
+      }
       return;
+    }
     const { container, viewerElement } = createPdfPresentationLayer(input.viewerElement);
     const abortController = new AbortController();
     let current = true;
@@ -295,42 +320,48 @@ export function useScientPdfReader(input: {
       requestedSourceRef.current.revisionId === input.revisionId &&
       requestedSourceRef.current.url === input.sourceUrl;
     let candidate: ScientPdfRuntime | null = null;
-    let searchWarmupHandle: number | null = null;
-    let searchWarmupKind: "idle" | "timeout" | null = null;
     let pinchFrame: number | null = null;
     let pendingPinchFactor = 1;
     let pendingPinchOrigin: [number, number] = [0, 0];
     let onPinchWheel: ((event: WheelEvent) => void) | null = null;
     const viewportSession = createPdfReaderViewportSession({ documentKey: input.documentKey });
     const responsiveZoom = createPdfResponsiveZoomController();
-    const loadingTask = startPdfDocumentLoad(input.sourceUrl, {
-      onPassword: ({ reason, submit }) => {
-        if (!isRequested()) return;
-        passwordRef.current = submit;
-        setState((previous) => ({
-          ...previous,
-          phase: "password",
-          passwordReason: reason,
-          error: null,
-        }));
+    // A PDF known by its content is kept for a while after the reader leaves it (pdfDocuments.ts).
+    const lease = acquirePdfDocument(
+      input.contentKey === null
+        ? null
+        : JSON.stringify(["pdf", input.documentKey, input.contentKey]),
+      input.sourceUrl,
+      {
+        onPassword: ({ reason, submit }) => {
+          if (!isRequested()) return;
+          passwordRef.current = submit;
+          setState((previous) => ({
+            ...previous,
+            phase: "password",
+            passwordReason: reason,
+            error: null,
+          }));
+        },
+        onProgress: (loaded, total) => {
+          if (!isRequested() || runtimeRef.current) return;
+          setState((previous) => ({
+            ...previous,
+            progress: total && total > 0 ? Math.min(loaded / total, 1) : null,
+          }));
+        },
       },
-      onProgress: (loaded, total) => {
-        if (!isRequested() || runtimeRef.current) return;
-        setState((previous) => ({
-          ...previous,
-          progress: total && total > 0 ? Math.min(loaded / total, 1) : null,
-        }));
-      },
-    });
+    );
+    let failed = false;
+    let unkeep: (() => void) | null = null;
 
-    void loadingTask.promise
-      .then(async (document) => {
+    void lease.value
+      .then(async ({ document }) => {
         if (!isRequested()) return;
         const runtime = createPdfRuntime({
           container,
           viewerElement,
           document,
-          loadingTask,
           onContainerResize: (viewer) => responsiveZoom.reconcile(viewer, container.clientWidth),
           sourceUrl: input.sourceUrl,
         });
@@ -360,6 +391,7 @@ export function useScientPdfReader(input: {
               revisionId: input.revisionId,
               runtime,
               sourceUrl: input.sourceUrl,
+              contentKey: input.contentKey,
               loadAttempt: input.loadAttempt,
             } satisfies PresentedPdfSource & {
               readonly runtime: ScientPdfRuntime;
@@ -369,6 +401,19 @@ export function useScientPdfReader(input: {
             responsiveZoomRef.current = responsiveZoom;
             presentationRef.current = nextPresentation;
             disposePresentedRef.current = dispose;
+            // Once shown it may be kept hidden (documentShelf): drawing pauses, and the pages in
+            // view count as kept. A PDF left while still opening is not kept.
+            unkeep =
+              shelfPlace?.keep({
+                hide: (evict, viewBytes) => {
+                  runtime.park();
+                  return lease.park(evict, viewBytes);
+                },
+                show: () => {
+                  lease.unpark();
+                  runtime.unpark();
+                },
+              }) ?? null;
             container.classList.remove("scient-pdf-staging");
             container.removeAttribute("aria-hidden");
             container.inert = false;
@@ -383,6 +428,7 @@ export function useScientPdfReader(input: {
                 documentKey: input.documentKey,
                 revisionId: input.revisionId,
                 sourceUrl: input.sourceUrl,
+                contentKey: input.contentKey,
                 loadAttempt: input.loadAttempt,
               });
               setState((previous) => ({
@@ -416,41 +462,20 @@ export function useScientPdfReader(input: {
                 matchDiacritics: true,
               });
               setState((previous) => ({ ...previous, findPhase: "pending" }));
-              return;
-            }
-
-            const warmSearch = () => {
-              searchWarmupHandle = null;
-              searchWarmupKind = null;
-              if (!current || activeSearchQueryRef.current.length > 0) return;
-              runtime.eventBus.dispatch("find", {
-                source: runtime,
-                type: "",
-                query: "",
-                phraseSearch: true,
-                caseSensitive: false,
-                entireWord: false,
-                highlightAll: false,
-                findPrevious: false,
-                matchDiacritics: true,
-              });
-            };
-            if (typeof window.requestIdleCallback === "function") {
-              searchWarmupKind = "idle";
-              searchWarmupHandle = window.requestIdleCallback(warmSearch, { timeout: 1_500 });
-            } else {
-              searchWarmupKind = "timeout";
-              searchWarmupHandle = window.setTimeout(warmSearch, 750);
             }
           };
-          void preparePdfPresentation({
-            runtime,
-            container,
-            current: () => presentationRef.current,
-            signal: abortController.signal,
-          })
-            .then(publish)
-            .catch(fail);
+          // A PDF kept from a recent visit shows at once, where it was left, its pages painting in
+          // place; otherwise the first view waits until its visible pages are painted.
+          if (lease.kept && presentationRef.current === null) publish();
+          else
+            void preparePdfPresentation({
+              runtime,
+              container,
+              current: () => presentationRef.current,
+              signal: abortController.signal,
+            })
+              .then(publish)
+              .catch(fail);
         };
         const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
           if (!displayed()) return;
@@ -571,6 +596,8 @@ export function useScientPdfReader(input: {
         (error instanceof Error && (error.name === "AbortException" || error.name === "AbortError"))
       )
         return;
+      failed = true;
+      unkeep?.();
       if (isChangedPdfSource(error)) {
         invalidateRef.current();
         dispose();
@@ -590,12 +617,9 @@ export function useScientPdfReader(input: {
     function dispose() {
       if (!current) return;
       current = false;
+      unkeep?.();
       abortController.abort();
       passwordRef.current = null;
-      if (searchWarmupHandle !== null) {
-        if (searchWarmupKind === "idle") window.cancelIdleCallback(searchWarmupHandle);
-        else window.clearTimeout(searchWarmupHandle);
-      }
       if (pinchFrame !== null) cancelAnimationFrame(pinchFrame);
       if (onPinchWheel) container.removeEventListener("wheel", onPinchWheel);
       const runtime = candidate;
@@ -612,7 +636,10 @@ export function useScientPdfReader(input: {
       }
       viewportSession.flush();
       container.remove();
-      void (runtime ? runtime.destroy() : loadingTask.destroy()).catch(() => undefined);
+      // The viewer goes; the document is kept for a return unless it failed.
+      void (runtime ? runtime.destroy() : Promise.resolve())
+        .catch(() => undefined)
+        .finally(() => lease.release({ discard: failed }));
     }
     return () => {
       requested = false;
@@ -625,9 +652,11 @@ export function useScientPdfReader(input: {
     input.documentKey,
     input.revisionId,
     input.sourceUrl,
+    input.contentKey,
     input.viewerElement,
     input.candidateReady,
     input.loadAttempt,
+    shelfPlace,
   ]);
 
   const submitPassword = useStableCallback((password: string) => {

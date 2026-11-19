@@ -110,7 +110,8 @@ export function createExtensionsAtoms<R, E>(
       tag: WS_METHODS.extensionsProviderStoreSearch,
       refreshTrigger: changesOf,
       staleTimeMs: 60_000,
-      idleTtlMs: 60_000,
+      // Kept for a while after leaving a category, so going back shows it at once.
+      idleTtlMs: 10 * 60_000,
     }),
     pluginKeys: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:plugin-keys",
@@ -165,6 +166,18 @@ export function createExtensionsAtoms<R, E>(
       tag: WS_METHODS.extensionsConnectorRemove,
       ...mutationLane,
     }),
+    /** Undoes the last change to a local connector's folder, or brings a removed one back. */
+    undoConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:undo-connector",
+      tag: WS_METHODS.extensionsConnectorUndo,
+      ...mutationLane,
+    }),
+    /** A local connector as an .mcpb file; changes nothing. */
+    exportConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:export-connector",
+      tag: WS_METHODS.extensionsConnectorExport,
+      concurrency: perConnector,
+    }),
     installScientPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:install-plugin",
       tag: WS_METHODS.extensionsPluginInstall,
@@ -185,6 +198,16 @@ export function createExtensionsAtoms<R, E>(
       label: "environment-command:extensions:start-connector-sign-in",
       tag: WS_METHODS.extensionsConnectorStartSignIn,
       concurrency: perConnector,
+    }),
+    /** Local servers other apps on that computer run, for Add local connector. */
+    listImportableConnectors: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:importable-connectors",
+      tag: WS_METHODS.extensionsConnectorImportable,
+    }),
+    /** Reads a bundle's manifest for the add form; changes nothing. */
+    inspectLocalBundle: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:inspect-local-bundle",
+      tag: WS_METHODS.extensionsConnectorInspectLocal,
     }),
     testConnector: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:test-connector",
@@ -248,11 +271,15 @@ export const extensionsDiscoverPage = extensionsAtoms.discoverPage;
 export const addConnector = extensionsAtoms.addConnector;
 export const updateConnector = extensionsAtoms.updateConnector;
 export const removeConnector = extensionsAtoms.removeConnector;
+export const undoConnector = extensionsAtoms.undoConnector;
+export const exportConnector = extensionsAtoms.exportConnector;
 export const installScientPlugin = extensionsAtoms.installScientPlugin;
 export const removeScientPlugin = extensionsAtoms.removeScientPlugin;
 export const setScientPluginEnabled = extensionsAtoms.setScientPluginEnabled;
 export const startConnectorSignIn = extensionsAtoms.startConnectorSignIn;
 export const testConnector = extensionsAtoms.testConnector;
+export const inspectLocalBundle = extensionsAtoms.inspectLocalBundle;
+export const listImportableConnectors = extensionsAtoms.listImportableConnectors;
 export const actOnProviderPlugin = extensionsAtoms.actOnProviderPlugin;
 
 export const extensionsProviderStorePage = extensionsAtoms.providerStorePage;

@@ -33,6 +33,7 @@ const layerRejectedBeforeSession = Layer.succeed(
     isPartition: () => false,
     getSession: () => Effect.die("getSession must not be reached"),
     clearCookies: () => Effect.die("clearCookies must not be reached"),
+    cookiesCleared: () => Effect.die("cookiesCleared must not be reached"),
     clearCache: () => Effect.die("clearCache must not be reached"),
   }),
 );
@@ -88,22 +89,24 @@ describe("BrowserImport.importCookies", () => {
 
       assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
       assert.equal(error.reason, "unknownSourceProfile");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  // SCIENT-FORK:START — Scient Accounts: Chromium on macOS and Linux is read from a copy while it runs.
   it.effect.skipIf(!symlinksSupported)(
-    "refuses to import while the source browser holds its profile",
+    "imports while the source browser holds its profile on macOS",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const { importer, root } = yield* withImporter();
         yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
 
+        // An unlisted profile stops the import right after the running check, before any keychain read.
         const error = yield* importer
           .importCookies({
             input: {
               sourceId: "helium",
-              sourceProfileDirectory: "Default",
+              sourceProfileDirectory: "Missing",
               targetProfileId: "default",
             },
             scope: "persist:t3code-preview-test",
@@ -112,9 +115,10 @@ describe("BrowserImport.importCookies", () => {
           .pipe(Effect.flip);
 
         assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
-        assert.equal(error.reason, "browserRunning");
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        assert.equal(error.reason, "unknownSourceProfile");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
+  // SCIENT-FORK:END
 });
 
 describe("BrowserImport.checkBrowserImportPolicy", () => {
@@ -213,7 +217,21 @@ describe("BrowserImport.writeCookies", () => {
       );
 
       assert.deepEqual(events, ["set", "set", "flush"]);
-      assert.deepEqual(result, { imported: 2, skipped: 0, skippedDomains: [] });
+      assert.deepEqual(result, {
+        imported: 2,
+        skipped: 0,
+        skippedDomains: [],
+        // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+        importedSites: 1,
+        skippedByReason: {
+          appBoundEncryption: 0,
+          decryptFailed: 0,
+          partitionUnsupported: 0,
+          writeFailed: 0,
+        },
+        importedGoogle: false,
+        // SCIENT-FORK:END
+      });
     }),
   );
 });

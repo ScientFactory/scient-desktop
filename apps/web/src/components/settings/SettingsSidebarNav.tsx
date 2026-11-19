@@ -48,9 +48,11 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
+import { resolveEventKeys } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { isElectron } from "~/env";
 import { useScientSettingsNavigation } from "../../scient/settings/useScientSettingsNavigation";
+import { T, useGT, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -69,13 +71,15 @@ import {
   searchSettings,
   revealSettingsSearchTarget,
   SETTINGS_NAV_GROUPS,
+  SETTINGS_NAV_LABELS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+// SCIENT-FORK: Scient Accounts reads the settings machine scope.
 import { validateSettingsScopeSearch } from "./settingsScope";
-import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
+import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -183,13 +187,15 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
-  const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
+  const gt = useGT();
+  const m = useMessages();
+  const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
-  const currentSearch = useLocation({ select: (location) => location.search });
-  const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   // SCIENT-FORK:START — Scient Accounts: hide account navigation on older servers.
+  const currentSearch = useLocation({ select: (location) => location.search });
+  const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const accountsAvailable = useAtomValue(
     accountsAvailability(
@@ -197,21 +203,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     ),
   );
   // SCIENT-FORK:END
-  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
-  const sectionNavigation = useSettingsSectionNavigation(
-    navPaths.find((to) => activePath === to || activePath.startsWith(`${to}/`)) ??
-      navPaths[0] ??
-      "",
-  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const searchableItems = useAvailableSettingsSearchItems();
   const renderPageSections = useScientSettingsNavigation(pathname, SETTINGS_NAV_ITEMS);
   // SCIENT-FORK:START — Scient Accounts: search follows server availability.
-  const results = searchSettings(query, searchableItems).filter(
+  const results = searchSettings(query, searchableItems, m).filter(
     (item) => item.to !== "/settings/accounts" || accountsAvailable,
   );
   // SCIENT-FORK:END
@@ -227,13 +227,17 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      const eventKeys = resolveEventKeys(event);
       const isFindShortcut =
-        event.key.toLowerCase() === "f" &&
-        (event.metaKey || event.ctrlKey) &&
-        !event.altKey &&
-        !event.shiftKey;
+        eventKeys.has("f") && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+      // Shift is allowed only when the layout types "/" with it (German Shift+7); Shift on
+      // the physical Slash key types "?" or "," instead.
       const isSlashShortcut =
-        event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey;
+        eventKeys.has("/") &&
+        (event.key === "/" || !event.shiftKey) &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey;
       if (!isFindShortcut && !isSlashShortcut) return;
 
       const target = event.target;
@@ -356,8 +360,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 onBlur={() => {
                   if (!isSearching) setCompactSearchOpen(false);
                 }}
-                placeholder="Search"
-                aria-label="Search settings"
+                placeholder={gt("Search")}
+                aria-label={gt("Search settings")}
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded={isSearching && hasResults}
@@ -375,7 +379,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear settings search"
+                  aria-label={gt("Clear settings search")}
                   onClick={() => {
                     clearSearch();
                     searchInputRef.current?.focus();
@@ -392,14 +396,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                No settings found
+                <T>No settings found</T>
               </p>
             ) : null}
             {isSearching ? (
               <SidebarMenu
                 id={hasResults ? "settings-search-results" : undefined}
                 role={hasResults ? "listbox" : undefined}
-                aria-label={hasResults ? "Settings search results" : undefined}
+                aria-label={hasResults ? gt("Settings search results") : undefined}
               >
                 {results.map((item, index) => (
                   <SidebarMenuItem
@@ -421,10 +425,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <SettingsSectionIcon to={item.to} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-sidebar-foreground">
-                          {item.title}
+                          {m(item.title)}
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {m(SETTINGS_SECTION_LABELS[item.to])}
                         </span>
                       </span>
                     </SidebarMenuButton>
@@ -437,7 +441,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   <SidebarMenu className="md:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
-                        aria-label="Search settings"
+                        aria-label={gt("Search settings")}
                         onClick={() => setCompactSearchOpen(true)}
                       >
                         <SearchIcon />
@@ -445,70 +449,66 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </SidebarMenuItem>
                   </SidebarMenu>
                 )}
-                <div
-                  {...sectionNavigation.containerProps}
-                  role="tree"
-                  aria-label="Settings sections"
-                  className="flex flex-col gap-4"
-                >
+                <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
                   {/* SCIENT-FORK: Voice settings need the desktop app. */}
                   {SETTINGS_NAV_GROUPS_FOR_PLATFORM.map((group, index) => (
                     <div
-                      key={group.heading ?? index}
-                      role="group"
-                      aria-label={group.heading ?? undefined}
+                      key={group.heading}
                       className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
                     >
-                      {group.heading ? (
-                        // The group carries this label; a heading is not a valid tree child.
-                        <h3
-                          aria-hidden="true"
-                          className={cn(
-                            "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                            !compactSearchOpen && "max-md:hidden",
-                          )}
-                        >
-                          {group.heading}
-                        </h3>
-                      ) : null}
-                      <SidebarMenu role="presentation">
-                        {/* SCIENT-FORK: Scient Accounts omits unsupported navigation. */}
-                        {group.paths
-                          .filter((to) => to !== "/settings/accounts" || accountsAvailable)
-                          .map((to) => {
-                            const Icon = SETTINGS_SECTION_ICONS[to];
-                            const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                            return (
-                              <SidebarMenuItem key={to} role="presentation">
-                                <SidebarMenuButton
-                                  data-settings-section={to}
-                                  role="treeitem"
-                                  tabIndex={sectionNavigation.tabIndexFor(to)}
-                                  aria-selected={isActive}
-                                  aria-current={isActive ? "page" : undefined}
-                                  isActive={isActive}
-                                  onClick={() => handleSectionClick(to)}
-                                >
-                                  <Icon />
-                                  <span
+                      <h3
+                        id={`settings-nav-group-${index}`}
+                        className={cn(
+                          "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                          group.headingHidden ? "sr-only" : !compactSearchOpen && "max-md:sr-only",
+                        )}
+                      >
+                        {m(group.heading)}
+                      </h3>
+                      {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
+                      <div role="group" aria-labelledby={`settings-nav-group-${index}`}>
+                        <SidebarMenu>
+                          {/* SCIENT-FORK: Scient Accounts omits unsupported navigation. */}
+                          {group.paths
+                            .filter((to) => to !== "/settings/accounts" || accountsAvailable)
+                            .map((to) => {
+                              const Icon = SETTINGS_SECTION_ICONS[to];
+                              const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                              return (
+                                <SidebarMenuItem key={to}>
+                                  <SidebarMenuButton
+                                    data-settings-section={to}
+                                    aria-current={isActive ? "page" : undefined}
+                                    isActive={isActive}
+                                    onClick={() => handleSectionClick(to)}
+                                  >
+                                    <Icon />
+                                    <span
+                                      className={cn(
+                                        "truncate",
+                                        !compactSearchOpen && "max-md:sr-only",
+                                      )}
+                                    >
+                                      {m(SETTINGS_NAV_LABELS[to])}
+                                    </span>
+                                  </SidebarMenuButton>
+                                  {/* SCIENT-FORK: page section outline, hidden while the nav is an icon rail. */}
+                                  <div
                                     className={cn(
-                                      "truncate",
-                                      !compactSearchOpen && "max-md:sr-only",
+                                      "contents",
+                                      !compactSearchOpen && "max-md:hidden",
                                     )}
                                   >
-                                    {SETTINGS_SECTION_LABELS[to]}
-                                  </span>
-                                </SidebarMenuButton>
-                                {/* SCIENT-FORK: page section outline, hidden while the nav is an icon rail. */}
-                                <div
-                                  className={cn("contents", !compactSearchOpen && "max-md:hidden")}
-                                >
-                                  {renderPageSections({ to, label: SETTINGS_SECTION_LABELS[to] })}
-                                </div>
-                              </SidebarMenuItem>
-                            );
-                          })}
-                      </SidebarMenu>
+                                    {renderPageSections({
+                                      to,
+                                      label: m(SETTINGS_SECTION_LABELS[to]),
+                                    })}
+                                  </div>
+                                </SidebarMenuItem>
+                              );
+                            })}
+                        </SidebarMenu>
+                      </div>
                     </div>
                   ))}
                 </div>

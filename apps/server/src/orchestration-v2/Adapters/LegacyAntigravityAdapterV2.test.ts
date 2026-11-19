@@ -29,6 +29,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "../../provider/antigravity/WorkspaceInstructions.ts";
 import { makeLegacyAntigravityAdapterV2 } from "./LegacyAntigravityAdapterV2.ts";
 
 const decodeSettings = Schema.decodeEffect(AntigravitySettings);
@@ -351,7 +352,7 @@ it.layer(TestLayer, { excludeTestServices: true })("LegacyAntigravityAdapterV2",
         }),
       ),
   );
-  it.effect("preserves exact user authorship on consecutive native prompts", () =>
+  it.effect("keeps the user's prompt exact and sends the file-tool rule once per process", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* setupNative("authorship");
@@ -359,8 +360,13 @@ it.layer(TestLayer, { excludeTestServices: true })("LegacyAntigravityAdapterV2",
           yield* h.start(ordinal, "ECHO_PROMPT");
           const terminal = yield* h.terminal();
           assert.equal(terminal.type === "turn.terminal" && terminal.status, "completed");
-          assert.equal(h.textFor(ordinal), "ECHO_PROMPT");
         }
+        // The first prompt carries the file-tool rule in its own block; the user's text is unchanged.
+        assert.equal(
+          h.textFor(1),
+          `<scient_instructions>\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS.trim()}\n</scient_instructions>\n\nECHO_PROMPT`,
+        );
+        assert.equal(h.textFor(2), "ECHO_PROMPT");
       }),
     ),
   );

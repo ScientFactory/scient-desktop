@@ -1,5 +1,5 @@
 import type { ScientProjectInspection } from "@t3tools/contracts";
-import { FolderIcon, SparklesIcon } from "lucide-react";
+import { FolderCogIcon, FolderIcon } from "lucide-react";
 
 import {
   scientProjectFolderName,
@@ -75,13 +75,8 @@ export function ScientProjectInitializationDialog(props: {
                     onClick={() => props.onDecision("initialize")}
                     className={choiceClassName}
                   >
-                    <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <FolderIcon aria-hidden className="size-5.5" strokeWidth={1.7} />
-                      <SparklesIcon
-                        aria-hidden
-                        className="absolute top-[58%] left-[58%] size-3"
-                        strokeWidth={1.8}
-                      />
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <FolderCogIcon aria-hidden className="size-5.5" strokeWidth={1.7} />
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold leading-5 text-foreground">

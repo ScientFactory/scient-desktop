@@ -11,7 +11,7 @@ it("states scient_thread_inspect page size limits in the parameter descriptions"
   const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.scient_thread_inspect) as {
     readonly properties: Readonly<Record<string, { readonly description?: string }>>;
   };
-  const limits = { limit: "100", runLimit: "50", maxCharsPerItem: "50000" };
+  const limits = { limit: "100", runLimit: "50", maxCharsPerItem: "20000" };
   for (const [name, maximum] of Object.entries(limits)) {
     expect(schema.properties[name]?.description, name).toContain(maximum);
   }

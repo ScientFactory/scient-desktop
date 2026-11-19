@@ -33,7 +33,10 @@ import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
 } from "../../provider/ScientProviderInstanceSeams.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
@@ -43,7 +46,10 @@ import {
 import {
   detectTargetSafely,
   isManagedRuntimeDowngrade,
+  makeManagedRuntimeProgressFilter,
   managedRuntimeDowngradeMessage,
+  managedRuntimeInstallationFailureMessage,
+  managedRuntimeRetryMessage,
   managedRuntimeSwitchPlan,
 } from "./ManagedProviderRuntimeActions.ts";
 
@@ -63,11 +69,14 @@ export function resolveCodexCodeModeHostPath(
 export const hasManagedCodexCodeModeHost = Effect.fn("CodexManagedRuntime.hasCodeModeHost")(
   function* (binaryPath: string, platform: NodeJS.Platform) {
     const hostPath = resolveCodexCodeModeHostPath(binaryPath, platform);
-    return yield* Effect.tryPromise(async () => {
-      const stat = await NodeFSP.lstat(hostPath);
-      if (!stat.isFile() || stat.isSymbolicLink()) return false;
-      if (platform !== "win32") await NodeFSP.access(hostPath, NodeFSP.constants.X_OK);
-      return true;
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const stat = await NodeFSP.lstat(hostPath);
+        if (!stat.isFile() || stat.isSymbolicLink()) return false;
+        if (platform !== "win32") await NodeFSP.access(hostPath, NodeFSP.constants.X_OK);
+        return true;
+      },
+      catch: (cause) => runtimeError("Unable to check Codex's code-mode host.", cause),
     }).pipe(Effect.orElseSucceed(() => false));
   },
 );
@@ -89,11 +98,15 @@ function mapProgress(progress: ManagedCodexRuntimeProgress): ProviderManagedRunt
   } as const;
   return {
     status: progress.stage,
-    message: messages[progress.stage],
+    message: progress.retry
+      ? managedRuntimeRetryMessage("Codex", progress.retry)
+      : messages[progress.stage],
+    ...(progress.retry ? { retrying: true } : {}),
     ...(progress.downloadedBytes === undefined
       ? {}
       : { downloadedBytes: progress.downloadedBytes }),
     ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+    ...(progress.download ? { download: progress.download } : {}),
   };
 }
 
@@ -762,8 +775,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       if (!actionArtifact) {
         return yield* runtimeError("No qualified Codex artifact is available.");
       }
-      let lastStatus: ManagedCodexRuntimeProgress["stage"] | undefined;
-      let lastReportedBytes = 0;
+      const worthReporting = makeManagedRuntimeProgressFilter();
       yield* Effect.tryPromise({
         try: (signal) =>
           runtime.install({
@@ -795,21 +807,13 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
               }
             },
             onProgress: (progress) => {
-              const stageChanged = progress.stage !== lastStatus;
-              const downloadedBytes = progress.downloadedBytes ?? 0;
-              const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
-              const downloadFinished =
-                progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-              if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
-              lastStatus = progress.stage;
-              lastReportedBytes = downloadedBytes;
-              runFork(report(mapProgress(progress)));
+              if (worthReporting(progress)) runFork(report(mapProgress(progress)));
             },
           }),
         catch: (cause) =>
-          cause instanceof ProviderConnectionActionError
+          isProviderConnectionActionError(cause)
             ? cause
-            : runtimeError("Scient could not install the private Codex runtime.", cause),
+            : runtimeError(managedRuntimeInstallationFailureMessage("Codex", cause), cause),
       });
       yield* Ref.set(managedHealthCache, null);
     });
@@ -844,9 +848,10 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     // built. Re-check the private copy so the owner can switch back to it.
     const selectionChanged = Effect.gen(function* () {
       if (source !== "system" || hasCustomRuntime || !bundledArtifact) return false;
-      const latest = yield* Effect.tryPromise(() => runtime.status(bundledArtifact)).pipe(
-        Effect.option,
-      );
+      const latest = yield* Effect.tryPromise({
+        try: () => runtime.status(bundledArtifact),
+        catch: (cause) => runtimeError("Unable to check the private Codex runtime.", cause),
+      }).pipe(Effect.option);
       if (Option.isNone(latest) || !latest.value.installed) return false;
       // Not cached: this instance keeps launching PATH Codex until the owner
       // reloads it, and its summary must keep saying so.

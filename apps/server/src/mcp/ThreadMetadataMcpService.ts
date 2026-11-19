@@ -161,6 +161,7 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(
         threadManagement,
+        scope,
         threadId,
         `Thread ${threadId} was not found.`,
         (candidate) => callerShell == null || candidate.projectId === callerShell.projectId,

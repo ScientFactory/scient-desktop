@@ -49,8 +49,8 @@ const decodeIdTokenClaims = Schema.decodeUnknownOption(Schema.fromJsonString(IdT
 
 /**
  * Who an install belongs to, from strongest to weakest. `connect` is the T3
- * Connect account. `openai` and `claude` are provider accounts. `device` is a
- * client device that connected.
+ * Connect account. `openai` and `claude` are provider accounts. `device` is the
+ * computer itself, from the operating system's machine id.
  */
 export const TelemetryOwnerSource = Schema.Literals(["connect", "openai", "claude", "device"]);
 export type TelemetryOwnerSource = typeof TelemetryOwnerSource.Type;
@@ -293,6 +293,11 @@ export const getTelemetryIdentityForHome = Effect.fn("getTelemetryIdentityForHom
     installId,
   };
 });
+
+export const getTelemetryIdentity = Effect.flatMap(
+  HostProcess.HomeDirectory,
+  getTelemetryIdentityForHome,
+);
 
 /**
  * Owners the server can read without a client: the linked T3 Connect account

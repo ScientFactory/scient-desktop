@@ -146,6 +146,8 @@ A few settings need care:
 - `worktreeCleanup`, which projects can also set, overrides the `worktree` rules in
   `storageCleanup`. Lock it along with those rules; Scient refuses a policy that locks only the
   rules.
+- `observability` cannot be managed. Its OTLP endpoints come from each user's environment
+  variables, settings file and desktop startup input, which a policy cannot override.
 - Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
   compaction choice still wins over `idleCompaction`.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
@@ -274,7 +276,7 @@ starts the binary you set.
 
 - `mode`: `auto` keeps the normal update flow. `off` stops Scient from checking for updates, for
   machines that get Scient through device management.
-- `feedUrl`: Scient updates from your own mirror instead of GitHub: the desktop app,
+- `feedUrl`: Scient updates from your own mirror instead of Scient's own sources: the desktop app,
   `scient update`, and updates started from another device. Publish only the versions you have
   approved, laid out as on a GitHub release. The release's update files (`latest.yml`,
   `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and their `beta` or `nightly`

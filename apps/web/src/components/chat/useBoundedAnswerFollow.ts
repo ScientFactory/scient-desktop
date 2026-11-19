@@ -7,8 +7,7 @@ import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   type TimelineListMeasurementState,
 } from "./timelineScrollAnchoring";
-import { isTimelineScrollTarget } from "./timelineScrollTarget";
-import { isInSideChatPane } from "../../lib/sideChatPane";
+import type { TimelineViewport } from "./timelineViewport";
 import { motionClock } from "./motionClock";
 import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
 import { keepsSettledAnswerVisible } from "~/scient/threadTimeline/keptAnswers";
@@ -167,11 +166,13 @@ export function boundedAnswerScrollDelta(input: {
 
 /**
  * Follow belongs to one prompt's V2 run and ends only after its last message is revealed or the
- * reader scrolls up. Downward/nested scrolling, selection, and clicks do not cancel it. Rest
- * without pending reveal work; save only an active follow owner.
+ * reader scrolls up. Downward/nested scrolling, selection, and clicks do not cancel it: the
+ * timeline viewport's navigation lets go of it (chat/useReadingFollow.ts), and every other
+ * reader input only pauses it. Rest without pending reveal work; save only an active follow owner.
  */
 export function useBoundedAnswerFollow({
   listRef,
+  viewport: timelineViewport,
   rows,
   promptMessageId,
   responseSettled,
@@ -182,6 +183,8 @@ export function useBoundedAnswerFollow({
   onFinished,
 }: {
   listRef: RefObject<LegendListRef | null>;
+  /** The timeline's input; the follow pauses for the reader's scrolling toward the end. */
+  viewport: TimelineViewport | null;
   rows: readonly MessagesTimelineRow[];
   promptMessageId: string | null;
   /** The prompt's own run has ended, so no more of its response will arrive. */
@@ -438,65 +441,46 @@ export function useBoundedAnswerFollow({
       );
       schedule();
     };
-    const onWheel = (event: WheelEvent) => {
-      if (!isTimelineScrollTarget(event.target, viewport, event.deltaY)) return;
-      if (event.deltaY < 0) cancel();
-      else yieldToReader();
-    };
-    const onTouchMove = () => yieldToReader();
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.target === viewport) yieldToReader(Number.POSITIVE_INFINITY);
-    };
+    // Scrolling toward the end, a touch drag or a held scrollbar pauses the follow while it
+    // moves; moving toward older content lets go of it through the timeline's follow.
+    const unsubscribe = timelineViewport?.subscribe((navigation) => {
+      switch (navigation.source) {
+        case "wheel":
+        case "key":
+          // Stops at once, before the next frame could write over the reader's scroll.
+          if (navigation.direction === "up") cancel();
+          else yieldToReader();
+          return;
+        case "touch":
+          yieldToReader();
+          return;
+        case "pointer":
+          if (navigation.onScrollbar) yieldToReader(Number.POSITIVE_INFINITY);
+          return;
+        default:
+          return;
+      }
+    });
     const onPointerUp = () => {
       if (intent.current.readerInputUntil === Number.POSITIVE_INFINITY) {
         intent.current.readerInputUntil = 0;
         yieldToReader();
       }
     };
-    // Any upward movement the reveal did not make (a touch drag, the
-    // scrollbar, a key) is the reader scrolling back, which ends the reveal.
+    // Any upward movement the reveal did not make (a touch drag, the scrollbar, a screen
+    // reader) is the reader scrolling back, which lets go of the follow.
     const onScroll = () => {
       // At the very end, a lower position is the end itself moving up (a
       // busy indicator or a collapsed row went away), not the reader.
       const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 1;
       if (followResponse && atEnd) revealTop = viewport.scrollTop;
-      else if (viewport.scrollTop < revealTop - 2) cancel();
-      else revealTop = Math.max(revealTop, viewport.scrollTop);
+      else if (viewport.scrollTop < revealTop - 2) {
+        cancel();
+        timelineViewport?.navigate({ releasesFollow: true });
+      } else revealTop = Math.max(revealTop, viewport.scrollTop);
     };
-    const onKey = (event: KeyboardEvent) => {
-      // Only a key that scrolls the timeline counts (as in ChatView's own key
-      // handling): focus in the timeline or nowhere, unmodified, not typing. A
-      // key moving through a menu, a dialog or the composer leaves the follow be.
-      const target = event.target;
-      const document = viewport.ownerDocument;
-      if (
-        !(target instanceof Node) ||
-        (!viewport.contains(target) &&
-          // Body keys belong to the main timeline; a side chat's hears only its own.
-          ((target !== document.body && target !== document.documentElement) ||
-            isInSideChatPane(viewport))) ||
-        event.defaultPrevented ||
-        event.isComposing ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        (target instanceof Element &&
-          target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'))
-      )
-        return;
-      // A key scrolling a nested region (tool output) leaves the timeline where it is.
-      const direction = ["ArrowUp", "PageUp", "Home"].includes(event.key) ? -1 : 1;
-      if (viewport.contains(target) && !isTimelineScrollTarget(target, viewport, direction)) return;
-      if (["ArrowUp", "PageUp", "Home"].includes(event.key)) cancel();
-      else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) yieldToReader();
-    };
-    viewport.addEventListener("wheel", onWheel, { passive: true });
     viewport.addEventListener("scroll", onScroll, { passive: true });
-    viewport.addEventListener("touchmove", onTouchMove, { passive: true });
-    viewport.addEventListener("pointerdown", onPointerDown);
     viewport.ownerDocument.addEventListener("pointerup", onPointerUp);
-    viewport.ownerDocument.addEventListener("keydown", onKey);
     viewport.ownerDocument.addEventListener("selectionchange", schedule);
     // A followed response can grow anywhere (a tool's output expanding in place).
     const content = viewport.firstElementChild;
@@ -513,16 +497,14 @@ export function useBoundedAnswerFollow({
       stopResize();
       stopAnswerResize?.();
       unsubscribeReveal();
-      viewport.removeEventListener("wheel", onWheel);
+      unsubscribe?.();
       viewport.removeEventListener("scroll", onScroll);
-      viewport.removeEventListener("touchmove", onTouchMove);
-      viewport.removeEventListener("pointerdown", onPointerDown);
       viewport.ownerDocument.removeEventListener("pointerup", onPointerUp);
-      viewport.ownerDocument.removeEventListener("keydown", onKey);
       viewport.ownerDocument.removeEventListener("selectionchange", schedule);
     };
   }, [
     listRef,
+    timelineViewport,
     rows,
     promptMessageId,
     responseSettled,

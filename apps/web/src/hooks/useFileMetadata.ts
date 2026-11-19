@@ -3,7 +3,11 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import {
+  parseFileUrlHref,
+  resolvePathLinkTarget,
+  splitFilePathPosition,
+} from "@t3tools/shared/fileLinks";
 import {
   isAbsolutePath,
   isNetworkPath,
@@ -12,6 +16,7 @@ import {
   resolveWorkspaceFilePath,
   // SCIENT-FORK:END
 } from "@t3tools/shared/path";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import { useContext } from "react";
 
 import { useEnvironmentScope } from "../state/session";
@@ -28,6 +33,7 @@ export function getFileMetadataQueryAtom(
   literal = false,
   // SCIENT-FORK:END
 ) {
+  const uri = /^file:\/\//iu.test(path) ? parseFileUrlHref(path) : null;
   const hostPath = splitFilePathPosition(path).path;
   // SCIENT-FORK:START — a chip names a literal file, not a positioned Markdown link.
   const targetPath = literal
@@ -35,7 +41,11 @@ export function getFileMetadataQueryAtom(
       ? resolveWorkspaceFilePath(path, cwd)
       : path
     : normalizeProjectPathForComparison(
-        hostPath.startsWith("~/") || !cwd ? hostPath : resolvePathLinkTarget(hostPath, cwd),
+        uri
+          ? safeDecodeURIComponent(uri.path)
+          : hostPath.startsWith("~/") || !cwd
+            ? hostPath
+            : resolvePathLinkTarget(hostPath, cwd),
       );
   const absolute =
     isAbsolutePath(targetPath) || targetPath.startsWith("~/") || targetPath.startsWith("~\\");

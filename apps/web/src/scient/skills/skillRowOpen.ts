@@ -2,7 +2,7 @@ import type { MouseEvent } from "react";
 
 /** A row's own controls, including options in popups that render elsewhere but bubble here. */
 const ROW_CONTROLS =
-  "button, a, input, select, [role='switch'], [role='combobox'], [role='option']";
+  "button, a, input, select, [role='switch'], [role='combobox'], [role='option'], [role='menuitem']";
 
 export const OPENABLE_ROW_CLASS = "cursor-pointer transition-colors hover:bg-foreground/[0.025]";
 

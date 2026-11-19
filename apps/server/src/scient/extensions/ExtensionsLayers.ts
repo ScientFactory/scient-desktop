@@ -10,6 +10,7 @@ import * as AccountsConnectorCredentials from "../accounts/AccountsConnectorCred
 import { AccountVaultLive } from "../accounts/AccountsLayers.ts";
 // SCIENT-FORK:END
 import * as ConnectorRuntime from "./connectors/ConnectorRuntime.ts";
+import * as GitHubSourceControlCredential from "./connectors/GitHubSourceControlCredential.ts";
 import * as ExtensionsDiscover from "./discover/ExtensionsDiscover.ts";
 import * as ExtensionDeliveryReceipts from "./ExtensionDeliveryReceipts.ts";
 import { changeFeedLayer } from "./ExtensionsRpcHandlers.ts";
@@ -23,6 +24,7 @@ import * as ProviderPluginManagement from "./ProviderPluginManagement.ts";
 const ConnectorCoreLive = Layer.merge(
   ConnectorRuntime.layer.pipe(
     Layer.provide(AccountsConnectorCredentials.layer.pipe(Layer.provide(AccountVaultLive))),
+    Layer.provide(GitHubSourceControlCredential.layer),
   ),
   ExtensionDeliveryReceipts.layer,
 ).pipe(Layer.provideMerge(PluginConnectorEligibility.layer));

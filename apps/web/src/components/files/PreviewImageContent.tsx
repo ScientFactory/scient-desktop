@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -5,6 +6,10 @@ import { observeResize } from "~/lib/observeResize";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileSurfaceAction, FileSurfaceFailure } from "./fileSurfaceChrome";
+// SCIENT-FORK:START — TIFF planes and value range
+import { TiffPreviewSummary } from "~/scient/fileSurfaces/tiffPreview/TiffPreviewSummary";
+import { isTiffPreview, useTiffPreview } from "~/scient/fileSurfaces/tiffPreview/useTiffPreview";
+// SCIENT-FORK:END
 
 export default function PreviewImageContent(props: {
   readonly src: string;
@@ -12,12 +17,23 @@ export default function PreviewImageContent(props: {
   readonly mimeType?: string;
   readonly onError?: () => void;
 }) {
+  const gt = useGT();
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  // SCIENT-FORK:START — a load failure renews the URL upstream; a format failure says why here.
+  const tiff = useTiffPreview({
+    src: props.src,
+    enabled: isTiffPreview(props.name, props.mimeType),
+    onLoadError: () => {
+      setFailed(true);
+      props.onError?.();
+    },
+  });
+  // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the image viewport before paint and observe resizes to keep fit-to-view scaling accurate.
   useLayoutEffect(() => {
     const node = ref.current;
@@ -35,18 +51,27 @@ export default function PreviewImageContent(props: {
     : 1;
   const scale = zoom ?? fit;
   const changeZoom = (factor: number) => setZoom(Math.max(0.05, Math.min(8, scale * factor)));
+  // SCIENT-FORK:START
+  if (tiff?.failure)
+    return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.image} details={tiff.failure} />;
+  // SCIENT-FORK:END
   if (failed) return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.image} />;
   return (
     <>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
         <span className="tabular-nums">
-          {natural.width
-            ? `${natural.width.toLocaleString()} × ${natural.height.toLocaleString()}`
-            : "Loading image…"}
+          {/* SCIENT-FORK:START */}
+          {tiff?.info ? (
+            <TiffPreviewSummary info={tiff.info} preview={tiff} />
+          ) : /* SCIENT-FORK:END */ natural.width ? (
+            `${natural.width.toLocaleString()} × ${natural.height.toLocaleString()}`
+          ) : (
+            gt("Loading image…")
+          )}
         </span>
         <div className="flex items-center gap-1">
           <FileSurfaceAction
-            label="Zoom out"
+            label={gt("Zoom out")}
             disabled={!natural.width || scale <= 0.05}
             onPress={() => changeZoom(1 / 1.25)}
           >
@@ -54,21 +79,21 @@ export default function PreviewImageContent(props: {
           </FileSurfaceAction>
           <span className="min-w-10 text-center tabular-nums">{Math.round(scale * 100)}%</span>
           <FileSurfaceAction
-            label="Zoom in"
+            label={gt("Zoom in")}
             disabled={!natural.width || scale >= 8}
             onPress={() => changeZoom(1.25)}
           >
             <PlusIcon className="size-3.5" />
           </FileSurfaceAction>
           <FileSurfaceAction
-            label="Fit image"
+            label={gt("Fit image")}
             pressed={zoom === null}
             onPress={() => setZoom(null)}
           >
             <ScanIcon className="size-3.5" />
           </FileSurfaceAction>
           <FileSurfaceAction
-            label="Actual image size"
+            label={gt("Actual image size")}
             pressed={zoom === 1}
             onPress={() => setZoom(1)}
           >
@@ -86,32 +111,52 @@ export default function PreviewImageContent(props: {
         >
           <button
             type="button"
-            aria-label={`Zoom ${props.name}`}
+            aria-label={gt("Zoom {name}", { name: props.name })}
             className="shrink-0 cursor-zoom-in"
             onClick={() => setExpanded(true)}
           >
-            <AttachmentImage
-              name={props.name}
-              mimeType={props.mimeType}
-              src={props.src}
-              alt={props.name}
-              className="block max-w-none"
-              style={
-                natural.width
-                  ? { width: natural.width * scale, height: natural.height * scale }
-                  : { maxWidth: "100%" }
-              }
-              onLoad={(event) =>
-                setNatural({
-                  width: event.currentTarget.naturalWidth,
-                  height: event.currentTarget.naturalHeight,
-                })
-              }
-              onError={() => {
-                setFailed(true);
-                props.onError?.();
-              }}
-            />
+            {/* SCIENT-FORK:START — the decoded plane is drawn at the TIFF's true size. */}
+            {tiff ? (
+              tiff.url ? (
+                <img
+                  src={tiff.url}
+                  alt={props.name}
+                  className="block max-w-none"
+                  style={
+                    natural.width
+                      ? { width: natural.width * scale, height: natural.height * scale }
+                      : { maxWidth: "100%" }
+                  }
+                  onLoad={() => {
+                    if (tiff.info) setNatural({ width: tiff.info.width, height: tiff.info.height });
+                  }}
+                />
+              ) : null
+            ) : (
+              /* SCIENT-FORK:END */
+              <AttachmentImage
+                name={props.name}
+                mimeType={props.mimeType}
+                src={props.src}
+                alt={props.name}
+                className="block max-w-none"
+                style={
+                  natural.width
+                    ? { width: natural.width * scale, height: natural.height * scale }
+                    : { maxWidth: "100%" }
+                }
+                onLoad={(event) =>
+                  setNatural({
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  })
+                }
+                onError={() => {
+                  setFailed(true);
+                  props.onError?.();
+                }}
+              />
+            )}
           </button>
         </div>
       </div>
@@ -119,11 +164,15 @@ export default function PreviewImageContent(props: {
         <ExpandedImageDialog
           preview={{
             images: [
-              {
-                src: props.src,
-                name: props.name,
-                ...(props.mimeType ? { mimeType: props.mimeType } : {}),
-              },
+              // SCIENT-FORK:START — the dialog shows the plane already decoded.
+              tiff?.url
+                ? { src: tiff.url, name: props.name, mimeType: "image/png" }
+                : // SCIENT-FORK:END
+                  {
+                    src: props.src,
+                    name: props.name,
+                    ...(props.mimeType ? { mimeType: props.mimeType } : {}),
+                  },
             ],
             index: 0,
           }}

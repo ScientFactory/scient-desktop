@@ -10,6 +10,7 @@ import { ConversationForkService } from "../ConversationForkService.ts";
 import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
 import { run, seed } from "./stressHarness.ts";
 import { measureEffectBenchmark as measureForkEffect } from "../../../testUtils/benchmark.testkit.ts";
+import { forkConversation } from "../../testkit/ConversationForkCommand.ts";
 
 const encodeMeasurement = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -19,7 +20,6 @@ describe.skipIf(process.env.SCIENT_FORK_BENCH !== "1")("fork scale", () => {
       run(
         Effect.gen(function* () {
           const source = yield* seed({ turns: 2 });
-          const forks = yield* ConversationForkService;
           const store = yield* ProjectionStoreV2;
           const sql = yield* SqlClient.SqlClient;
           const answer = source.messages.findLast((m) => m.role === "assistant")!;
@@ -28,7 +28,7 @@ describe.skipIf(process.env.SCIENT_FORK_BENCH !== "1")("fork scale", () => {
             const [, duration] = yield* measureForkEffect(
               bench,
               `fork ${index}`,
-              forks.dispatch({
+              forkConversation({
                 type: "thread.fork",
                 commandId: CommandId.make(`scale-${index}`),
                 newThreadId: ThreadId.make(`scale-${index}`),
@@ -103,7 +103,7 @@ describe.skipIf(process.env.SCIENT_FORK_BENCH !== "1")("fork scale", () => {
           const [, forkMs] = yield* measureForkEffect(
             bench,
             "fork dispatch",
-            forks.dispatch(command),
+            forkConversation(command),
           );
           yield* Fiber.interrupt(reader);
           const [window, openMs] = yield* measureForkEffect(

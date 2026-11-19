@@ -83,9 +83,6 @@ describe("native agent model selection", () => {
       expect(selected.map((model) => model.slug)).toEqual([
         "anthropic/claude-sonnet-5-5",
         "openai-codex/gpt-6.1-sol",
-        "google-antigravity/claude-opus-4-6",
-        "google-antigravity/gemini-3.8-flash",
-        "google-antigravity/gemini-3.1-pro",
       ]);
       expect(
         resolveAppModelSelectionForInstance(
@@ -214,6 +211,12 @@ describe("native agent model selection", () => {
         ),
       ).toEqual(["native/unknown"]);
       expect(getDefaultProviderInstanceModel([entry], entry.instanceId)).toBe("native/unknown");
+      // A saved selection is kept through catalog gaps, but not when Pi reports it unavailable.
+      expect(
+        resolveAppModelSelectionForInstance(entry.instanceId, settings, [entry], "native/blocked", {
+          preserveUnavailableSelection: true,
+        }),
+      ).toBe("native/unknown");
     },
   );
 

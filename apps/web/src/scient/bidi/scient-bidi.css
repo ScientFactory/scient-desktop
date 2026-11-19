@@ -72,17 +72,14 @@
   text-align: start;
 }
 
-.chat-markdown .chat-markdown-codeblock[data-copy-text-direction="auto"] pre {
+.chat-markdown .chat-markdown-codeblock[dir="auto"] pre {
   unicode-bidi: plaintext;
   text-align: start;
 }
 
-.chat-markdown[data-scient-content-direction="rtl"]
-  .chat-markdown-details
-  [data-markdown-details-summary],
-.chat-markdown[data-scient-content-direction="ltr"]
-  .chat-markdown-details
-  [data-markdown-details-summary] {
+/* Upstream's summary trigger is text-left; a summary follows its message's direction. */
+.chat-markdown[data-scient-content-direction="rtl"] [data-markdown-details-summary],
+.chat-markdown[data-scient-content-direction="ltr"] [data-markdown-details-summary] {
   text-align: start;
 }
 

@@ -531,4 +531,233 @@ describe("LazyWorkspaceTreeController", () => {
     expect(harness.snapshot()?.rootError).toContain("incomplete directory listing");
     harness.destroy();
   });
+
+  describe("very large folders", () => {
+    const bigFolder = (count: number) =>
+      Array.from({ length: count }, (_, index) =>
+        file(`big/f${String(index).padStart(5, "0")}.txt`),
+      );
+    const expandedPaths = (model: FileTree, paths: readonly string[]) =>
+      paths.filter((path) => {
+        const item = model.getItem(path);
+        return item !== null && "isExpanded" in item && item.isExpanded();
+      });
+    const expand = (model: FileTree, path: string) => {
+      const item = model.getItem(path);
+      if (item && "expand" in item) item.expand();
+    };
+
+    it("rebuilds the tree for a large listing, keeping what it shows open, selected and new", async () => {
+      let bigEntries = bigFolder(3_000);
+      const harness = makeController(async (relativeDirectory) => {
+        switch (relativeDirectory) {
+          case "":
+            return complete(
+              directory("big"),
+              directory("docs"),
+              directory("src"),
+              file("README.md"),
+            );
+          case "src":
+            return complete(directory("src/lib"), file("src/a.ts"));
+          case "docs":
+            return complete(file("docs/guide.md"));
+          default:
+            return complete(...bigEntries);
+        }
+      });
+      await harness.controller.start();
+      for (const path of ["src", "docs"]) {
+        expand(harness.model, path);
+        await harness.controller.load(path);
+      }
+      harness.model.getItem("src/a.ts")?.select();
+      // New rows the disk does not have yet, one of them hidden in a closed folder.
+      harness.controller.addProvisional("src/untitled.md");
+      harness.controller.addProvisional("docs/untitled folder/");
+      const docs = harness.model.getItem("docs/");
+      if (docs && "collapse" in docs) docs.collapse();
+      const resetPaths = vi.spyOn(harness.model, "resetPaths");
+      const batch = vi.spyOn(harness.model, "batch");
+
+      expand(harness.model, "big");
+      await harness.controller.load("big");
+
+      expect(resetPaths).toHaveBeenCalledTimes(1);
+      // One real change follows the rebuild, so the tree updates what depends on changes.
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(batch.mock.calls[0]?.[0]).toHaveLength(1);
+      expect(harness.model.getItem("big/f02999.txt")).not.toBeNull();
+      expect(harness.model.getItem("src/untitled.md")).not.toBeNull();
+      expect(harness.model.getItem("docs/untitled folder/")).not.toBeNull();
+      expect(harness.model.getItem("src/lib/")).not.toBeNull();
+      expect(expandedPaths(harness.model, ["big/", "docs/", "src/", "src/lib/"])).toEqual([
+        "big/",
+        "src/",
+      ]);
+      expect(harness.model.getSelectedPaths()).toEqual(["src/a.ts"]);
+      // big, its files, docs, src with its three rows, and the README.
+      expect(harness.model.getVisibleCount()).toBe(1 + 3_000 + 1 + 4 + 1);
+      expect(harness.snapshot()?.entries.size).toBe(4 + 2 + 1 + 3_000);
+
+      // Most of the folder is deleted: the refresh rebuilds again and drops the rows.
+      bigEntries = bigEntries.slice(0, 10);
+      await harness.controller.refresh();
+      expect(resetPaths).toHaveBeenCalledTimes(2);
+      expect(harness.model.getItem("big/f00009.txt")).not.toBeNull();
+      expect(harness.model.getItem("big/f00010.txt")).toBeNull();
+      expect(harness.model.getItem("src/untitled.md")).not.toBeNull();
+      expect(harness.model.getVisibleCount()).toBe(1 + 10 + 1 + 4 + 1);
+      expect(harness.snapshot()?.entries.size).toBe(4 + 2 + 1 + 10);
+      harness.destroy();
+    });
+
+    it("drops the selection of an entry that changed kind but keeps its focus, as a batch does", async () => {
+      let bigEntries = bigFolder(3_000);
+      const harness = makeController(async (relativeDirectory) =>
+        relativeDirectory === "" ? complete(directory("big")) : complete(...bigEntries),
+      );
+      await harness.controller.start();
+      expand(harness.model, "big");
+      await harness.controller.load("big");
+      harness.model.getItem("big/f00001.txt")?.select();
+      harness.model.focusPath("big/f00001.txt");
+      const resetPaths = vi.spyOn(harness.model, "resetPaths");
+
+      // f00001.txt is now a folder, and the rest of the folder changed with it.
+      bigEntries = [
+        directory("big/f00001.txt"),
+        ...bigFolder(3_000)
+          .slice(2)
+          .map((entry) => file(entry.relativePath.replace("/f", "/g"))),
+      ];
+      await harness.controller.refresh();
+
+      // A first rebuild without either form of the changed entry ends its selection.
+      expect(resetPaths).toHaveBeenCalledTimes(2);
+      expect(harness.model.getItem("big/f00001.txt/")).not.toBeNull();
+      expect(harness.model.getItem("big/g02999.txt")).not.toBeNull();
+      expect(harness.model.getItem("big/f00002.txt")).toBeNull();
+      expect(harness.model.getSelectedPaths()).toEqual([]);
+      expect(harness.model.getFocusedPath()).toBe("big/f00001.txt/");
+      harness.destroy();
+    });
+
+    it("keeps an open search, and what it restores, through a large folder's rebuild", async () => {
+      const harness = makeController(async (relativeDirectory) =>
+        relativeDirectory === ""
+          ? complete(directory("big"), file("README.md"))
+          : complete(...bigFolder(3_000)),
+      );
+      await harness.controller.start();
+      const resetPaths = vi.spyOn(harness.model, "resetPaths");
+      harness.model.setSearch("f0299");
+
+      await harness.controller.primePaths(["big/f02999.txt"]);
+
+      expect(resetPaths).toHaveBeenCalledTimes(1);
+      expect(harness.model.isSearchOpen()).toBe(true);
+      expect(harness.model.getSearchMatchingPaths()).toEqual(
+        Array.from({ length: 10 }, (_, index) => `big/f0299${index}.txt`),
+      );
+      harness.model.closeSearch();
+      expect(expandedPaths(harness.model, ["big/"])).toEqual([]);
+      harness.destroy();
+    });
+
+    it("drops a new row with the folder a large listing removes", async () => {
+      let bigEntries = [directory("big/gone"), ...bigFolder(3_000)];
+      const harness = makeController(async (relativeDirectory) => {
+        if (relativeDirectory === "") return complete(directory("big"));
+        if (relativeDirectory === "big/gone") return complete(file("big/gone/kept.txt"));
+        return complete(...bigEntries);
+      });
+      await harness.controller.start();
+      expand(harness.model, "big");
+      await harness.controller.load("big");
+      expand(harness.model, "big/gone");
+      await harness.controller.load("big/gone");
+      harness.controller.addProvisional("big/gone/untitled.txt");
+      const resetPaths = vi.spyOn(harness.model, "resetPaths");
+
+      bigEntries = bigFolder(3_000).map((entry) => file(entry.relativePath.replace("/f", "/g")));
+      await harness.controller.refresh();
+
+      expect(resetPaths).toHaveBeenCalledTimes(1);
+      expect(harness.model.getItem("big/gone/")).toBeNull();
+      expect(harness.model.getItem("big/gone/untitled.txt")).toBeNull();
+      expect(harness.model.getItem("big/g00000.txt")).not.toBeNull();
+      harness.destroy();
+    });
+
+    it("never shrinks an open search's results while a large listing adds to them", async () => {
+      const rootFiles = Array.from({ length: 50 }, (_, index) =>
+        file(`f0r${String(index).padStart(2, "0")}.txt`),
+      );
+      const harness = makeController(async (relativeDirectory) =>
+        relativeDirectory === ""
+          ? complete(directory("big"), ...rootFiles)
+          : complete(...bigFolder(3_000)),
+      );
+      await harness.controller.start();
+      harness.model.setSearch("f0");
+      const counts: number[] = [];
+      const stop = harness.model.subscribe(() => counts.push(harness.model.getVisibleCount()));
+      counts.length = 0;
+
+      await harness.controller.primePaths(["big/f02999.txt"]);
+      stop();
+
+      expect(Math.min(...counts)).toBeGreaterThanOrEqual(50);
+      expect(counts.at(-1)).toBe(50 + 1 + 3_000);
+      harness.destroy();
+    });
+
+    it("ends the selection of a thousand entries that changed kind without batching them", async () => {
+      let bigEntries = bigFolder(3_000);
+      const harness = makeController(async (relativeDirectory) =>
+        relativeDirectory === "" ? complete(directory("big")) : complete(...bigEntries),
+      );
+      await harness.controller.start();
+      expand(harness.model, "big");
+      await harness.controller.load("big");
+      for (const entry of bigEntries.slice(0, 1_000)) {
+        harness.model.getItem(entry.relativePath)?.select();
+      }
+      expect(harness.model.getSelectedPaths()).toHaveLength(1_000);
+      const resetPaths = vi.spyOn(harness.model, "resetPaths");
+      const batch = vi.spyOn(harness.model, "batch");
+
+      bigEntries = bigFolder(3_000).map((entry, index) =>
+        index < 1_000 ? directory(entry.relativePath) : entry,
+      );
+      await harness.controller.refresh();
+
+      expect(resetPaths).toHaveBeenCalledTimes(2);
+      expect(batch.mock.calls.map(([operations]) => operations.length)).toEqual([1]);
+      expect(harness.model.getItem("big/f00999.txt/")).not.toBeNull();
+      expect(harness.model.getItem("big/f01000.txt")).not.toBeNull();
+      expect(harness.model.getSelectedPaths()).toEqual([]);
+      harness.destroy();
+    });
+
+    it("keeps batching a small listing into a large tree", async () => {
+      const harness = makeController(async (relativeDirectory) => {
+        if (relativeDirectory === "") return complete(directory("big"), directory("src"));
+        if (relativeDirectory === "src") return complete(file("src/a.ts"), file("src/b.ts"));
+        return complete(...bigFolder(3_000));
+      });
+      await harness.controller.start();
+      await harness.controller.load("big");
+      const resetPaths = vi.spyOn(harness.model, "resetPaths");
+      const batch = vi.spyOn(harness.model, "batch");
+
+      await harness.controller.load("src");
+
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(resetPaths).not.toHaveBeenCalled();
+      expect(harness.model.getItem("src/b.ts")).not.toBeNull();
+      harness.destroy();
+    });
+  });
 });

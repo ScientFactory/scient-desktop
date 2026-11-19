@@ -7,15 +7,12 @@ import * as Schema from "effect/Schema";
 
 const decodeInput = Schema.decodeUnknownSync(ScientDocumentPageInput);
 
-export class DocumentPageInputError extends Error {
-  constructor(
-    readonly code: "input-unavailable" | "input-invalid",
-    message: string,
-  ) {
-    super(message);
-    this.name = "DocumentPageInputError";
-  }
-}
+export class DocumentPageInputError extends Schema.TaggedError<DocumentPageInputError>()(
+  "DocumentPageInputError",
+  { code: Schema.Literals(["input-unavailable", "input-invalid"]), message: Schema.String },
+) {}
+
+export const isDocumentPageInputError = Schema.is(DocumentPageInputError);
 
 /** Reads the signed capture URL from the page fragment; only an absolute http(s) input is accepted. */
 export function readDocumentPageInputUrl(hash: string): URL {
@@ -33,7 +30,10 @@ export function readDocumentPageInputUrl(hash: string): URL {
     (url.protocol !== "http:" && url.protocol !== "https:") ||
     !url.pathname.endsWith(`/${SCIENT_DOCUMENT_CAPTURE_INPUT_FILE}`)
   ) {
-    throw new DocumentPageInputError("input-unavailable", "The document page has no valid input.");
+    throw new DocumentPageInputError({
+      code: "input-unavailable",
+      message: "The document page has no valid input.",
+    });
   }
   return url;
 }
@@ -46,23 +46,23 @@ export async function loadDocumentPageInput(
   try {
     response = await fetchInput(inputUrl, { credentials: "omit", cache: "no-store" });
   } catch {
-    throw new DocumentPageInputError(
-      "input-unavailable",
-      "The document page could not load the captured document.",
-    );
+    throw new DocumentPageInputError({
+      code: "input-unavailable",
+      message: "The document page could not load the captured document.",
+    });
   }
   if (!response.ok) {
-    throw new DocumentPageInputError(
-      "input-unavailable",
-      `The captured document is unavailable (HTTP ${response.status}).`,
-    );
+    throw new DocumentPageInputError({
+      code: "input-unavailable",
+      message: `The captured document is unavailable (HTTP ${response.status}).`,
+    });
   }
   try {
     return decodeInput(await response.json());
   } catch {
-    throw new DocumentPageInputError(
-      "input-invalid",
-      "The captured document is not a valid Scient document page input.",
-    );
+    throw new DocumentPageInputError({
+      code: "input-invalid",
+      message: "The captured document is not a valid Scient document page input.",
+    });
   }
 }

@@ -33,7 +33,8 @@ export type ScientOverleafFilesystemRefusalReason =
 const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, string> = {
   "unsupported-windows-version":
     "Update this project's server to Windows 10 version 1809 or later, then sync again.",
-  "unsupported-filesystem": "Move the project to a supported local disk, then relink it.",
+  "unsupported-filesystem":
+    "Move the project to a local disk formatted as APFS on a Mac, NTFS on Windows, or ext4, XFS or Btrfs on Linux, then relink it.",
   "network-filesystem":
     "Move the project from the network drive to a supported local disk, then relink it.",
   "volatile-filesystem": "Move the project to a permanent local disk, then relink it.",
@@ -228,12 +229,46 @@ export const ScientOverleafConnectionSummary = Schema.Struct({
 });
 export type ScientOverleafConnectionSummary = typeof ScientOverleafConnectionSummary.Type;
 
+/**
+ * A link record this release can't read, with what it still shows. `setAside` says
+ * whether it can be moved aside: "confirm" for a damaged record whose staged files lose
+ * their protection, "held" for a newer release's record that release must settle.
+ */
+export const ScientOverleafUnreadableRecord = Schema.Struct({
+  recordId: ConnectionId,
+  kind: Schema.Literals(["damaged", "newer"]),
+  /** The linked folder, when the record still names it. */
+  folder: Schema.NullOr(Schema.String),
+  /** A sync it records stopped part-way; null when the record doesn't say. */
+  unfinished: Schema.NullOr(Schema.Boolean),
+  /** Besides linking: bulk changes at its own checkout, at every checkout, or nothing more. */
+  holds: Schema.Literals(["linking", "checkout", "every-checkout"]),
+  setAside: Schema.Literals(["allowed", "confirm", "held"]),
+});
+export type ScientOverleafUnreadableRecord = typeof ScientOverleafUnreadableRecord.Type;
+
 export const ScientOverleafConnectionList = Schema.Struct({
   connections: Schema.Array(
     Schema.Struct({ ...ScientOverleafConnectionSummary.fields, linkedHere: Schema.Boolean }),
   ),
+  /** Link records this release can't read; absent from servers that predate the list. */
+  unreadableRecords: Schema.optional(Schema.Array(ScientOverleafUnreadableRecord)),
 });
 export type ScientOverleafConnectionList = typeof ScientOverleafConnectionList.Type;
+
+/** Moves one unreadable link record aside; "confirm" records need `acceptUnfinished`. */
+export const ScientOverleafSetAsideRequest = Schema.Struct({
+  workspaceRoot: WorkspaceRoot,
+  recordId: ConnectionId,
+  acceptUnfinished: Schema.optional(Schema.Boolean),
+});
+export type ScientOverleafSetAsideRequest = typeof ScientOverleafSetAsideRequest.Type;
+
+/** Moved aside bytes intact, kept for its unfinished sync, or already gone or readable. */
+export const ScientOverleafSetAsideResult = Schema.Struct({
+  outcome: Schema.Literals(["set-aside", "held", "gone"]),
+});
+export type ScientOverleafSetAsideResult = typeof ScientOverleafSetAsideResult.Type;
 
 /** Connect, relink or disconnect: done, or a fixed reason it did nothing. */
 export const ScientOverleafManageResult = Schema.Union([
@@ -243,7 +278,11 @@ export const ScientOverleafManageResult = Schema.Union([
     /** Disconnect finished an interrupted sync first, which may have written the folder. */
     finishedInterruptedSync: Schema.optional(Schema.Boolean),
   }),
-  Schema.TaggedStruct("refused", { reason: Schema.String }),
+  Schema.TaggedStruct("refused", {
+    reason: Schema.String,
+    /** Disconnect finished an interrupted sync before it was refused. */
+    finishedInterruptedSync: Schema.optional(Schema.Boolean),
+  }),
 ]);
 export type ScientOverleafManageResult = typeof ScientOverleafManageResult.Type;
 
@@ -349,6 +388,10 @@ export type ScientOverleafReview = typeof ScientOverleafReview.Type;
 export const ScientOverleafRefusal = Schema.Struct({
   reason: Schema.String,
   path: Schema.optional(ManuscriptPath),
+  /** Every name the refusal concerns, when it is more than one (two spellings of a name). */
+  paths: Schema.optional(Schema.Array(ManuscriptPath)),
+  /** The server's fixed sentence for a refusal raised after the folder was written. */
+  message: Schema.optional(Schema.String),
 });
 export type ScientOverleafRefusal = typeof ScientOverleafRefusal.Type;
 

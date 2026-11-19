@@ -25,7 +25,7 @@ import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { ConversationForkService } from "./ConversationForkService.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 it.live.each(
   (["stamped", "legacy-unannotated"] as const).map((mode) => ({
@@ -89,7 +89,6 @@ it.live.each(
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
-        const forks = yield* ConversationForkService;
         const projectId = ProjectId.make("project:handoff-chain");
         const sourceId = ThreadId.make("thread:handoff-source");
         const childId = ThreadId.make("thread:handoff-child");
@@ -185,7 +184,7 @@ it.live.each(
             (row) => row.item.type === "assistant_message",
           );
           assert.ok(answer?.item.type === "assistant_message");
-          yield* forks.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make(`handoff-chain:fork:${target}`),
             originThreadId: source.thread.id,

@@ -19,7 +19,6 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
-import * as Data from "effect/Data";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -54,9 +53,10 @@ export type ConversationSnapshotThread = Pick<
 };
 
 /** The range's last message is not a completed user or assistant message of the thread. */
-export class SnapshotRangeError extends Data.TaggedError("SnapshotRangeError")<{
-  readonly messageId: MessageId;
-}> {}
+export class SnapshotRangeError extends Schema.TaggedError<SnapshotRangeError>()(
+  "SnapshotRangeError",
+  { messageId: MessageId },
+) {}
 
 function toAttachment(
   attachment: ChatAttachment,

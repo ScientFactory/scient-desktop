@@ -2,7 +2,7 @@ import { Check, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
@@ -19,7 +19,9 @@ export function ComputeOutputBlock(props: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "output" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("output"),
+  });
   // The observer reports once on attach and again as streamed output grows.
   const measure = (node: HTMLDivElement | null) => {
     if (node === null) return;

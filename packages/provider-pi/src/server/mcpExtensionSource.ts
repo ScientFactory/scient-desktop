@@ -12,6 +12,7 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 /** JSON array of `{ serverName, url }`; set only when the session delivers connectors. */
 export const T3_MCP_CONNECTORS_ENV = "T3_MCP_CONNECTORS";
 // SCIENT-FORK:END
+export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -22,9 +23,7 @@ export const makePiMcpExtensionSource = (
 ): string => {
   return /* SCIENT-FORK:END */ `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-// SCIENT-FORK:START: Scient Extensions: hashed aliases for Scient connector tool names.
 import * as NodeCrypto from "node:crypto";
-// SCIENT-FORK:END
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
@@ -43,6 +42,7 @@ const ORCHESTRATION_INSTRUCTIONS = ${
     JSON.stringify(orchestrationInstructions.trim())
     // SCIENT-FORK:END
   };
+const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -80,12 +80,19 @@ function runtimeMode(): RuntimeMode {
     : "full-access";
 }
 
+// The app keys "Always allow this session" on this text, so a cut summary ends with the
+// full input's hash: calls that differ only past the cut get separate grants.
 function toolInputSummary(input: unknown): string {
+  let text: string;
   try {
-    return JSON.stringify(input, null, 2).slice(0, 4_000);
+    text = JSON.stringify(input, null, 2) ?? String(input);
   } catch {
-    return String(input).slice(0, 4_000);
+    text = String(input);
   }
+  if (text.length <= 4_000) return text;
+  const hash = NodeCrypto.createHash("sha256").update(text, "utf16le").digest("hex");
+  return text.slice(0, 4_000) + "\\n... " + (text.length - 4_000) +
+    " more characters not shown (sha256 " + hash + ")";
 }
 
 // SCIENT-FORK:START: Scient Extensions: incremental, request-correlated response reader. Remote Streamable
@@ -453,23 +460,43 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     };
   });
 
-  // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
-  // previous response's usage even when a fork's instructions/tools differ,
-  // then reserves almost all remaining context for output. OpenRouter can
-  // reject even a short conversation. Remove this cap when Pi accounts for
-  // the current request prefix reliably (api/simple-options + utils/estimate).
+  // Pi has no service tier setting, so Scient sets one through this command before each turn.
+  // Only a tier the active model advertises is sent; Standard sends none.
+  let serviceTier: string | undefined;
+  pi.registerCommand(SERVICE_TIER_COMMAND, {
+    description: "Set the service tier Scient sends with provider requests",
+    handler: async (args) => {
+      serviceTier = args.trim() || undefined;
+    },
+  });
+
   pi.on("before_provider_request", (event, ctx) => {
-    if (ctx.model?.provider !== "openrouter") return;
     const payload = event.payload;
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
     const replacement = { ...payload } as Record<string, unknown>;
     let changed = false;
-    for (const key of ["max_tokens", "max_completion_tokens"]) {
-      const limit = replacement[key];
-      if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
-        replacement[key] = 32_768;
-        changed = true;
+    // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
+    // previous response's usage even when a fork's instructions/tools differ,
+    // then reserves almost all remaining context for output. OpenRouter can
+    // reject even a short conversation. Remove this cap when Pi accounts for
+    // the current request prefix reliably (api/simple-options + utils/estimate).
+    if (ctx.model?.provider === "openrouter") {
+      for (const key of ["max_tokens", "max_completion_tokens"]) {
+        const limit = replacement[key];
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
+          replacement[key] = 32_768;
+          changed = true;
+        }
       }
+    }
+    const tiers = (ctx.model as { serviceTiers?: unknown } | undefined)?.serviceTiers;
+    if (
+      serviceTier !== undefined &&
+      Array.isArray(tiers) &&
+      tiers.some((tier) => tier?.id === serviceTier)
+    ) {
+      replacement.service_tier = serviceTier;
+      changed = true;
     }
     if (changed) return replacement;
   });
@@ -479,9 +506,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // keep their normal meaning without replacing or shadowing Pi's runtime.
   // Only Pi's own search is known to be read-only. An extension that replaces
   // it keeps the name, and cannot discover deferred tools either.
+  // OmO reports Pi's builtin search with angle brackets around the same path.
+  const BUILTIN_TOOL_SEARCH_PATHS = new Set(["builtin:tool-search", "<builtin:tool-search>"]);
   const hasBuiltinToolSearch = () =>
     typeof pi.getAllTools === "function" &&
-    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
+    pi.getAllTools().some((tool) => tool.name === "tool_search" && BUILTIN_TOOL_SEARCH_PATHS.has(tool.sourceInfo?.path ?? ""));
 
   const readOnlyMcpTools = new Set<string>();
   // SCIENT-FORK:START: Scient Extensions: model tool name -> "server/tool" for Scient connector tools.
@@ -534,8 +563,16 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
   delete process.env[TOOL_NAME_MAP_ENV];
   const modelToolName = (canonicalName: string) => toolNameMap[canonicalName] ?? canonicalName;
+  // SCIENT-FORK:START: Pi's search covers only tools not loaded yet; say so wherever it is offered.
+  const toolSearchNote = () =>
+    hasBuiltinToolSearch()
+      ? "tool_search finds only tools that are not loaded yet. Tools already in your tool list, such as bash, read, edit and write, are callable directly; an empty search does not mean a capability is missing."
+      : "";
   const runtimeSystemPrompt = (systemPrompt: string) =>
-    [systemPrompt, awareness, endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""].filter(Boolean).join("\\n\\n");
+    [systemPrompt, awareness, toolSearchNote(), endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""]
+      .filter(Boolean)
+      .join("\\n\\n");
+  // SCIENT-FORK:END
   if (endpoint === undefined || token === undefined) {
     // SCIENT-FORK:START: runtime guidance without MCP; this path's single before_agent_start hook.
     pi.on("before_agent_start", (event, ctx) => {

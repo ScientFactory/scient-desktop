@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelReasoningMetadata } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -14,7 +15,7 @@ import * as Stream from "effect/Stream";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import { applyPiModelSelection } from "@t3tools/provider-pi/server/modelSelection";
-import { piDiscoveredModelToServerProviderModel } from "@t3tools/provider-pi/server/model";
+import { piModelCapabilities } from "@t3tools/provider-pi/server/model";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const decodeBody = Schema.decodeUnknownSync(
@@ -109,7 +110,7 @@ export default function() {
               guard,
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: root + "/profile",
               PI_TELEMETRY: "0",
@@ -125,16 +126,9 @@ export default function() {
             reasoning: true,
           });
           expect(discovered?.reasoningMetadata).toBeUndefined();
-          const composerModel = piDiscoveredModelToServerProviderModel({
-            id: discovered!.id,
-            provider: discovered!.provider,
-            ...(discovered?.reasoning === undefined ? {} : { reasoning: discovered.reasoning }),
-            ...(discovered?.thinkingLevelMap
-              ? { thinkingLevelMap: discovered.thinkingLevelMap }
-              : {}),
-            name: "Legacy model",
-          });
-          expect(composerModel?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          // What the composer offers for it, as Pi model discovery (status.ts) builds it.
+          const composerCapabilities = piModelCapabilities(discovered, undefined);
+          expect(composerCapabilities.optionDescriptors?.[0]).toMatchObject({
             options: expect.arrayContaining([{ id: "low", label: "Low" }]),
           });
           const selected = { provider: "scient_legacy", modelId: "gpt-5" };
@@ -275,7 +269,7 @@ for (const basePath of ["/v1", "/api.x.ai/v1"]) {
               "--no-tools",
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: root + "/profile",
               PI_TELEMETRY: "0",
@@ -442,7 +436,7 @@ for (const protocol of ["openai-responses", "anthropic-messages"] as const) {
               "--no-tools",
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: root + "/profile",
               PI_TELEMETRY: "0",

@@ -147,7 +147,12 @@ function runtimeError(
   message: string,
   cause?: unknown,
 ): ComputeRuntimeError {
-  return new ComputeRuntimeError({ operation, message, ...(cause === undefined ? {} : { cause }) });
+  // A failed setup's detail is already up to the limit, and its summary goes in front.
+  return new ComputeRuntimeError({
+    operation,
+    message: message.slice(0, 4096),
+    ...(cause === undefined ? {} : { cause }),
+  });
 }
 
 function manageError(message: string, cause?: unknown): ComputeOperationError {

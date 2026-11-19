@@ -1,10 +1,11 @@
 # T3 Connect
 
-> Inherited T3 architecture for maintainers. Scient does not currently operate
-> or publish T3 Connect, `app.t3.codes`, its relay, or its mobile distribution.
-> Preserve this document for upstream compatibility and source development; do
-> not use it as Scient setup guidance. See Scient's supported
-> [remote access](../user/remote-access.md).
+> Inherited T3 architecture for maintainers. Scient runs this stack as Scient
+> Connect (relay `relay.scientfactory.com`, hosted app `app.scientfactory.com`,
+> no mobile distribution yet); its values and deploys are in
+> [Scient Connect operations](../operations/scient-connect.md), and user setup
+> is in [remote access](../user/remote-access.md#scient-connect). T3 names
+> below (`t3-relay`, `t3code://`, T3 Chat) describe upstream's deployment.
 
 T3 Connect uses Clerk for cloud identity. The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After
@@ -129,6 +130,26 @@ environment or commit it to the repository.
 The `prod` Alchemy stage owns the retained PlanetScale database. Non-production stages reference
 that database and provision isolated PlanetScale branches, so deploy `prod` before creating a
 personal developer stage.
+
+## Device approval
+
+Device approval, off by default, limits what the relay's signing authority buys. With
+`requireConnectDeviceApproval` on, the environment trusts T3 Connect device
+keys, meaning DPoP thumbprints, and not the relay. A mint for an untrusted key
+still succeeds, so the relay protocol does not change. The credential it returns
+cannot be spent until someone with `access:write` on the environment approves
+that key, so a forged mint yields a request that waits for approval, never a
+session. The waiting device retries the whole mint, and the environment hands
+back the same open request, so approvers see one entry with a stable code
+derived from the thumbprint. Approval is per key and does not expire. It ends
+only when the key is revoked. Revoking a session bound to a key revokes the key,
+all its sessions, and its unspent credentials, unless the caller's own session
+holds the same key; otherwise the device would mint itself a new session within
+seconds. While approval is off, every key that completes an
+exchange is recorded as trusted. Turning approval on therefore keeps current
+devices working and lists them for review, including any that got in before.
+See `issueConnectCredential` in the
+[environment auth service](../../apps/server/src/auth/EnvironmentAuth.ts).
 
 ## Idle tunnels are reclaimed and recovered
 
@@ -384,6 +405,20 @@ controls, rendered by `SettingsSidebarNav.tsx`: `T3ConnectSidebarSignIn` in the 
 Desktop renders the same web bundle, so it has them too. The waitlist enrollment flow from the
 private beta was removed when Connect went GA; sign-up is open unless a Clerk restriction below is
 enabled.
+
+### Scient: the desktop turns Connect on at sign-in
+
+In the Scient desktop app, signing in turns Scient Connect on for that computer;
+there is no onboarding wizard and no relay-client install confirmation. The
+desktop backend's `ScientConnectHost` (`apps/server/src/scient/connect/`) installs
+the pinned `cloudflared`, then links itself through `CloudLink.linkWithAccessToken`
+with a short-lived relay token that a signed-in window lends once
+(`ScientConnectBridge`). One attempt runs at a time; Off, Turn on and an account
+change fence it before credentials apply. The person's Off is stored per computer
+(`scient-connect-off` secret) and also refuses late `relayConfig` applies. Every
+window reads one status stream (`scientConnect.status`); Settings and the guest
+dialog show it. The hosted app keeps upstream's wizard, and hosts linked with
+`scient connect link` stay CLI-owned.
 
 ## Restricting Sign-ups: Known-User Allowlist
 

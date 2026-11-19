@@ -78,6 +78,7 @@ import {
   validatePackagedDesktopRuntimeResources,
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
+  resolveMacFileExclusions,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveServerRuntimeDependencies,
@@ -92,8 +93,10 @@ import {
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   LinuxBrowserSecretHostError,
+  LinuxPackagedAppMissingError,
   MacPackagedAppMissingError,
   stageBrowserSecret,
+  validateLinuxPackagedPayload,
   validateMacPackagedPayload,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
@@ -343,8 +346,9 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 
 const isCursorSdkPlatformPackagesMissingError = Schema.is(CursorSdkPlatformPackagesMissingError);
 
-const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* (input: {
+const makePackagedAppFixture = Effect.fn("test.makePackagedAppFixture")(function* (input: {
   readonly serverEntrySource?: string;
+  readonly resourcesPath?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -355,7 +359,10 @@ const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* 
   yield* fs.writeFileString(serverEntryPath, input.serverEntrySource ?? "console.log('server');\n");
 
   const stageDistDir = path.join(tempDir, "dist");
-  const resourcesDir = path.join(stageDistDir, "mac-arm64/T3 Code.app/Contents/Resources");
+  const resourcesDir = path.join(
+    stageDistDir,
+    input.resourcesPath ?? "mac-arm64/T3 Code.app/Contents/Resources",
+  );
   yield* fs.makeDirectory(resourcesDir, { recursive: true });
   yield* Effect.promise(() =>
     createPackageWithOptions(sourceDir, path.join(resourcesDir, "app.asar"), {}),
@@ -1047,6 +1054,52 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
+  it.effect("names the Electron window class in the Linux desktop entry", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      // SCIENT-FORK: Electron's WM_CLASS follows setDesktopName("scient.desktop").
+      assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "scient");
+    }),
+  );
+
+  // SCIENT-FORK: AppImages keep Scient's versioned name (see createBuildConfig).
+
+  it.effect("declares Calendar access for hosted commands in macOS builds", () =>
+    Effect.gen(function* () {
+      for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
+        for (const signed of [false, true]) {
+          const config = yield* createBuildConfig(
+            "mac",
+            "dmg",
+            version,
+            signed,
+            false,
+            undefined,
+            undefined,
+          );
+          const mac = config.mac as { extendInfo: Record<string, unknown> };
+          for (const key of [
+            "NSCalendarsUsageDescription",
+            "NSCalendarsFullAccessUsageDescription",
+            "NSCalendarsWriteOnlyAccessUsageDescription",
+          ]) {
+            assert.isString(mac.extendInfo[key], `${version}, signed=${signed}: ${key}`);
+            assert.isNotEmpty(mac.extendInfo[key]);
+          }
+        }
+      }
+    }),
+  );
+
   // pnpm writes "set this to true or false" placeholders into allowBuilds when a
   // tarball changes. pnpm ignores them, but the release build decode rejects them.
   it("distinguishes file tarballs from exact pnpm patch approval suffixes", () => {
@@ -1247,7 +1300,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
-      assert.deepStrictEqual(mac.asarUnpack, [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`]);
+      assert.deepStrictEqual(mac.asarUnpack, [
+        `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`,
+        "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
+      ]);
       assert.deepStrictEqual(linux.asarUnpack, mac.asarUnpack);
       assert.deepStrictEqual(win.asar, { smartUnpack: false });
       assert.deepStrictEqual(win.asarUnpack, [
@@ -1783,6 +1839,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  it("drops the other architecture's Darwin prebuilds from single-architecture Mac builds", () => {
+    const excludes = (arch: "arm64" | "x64" | "universal", file: string) =>
+      resolveMacFileExclusions(arch).some((glob) => NodePath.matchesGlob(file, glob.slice(1)));
+    const x64 = [
+      "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
+      "node_modules/objc-js/prebuilds/darwin-x64/node.napi.node",
+    ];
+    const arm64 = [
+      "node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+      "node_modules/objc-js/prebuilds/darwin-arm64/node.napi.armv8.node",
+    ];
+
+    for (const file of x64) {
+      assert.isTrue(excludes("arm64", file), file);
+      assert.isFalse(excludes("x64", file), file);
+      assert.isFalse(excludes("universal", file), file);
+    }
+    for (const file of arm64) {
+      assert.isTrue(excludes("x64", file), file);
+      assert.isFalse(excludes("arm64", file), file);
+      assert.isFalse(excludes("universal", file), file);
+    }
+  });
 
   it.effect("stages Cursor helpers and extracts the actual Windows archive for WSL fallback", () =>
     Effect.scoped(
@@ -2985,7 +3065,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("rejects a macOS app whose packaged server bundle cannot resolve", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeMacPayloadFixture({
+        const fixture = yield* makePackagedAppFixture({
           serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
         });
         const error = yield* validateMacPackagedPayload({
@@ -3001,11 +3081,34 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("accepts a macOS app whose packaged server bundle resolves", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeMacPayloadFixture({});
+        const fixture = yield* makePackagedAppFixture({});
         yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
       }),
     ),
   );
+
+  it.effect("never runs an untrusted macOS bundle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const marker = path.join(yield* fs.makeTempDirectoryScoped(), "ran");
+        const fixture = yield* makePackagedAppFixture({
+          serverEntrySource: `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "");\n`,
+        });
+        yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
+        assert.isFalse(yield* fs.exists(marker));
+      }),
+    ).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_UNTRUSTED_BUNDLE: "true" } }),
+        ),
+      ),
+    ),
+  );
+
+  // SCIENT-FORK: Scient has no macOS PR preview workflow, so T3's check of its wiring is not carried.
 
   it.effect("rejects a macOS stage without a packaged app", () =>
     Effect.scoped(
@@ -3030,6 +3133,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const error = yield* validateMacPackagedPayload({ stageDistDir }).pipe(Effect.flip);
 
         assert.instanceOf(error, BundleNotSelfContainedError);
+      }),
+    ),
+  );
+
+  it.effect("rejects a Linux app whose packaged server bundle cannot resolve", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const fixture = yield* makePackagedAppFixture({
+          resourcesPath: "linux-arm64-unpacked/resources",
+          serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
+        });
+        const error = yield* validateLinuxPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, BundleNotSelfContainedError);
+        assert.include(error.output, "t3code-deliberately-missing-package");
+
+        const emptyStage = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-payload-test-" });
+        const missing = yield* validateLinuxPackagedPayload({ stageDistDir: emptyStage }).pipe(
+          Effect.flip,
+        );
+        assert.instanceOf(missing, LinuxPackagedAppMissingError);
       }),
     ),
   );
@@ -3516,10 +3642,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/node-pty/build*",
       "--exclude=node_modules/node-pty/third_party/conpty*",
       "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
+      // SCIENT-FORK
+      "--exclude=node_modules/@parcel/watcher-win32-*",
       "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
       "--exclude=node_modules/@napi-rs/canvas-win32-*",
       "--exclude=node_modules/@napi-rs/keyring-win32-*",
       "--exclude=node_modules/@cursor/sdk-win32-*",
+      "--exclude=node_modules/@koromix/koffi-win32-*",
+      "--exclude=node_modules/@transcribe-cpp/win32-*",
       "apps/server/dist",
       "node_modules",
     ]);
@@ -3909,6 +4039,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
+        voiceRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -3952,6 +4083,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             wslPrebuild: Option.none(),
             syncTexRuntime: Option.none(),
             wslSyncTexRuntime: Option.none(),
+            voiceRuntime: Option.none(),
           }),
         );
 
@@ -3978,6 +4110,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
+        voiceRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
@@ -4019,6 +4152,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
+        voiceRuntime: Option.none(),
       });
 
       assert.isTrue(resolved.signed);

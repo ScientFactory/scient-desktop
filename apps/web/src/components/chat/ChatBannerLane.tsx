@@ -6,8 +6,16 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
-import { ProviderStatusBanner } from "./ProviderStatusBanner";
+import {
+  dismissProviderStatusBannerForSession,
+  ProviderStatusBanner,
+} from "./ProviderStatusBanner";
 import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadErrorBanner";
+// SCIENT-FORK:START — report a failed turn to the Scient team.
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { feedbackAvailable } from "../../scient/feedback/FeedbackDialog";
+import { requestFeedback } from "../../scient/feedback/feedbackStore";
+// SCIENT-FORK:END
 
 /**
  * The banners pinned above the timeline. The dismiss handlers are built here from plain
@@ -16,8 +24,7 @@ import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadE
 export function ChatBannerLane(props: {
   environmentId: EnvironmentId;
   providerStatus: ServerProvider | null;
-  providerStatusBannerKey: string | null;
-  setDismissedProviderStatusBannerKey: Dispatch<SetStateAction<string | null>>;
+  providerStatusDismissalKey: string | null;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   threadId: ThreadId;
   threadError: string | null;
@@ -29,8 +36,7 @@ export function ChatBannerLane(props: {
 }) {
   const {
     providerStatus,
-    providerStatusBannerKey,
-    setDismissedProviderStatusBannerKey,
+    providerStatusDismissalKey,
     onOpenProviderSetup,
     threadId,
     threadError,
@@ -45,7 +51,7 @@ export function ChatBannerLane(props: {
       <ProviderStatusBanner
         environmentId={props.environmentId}
         status={providerStatus}
-        onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
+        onDismiss={() => dismissProviderStatusBannerForSession(providerStatusDismissalKey)}
         onOpenProviderSetup={onOpenProviderSetup}
       />
       <ThreadErrorBanner
@@ -57,6 +63,22 @@ export function ChatBannerLane(props: {
           dismissThreadErrorBannerForSession(threadErrorBannerKey);
           setThreadErrorBannerDismissTick((tick) => tick + 1);
         }}
+        // SCIENT-FORK:START — report a failed turn to the Scient team.
+        onReport={
+          feedbackAvailable() && threadError !== null
+            ? () =>
+                requestFeedback({
+                  source: "turn-error",
+                  error: {
+                    message: threadError.slice(0, 8000),
+                    ...(threadErrorClass ? { class: threadErrorClass } : {}),
+                    ...(threadErrorCode ? { code: threadErrorCode.slice(0, 128) } : {}),
+                  },
+                  threadRef: scopeThreadRef(props.environmentId, threadId),
+                })
+            : undefined
+        }
+        // SCIENT-FORK:END
       />
     </div>
   );

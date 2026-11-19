@@ -75,6 +75,16 @@ import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
+// SCIENT-FORK:START account-deletion
+import * as AccountDeletion from "./account/AccountDeletion.ts";
+// SCIENT-FORK:START account-deletion
+import * as AppleSignInRevocation from "./account/AppleSignInRevocation.ts";
+// SCIENT-FORK:END account-deletion
+import * as AccountRecords from "./account/AccountRecords.ts";
+import * as LinkSupersession from "./environments/LinkSupersession.ts";
+import * as ClerkUsers from "./account/ClerkUsers.ts";
+import * as RelayAccountApi from "./http/AccountApi.ts";
+// SCIENT-FORK:END account-deletion
 
 const layerWebcrypto = Layer.mergeAll(
   Digest.layerWebCrypto,
@@ -104,6 +114,9 @@ const layerRelayApi = Layer.mergeAll(
   RelayHttpApi.layerTokenApi,
   RelayHttpApi.layerDpopClientApi,
   RelayHttpApi.layerServerApi,
+  // SCIENT-FORK:START account-deletion
+  RelayAccountApi.layerAccountApi,
+  // SCIENT-FORK:END account-deletion
 );
 
 const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
@@ -124,7 +137,9 @@ export const layer = Api.make(
       // Requests run several Postgres queries in sequence. At the user's edge
       // each one paid the round trip to the database (~300 ms from JNB); next
       // to PlanetScale `us-west` the request pays that distance once.
-      placement: { region: "aws:us-west-2" },
+      // SCIENT-FORK:START — next to the us-east database (src/db.ts).
+      placement: { region: "aws:us-east-1" },
+      // SCIENT-FORK:END
       domain: relayPublicDomain,
     })),
     Effect.orDie,
@@ -164,6 +179,56 @@ export const layer = Api.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    // SCIENT-FORK:START clerk-legacy-instance — both values, or neither (src/auth/ClerkInstances.ts).
+    const clerkLegacySecretKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("CLERK_LEGACY_SECRET_KEY")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
+    const clerkLegacyPublishableKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.String("CLERK_LEGACY_PUBLISHABLE_KEY")),
+        (value) => value.trim().length > 0,
+      ),
+    );
+    const clerkLegacy =
+      clerkLegacySecretKey && clerkLegacyPublishableKey
+        ? { secretKey: clerkLegacySecretKey, publishableKey: clerkLegacyPublishableKey.trim() }
+        : undefined;
+    // SCIENT-FORK:END clerk-legacy-instance
+    // SCIENT-FORK:START account-deletion — the Sign in with Apple key; revocation is off without it.
+    const appleSignInPrivateKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("APPLE_SIGN_IN_PRIVATE_KEY")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
+    const appleSignInKeyId = (yield* Config.String("APPLE_SIGN_IN_KEY_ID").pipe(
+      Config.withDefault(""),
+    )).trim();
+    const appleSignInTeamId = (yield* Config.String("APPLE_SIGN_IN_TEAM_ID").pipe(
+      Config.withDefault(""),
+    )).trim();
+    const appleSignInClientIds = (yield* Config.String("APPLE_SIGN_IN_CLIENT_IDS").pipe(
+      Config.withDefault(""),
+    ))
+      .split(",")
+      .map((clientId) => clientId.trim())
+      .filter((clientId) => clientId.length > 0);
+    const appleSignIn =
+      appleSignInPrivateKey &&
+      appleSignInKeyId &&
+      appleSignInTeamId &&
+      appleSignInClientIds.length > 0
+        ? {
+            teamId: appleSignInTeamId,
+            keyId: appleSignInKeyId,
+            privateKey: appleSignInPrivateKey,
+            clientIds: appleSignInClientIds,
+          }
+        : undefined;
+    // SCIENT-FORK:END account-deletion
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -193,6 +258,9 @@ export const layer = Api.make(
     const legacyTunnelGraceMinutes = Option.getOrUndefined(
       yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
     );
+    // SCIENT-FORK:START — RELAY_DEFAULT_TUNNEL_LIMIT, read at deploy time like the cleanup modes.
+    const defaultManagedTunnelLimit = yield* RelayConfiguration.defaultManagedTunnelLimitConfig;
+    // SCIENT-FORK:END
     // Endpoint keys and their hashes differ by stage, including in shared accounts.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
       namespaceId: 1001,
@@ -236,6 +304,9 @@ export const layer = Api.make(
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
+        // SCIENT-FORK:START clerk-legacy-instance
+        ...(clerkLegacy ? { clerkLegacy } : {}),
+        // SCIENT-FORK:END clerk-legacy-instance
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
@@ -246,6 +317,9 @@ export const layer = Api.make(
         ...(t3ChatLinkSecret
           ? { t3Chat: { baseUrl: t3ChatBaseUrl, linkSecret: t3ChatLinkSecret } }
           : {}),
+        // SCIENT-FORK:START account-deletion
+        ...(appleSignIn ? { appleSignIn } : {}),
+        // SCIENT-FORK:END account-deletion
       });
     });
 
@@ -282,7 +356,19 @@ export const layer = Api.make(
       }),
     });
 
-    const layerRuntime = Layer.empty.pipe(
+    // SCIENT-FORK:START account-deletion — heads the runtime chain, which is at pipe's arity limit.
+    const layerAccountDeletion = AccountDeletion.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          AccountRecords.layer,
+          ClerkUsers.layer,
+          LinkSupersession.layer,
+          AppleSignInRevocation.layer,
+        ),
+      ),
+    );
+    const layerRuntime = layerAccountDeletion.pipe(
+      // SCIENT-FORK:END account-deletion
       Layer.provideMerge(MobileRegistrations.layer),
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
@@ -347,7 +433,17 @@ export const layer = Api.make(
           Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
         ),
       ),
-      Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
+      // SCIENT-FORK:START — with the configured default cap; unset keeps the contract default.
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings),
+          Option.match(defaultManagedTunnelLimit, {
+            onNone: () => Layer.empty,
+            onSome: (limit) => Layer.succeed(ManagedTunnelLimits.ManagedTunnelDefaultLimit, limit),
+          }),
+        ),
+      ),
+      // SCIENT-FORK:END
       Layer.provideMerge(layerWebcrypto),
     );
 
@@ -448,16 +544,9 @@ export const layer = Api.make(
         deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
       },
       (stream) =>
-        stream.pipe(
-          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach((message) =>
-            ApnsDeliveries.ApnsDeliveries.pipe(
-              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          ),
-          Effect.provide(layerRuntime),
-        ),
+        Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+          deliveries.processBatch(stream),
+        ).pipe(Effect.provide(layerRuntime)),
     );
 
     yield* Cloudflare.Queues.consumeQueueMessages<unknown>(

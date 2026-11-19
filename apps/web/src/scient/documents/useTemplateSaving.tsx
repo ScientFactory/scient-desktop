@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 
 import { toastManager } from "~/components/ui/toast";
@@ -16,11 +17,13 @@ import { captureVisualPage } from "./templatePreviews";
 import { type UserTemplate, userTemplates } from "./userTemplates";
 
 /** A file a template needs that could not be taken whole. */
-class Incomplete extends Error {
-  constructor(readonly path: string) {
-    super(`${path} could not be read whole.`);
+class Incomplete extends Schema.TaggedError<Incomplete>()("Incomplete", { path: Schema.String }) {
+  override get message(): string {
+    return `${this.path} could not be read whole.`;
   }
 }
+
+const isIncomplete = Schema.is(Incomplete);
 
 /** The most included files a template carries, and their total size. */
 const MAX_FILES = 40;
@@ -72,7 +75,7 @@ export function useTemplateSaving(input: {
    * a template missing a chapter is never saved.
    */
   const capture = async (replacing: UserTemplate | null) => {
-    if (!(await flush(key.relativePath))) throw new Incomplete(key.relativePath);
+    if (!(await flush(key.relativePath))) throw new Incomplete({ path: key.relativePath });
     // Its first page as Visual draws it, read before anything else can change the screen.
     const source = lease.getSnapshot().draftSource;
     const picture = captureVisualPage();
@@ -85,9 +88,10 @@ export function useTemplateSaving(input: {
       if (name in files) continue;
       const path = `${folder}${name}`;
       if (Object.keys(files).length >= MAX_FILES || !(await flush(path)))
-        throw new Incomplete(path);
+        throw new Incomplete({ path });
       const contents = await read(path);
-      if (contents === null || (bytes += contents.length) > MAX_BYTES) throw new Incomplete(path);
+      if (contents === null || (bytes += contents.length) > MAX_BYTES)
+        throw new Incomplete({ path });
       files[name] = contents;
       queue.push(...includedFiles(contents));
     }
@@ -107,7 +111,7 @@ export function useTemplateSaving(input: {
       templateEdits.set(key, saved.id);
       toastManager.add({ type: "success", title: `Saved as the template “${saved.name}”.` });
     } catch (error) {
-      if (error instanceof Incomplete)
+      if (isIncomplete(error))
         toastManager.add({
           type: "error",
           title: "The template could not be saved.",

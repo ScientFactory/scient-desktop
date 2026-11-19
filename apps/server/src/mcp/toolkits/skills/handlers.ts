@@ -4,10 +4,19 @@ import {
   toSkillReleaseSummary,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
+import type { ScientSkillManagementError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import { ScientSkillToolError, ScientSkillsToolkit, type ScientSkillListInput } from "./tools.ts";
+import * as PersonalSkills from "../../../scient/skills/PersonalSkills.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
+import {
+  SKILL_PAGE_SIZE,
+  ScientSkillToolError,
+  ScientSkillsToolkit,
+  type ScientSkillListInput,
+} from "./tools.ts";
 
 const compareStrings = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
@@ -53,9 +62,15 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
   }
   const matches = skillScope.skills.filter((skill) => skill.name === requestedName);
   if (matches.length === 0) {
+    const nearest = nearestSkillNames(
+      skillScope.skills.map((skill) => skill.name),
+      requestedName,
+    );
     return yield* toolError(
       "not-found",
-      "No Scient skill with that name is available in this turn. Call scient_skills_list once and retry with an exact returned name.",
+      `No Scient skill with that name is available in this turn.${
+        nearest.length === 0 ? "" : ` Closest names: ${nearest.join(", ")}.`
+      } Call scient_skills_list once and retry with an exact returned name.`,
     );
   }
   if (matches.length > 1) {
@@ -129,18 +144,24 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
   const browseFallback = terms.length > 0 && matched.length === 0 && skills.length > 0;
   const matches = browseFallback ? skills : matched;
   const offset = input.offset ?? 0;
-  const page = matches.slice(offset, offset + (input.limit ?? 20));
+  const pageSize = Math.min(input.limit ?? SKILL_PAGE_SIZE.default, SKILL_PAGE_SIZE.max);
+  const page = matches.slice(offset, offset + pageSize);
   const nextOffset = offset + page.length < matches.length ? offset + page.length : null;
   const includesAllSkills =
     scope.status === "complete" && terms.length === 0 && offset === 0 && nextOffset === null;
-  const hint =
+  // A browse page under incomplete discovery needs both explanations, or it reads as matches.
+  const hint = [
     scope.status === "incomplete"
       ? "Scient skill discovery was incomplete for this turn. Results may be partial, and an empty result does not establish that no Scient skills are available. Retry discovery after a new turn scope is prepared."
       : skills.length === 0
         ? "No Scient skills are available in this prepared turn scope."
-        : browseFallback
-          ? "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order."
-          : undefined;
+        : undefined,
+    browseFallback
+      ? "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order."
+      : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
   return {
     skills: page,
     total: matches.length,
@@ -190,10 +211,155 @@ export const readScientSkillResourceForInvocation = Effect.fn("ScientSkillsToolk
   },
 );
 
-const handlers = {
-  scient_skills_list: listScientSkillsForInvocation,
-  scient_skill_load: loadScientSkillForInvocation,
-  scient_skill_read_resource: readScientSkillResourceForInvocation,
-} satisfies Parameters<typeof ScientSkillsToolkit.toLayer>[0];
+const NEAREST_SKILL_LIMIT = 3;
 
-export const ScientSkillsToolkitHandlersLive = ScientSkillsToolkit.toLayer(handlers);
+const editDistance = (left: string, right: string): number => {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j += 1) {
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + (left[i - 1] === right[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length]!;
+};
+
+/** In-scope names within a few edits of the request, or sharing one of its words. */
+const nearestSkillNames = (names: ReadonlyArray<string>, requested: string) => {
+  const words = new Set(requested.split("-"));
+  return [...new Set(names)]
+    .map((name) => ({ name, distance: editDistance(name, requested) }))
+    .filter(
+      ({ name, distance }) =>
+        distance <= Math.max(2, Math.floor(requested.length / 3)) ||
+        name.split("-").some((word) => word.length > 2 && words.has(word)),
+    )
+    .toSorted(
+      (left, right) => left.distance - right.distance || compareStrings(left.name, right.name),
+    )
+    .slice(0, NEAREST_SKILL_LIMIT)
+    .map(({ name }) => name);
+};
+
+/** The management failure's own reason; storage faults are Scient's, not the agent's input. */
+const personalError = (error: ScientSkillManagementError) => {
+  switch (error.reason) {
+    case "name-taken":
+    case "limit":
+      return toolError(error.reason, error.message);
+    case "write-failed":
+    case "unreadable":
+    case "unavailable":
+      return toolError("storage-failed", error.message);
+    case "not-found":
+      return toolError("not-found", error.message);
+    case "invalid-skill":
+    case "unsafe":
+    case "too-large":
+      return toolError("invalid-skill", error.message);
+    default:
+      return toolError(error.operation === "read" ? "not-found" : "invalid-skill", error.message);
+  }
+};
+
+/** A read miss on a skill the turn has from elsewhere says how that skill can change. */
+const readMissHint = Effect.fn("ScientSkillsToolkit.readMissHint")(function* (name: string) {
+  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
+  const releases = invocation.skillScope?.releases.values() ?? [];
+  const origin = [...releases].find((release) => release.name === name)?.origin;
+  if (origin === undefined || origin === "personal") return "";
+  return origin.startsWith("project:")
+    ? ` ${name} is a project skill: edit its files at .scient/skills/${name}/ in the project.`
+    : ` ${name} comes with Scient or a plugin and can't be edited: load it with scient_skill_load, or save an improved copy under a new name with scient_skill_save.`;
+});
+
+/** Save the user's own skill; it reaches agents from the next message, like any skill change. */
+export const savePersonalSkillForInvocation = Effect.fn("ScientSkillsToolkit.savePersonal")(
+  function* (
+    personal: PersonalSkills.PersonalSkillsShape,
+    input: {
+      readonly name: string;
+      readonly files: ReadonlyArray<{ readonly path: string; readonly content: string }>;
+    },
+  ) {
+    const paths = new Set<string>();
+    for (const file of input.files) {
+      if (paths.has(file.path))
+        return yield* toolError("invalid-skill", `${file.path} is listed twice.`);
+      paths.add(file.path);
+    }
+    const saved = yield* personal
+      .save({
+        name: input.name,
+        files: Object.fromEntries(input.files.map((file) => [file.path, file.content])),
+      })
+      .pipe(Effect.mapError(personalError));
+    const status = saved.created ? ("created" as const) : ("updated" as const);
+    return {
+      name: input.name,
+      status,
+      active: saved.active,
+      message: saved.withheld
+        ? `Saved ${input.name}, but it is withheld: ${saved.withheld}`
+        : saved.created
+          ? `Saved ${input.name}. It is on for every agent from the user's next message. They can turn it off or undo this from its row in Settings → Extensions → Skills.`
+          : `Updated ${input.name}; the earlier version is kept. ${saved.active ? "It stays on." : "It stays off, as the user set it."} The user can undo this from its row in Settings → Extensions → Skills.`,
+    };
+  },
+);
+
+export const readPersonalSkillForInvocation = Effect.fn("ScientSkillsToolkit.readPersonal")(
+  function* (personal: PersonalSkills.PersonalSkillsShape, input: { readonly name: string }) {
+    const files = yield* personal
+      .read(input.name)
+      .pipe(
+        Effect.catch((error) =>
+          error.reason === "not-found"
+            ? readMissHint(input.name).pipe(
+                Effect.flatMap((hint) =>
+                  Effect.fail(toolError("not-found", `${error.message}${hint}`)),
+                ),
+              )
+            : Effect.fail(personalError(error)),
+        ),
+      );
+    return { name: input.name, files: [...files] };
+  },
+);
+
+/**
+ * Which skill an agent loaded: the name of one built into Scient, otherwise only where it came
+ * from, since the user's, a project's and a plugin's skill names are theirs.
+ */
+export const loadedSkillFacts = (release: Pick<SkillRelease, "name" | "origin">) =>
+  release.origin === "scient"
+    ? { feature: "skills.load", variant: "scient", skill: release.name }
+    : { feature: "skills.load", variant: release.origin.split(":", 1)[0] ?? "other" };
+
+export const ScientSkillsToolkitHandlersLive = ScientSkillsToolkit.toLayer(
+  Effect.gen(function* () {
+    const personal = yield* PersonalSkills.PersonalSkills;
+    const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
+    return {
+      scient_skills_list: listScientSkillsForInvocation,
+      scient_skill_load: (input) =>
+        loadScientSkillForInvocation(input).pipe(
+          Effect.tap((loaded) =>
+            analytics === undefined
+              ? Effect.void
+              : analytics
+                  .record("feature.used", loadedSkillFacts(loaded.skill))
+                  .pipe(Effect.ignoreCause()),
+          ),
+        ),
+      scient_skill_read_resource: readScientSkillResourceForInvocation,
+      scient_skill_save: (input) => savePersonalSkillForInvocation(personal, input),
+      scient_skill_read: (input) => readPersonalSkillForInvocation(personal, input),
+    } satisfies Parameters<typeof ScientSkillsToolkit.toLayer>[0];
+  }),
+);

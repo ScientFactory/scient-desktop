@@ -4,8 +4,10 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   EnvironmentId,
   DesktopPreviewTabInputSchema,
+  type DesktopCapturedSignIn,
 } from "@t3tools/contracts";
 import * as Electron from "electron";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { readBrowserPasswords } from "./browserPasswords.ts";
 import * as Option from "effect/Option";
@@ -17,12 +19,31 @@ import { PreviewManager } from "../../preview/Manager.ts";
 import { safeHttpOrigin } from "../../preview/FaviconCapture.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { discoverSourceProfiles } from "./sourceProfiles.ts";
+import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "../../preview/BrowserImport/Sources.ts";
+import { throughBrowserIsOn } from "./browserConnectionImport.ts";
 import { makeSiteIcons } from "./siteIcons.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
+import { groupSignedInSites } from "./signedInSites.ts";
+import {
+  FillMainInput,
+  ReadSessionsInput,
+  fillMain,
+  readSessions,
+  removeSiteCookies,
+  signOutMainSite,
+  WithdrawMainInput,
+  withdrawFromMain,
+} from "./mainFill.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
+import {
+  ChromeSignInInput,
+  chromeSignIn,
+  chromeSignInBrowser,
+  endChromeSignIn,
+} from "./chromeSignIn.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
+import { accountsOwner } from "./accountsOwner.ts";
 import { readGoogleSessions } from "./googleSessions.ts";
 import { isPublicHttps, quietVisit } from "./quietVisit.ts";
 import * as Channels from "./protocol.ts";
@@ -32,6 +53,7 @@ const Fill = Schema.Struct({
   tabId: DesktopPreviewTabInputSchema.fields.tabId,
   expectedOrigin: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
   username: Schema.optional(Value),
+  otherUsername: Schema.optional(Value),
   password: Schema.optional(Value),
   otp: Schema.optional(Value),
   documentId: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
@@ -44,8 +66,10 @@ const Sites = Schema.Struct({
 });
 const Capture = Schema.Struct({
   url: Schema.String.check(Schema.isMaxLength(2048)),
+  path: Schema.String.check(Schema.isMaxLength(2048)),
+  step: Schema.Literals(["password", "username"]),
   username: Value,
-  password: Value.check(Schema.isMinLength(1)),
+  password: Value,
 });
 
 const decodeFill = Schema.decodeUnknownOption(Fill);
@@ -239,17 +263,70 @@ const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
   return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
     Effect.flatMap((session) =>
       Effect.tryPromise({
-        try: async () => {
-          const removals = siteCookieRemovals(await session.cookies.get({}), input.value.site);
-          await Promise.all(removals.map(({ url, name }) => session.cookies.remove(url, name)));
-          await session.cookies.flushStore();
-          return true;
-        },
+        try: () => removeSiteCookies(session, input.value.site).then(() => true),
         catch: unavailable,
       }),
     ),
     Effect.orElseSucceed(() => false),
   );
+});
+
+const decodeFillMain = Schema.decodeUnknownOption(FillMainInput);
+export const fillMainHandler = Effect.fn("DesktopAccounts.fillMainHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const input = decodeFillMain(raw);
+  if (Option.isNone(input)) return null;
+  return yield* fillMain(input.value);
+});
+
+const decodeReadSessions = Schema.decodeUnknownOption(ReadSessionsInput);
+const readSessionsHandler = Effect.fn("DesktopAccounts.readSessionsHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const input = decodeReadSessions(raw);
+  if (Option.isNone(input)) return null;
+  return yield* readSessions(input.value);
+});
+
+const decodeSignOutMain = Schema.decodeUnknownOption(
+  Schema.Struct({ site: SignOut.fields.site, environmentId: Schema.optional(EnvironmentId) }),
+);
+const signOutMainHandler = Effect.fn("DesktopAccounts.signOutMainHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return false;
+  const input = decodeSignOutMain(raw);
+  if (Option.isNone(input)) return false;
+  return yield* signOutMainSite(
+    input.value.site,
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+  ).pipe(Effect.orElseSucceed(() => false));
+});
+
+const decodeWithdrawMain = Schema.decodeUnknownOption(WithdrawMainInput);
+export const withdrawFromMainHandler = Effect.fn("DesktopAccounts.withdrawFromMainHandler")(
+  function* (raw: unknown, event?: AccountsInvokeEvent) {
+    if (!(yield* appWindowSender(event))) return null;
+    const input = decodeWithdrawMain(raw);
+    if (Option.isNone(input)) return null;
+    return yield* withdrawFromMain(input.value);
+  },
+);
+
+const decodeChromeSignIn = Schema.decodeUnknownOption(ChromeSignInInput);
+const chromeSignInHandler = Effect.fn("DesktopAccounts.chromeSignInHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  const input = decodeChromeSignIn(raw);
+  if (!(yield* appWindowSender(event)) || Option.isNone(input)) return { outcome: "failed" };
+  return yield* chromeSignIn(input.value);
 });
 
 const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
@@ -258,6 +335,22 @@ const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
 ) {
   if (!(yield* appWindowSender(event)) || raw !== undefined) return [];
   return yield* discoverSourceProfiles();
+});
+
+const decodeSourceId = Schema.decodeUnknownOption(BrowserImportSourceId);
+/** Whether a browser that hands its cookies over itself has remote debugging on; never asks. */
+const browserConnection = Effect.fn("DesktopAccounts.browserConnection")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const sourceId = decodeSourceId(raw);
+  const definition = Option.isSome(sourceId)
+    ? BROWSER_IMPORT_SOURCES.find(({ id }) => id === sourceId.value)
+    : undefined;
+  if (definition === undefined) return null;
+  const on = yield* throughBrowserIsOn(definition, yield* sourcePathContext);
+  return on === undefined ? null : { on };
 });
 
 const decodePasswordSource = Schema.decodeUnknownOption(
@@ -303,13 +396,64 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
     handler: readBrowserPasswordsCsv,
   });
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
+  yield* ipc.handle({ channel: Channels.BROWSER_CONNECTION, handler: browserConnection });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
   yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
   yield* ipc.handle({ channel: Channels.GOOGLE_SESSIONS, handler: googleSessions });
   yield* ipc.handle({ channel: Channels.QUIET_VISIT, handler: visitQuietly });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
+  yield* ipc.handle({ channel: Channels.FILL_MAIN, handler: fillMainHandler });
+  yield* ipc.handle({ channel: Channels.READ_SESSIONS, handler: readSessionsHandler });
+  yield* ipc.handle({ channel: Channels.SIGN_OUT_MAIN_SITE, handler: signOutMainHandler });
+  yield* ipc.handle({ channel: Channels.WITHDRAW_FROM_MAIN, handler: withdrawFromMainHandler });
+  yield* ipc.handle({
+    channel: Channels.ACCOUNTS_OWNER,
+    handler: Effect.fn("DesktopAccounts.accountsOwner")(function* (
+      _raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      if (!(yield* appWindowSender(event))) return false;
+      return accountsOwner(yield* (yield* ElectronWindow).appWindows) === event?.sender.id;
+    }),
+  });
+  yield* ipc.handle({
+    channel: Channels.CHROME_SIGN_IN_BROWSER,
+    handler: Effect.fn("DesktopAccounts.chromeSignInBrowser")(function* (
+      _raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      if (!(yield* appWindowSender(event))) return null;
+      return yield* chromeSignInBrowser;
+    }),
+  });
+  yield* ipc.handle({ channel: Channels.CHROME_SIGN_IN, handler: chromeSignInHandler });
+  yield* ipc.handle({
+    channel: Channels.END_CHROME_SIGN_IN,
+    handler: Effect.fn("DesktopAccounts.endChromeSignInHandler")(function* (
+      raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      if (!(yield* appWindowSender(event)) || typeof raw !== "boolean") return false;
+      return yield* endChromeSignIn(raw);
+    }),
+  });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
+  if (!Electron.app.isPackaged)
+    yield* ipc.handle({
+      channel: Channels.QUALIFY_SESSION_COPY,
+      handler: Effect.fn("DesktopAccounts.qualifySessionCopyHandler")(function* (
+        _raw: unknown,
+        event?: AccountsInvokeEvent,
+      ) {
+        if (!(yield* appWindowSender(event))) return null;
+        // Loaded only here: a packaged build never registers this channel.
+        const { qualifySessionCopy } = yield* Effect.promise(
+          () => import("./qualifySessionCopy.ts"),
+        );
+        return yield* Effect.promise(qualifySessionCopy);
+      }),
+    });
   const manager = yield* PreviewManager;
   const context = yield* Effect.context<PreviewManager | ElectronWindow>();
   const runPromise = Effect.runPromiseWith(context);
@@ -325,6 +469,24 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   const detected = (event: Electron.IpcMainEvent) => {
     void runPromise(forwardLoginForm(event).pipe(Effect.ignore)).catch(() => undefined);
   };
+  // A window closing may move the background work: every window asks again.
+  const ownerMayChange = (_event: unknown, window: Electron.BrowserWindow) =>
+    window.once("closed", () => {
+      void runPromise(
+        Effect.gen(function* () {
+          for (const open of yield* (yield* ElectronWindow).appWindows)
+            if (!open.webContents.isDestroyed())
+              open.webContents.send(Channels.ACCOUNTS_OWNER_CHANGED);
+        }),
+      ).catch(() => undefined);
+    });
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      for (const window of Electron.BrowserWindow.getAllWindows()) ownerMayChange(null, window);
+      Electron.app.on("browser-window-created", ownerMayChange);
+    }),
+    () => Effect.sync(() => Electron.app.removeListener("browser-window-created", ownerMayChange)),
+  );
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       Electron.ipcMain.on(Channels.CAPTURE_ALLOWED, allowed);
@@ -369,13 +531,33 @@ export const forwardCapturedSignIn = Effect.fn("DesktopAccounts.forwardCapturedS
   if (contents !== event.sender || !isCaptureGuest(event)) return;
   const origin = safeHttpOrigin(contents.getURL());
   if (origin === null || decoded.value.url !== origin) return;
+  const { step, username, password, path } = decoded.value;
+  const key = `${tabId}\u0000${origin}`;
+  const now = yield* Clock.currentTimeMillis;
+  // A username step is kept for the password step that follows, in this process: a page's own
+  // memory ends with the page. It is never sent on its own.
+  if (step === "username") {
+    if (username) earlierUsernames.set(key, { username, at: now });
+    return;
+  }
+  if (!password) return;
+  const earlier = earlierUsernames.get(key);
+  earlierUsernames.delete(key);
+  const carried = !username && earlier && now - earlier.at < USERNAME_STEP_MS;
   hostWindow.value.webContents.send(Channels.CAPTURED, {
-    ...decoded.value,
     url: origin,
+    path,
+    step,
+    username: carried ? earlier.username : username,
+    password,
+    usernameFrom: carried ? "earlier-step" : "form",
     tabId,
     profileId: identity.profileId,
-  });
+  } satisfies DesktopCapturedSignIn);
 });
+
+const USERNAME_STEP_MS = 10 * 60_000;
+const earlierUsernames = new Map<string, { readonly username: string; readonly at: number }>();
 
 const FormReport = Schema.Struct({
   url: Schema.String,
@@ -383,6 +565,14 @@ const FormReport = Schema.Struct({
   userEdited: Schema.Boolean,
   hasPassword: Schema.Boolean,
   hasValues: Schema.Boolean,
+  boxes: Schema.Array(
+    Schema.Struct({
+      email: Schema.Boolean,
+      minLength: Schema.Number,
+      maxLength: Schema.Number,
+      pattern: Schema.String.check(Schema.isMaxLength(1024)),
+    }),
+  ).check(Schema.isMaxLength(2)),
 });
 const decodeFormReport = Schema.decodeUnknownOption(FormReport);
 const TabInput = Schema.Struct({ tabId: DesktopPreviewTabInputSchema.fields.tabId });

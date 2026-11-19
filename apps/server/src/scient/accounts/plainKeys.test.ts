@@ -1,5 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
+import { AccountId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { expect, it } from "vite-plus/test";
-import { secretsInText } from "./plainKeys.ts";
+import { fakeAccounts } from "./Accounts.testkit.ts";
+import { makePlainKeys, secretsInText } from "./plainKeys.ts";
 
 it("finds real-looking secrets and skips the rest", () => {
   const text = [
@@ -20,3 +26,29 @@ it("reads PowerShell's way of setting a variable", () => {
     { name: "OPENAI_API_KEY", value: "sk-synthetic-value-12345" },
   ]);
 });
+
+effectIt.effect("counts a file's key as kept only when its value is in Accounts", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped();
+    yield* fs.writeFileString(`${root}/.env`, "OPENAI_API_KEY=sk-synthetic-development-key");
+    yield* fs.writeFileString(
+      `${root}/.env.production`,
+      "OPENAI_API_KEY=sk-synthetic-production-key",
+    );
+    const kept = {
+      accountId: AccountId.make("acc_fixture1"),
+      details: { kind: "api-key", envName: "OPENAI_API_KEY" },
+      secrets: { token: { source: { type: "scient" } } },
+    };
+    const accounts = fakeAccounts({
+      accounts: [kept as never],
+      values: { token: "sk-synthetic-development-key" },
+    });
+    const found = yield* (yield* makePlainKeys(accounts.service)).find([root]);
+    expect(found.filter((key) => key.file.startsWith(root))).toEqual([
+      { file: `${root}/.env`, name: "OPENAI_API_KEY", kept: true },
+      { file: `${root}/.env.production`, name: "OPENAI_API_KEY", kept: false },
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- gated qualification uses an explicit native Python and a recording Fetch service restricted to its loopback fixture.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
 import * as NodeProcess from "node:process";
 
@@ -19,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as OwnedLocalEndpoints from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -171,6 +173,11 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
               Layer.succeed(OwnedLocalEndpoints.OwnedLocalEndpointRegistry, scannerOwnedEndpoints),
             ),
             Layer.provide(scannerFetchLayer(requestedUrls)),
+            Layer.provide(
+              Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+                shouldRunOpportunisticWork: Effect.succeed(true),
+              }),
+            ),
           );
 
           yield* Effect.gen(function* () {
@@ -207,6 +214,17 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
             const waitForLsofProcess = Effect.fn("PortScannerPythonCompute.waitForLsofProcess")(
               function* (processId: number) {
                 yield* scanConfiguredFixture(1);
+                // Linux scans read /proc before lsof, so confirm the kernel's listener with the
+                // same lsof query when the scanner did not run it.
+                if (!lsofObservedProcess(lsofSnapshots, processId)) {
+                  lsofSnapshots.push(
+                    NodeChildProcess.execFileSync(
+                      "lsof",
+                      ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
+                      { encoding: "utf8" },
+                    ),
+                  );
+                }
                 expect(lsofObservedProcess(lsofSnapshots, processId)).toBe(true);
               },
             );

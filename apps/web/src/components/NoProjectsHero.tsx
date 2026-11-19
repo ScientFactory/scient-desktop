@@ -1,4 +1,5 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { T, useGT } from "gt-react";
 import { MessageSquareDashedIcon, PlusIcon } from "lucide-react";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -9,9 +10,11 @@ import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { DesktopWorkspaceReadiness } from "./desktop/DesktopWorkspaceReadiness";
 
 export function NoProjectsHero() {
-  const contentArea = workspaceAreaProps("home", 1, "Home");
+  const gt = useGT();
+  const contentArea = workspaceAreaProps("home", 1, gt("Home"));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
@@ -22,22 +25,29 @@ export function NoProjectsHero() {
       role="main"
       className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
     >
+      <DesktopWorkspaceReadiness
+        environmentId={primaryEnvironmentId}
+        initialized
+        projectRestored={false}
+      />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <Empty size="hero" className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle>What should we work on?</EmptyTitle>
+              <EmptyTitle>
+                <T>What should we work on?</T>
+              </EmptyTitle>
               <EmptyDescription>
                 {scratchTargetEnvironmentId === null
-                  ? "Add a project to start your first thread."
-                  : "Add a project, or start without one."}
+                  ? gt("Add a project to start your first thread.")
+                  : gt("Add a project, or start without one.")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center gap-2">
                 <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
                   <PlusIcon className="size-4" />
-                  Add project
+                  <T>Add project</T>
                 </Button>
                 {scratchTargetEnvironmentId === null ? null : (
                   <Button
@@ -46,7 +56,7 @@ export function NoProjectsHero() {
                     onClick={() => void startScratchThread(scratchTargetEnvironmentId)}
                   >
                     <MessageSquareDashedIcon className="size-4" />
-                    Start without a project
+                    <T>Start without a project</T>
                   </Button>
                 )}
               </div>

@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { CommandId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type { ResolvedModelConnection } from "../../customModels.ts";
@@ -74,7 +75,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
           );
           const { environment } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const releaseFile = NodePath.join(root, "release");
           NodeChildProcess.execFileSync("mkfifo", [releaseFile]);

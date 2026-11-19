@@ -29,6 +29,16 @@ export const scientRetainMissingProviderModels = (
     return isPendingInitialProbe || didInstalledProviderProbeFail;
   }
 
+  // T3 keeps OpenCode's models through a cold server's empty warning. After a logout OpenCode
+  // reports no connected upstream providers, and its stale models must go.
+  if (
+    provider.driver === ProviderDriverKind.make("opencode") &&
+    provider.status === "warning" &&
+    provider.message?.includes("did not report any connected upstream providers") === true
+  ) {
+    return false;
+  }
+
   return undefined;
 };
 

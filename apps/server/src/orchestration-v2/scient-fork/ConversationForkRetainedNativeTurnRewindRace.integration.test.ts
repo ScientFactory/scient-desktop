@@ -38,12 +38,12 @@ import { layerWithRegistry as makeReplayLayer } from "../testkit/ProviderReplayH
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerConfig } from "../../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { layerGitVcsDriverWithoutBranches } from "../testkit/ProviderRuntimeTestServices.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
@@ -74,7 +74,7 @@ const layer = makeReplayLayer(
         const gate = forkCommitGate;
         if (
           gate === undefined ||
-          input.commandType !== "thread.conversation.fork" ||
+          input.commandType !== "thread.fork" ||
           input.forkHistory === undefined
         )
           return sink.commitCommand(input);
@@ -105,14 +105,13 @@ it.effect(
       const orchestrator = yield* OrchestratorV2;
       const sink = yield* EventSinkV2;
       const store = yield* ProjectionStoreV2;
-      const forks = yield* ConversationForkService;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
         Effect.provide(
           ProviderEventIngestor.layer.pipe(
             Layer.provide(layerGitVcsDriverWithoutBranches),
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                getInstance: () => Effect.succeed(undefined),
+                getInstance: () => Effect.undefined,
               }),
             ),
           ),
@@ -400,7 +399,7 @@ it.effect(
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       forkCommitGate = { entered, release };
-      const forkFiber = yield* forks.dispatch(command).pipe(Effect.forkScoped);
+      const forkFiber = yield* forkConversation(command).pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
 
       // This follows the production acceptance path: the live run router first

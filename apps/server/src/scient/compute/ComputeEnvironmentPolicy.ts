@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- canonical path validation needs node:path.
 import * as NodePath from "node:path";
 
+import { RESULTS_FOLDER_VARIABLE } from "@t3tools/shared/computeResults";
+
 /**
  * Python/Jupyter overrides would change how the bridge loads, and the app's own sign-in tokens
  * are not the user's. The user's own credentials (cloud, API keys) stay available to their code, as in
@@ -69,8 +71,12 @@ const canonicalKey = (key: string): string => key.toUpperCase();
 const DENIED_KEYS: ReadonlySet<string> = new Set(ENVIRONMENT_DENYLIST.map(canonicalKey));
 const DENIED_PREFIXES: ReadonlyArray<string> = ENVIRONMENT_PREFIX_DENYLIST.map(canonicalKey);
 
-function isDenied(key: string): boolean {
+/** Variables Scient sets for one run, which a launch keeps and a host environment never passes. */
+const SCIENT_RUN_KEYS: ReadonlySet<string> = new Set([canonicalKey(RESULTS_FOLDER_VARIABLE)]);
+
+function isDenied(key: string, keepRunKeys: boolean): boolean {
   const canonical = canonicalKey(key);
+  if (keepRunKeys && SCIENT_RUN_KEYS.has(canonical)) return false;
   if (DENIED_KEYS.has(canonical)) return true;
   return DENIED_PREFIXES.some((prefix) => canonical.startsWith(prefix));
 }
@@ -79,7 +85,10 @@ function isDenied(key: string): boolean {
  * Use extendEnv false with this complete sanitized record or host variables return. Never log
  * values; expose only removed key names for observability.
  */
-export function sanitizeComputeEnvironment(hostEnv: Readonly<Record<string, string>>): {
+export function sanitizeComputeEnvironment(
+  hostEnv: Readonly<Record<string, string>>,
+  options: { readonly keepRunKeys?: boolean } = {},
+): {
   readonly environment: Record<string, string>;
   readonly removedKeys: ReadonlyArray<string>;
 } {
@@ -87,7 +96,7 @@ export function sanitizeComputeEnvironment(hostEnv: Readonly<Record<string, stri
   const env: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(hostEnv)) {
-    if (isDenied(key)) {
+    if (isDenied(key, options.keepRunKeys === true)) {
       removed.push(key);
     } else {
       env[key] = value;

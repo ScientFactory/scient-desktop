@@ -34,6 +34,11 @@ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const pidLogPath = process.env.T3_ACP_PID_LOG_PATH;
 const emptyPromptAcknowledgement: AcpSchema.PromptResponse = {};
 const nativeV2 = process.env.T3_ACP_GROK_MOCK_GENERATION === "2";
+const effortMismatch = process.env.T3_ACP_GROK_EFFORT_MISMATCH === "1";
+const crashPrompt = process.env.T3_ACP_CRASH_PROMPT === "1";
+const emitXAiRateLimitThenHang = process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
+const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
+const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
 if (pidLogPath) NodeFS.writeFileSync(pidLogPath, String(process.pid));
 
 const program = Effect.gen(function* () {
@@ -142,8 +147,7 @@ const program = Effect.gen(function* () {
           if (request.configId === "native-model-choice" && typeof request.value === "string")
             modelId = request.value;
           if (request.configId === "native-effort-choice" && typeof request.value === "string") {
-            reasoningEffort =
-              process.env.T3_ACP_GROK_EFFORT_MISMATCH === "1" ? "high" : request.value;
+            reasoningEffort = effortMismatch ? "high" : request.value;
           }
           return { configOptions: configOptions() };
         }),
@@ -153,7 +157,7 @@ const program = Effect.gen(function* () {
         beginAcpMockPrompt(cancelledSessions, request.sessionId);
         cancelled = yield* Deferred.make<void>();
         if (
-          process.env.T3_ACP_CRASH_PROMPT === "1" &&
+          crashPrompt &&
           request.prompt.some((part) => part.type === "text" && part.text === "crash now")
         ) {
           return yield* Effect.sync(() => process.exit(23));
@@ -162,7 +166,7 @@ const program = Effect.gen(function* () {
           typeof request._meta?.promptId === "string"
             ? request._meta.promptId
             : "mock-xai-prompt-1";
-        if (process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1") {
+        if (emitXAiRateLimitThenHang) {
           yield* notify("_x.ai/session/prompt_complete", {
             sessionId,
             promptId,
@@ -173,7 +177,7 @@ const program = Effect.gen(function* () {
             Effect.as({ stopReason: "cancelled" as const }),
           );
         }
-        if (process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1") {
+        if (emitPlanThenHang) {
           yield* update({
             sessionUpdate: "plan",
             entries: [
@@ -184,7 +188,7 @@ const program = Effect.gen(function* () {
             Effect.as({ stopReason: "cancelled" as const }),
           );
         }
-        if (process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1") {
+        if (emitGrokMonitorPostTurnPoll) {
           const taskId = "01a05f41-5107-7550-821e-79e8d1cd7687";
           const description = "Watch count-sheet Typst unit until done";
           yield* update({

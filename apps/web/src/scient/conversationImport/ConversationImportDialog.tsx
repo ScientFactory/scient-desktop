@@ -50,7 +50,7 @@ import {
 } from "./client";
 import { installConversationImportDropTarget, type ConversationFileDrag } from "./drop";
 import {
-  ConversationImportNotice,
+  isConversationImportNotice,
   IMPORT_RUNTIME_MODE,
   desktopUploadOutcome,
   importEnvironmentOptions,
@@ -74,7 +74,7 @@ import {
 
 function checkedDesktopUploadOutcome(result: Parameters<typeof desktopUploadOutcome>[0]) {
   const outcome = desktopUploadOutcome(result);
-  if (outcome instanceof ConversationImportNotice) throw outcome;
+  if (isConversationImportNotice(outcome)) throw outcome;
   return outcome;
 }
 
@@ -209,7 +209,7 @@ function stageStatus(stage: Stage): string | null {
 
 /** Failures that sending the same file again would repeat. */
 function isTerminalFailure(cause: unknown): boolean {
-  if (cause instanceof ConversationImportNotice) return cause.terminal;
+  if (isConversationImportNotice(cause)) return cause.terminal === true;
   return (
     isConversationImportError(cause) &&
     (cause.reason === "package-rejected" || cause.reason === "package-too-large")

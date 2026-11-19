@@ -3,11 +3,13 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
   canCheckForUpdate,
+  getDesktopUpdateBackgroundTooltip,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   getScientDesktopUpdateLabel,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
+  isBackgroundDesktopUpdate,
   resolveDesktopUpdateButtonAction,
 } from "./desktopUpdate.logic";
 
@@ -35,7 +37,7 @@ describe("Scient update labels", () => {
   it.each(["idle", "error"] as const)("keeps %s as the discovery icon", (status) =>
     expect(getScientDesktopUpdateLabel({ ...baseState, status })).toBeNull(),
   );
-  it("offers download, restart, and recovery using the canonical action", () => {
+  it("offers download, the update, and recovery using the canonical action", () => {
     const available: DesktopUpdateState = {
       ...baseState,
       status: "available",
@@ -47,10 +49,41 @@ describe("Scient update labels", () => {
       downloadedVersion: "1.1.0",
     };
     expect(getScientDesktopUpdateLabel(available)).toBe("Update");
-    expect(getScientDesktopUpdateLabel(downloaded)).toBe("Restart");
+    expect(getScientDesktopUpdateLabel(downloaded)).toBe("Update");
+    expect(getDesktopUpdateButtonTooltip(downloaded)).toBe("Restart and update to 1.1.0");
     // Main-process failures retain available/downloaded rather than error status.
     expect(getScientDesktopUpdateLabel({ ...available, errorContext: "download" })).toBe("Retry");
     expect(getScientDesktopUpdateLabel({ ...downloaded, errorContext: "install" })).toBe("Retry");
+  });
+  it("keeps the desktop's own download behind the idle control", () => {
+    const available: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+    };
+    const downloading: DesktopUpdateState = {
+      ...available,
+      status: "downloading",
+      downloadPercent: 42.7,
+    };
+    expect(isBackgroundDesktopUpdate(available, false)).toBe(true);
+    expect(isBackgroundDesktopUpdate(downloading, false)).toBe(true);
+    expect(getDesktopUpdateBackgroundTooltip(downloading)).toBe(
+      "Downloading update 1.1.0 in the background (42%)",
+    );
+    // A failed download offers Retry, and a download the user started shows its progress.
+    expect(isBackgroundDesktopUpdate({ ...available, errorContext: "download" }, false)).toBe(
+      false,
+    );
+    expect(isBackgroundDesktopUpdate(downloading, true)).toBe(false);
+    // Ready and idle states are never background work.
+    expect(
+      isBackgroundDesktopUpdate(
+        { ...available, status: "downloaded", downloadedVersion: "1.1.0" },
+        false,
+      ),
+    ).toBe(false);
+    expect(isBackgroundDesktopUpdate(baseState, false)).toBe(false);
   });
   it.each<[number | null, string]>([
     [40.9, "40%"],
@@ -78,6 +111,22 @@ describe("desktop update button state", () => {
     };
     expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
     expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
+  });
+
+  it("shows the download failure after returning to available", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+      message: "network timeout",
+      errorContext: "download",
+      canRetry: true,
+    };
+    expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
+    expect(getDesktopUpdateButtonTooltip(state)).toBe("Download failed for 1.1.0. Click to retry.");
+    expect(getDesktopUpdateButtonTooltip({ ...state, notAppliedVersion: "1.1.0" })).toBe(
+      "Update 1.1.0 did not apply. Click to retry.",
+    );
   });
 
   it("prefers a newly available release over a stale downloaded version", () => {

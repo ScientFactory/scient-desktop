@@ -14,7 +14,7 @@ import {
   renderWithCompleteNotes,
 } from "./documentPageReadiness";
 import {
-  DocumentPageInputError,
+  isDocumentPageInputError,
   loadDocumentPageInput,
   readDocumentPageInputUrl,
 } from "./documentPageInput";
@@ -59,7 +59,7 @@ async function renderDocumentPage(): Promise<ScientDocumentPageReadiness> {
       },
     });
   } catch (cause) {
-    if (cause instanceof DocumentPageInputError) {
+    if (isDocumentPageInputError(cause)) {
       tracker.fatal(cause.code, cause.message);
     } else {
       tracker.fatal(

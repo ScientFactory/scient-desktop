@@ -27,7 +27,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import type * as EffectAcpProtocol from "effect-acp/protocol";
+import * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -111,6 +111,8 @@ export interface AcpSessionRuntimeOptions {
   readonly resumeMethod?: "load" | "resume";
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
+  // Treat replay going quiet as loaded, for agents whose session/load may never reply.
+  readonly sessionLoadReplayIdleReadiness?: boolean;
   readonly interruptPromptOnCancel?: boolean;
   readonly cancelMeta?: EffectAcpSchema.CancelNotification["_meta"];
   readonly initializeMeta?: EffectAcpSchema.InitializeRequest["_meta"];
@@ -128,6 +130,7 @@ export interface AcpSessionRuntimeOptions {
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
+    readonly title?: string;
     readonly version: string;
   };
   readonly authMethodId?:
@@ -514,18 +517,18 @@ export function terminateLinuxCgroupLease(
     let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
-      const killed = yield* Effect.try(() => lease.kill()).pipe(Effect.result);
+      const killed = Result.try(() => lease.kill());
       if (Result.isFailure(killed)) {
-        const cause = killed.failure.cause;
+        const cause = killed.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code !== "ENOENT") return yield* failure("kill", cause);
         if (!lease.exists()) return;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      const populated = yield* Effect.try(() => lease.populated()).pipe(Effect.result);
+      const populated = Result.try(() => lease.populated());
       if (Result.isFailure(populated)) {
-        const cause = populated.failure.cause;
+        const cause = populated.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code === "ENOENT") {
@@ -539,9 +542,9 @@ export function terminateLinuxCgroupLease(
         yield* Effect.sleep("10 millis");
         continue;
       }
-      const removed = yield* Effect.try(() => lease.remove()).pipe(Effect.result);
+      const removed = Result.try(() => lease.remove());
       if (Result.isFailure(removed)) {
-        const cause = removed.failure.cause;
+        const cause = removed.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
@@ -652,9 +655,10 @@ function makeLinuxProcessTreeController(): AcpPosixProcessTreeController {
       }),
     identity: readLinuxProcessIdentity,
     snapshot: () =>
-      NodeFS.readdirSync("/proc", { withFileTypes: true }).flatMap((entry) => {
-        if (!entry.isDirectory() || !/^[1-9][0-9]*$/.test(entry.name)) return [];
-        const identity = readLinuxProcessIdentity(Number(entry.name));
+      // By name only: withFileTypes lstats entries, which throws when a process exits mid-scan.
+      NodeFS.readdirSync("/proc").flatMap((entry) => {
+        if (!/^[1-9][0-9]*$/.test(entry)) return [];
+        const identity = readLinuxProcessIdentity(Number(entry));
         return identity === undefined ? [] : [identity];
       }),
     signalProcess: (pid, signal) => process.kill(pid, signal),
@@ -1208,12 +1212,16 @@ export class AcpSessionRuntime extends Context.Service<
       providerId: string,
     ) => Effect.Effect<EffectAcpSchema.DisableProviderResponse, EffectAcpErrors.AcpError>;
     readonly logout: Effect.Effect<EffectAcpSchema.LogoutResponse, EffectAcpErrors.AcpError>;
-    /** options.dispatched settles when cancel can target this prompt. */
+    /**
+     * options.dispatched settles when cancel can target this prompt. options.released lets the
+     * next prompt go out while this one's response is still held; it still resolves this call.
+     */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: {
         readonly dispatched?: Deferred.Deferred<void>;
         readonly onSend?: Effect.Effect<void>;
+        readonly released?: Deferred.Deferred<void>;
       },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -1239,7 +1247,11 @@ export class AcpSessionRuntime extends Context.Service<
     readonly setConfigOption: (
       configId: string,
       value: string | boolean,
-      options?: { readonly allowUnlistedValue?: boolean },
+      options?: {
+        readonly allowUnlistedValue?: boolean;
+        /** Sends the write even when the cached value already matches it. */
+        readonly resendCurrentValue?: boolean;
+      },
     ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly request: (
@@ -1287,7 +1299,13 @@ interface EnsureActiveAssistantSegmentResult {
 interface AcpActivePrompt {
   readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
   readonly completed: Deferred.Deferred<void>;
+  /** Settles once the prompt is queued to the agent, or its call has ended without that. */
+  readonly queued: Deferred.Deferred<void>;
 }
+
+// A fiber stopped before its call began never settles queued, so its end counts too.
+const awaitPromptQueued = (prompt: AcpActivePrompt) =>
+  Effect.raceFirst(Deferred.await(prompt.queued), Fiber.await(prompt.fiber).pipe(Effect.asVoid));
 
 export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   options: AcpSessionRuntimeOptions,
@@ -1298,6 +1316,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 > {
   const random = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const hostPlatform = yield* HostProcess.Platform;
   const callerScope = yield* Scope.Scope;
   const runtimeScope = yield* Scope.fork(callerScope);
   const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
@@ -1531,17 +1550,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
         ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
         extendEnv: options.spawn.extendEnv ?? true,
-        // SCIENT-FORK:START — Windows owns the tree with taskkill /T, not a group.
-        // A detached agent has no console, so every console program it starts
-        // (Antigravity's own inner process included) opens a visible window.
-        // The host decides, not the teardown platform a test may simulate.
+        // Windows `detached` gives the child its own console, which breaks stdio pipes through
+        // `.cmd` shims; taskkill /T cleans up the tree there without it.
         ...(options.ownDetachedProcessGroup === undefined
           ? {}
-          : {
-              detached:
-                options.ownDetachedProcessGroup && (yield* HostProcess.Platform) !== "win32",
-            }),
-        // SCIENT-FORK:END
+          : { detached: options.ownDetachedProcessGroup && hostPlatform !== "win32" }),
         shell: containedSpawnCommand.shell,
       }),
     )
@@ -1710,7 +1723,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     ),
   );
   if (options.ownDetachedProcessGroup === true) {
-    const hostPlatform = yield* HostProcess.Platform;
     const forceTerminateOwnedProcessGroup =
       hostPlatform === "win32"
         ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
@@ -1916,8 +1928,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...options.clientCapabilities?.fs,
     },
     terminal: options.clientCapabilities?.terminal ?? false,
-    // ACP v1 agents send session notices only to clients that advertise them; v2 needs no capability.
-    session: { ...options.clientCapabilities?.session, notices: {} },
+    // ACP v1 agents send session notices and compaction updates only to clients that advertise
+    // them; v2 needs no capability.
+    session: { ...options.clientCapabilities?.session, notices: {}, compaction: {} },
     ...(options.clientCapabilities?.auth ? { auth: options.clientCapabilities.auth } : {}),
     ...(options.clientCapabilities?.elicitation
       ? { elicitation: options.clientCapabilities.elicitation }
@@ -2083,14 +2096,19 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             status: "started",
           });
 
-          const idleFiber = yield* waitForSessionLoadReplayIdle({
-            gateRef: sessionLoadGateRef,
-          }).pipe(Effect.forkIn(runtimeScope));
-          const loaded = yield* Effect.raceFirst(
-            acp.agent.loadSession(loadPayload),
-            Fiber.join(idleFiber),
-          ).pipe(
-            Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
+          const loadOrReplayIdle =
+            options.sessionLoadReplayIdleReadiness === true
+              ? Effect.gen(function* () {
+                  const idleFiber = yield* waitForSessionLoadReplayIdle({
+                    gateRef: sessionLoadGateRef,
+                  }).pipe(Effect.forkIn(runtimeScope));
+                  return yield* Effect.raceFirst(
+                    acp.agent.loadSession(loadPayload),
+                    Fiber.join(idleFiber),
+                  ).pipe(Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)));
+                })
+              : acp.agent.loadSession(loadPayload);
+          const loaded = yield* loadOrReplayIdle.pipe(
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
               Effect.fromOption(
@@ -2137,7 +2155,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const writeConfigOption = (
     configId: string,
     value: string | boolean,
-    writeOptions?: { readonly allowUnlistedValue?: boolean },
+    writeOptions?: {
+      readonly allowUnlistedValue?: boolean;
+      readonly resendCurrentValue?: boolean;
+    },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
     validateConfigOptionValue(configId, value, writeOptions?.allowUnlistedValue === true).pipe(
       Effect.andThen(getStartedState),
@@ -2145,7 +2166,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         SubscriptionRef.get(configOptionsRef).pipe(
           Effect.flatMap((configOptions) => {
             const existing = findSessionConfigOption(configOptions, configId);
-            if (existing && configOptionCurrentValueMatches(existing, value)) {
+            if (
+              existing &&
+              writeOptions?.resendCurrentValue !== true &&
+              configOptionCurrentValueMatches(existing, value)
+            ) {
               return Effect.succeed({
                 configOptions,
               } satisfies EffectAcpSchema.SetSessionConfigOptionResponse);
@@ -2223,7 +2248,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const setConfigOption = (
     configId: string,
     value: string | boolean,
-    writeOptions?: { readonly allowUnlistedValue?: boolean },
+    writeOptions?: {
+      readonly allowUnlistedValue?: boolean;
+      readonly resendCurrentValue?: boolean;
+    },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
     configWrites.serialize(writeConfigOption(configId, value, writeOptions));
   // SCIENT-FORK:END
@@ -2542,6 +2570,28 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     (effect, timeout) => effect.pipe(Effect.timeoutOption(timeout), Effect.ignore),
   );
 
+  const joinPrompt = (
+    fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
+  ) =>
+    Fiber.join(fiber).pipe(
+      // SCIENT-FORK:START — config-write closure and runtime teardown keep their failure identity.
+      Effect.mapError((error) => configWrites.unreported ?? error),
+      Effect.catchCauseIf(
+        (cause) => options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+        () =>
+          Ref.get(terminationErrorRef).pipe(
+            Effect.flatMap((error) =>
+              Option.isSome(error)
+                ? Effect.fail(error.value)
+                : Effect.succeed({
+                    stopReason: "cancelled",
+                  } satisfies EffectAcpSchema.PromptResponse),
+            ),
+          ),
+      ),
+      // SCIENT-FORK:END
+    );
+
   const cancel = Effect.gen(function* () {
     const started = yield* getStartedState;
     const activePrompt = yield* Ref.get(activePromptRef);
@@ -2549,8 +2599,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       sessionId: started.sessionId,
       ...(options.cancelMeta === undefined ? {} : { _meta: options.cancelMeta }),
     } satisfies EffectAcpSchema.CancelNotification;
+    // An agent drops a cancel that reaches it before the prompt it targets, so the cancel waits
+    // until the prompt is queued, for at most the cancel timeout.
+    const promptQueued = Option.isSome(activePrompt)
+      ? awaitPromptQueued(activePrompt.value).pipe(
+          Effect.timeoutOption(options.cancelTimeout ?? defaultCancelTimeout),
+        )
+      : Effect.void;
     if (options.cancelBehavior !== "wait-for-prompt") {
       if (options.interruptPromptOnCancel === false) {
+        yield* promptQueued;
         return yield* acp.agent.cancel(cancelPayload);
       }
       if (Option.isSome(activePrompt)) {
@@ -2561,6 +2619,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       return;
     }
 
+    yield* promptQueued;
     yield* acp.agent.cancel(cancelPayload);
     if (Option.isNone(activePrompt)) {
       return;
@@ -2802,92 +2861,105 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       Effect.andThen(runLoggedRequest("logout", {}, acp.agent.logout({}))),
     ),
     prompt: (payload, promptOptions?) =>
-      promptSerializationSemaphore.withPermit(
-        Effect.acquireUseRelease(
-          promptDispatchSemaphore.withPermit(
-            Effect.gen(function* () {
-              const started = yield* getStartedState;
-              yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-              yield* Ref.set(assistantUpdatesOpenRef, true);
-              const requestPayload = {
-                sessionId: started.sessionId,
-                ...payload,
-              } satisfies EffectAcpSchema.PromptRequest;
-              const completed = yield* Deferred.make<void>();
-              // SCIENT-FORK:START — `onSend` runs as the request is handed to
-              // the writer, so a caller learns the turn reached the agent.
-              const onSend = promptOptions?.onSend;
-              promptWritten = false;
-              const fiber = yield* runLoggedRequest(
-                "session/prompt",
-                requestPayload,
-                Effect.suspend(() => {
-                  promptSendHook = onSend;
-                  return acp.agent.prompt(requestPayload);
-                }).pipe(
-                  Effect.ensuring(
-                    Effect.sync(() => {
-                      if (promptSendHook === onSend) promptSendHook = undefined;
-                    }),
-                  ),
-                ),
-              ).pipe(Effect.forkIn(runtimeScope));
-              // SCIENT-FORK:END
-              const active = { fiber, completed } satisfies AcpActivePrompt;
-              yield* Ref.set(activePromptRef, Option.some(active));
-              if (promptOptions?.dispatched) {
-                yield* Deferred.succeed(promptOptions.dispatched, undefined);
-              }
-              return active;
-            }).pipe(notificationSemaphore.withPermit),
-          ),
-          (activePrompt) =>
-            Fiber.join(activePrompt.fiber).pipe(
-              // SCIENT-FORK:START — config-write closure and runtime teardown keep their failure identity.
-              Effect.mapError((error) => configWrites.unreported ?? error),
-              Effect.catchCauseIf(
-                (cause) =>
-                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
-                () =>
-                  Ref.get(terminationErrorRef).pipe(
-                    Effect.flatMap((error) =>
-                      Option.isSome(error)
-                        ? Effect.fail(error.value)
-                        : Effect.succeed({
-                            stopReason: "cancelled",
-                          } satisfies EffectAcpSchema.PromptResponse),
-                    ),
-                  ),
+      promptSerializationSemaphore
+        .withPermit(
+          Effect.acquireUseRelease(
+            promptDispatchSemaphore.withPermit(
+              Effect.gen(function* () {
+                const started = yield* getStartedState;
+                yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+                yield* Ref.set(assistantUpdatesOpenRef, true);
+                const requestPayload = {
+                  sessionId: started.sessionId,
+                  ...payload,
+                } satisfies EffectAcpSchema.PromptRequest;
+                const completed = yield* Deferred.make<void>();
+                // SCIENT-FORK:START — `onSend` runs as the request is handed to
+                // the writer, so a caller learns the turn reached the agent.
+                const onSend = promptOptions?.onSend;
+                promptWritten = false;
                 // SCIENT-FORK:END
-              ),
-              Effect.tap(() =>
-                closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
-              ),
+                const queued = yield* Deferred.make<void>();
+                const fiber = yield* runLoggedRequest(
+                  "session/prompt",
+                  requestPayload,
+                  // SCIENT-FORK:START — the send hook is armed for this prompt only.
+                  Effect.suspend(() => {
+                    promptSendHook = onSend;
+                    return acp.agent.prompt(requestPayload);
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        if (promptSendHook === onSend) promptSendHook = undefined;
+                      }),
+                    ),
+                    // SCIENT-FORK:END
+                    Effect.provideService(EffectAcpProtocol.AcpOutgoingQueued, queued),
+                    Effect.ensuring(Deferred.succeed(queued, undefined)),
+                  ),
+                ).pipe(Effect.forkIn(runtimeScope));
+                const active = { fiber, completed, queued } satisfies AcpActivePrompt;
+                yield* Ref.set(activePromptRef, Option.some(active));
+                if (promptOptions?.dispatched) {
+                  yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                }
+                return active;
+              }).pipe(notificationSemaphore.withPermit),
             ),
-          (activePrompt, result) =>
-            Effect.gen(function* () {
-              if (
-                options.cancelBehavior === "wait-for-prompt" &&
-                Exit.isFailure(result) &&
-                Cause.hasInterrupts(result.cause)
-              ) {
-                yield* retireRuntime(
-                  new EffectAcpErrors.AcpTransportError({
-                    method: "session/prompt",
-                    detail: "The ACP prompt stopped before the agent confirmed completion.",
-                    cause: undefined,
-                  }),
-                );
-              }
-              yield* Fiber.interrupt(activePrompt.fiber).pipe(Effect.ignore);
-              yield* Ref.set(activePromptRef, Option.none());
-              yield* Deferred.succeed(activePrompt.completed, undefined);
-            }),
+            (activePrompt) => {
+              const settled = joinPrompt(activePrompt.fiber).pipe(
+                Effect.tap(() =>
+                  closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
+                ),
+                Effect.map((response) => ({ _tag: "Settled" as const, response })),
+              );
+              return promptOptions?.released === undefined
+                ? settled
+                : Effect.raceFirst(
+                    settled,
+                    Deferred.await(promptOptions.released).pipe(
+                      Effect.as({ _tag: "Released" as const, fiber: activePrompt.fiber }),
+                    ),
+                  );
+            },
+            (activePrompt, result) =>
+              Effect.gen(function* () {
+                if (Exit.isSuccess(result) && result.value._tag === "Released") {
+                  yield* Ref.set(activePromptRef, Option.none());
+                  yield* Deferred.succeed(activePrompt.completed, undefined);
+                  return;
+                }
+                if (
+                  options.cancelBehavior === "wait-for-prompt" &&
+                  Exit.isFailure(result) &&
+                  Cause.hasInterrupts(result.cause)
+                ) {
+                  yield* retireRuntime(
+                    new EffectAcpErrors.AcpTransportError({
+                      method: "session/prompt",
+                      detail: "The ACP prompt stopped before the agent confirmed completion.",
+                      cause: undefined,
+                    }),
+                  );
+                }
+                yield* Fiber.interrupt(activePrompt.fiber).pipe(Effect.ignore);
+                yield* Ref.set(activePromptRef, Option.none());
+                yield* Deferred.succeed(activePrompt.completed, undefined);
+              }),
+          ),
+        )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome._tag === "Settled"
+              ? Effect.succeed(outcome.response)
+              : joinPrompt(outcome.fiber),
+          ),
         ),
-      ),
     cancelAndAwaitPrompt,
+    // A cancel that waits for its prompt holds the dispatch permit, so a next prompt cannot reach
+    // the agent ahead of it and take the cancel meant for the prompt before.
     cancel:
-      options.cancelBehavior === "wait-for-prompt"
+      options.cancelBehavior === "wait-for-prompt" || options.interruptPromptOnCancel === false
         ? promptDispatchSemaphore.withPermit(cancel)
         : cancel,
     ...(options.ownDetachedProcessGroup === true ? { terminateProcessGroup } : {}),

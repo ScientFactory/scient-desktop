@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { DROID_DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import { Cause, Effect, Exit, FileSystem, Redacted, Schema, Stream } from "effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestClock from "effect/testing/TestClock";
 import { beforeAll } from "vite-plus/test";
 
@@ -191,7 +192,7 @@ const backgroundGenerationFixture = (
     const textGeneration = yield* makeDroidTextGeneration(
       { enabled: true, binaryPath: binary!, customModels: [], cloudSessionSync: true },
       {
-        PATH: process.env.PATH,
+        PATH: (yield* HostProcess.Environment).PATH,
         HOME: home,
         TMPDIR: `${tmp}/`,
         FACTORY_PROFILE_DIR: NodePath.join(home, "profile"),

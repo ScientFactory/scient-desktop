@@ -11,6 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START — scient/connect
+import * as Option from "effect/Option";
+// SCIENT-FORK:END
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -18,19 +21,30 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
+// SCIENT-FORK:START — leaving Connect turns Cloud copy off.
+import { ServerSettingsService } from "../serverSettings.ts";
+// SCIENT-FORK:END
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
+import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
+// SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+import { ScientConnectHost } from "../scient/connect/ScientConnectHost.ts";
+// SCIENT-FORK:END
 
-// SCIENT-FORK:START — inherited cloud routes stay dormant without explicit owner opt-in.
+// SCIENT-FORK:START — cloud routes follow Scient Connect's identity switch or an explicit opt-in.
 export const isScientCloudIntegrationDisabled = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ) => {
   const explicitCloudOptIn =
     env.SCIENT_NEXT_CLOUD_ENABLED === "true" ||
     (env.NODE_ENV === "test" && env.SCIENT_NEXT_CLOUD_ROUTE_TEST === "true");
-  return SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && !explicitCloudOptIn;
+  return (
+    SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled &&
+    !SCIENT_DESKTOP_IDENTITY.cloudEnabled &&
+    !explicitCloudOptIn
+  );
 };
 
 const cloudIntegrationDisabled = () =>
@@ -148,6 +162,34 @@ export const layer = HttpApiBuilder.group(
 
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
+    // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+    // Serialized with Off, so a link that started before Off cannot finish after it.
+    const connectHost = yield* Effect.serviceOption(ScientConnectHost);
+    const applyWhileOn = <A, E, R>(apply: Effect.Effect<A, E, R>) =>
+      connectHost._tag === "None"
+        ? apply
+        : connectHost.value.whileOn(apply).pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: (result) => Effect.succeed(result),
+                onNone: () =>
+                  Effect.fail(
+                    new EnvironmentHttpConflictError({
+                      message:
+                        "Scient Connect is turned off on this computer. Turn it on in Settings > Sharing & access.",
+                    }),
+                  ),
+              }),
+            ),
+          );
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — the computer left the account, so it stops copying to it; copies stay.
+    const settings = yield* Effect.serviceOption(ServerSettingsService);
+    const stopCloudCopy =
+      settings._tag === "Some"
+        ? settings.value.updateSettings({ scientCloudSyncEnabled: false }).pipe(Effect.ignore)
+        : Effect.void;
+    // SCIENT-FORK:END
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -160,13 +202,24 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("relayConfig", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
+          Effect.andThen(
+            // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+            applyWhileOn(
+              // SCIENT-FORK:END
+              toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload)),
+              // SCIENT-FORK:START
+            ),
+            // SCIENT-FORK:END
+          ),
         ),
       )
       .handle("linkState", () =>
-        requireEnvironmentScope(AuthRelayReadScope).pipe(
-          Effect.andThen(toHttpError(cloudLink.linkState())),
-        ),
+        Effect.gen(function* () {
+          const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
+          const state = yield* toHttpError(cloudLink.linkState());
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          return { ...state, linkableHere: canLinkHere(request, principal.subject) };
+        }),
       )
       .handle("checkReachability", () =>
         requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
@@ -174,6 +227,9 @@ export const layer = HttpApiBuilder.group(
       .handle("unlink", () =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.unlink())),
+          // SCIENT-FORK:START
+          Effect.tap(() => stopCloudCopy),
+          // SCIENT-FORK:END
         ),
       )
       .handle("preferences", ({ payload }) =>

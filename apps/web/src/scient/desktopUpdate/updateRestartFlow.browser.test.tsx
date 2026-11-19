@@ -2,9 +2,10 @@ import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../..
 import "../../index.css";
 
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type { UpdateEverythingRun } from "../../components/sidebar/updateEverything.logic";
 
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 const updateStore = vi.hoisted(() => {
   let state: DesktopUpdateState | null = null;
@@ -33,9 +34,25 @@ vi.mock("../../state/desktopUpdate", async (importOriginal) => {
     useDesktopUpdateState: () => useSyncExternalStore(updateStore.subscribe, updateStore.get),
   };
 });
+// Something here is working unless a test says otherwise, so the download offers Restart.
+const localWork = vi.hoisted(() => ({ blocksRestart: true }));
+vi.mock("./restartWhenIdle", () => ({
+  useLocalWorkBlocksRestart: () => () => localWork.blocksRestart,
+}));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useParams: () => null,
+}));
+// A pass for other machines can start while the restart card is open.
+const updateRun = vi.hoisted(() => ({
+  current: null as UpdateEverythingRun | null,
+  save: vi.fn(),
+}));
+vi.mock("../../components/sidebar/updateEverythingRun", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useUpdateEverythingRun: () => updateRun.current,
+  saveUpdateEverythingResult: updateRun.save,
+  clearSavedUpdateEverythingResult: vi.fn(),
 }));
 
 import { SidebarUpdatePill } from "../../components/sidebar/SidebarUpdatePill";
@@ -66,6 +83,9 @@ function updateState(overrides: Partial<DesktopUpdateState> = {}): DesktopUpdate
 
 const downloaded = () =>
   updateState({ status: "downloaded", downloadedVersion: "0.6.19", downloadPercent: 100 });
+// The desktop downloads an offered update by itself; the footer downloads only after that failed.
+const failedDownload = (overrides: Partial<DesktopUpdateState> = {}) =>
+  updateState({ message: "network timeout", errorContext: "download", ...overrides });
 
 function result(state: DesktopUpdateState, completed = true): DesktopUpdateActionResult {
   return { accepted: true, completed, state };
@@ -119,20 +139,24 @@ const cornerNotice = () => {
   const viewport = document.querySelector<HTMLElement>('[data-slot="toast-viewport"]');
   return viewport && viewport.textContent !== "" ? viewport : null;
 };
+const tooltipText = () => document.querySelector('[data-slot="tooltip-popup"]')?.textContent ?? "";
 const restartNow = (notice: HTMLElement) =>
   [...notice.querySelectorAll("button")].find((button) => button.textContent === "Restart now");
 
 async function downloadThroughFooter(_fixture: _Fixture) {
-  await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Update"));
+  await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Retry"));
   footerButton(_fixture).click();
   await vi.waitFor(() => expect(anchoredNotice() ?? cornerNotice()).not.toBeNull());
 }
 
 async function _setupFixture0(_fixture: _Fixture) {
   Object.assign(window, { desktopBridge: bridge });
-  updateStore.set(updateState());
+  updateStore.set(failedDownload());
+  localWork.blocksRestart = true;
   bridge.downloadUpdate.mockClear();
   bridge.installUpdate.mockClear();
+  updateRun.current = null;
+  updateRun.save.mockClear();
 }
 
 async function _cleanupFixture1(_fixture: _Fixture) {
@@ -143,7 +167,7 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("update restart flow", () => {
-  it("footer Restart installs immediately, with no confirmation", async () => {
+  it("footer Update opens a card whose Restart now installs, with no confirmation", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -152,12 +176,152 @@ describe("update restart flow", () => {
     updateStore.set(downloaded());
     await mount(_fixture);
 
-    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Restart"));
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
+    using _clock = fakeTimers();
     footerButton(_fixture).click();
+    await vi.waitFor(() =>
+      expect(anchoredNotice()?.textContent).toContain("Update 0.6.19 is ready"),
+    );
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+    // The card the user opened waits for them instead of timing out.
+    await act(() => vi.advanceTimersByTimeAsync(SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS * 3));
+    expect(anchoredNotice()).not.toBeNull();
 
+    restartNow(anchoredNotice()!)?.click();
     await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(1));
     expect(confirm).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("Restart now saves a pass for other machines that started after the card opened", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
+    footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+
+    // The circle starts updating another machine while the card is open.
+    updateRun.current = { localVersion: null, phase: "providers", restartAt: null, machines: [] };
+    await act(() => updateStore.set(downloaded()));
+
+    restartNow(anchoredNotice()!)?.click();
+    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledWith("0.6.19"));
+    expect(updateRun.save).toHaveBeenCalledWith(
+      expect.objectContaining({ localVersion: "0.6.19" }),
+    );
+  });
+
+  it("a second press on Update closes its card without installing", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
+    footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+
+    footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+
+    // And the next press opens it again.
+    footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+  });
+
+  it("the card closes when its update stops being ready", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
+    footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+
+    // A newer release replaces the pending download.
+    await act(() =>
+      updateStore.set(
+        updateState({ status: "downloading", availableVersion: "0.6.20", downloadPercent: 10 }),
+      ),
+    );
+    await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the footer idle while the desktop downloads by itself", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    updateStore.set(updateState({ status: "downloading", downloadPercent: 40 }));
+    await mount(_fixture);
+    await vi.waitFor(() =>
+      expect(footerButton(_fixture).getAttribute("aria-label")).toBe(
+        "Downloading update 0.6.19 in the background (40%)",
+      ),
+    );
+    expect(footerButton(_fixture).textContent).toBe("");
+
+    await act(() => updateStore.set(downloaded()));
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
+    // Finishing in the background announces nothing; the footer is the way in.
+    expect(anchoredNotice()).toBeNull();
+    expect(cornerNotice()).toBeNull();
+  });
+
+  it("shows native preparation beside the compact control without hover and blocks another restart or check", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    const pending = Promise.withResolvers<DesktopUpdateActionResult>();
+    bridge.installUpdate.mockImplementationOnce(() => {
+      updateStore.set({
+        ...downloaded(),
+        status: "preparing",
+        message: "Preparing update… Verifying the authorized release.",
+      });
+      return pending.promise;
+    });
+    await userEvent.click(footerButton(_fixture));
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    await userEvent.click(restartNow(anchoredNotice()!)!);
+    await vi.waitFor(() => expect(footerButton(_fixture).getAttribute("aria-busy")).toBe("true"));
+    expect(footerButton(_fixture).textContent).toBe("");
+    expect(footerButton(_fixture).getAttribute("aria-disabled")).toBe("true");
+    expect(footerButton(_fixture).getAttribute("aria-label")).toContain("Preparing update");
+    // Nobody has to hover: the progress stays open beside the control, and leaving keeps it.
+    await vi.waitFor(() => expect(tooltipText()).toContain("Preparing update"));
+    await userEvent.unhover(footerButton(_fixture).parentElement!);
+    expect(tooltipText()).toContain("Preparing update");
+    footerButton(_fixture).click();
+    expect(bridge.installUpdate).toHaveBeenCalledOnce();
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+    pending.resolve(result(downloaded(), false));
+  });
+
+  it("a retried download offers Restart even when nothing here is working", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    localWork.blocksRestart = false;
+    await mount(_fixture);
+    await downloadThroughFooter(_fixture);
+
+    expect(anchoredNotice()?.textContent).toContain("Update 0.6.19 is ready");
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+    restartNow(anchoredNotice()!)?.click();
+    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledWith("0.6.19"));
   });
 
   it("a finished download shows Restart now above the button, and it installs", async () => {
@@ -199,7 +363,7 @@ describe("update restart flow", () => {
 
     await act(() => vi.advanceTimersByTimeAsync(SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS));
     await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
-    expect(footerButton(_fixture).textContent).toBe("Restart");
+    expect(footerButton(_fixture).textContent).toBe("Update");
     expect(bridge.installUpdate).not.toHaveBeenCalled();
   });
 
@@ -214,11 +378,31 @@ describe("update restart flow", () => {
     anchoredNotice()!.querySelector<HTMLButtonElement>('[data-slot="toast-close"]')!.click();
 
     await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
-    expect(footerButton(_fixture).textContent).toBe("Restart");
+    expect(footerButton(_fixture).textContent).toBe("Update");
     expect(bridge.installUpdate).not.toHaveBeenCalled();
   });
 
-  it("a failed install releases the footer so Restart can be tried again", async () => {
+  it("with the sidebar closed, preparation is one corner toast that follows its progress", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const preparing = (message: string): DesktopUpdateState => ({
+      ...downloaded(),
+      status: "preparing",
+      message,
+    });
+    updateStore.set(preparing("Preparing update… You can keep working."));
+    await mount(_fixture, "position:fixed;left:-600px;bottom:24px;width:240px");
+
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("Preparing update"));
+    await act(() => updateStore.set(preparing("Saving your work before restarting…")));
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("Saving your work"));
+    expect(cornerNotice()?.textContent).not.toContain("Preparing update");
+    await act(() => updateStore.set(downloaded()));
+    await vi.waitFor(() => expect(cornerNotice()).toBeNull());
+  });
+
+  it("a failed install releases the footer so Update can be tried again", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -229,12 +413,19 @@ describe("update restart flow", () => {
     updateStore.set(downloaded());
     await mount(_fixture);
 
-    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Restart"));
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
     footerButton(_fixture).click();
-    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("IPC closed"));
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    restartNow(anchoredNotice()!)?.click();
+    // The reason stays where the user was looking, not in a corner toast.
+    await vi.waitFor(() => expect(tooltipText()).toContain("IPC closed"));
+    expect(tooltipText()).toContain("Could not install update");
+    expect(cornerNotice()).toBeNull();
     await vi.waitFor(() => expect(footerButton(_fixture).getAttribute("aria-disabled")).toBeNull());
 
     footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    restartNow(anchoredNotice()!)?.click();
     await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(2));
   });
 
@@ -270,7 +461,7 @@ describe("update restart flow", () => {
 
     const nightly = { channel: "nightly" as const, availableVersion: "0.6.19-nightly.2" };
     const notes = [{ version: "0.6.19-nightly.2", items: ["Newest change"], totalItems: 1 }];
-    updateStore.set(updateState({ ...nightly, releaseNotes: notes }));
+    updateStore.set(failedDownload({ ...nightly, releaseNotes: notes }));
     bridge.downloadUpdate.mockImplementationOnce(async () => {
       const done = updateState({
         ...nightly,
@@ -285,7 +476,7 @@ describe("update restart flow", () => {
     await mount(_fixture);
     const popover = () => document.querySelector('[aria-label="Update release notes"]');
 
-    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Update"));
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Retry"));
     await userEvent.hover(footerButton(_fixture));
     await vi.waitFor(() => expect(popover()).not.toBeNull());
 
@@ -305,7 +496,7 @@ describe("update restart flow", () => {
 
     const nightly = { channel: "nightly" as const, availableVersion: "0.6.19-nightly.2" };
     const notes = [{ version: "0.6.19-nightly.2", items: ["Newest change"], totalItems: 1 }];
-    updateStore.set(updateState({ ...nightly, releaseNotes: notes }));
+    updateStore.set(failedDownload({ ...nightly, releaseNotes: notes }));
     bridge.downloadUpdate.mockImplementationOnce(async () => {
       const done = updateState({
         ...nightly,
@@ -324,7 +515,7 @@ describe("update restart flow", () => {
     await mount(_fixture);
     const popover = () => document.querySelector('[aria-label="Update release notes"]');
 
-    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Update"));
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Retry"));
     elsewhere.focus();
     await userEvent.hover(footerButton(_fixture));
     await vi.waitFor(() => expect(popover()).not.toBeNull());

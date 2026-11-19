@@ -5,11 +5,15 @@ import type {
   ScientDocumentHostStreamEvent,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 
 /** Expected public document-host failures; arbitrary renderer causes are never serialized. */
-export class ScientDocumentHostExecutionError extends Error {
-  readonly _tag = "ScientDocumentHostExecutionError";
-}
+export class ScientDocumentHostExecutionError extends Schema.TaggedError<ScientDocumentHostExecutionError>()(
+  "ScientDocumentHostExecutionError",
+  { message: Schema.String },
+) {}
+
+const isScientDocumentHostExecutionError = Schema.is(ScientDocumentHostExecutionError);
 
 export function serializeScientDocumentHostError(
   error: unknown,
@@ -18,10 +22,9 @@ export function serializeScientDocumentHostError(
 ): NonNullable<ScientDocumentHostResponse["error"]> {
   return {
     _tag: "ScientDocumentHostExecutionError",
-    message:
-      error instanceof ScientDocumentHostExecutionError
-        ? error.message
-        : "The controlled document operation failed.",
+    message: isScientDocumentHostExecutionError(error)
+      ? error.message
+      : "The controlled document operation failed.",
     detail: {
       environmentId,
       threadId: request.threadId,

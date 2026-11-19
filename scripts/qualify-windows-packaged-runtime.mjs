@@ -4,7 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import { runDesktopSmoke } from "../apps/desktop/scripts/smoke-test.mjs";
+import { runDesktopSmokeWithOutputFiles } from "../apps/desktop/scripts/smoke-test.mjs";
 
 const packageRoot = NodePath.resolve(process.argv[2] ?? "");
 // eslint-disable-next-line t3code/no-global-process-runtime -- Standalone target-host probe runs outside the Effect application runtime.
@@ -68,27 +68,97 @@ if (process.argv.includes("--launch-smoke")) {
     ),
     helper: NodePath.join(packageRoot, "resources/file-exchange/scient-file-publication.exe"),
   });
-  const profileRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-packaged-smoke-"));
-  const smokeEnv = {
-    ...process.env,
-    SCIENT_NEXT_HOME: NodePath.join(profileRoot, "state"),
-    APPDATA: NodePath.join(profileRoot, "appdata"),
-    ELECTRON_ENABLE_LOGGING: "1",
+  const executable = NodePath.join(packageRoot, "Scient.exe");
+  // The app's own processes: everything started from its install folder (main, renderer, GPU,
+  // utility, backend, resource monitor). Helpers it started from elsewhere, such as Azure CLI's
+  // Python for source control discovery, are not the app and may finish in their own time.
+  const appProcesses = () => {
+    const script =
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,Name,ExecutablePath | ConvertTo-Json -Compress";
+    const out = NodeChildProcess.execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", script],
+      {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    const rows = out.trim() ? JSON.parse(out) : [];
+    const root = `${packageRoot.toLowerCase()}${NodePath.sep}`;
+    return (Array.isArray(rows) ? rows : [rows]).filter((row) =>
+      (row.ExecutablePath ?? "").toLowerCase().startsWith(root),
+    );
   };
-  delete smokeEnv.ELECTRON_RUN_AS_NODE;
-  delete smokeEnv.ELECTRON_NO_ASAR;
-  delete smokeEnv.NODE_OPTIONS;
-  const result = await runDesktopSmoke({
-    executable: NodePath.join(packageRoot, "Scient.exe"),
-    cwd: packageRoot,
-    env: smokeEnv,
-  });
-  process.stdout.write(result.output);
+  const waitForAppProcessesToExit = async (deadlineMs) => {
+    const deadline = Date.now() + deadlineMs;
+    let remaining = appProcesses();
+    while (remaining.length > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      remaining = appProcesses();
+    }
+    return remaining;
+  };
+  const describe = (result) =>
+    JSON.stringify({
+      code: result.code,
+      signal: result.signal,
+      shutdownRequested: result.shutdownRequested,
+      forcedKill: result.forcedKill,
+      error: result.error,
+      failures: result.failures,
+    });
+  const launch = async (name, options) => {
+    const profileRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), `scient-packaged-${name}-`),
+    );
+    const smokeEnv = {
+      ...process.env,
+      SCIENT_NEXT_HOME: NodePath.join(profileRoot, "state"),
+      APPDATA: NodePath.join(profileRoot, "appdata"),
+      ELECTRON_ENABLE_LOGGING: "1",
+    };
+    delete smokeEnv.ELECTRON_RUN_AS_NODE;
+    delete smokeEnv.ELECTRON_NO_ASAR;
+    delete smokeEnv.NODE_OPTIONS;
+    // Output goes to files: helpers the app started inherit its handles, and a pipe would wait
+    // for the last of them, not for the app.
+    // The scan waits until the app's processes are gone, so their last output is in it.
+    let remaining = [];
+    const result = await runDesktopSmokeWithOutputFiles({
+      executable,
+      cwd: packageRoot,
+      env: smokeEnv,
+      outputDirectory: NodePath.join(profileRoot, "output"),
+      beforeScan: async () => {
+        remaining = await waitForAppProcessesToExit(15_000);
+      },
+      ...options,
+    });
+    process.stdout.write(result.output);
+    // Windows can hold the profile's database files briefly after the app exits.
+    NodeFS.rmSync(profileRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+    return { result, remaining };
+  };
+
+  // A forced stop, as from a crash or Task Manager: Node's SIGTERM is TerminateProcess here.
+  const forced = await launch("forced-stop", {});
   NodeAssert.ok(
-    result.passed,
-    "Installed desktop must survive the smoke interval and drain on shutdown",
+    forced.result.passed,
+    `Installed desktop must survive the smoke interval and stop without fatal output: ${describe(forced.result)}`,
   );
-  // Windows can hold the profile's database files briefly after the app exits.
-  NodeFS.rmSync(profileRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  NodeAssert.deepEqual(forced.remaining, [], "The app's processes must end after a forced stop");
+
+  // A normal quit: close its windows the way a person does (taskkill without /F sends WM_CLOSE).
+  const quit = await launch("quit", {
+    shutdownGraceMs: 15_000,
+    requestShutdown: (child) =>
+      NodeChildProcess.spawnSync("taskkill.exe", ["/PID", String(child.pid)], { windowsHide: true })
+        .status === 0,
+  });
+  NodeAssert.ok(
+    quit.result.passed,
+    `Installed desktop must quit when its windows are closed: ${describe(quit.result)}`,
+  );
+  NodeAssert.deepEqual(quit.remaining, [], "The app's processes must end after it quits");
   console.log("Installed Windows desktop launch smoke passed.");
 }

@@ -26,6 +26,19 @@ import { decodeRelativePath, type ResolvedAsset } from "./AssetAccess.ts";
 import { optionOnNotFound } from "../project/ProjectFaviconResolver.ts";
 import type { ScientAssetClaims } from "./ScientAssetClaims.ts";
 
+/**
+ * Names the file's bytes apart from its signed URL, like statFingerprint does for media: a
+ * replacement under the same name is a new revision. A reader keeps a loaded PDF while a renewed
+ * URL reports the same revision.
+ */
+export const fileInfoRevision = (info: FileSystem.File.Info) =>
+  [
+    info.dev,
+    Option.getOrElse(info.ino, () => ""),
+    info.size,
+    Option.match(info.mtime, { onNone: () => "", onSome: (mtime) => mtime.getTime() }),
+  ].join(":");
+
 const ENVIRONMENT_HTML_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ENVIRONMENT_HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
 
@@ -41,9 +54,16 @@ export const isScientAssetClaims = (claims: {
   readonly kind: string;
 }): claims is ScientAssetClaims => SCIENT_ASSET_CLAIM_KINDS.has(claims.kind);
 
+const hasHiddenSegment = (segments: ReadonlyArray<string>) =>
+  segments.some((segment) => segment.startsWith("."));
+
 const resolveCanonicalEnvironmentDocumentFileForRequest = Effect.fn(
   "ScientAssetAccess.resolveCanonicalEnvironmentDocumentFileForRequest",
-)(function* (input: { readonly baseDirectory: string; readonly relativePath: string }) {
+)(function* (input: {
+  readonly baseDirectory: string;
+  readonly relativePath: string;
+  readonly entryFileName: string;
+}) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const canonicalCandidate = yield* optionOnNotFound(
@@ -64,7 +84,8 @@ const resolveCanonicalEnvironmentDocumentFileForRequest = Effect.fn(
     relative === "" ||
     relative === ".." ||
     relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
+    path.isAbsolute(relative) ||
+    (relative !== input.entryFileName && hasHiddenSegment(relative.split(path.sep)))
   ) {
     return null;
   }
@@ -128,6 +149,7 @@ export const issueScientAssetClaims = Effect.fnUntraced(function* (
   let claims: ScientAssetClaims;
   let fileName: string;
   let sourcePath: string | undefined;
+  let fileRevision: string | undefined;
 
   switch (input.resource._tag) {
     case "generated-document": {
@@ -324,10 +346,11 @@ export const issueScientAssetClaims = Effect.fnUntraced(function* (
           }),
         };
       }
+      if (claims.kind === "environment-file-exact") fileRevision = fileInfoRevision(info.value);
       break;
     }
   }
-  return { claims, fileName, sourcePath, expiresAt };
+  return { claims, fileName, sourcePath, expiresAt, fileRevision };
 });
 
 /** Resolves a Scient claim to the file it grants, or null when the request does not match. */
@@ -399,13 +422,14 @@ export const resolveScientAsset = Effect.fnUntraced(function* (
       decodedPath.includes("\0") ||
       path.isAbsolute(decodedPath) ||
       segments.some((segment) => segment === "" || segment === "." || segment === "..") ||
-      (decodedPath !== claims.entryFileName && segments.some((segment) => segment.startsWith(".")))
+      (decodedPath !== claims.entryFileName && hasHiddenSegment(segments))
     ) {
       return null;
     }
     const documentFile = yield* resolveCanonicalEnvironmentDocumentFileForRequest({
       baseDirectory: claims.baseDirectory,
       relativePath: decodedPath,
+      entryFileName: claims.entryFileName,
     });
     return documentFile
       ? ({ kind: "file", path: documentFile, cacheControl: "no-store" } satisfies ResolvedAsset)

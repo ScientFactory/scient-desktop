@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -29,12 +30,12 @@ import { EventStoreV2 } from "../../orchestration-v2/EventStore.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { applyToProjection, emptyProjection } from "../../orchestration-v2/ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
-import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { nativeOmpOrchestration } from "../testUtils/nativeOmpOrchestration.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
+import { forkConversation } from "../../orchestration-v2/testkit/ConversationForkCommand.ts";
 
 const dependencies = Layer.mergeAll(
   Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
@@ -113,7 +114,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP fork continuity", () => {
           const instanceId = ProviderInstanceId.make("omp-fork-continuity");
           const { environment } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const factory = yield* makeOmpCustomModelsClientFactory(
             ompQualifyTarget,
@@ -240,8 +241,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP fork continuity", () => {
               );
               if (!answer || answer.type !== "assistant_message")
                 return yield* Effect.die("Missing actual source answer");
-              const forks = yield* ConversationForkService;
-              yield* forks.dispatch({
+              yield* forkConversation({
                 type: "thread.fork",
                 commandId: CommandId.make("installed-native-fork"),
                 originThreadId: f.threadId,

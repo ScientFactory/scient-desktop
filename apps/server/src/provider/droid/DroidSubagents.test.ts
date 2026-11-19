@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
   droidSubagentActivity,
+  droidSubagentOutlivesTurn,
   endDroidSubagents,
   makeDroidSubagentTracker,
   observeDroidSubagentToolCall,
@@ -104,6 +105,38 @@ describe("Droid sub-agents", () => {
     expect(droidSubagentActivity(tracker).open).toBe(0);
   });
 
+  it("keeps Droid 1.2.0's background sub-agent open past its turn until Droid ends its call", () => {
+    const tracker = makeDroidSubagentTracker();
+    observeDroidSubagentToolCall(tracker, task("t", "Sleep"), TURN);
+    observeDroidSubagentToolCall(
+      tracker,
+      task("t", "Sleep", { status: "inProgress", text: "Running in background" }),
+      TURN,
+    );
+    expect(endDroidSubagents(tracker, "turn-ended")).toEqual([]);
+    expect(droidSubagentOutlivesTurn(tracker, "t")).toBe(true);
+    // After the turn Droid names only the call id, not the Task it belongs to.
+    const done = observeDroidSubagentToolCall(
+      tracker,
+      call("t", { status: "completed", text: "Slept." }),
+      TurnId.make("turn-2"),
+    );
+    expect(brief(done.events)).toEqual(["task.completed completed: Slept."]);
+    expect(droidSubagentOutlivesTurn(tracker, "t")).toBe(false);
+  });
+
+  it("forgets an evicted sub-agent under every id Droid named it by", () => {
+    const tracker = makeDroidSubagentTracker();
+    const meta = { subagent_session_info: { session_id: "droid-1", message_start_index: 0 } };
+    const launched = task("t", "Sleep", { status: "inProgress", text: "Running in background" });
+    observeDroidSubagentToolCall(tracker, task("t", "Sleep"), TURN);
+    observeDroidSubagentToolCall(tracker, { ...launched, data: { ...launched.data, meta } }, TURN);
+    observeDroidSubagentToolCall(tracker, call("t", { status: "completed", text: "Slept." }), TURN);
+    for (let index = 0; index < 200; index += 1)
+      observeDroidSubagentToolCall(tracker, task(`more-${index}`, "More"), TURN);
+    expect(tracker.subagents.has("t")).toBe(false);
+    expect(tracker.background.has("droid-1")).toBe(false);
+  });
   it("leaves calls that are not about a sub-agent alone", () => {
     const tracker = makeDroidSubagentTracker();
     const read = call("read-1", { title: "Read file", rawInput: { file_path: "/a" } });

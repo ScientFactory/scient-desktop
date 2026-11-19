@@ -18,6 +18,7 @@ import { threadPullRequestsOf } from "@t3tools/client-runtime/thread-pull-reques
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { EMPTY_THREAD_HISTORY_META } from "@t3tools/client-runtime/state/threads";
+import { flushSync } from "react-dom";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render, stubGlobal } from "../../test/render";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../test-fixtures";
@@ -28,7 +29,6 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { SidebarProvider } from "./ui/sidebar";
 import ChatView from "./ChatView";
 import "../index.css";
-import * as journal from "../scient/threadQueue/editJournal";
 
 const lab = await vi.hoisted(async () => {
   const { Atom, AtomRegistry, AsyncResult } = await import("effect/reactivity");
@@ -65,7 +65,6 @@ vi.mock("../rpc/atomRegistry", () => ({
 vi.mock("../state/entities", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/environments", { spy: true });
-vi.mock("../scient/threadQueue/editJournal", { spy: true });
 vi.mock("../localEnvironment", () => ({ isLocalEnvironmentDisabled: () => true }));
 vi.mock("../state/use-orchestration-command", () => ({
   useOrchestrationCommand: () => lab.command,
@@ -111,7 +110,6 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
       storage.delete(key);
     },
   });
-  using _journals = vi.spyOn(journal, "readQueueEditJournals").mockResolvedValue([]);
   const drafts = useComposerDraftStore.getState();
   cleanup.defer(() => {
     useComposerDraftStore.setState(drafts, true);
@@ -205,13 +203,16 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
   await expect
     .element(screen.getByRole("button", { name: "Attach files", exact: true }))
     .toBeVisible();
-  const before = quiet.mock.calls.length;
   const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
     row.item.type === "assistant_message" && row.item.streaming
       ? { ...row, item: { ...row.item, text: "The live answer has advanced" } }
       : row,
   );
-  await act(() =>
+  // Counted inside one synchronous flush: the composer is still settling from the cancelled
+  // recording, and the renders its own size and the timeline's end bring would otherwise land
+  // here whenever the runner is slow.
+  const before = quiet.mock.calls.length;
+  flushSync(() =>
     lab.registry.set(
       lab.state,
       AsyncResult.success({
@@ -227,11 +228,10 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
       }),
     ),
   );
-  await expect
-    .element(screen.getByText("The live answer has advanced", { exact: true }))
-    .toBeVisible();
+  const streamedRenders = quiet.mock.calls.length - before;
+  expect(screen.container.textContent).toContain("The live answer has advanced");
   await expect.element(screen.getByText("Done", { exact: true })).toBeVisible();
-  expect(quiet.mock.calls.length).toBe(before);
+  expect(streamedRenders).toBe(0);
 });
 
 it("does not replay a pending question the shell already showed once the thread detail loads", async () => {
@@ -247,7 +247,6 @@ it("does not replay a pending question the shell already showed once the thread 
       storage.delete(key);
     },
   });
-  using _journals = vi.spyOn(journal, "readQueueEditJournals").mockResolvedValue([]);
   const drafts = useComposerDraftStore.getState();
   cleanup.defer(() => {
     useComposerDraftStore.setState(drafts, true);
@@ -375,16 +374,19 @@ it("does not replay a pending question the shell already showed once the thread 
     </RegistryContext.Provider>,
     { container },
   );
+  // The status region follows the messages-and-steps one.
+  const statusRegion = () =>
+    [...screen.container.querySelectorAll<HTMLElement>('div.sr-only[aria-live="polite"]')].at(-1);
   const region = await vi.waitFor(() => {
-    const found = screen.container.querySelector<HTMLElement>('div.sr-only[aria-live="polite"]');
-    if (found === null) throw new Error("The activity announcer has not mounted");
+    const found = statusRegion();
+    if (found === undefined) throw new Error("The activity announcer has not mounted");
     return found;
   });
   await act(() => deliver(Option.some(projection)));
   await vi.waitFor(() =>
     expect(screen.container.querySelector("[data-pending-user-input-toggle]")).not.toBeNull(),
   );
-  expect(screen.container.querySelector('div.sr-only[aria-live="polite"]')).toBe(region);
+  expect(statusRegion()).toBe(region);
   await expect.element(region).toBeEmptyDOMElement();
   await act(() => deliver(Option.some(questionProjection(RuntimeRequestId.make("next-request")))));
   await expect.element(region).toHaveTextContent("Needs your input");

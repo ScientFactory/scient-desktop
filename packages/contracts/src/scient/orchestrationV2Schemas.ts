@@ -189,4 +189,12 @@ export const ScientInternalCommands = [
     threadId: ThreadId,
     requestId: CommandId,
   }),
+  /** A saved steer the provider-input limit refused; records why it was not sent. */
+  Schema.Struct({
+    type: Schema.Literal("steer-input.refuse"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    message: TrimmedNonEmptyString,
+  }),
 ] as const;

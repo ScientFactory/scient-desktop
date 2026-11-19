@@ -1,5 +1,21 @@
 # Upstream maintenance
 
+Scient owns subscription-model policy in `packages/shared/src/scientModel.ts` and quota
+fallback in `packages/shared/src/scientAgentModelFallback.ts`, mounted in `ChatView.tsx`.
+Preserve exact-ID hidden defaults (new IDs visible), saved visibility/order/favorites and
+custom models, and explicit/persisted thread and global selections. Preferred subscription
+models, not catalog order, drive implicit defaults and the shared new-turn/explicit-resume
+quota fallback: configured fallback first (including an explicitly chosen API route or
+same-family account; default hiding cannot override it, but explicit hiding can), then
+Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
+subject to visibility, availability, sign-in, quota and task compatibility. Never silently
+choose metered API routes automatically or auto-resume a limited thread. This automatic
+chain can recover a standalone-provider thread too. Antigravity's native
+`google-antigravity` and CLI `antigravity-cli` catalog identities stay distinct; Hydrogen is
+preferred when offered even though the CLI source catalog names Carbon as its own default.
+Current choices and user controls: [Providers](docs/user/providers.md#model-visibility-and-subscription-defaults)
+and [Usage](docs/user/usage.md#subscription-quota-fallback).
+
 Mobile diff grammar tests: `apps/mobile/src/features/diffs/nativeReviewDiffHighlighter.test.ts`
 disables Shiki's per-line wall-clock timeout in its real-highlighter test wrapper.
 The inherited 500ms cutoff can return partial tokens and incomplete grammar state
@@ -144,13 +160,14 @@ marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's te
 upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
 change unless Scient wants its own drawing.
 
-Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
-`CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
-`ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
-hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
-(#14924) and the pressed wrap toggle (#13208) are ported. Sharing the generic implementation with
-upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
+Chat Markdown (Scient): code blocks render through T3's `chat/MarkdownCodeBlock.tsx`. Its
+Scient seams are two optional props. `dir` (default `"ltr"`): `ChatMarkdown.tsx` passes
+`chatCodeBoxDirection(...)` so a Hebrew or Arabic plain-text box reads right to left, and Copy
+message reads the same `dir`. `onCopyFailure(cause, copyButton)`, with a ref on the block's
+Copy button: chat shows T3's anchored "Failed to copy" toast beside that button (as Copy message
+does), and the Mermaid card shows its own error. T3's block alone only logs the failure. The loading placeholder in `ChatMarkdown.tsx` is not `aria-hidden`,
+so Copy message keeps code whose highlighting is still loading. The rich editor's code header
+keeps Scient's `CodeBlockActions.tsx` and `CodeBlockTitle.tsx`. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
 through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
 capture use the shared Pele lazy renderer in `chat/MermaidDiagram.tsx`, with Scient recovery,
@@ -179,29 +196,75 @@ speculative global probing during upstream alignment.
 
 Scient's desktop update control retains the inherited idle check icon and update
 actions. Its active states use a compact primary-colored button with Update,
-download percentage, Restart, or Retry copy. The labeled button is 28px tall and
+download percentage, or Retry copy. The labeled button is 28px tall and
 uses plain download/restart icons without status badges. Preserve the marked presentation
 seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
 `desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
 installation remain inherited. Do not copy the updater into a second component
 or restore upstream's muted active-state styling during alignment.
-Scient replaces upstream's restart flow: a finished download shows a notice
-anchored above the update control, with a **Restart now** action and a 5-second
-timeout, falling back to the corner stack when the control is off screen; and
-Restart installs without the confirmation dialog in the sidebar, the legacy
-sidebar and Settings. The notice and the shared install call live in
-`apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; the three callers
-carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
+Scient downloads an offered update in the background (`autoDownloadLoop` in
+`DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
+download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a
+check does not reset that schedule, and a newer release starts at once and replaces the pending
+download. electron-updater's own `autoDownload` stays off. Until the update is ready the control
+stays idle (its tooltip reports the download); a failed download shows Retry, whose download
+shows progress. A ready update shows **Update** ("Restart and update to …"), which opens a card
+anchored above the control with **Restart now**; that card stays until used, dismissed, pressed
+again, or its update stops being ready. A download the user started (Retry) announces its card
+with a 5-second timeout and never restarts by itself. Every install from the card, the footer,
+Settings or a pass names the version it showed, so a build that replaced it is refused, not
+installed. Restart installs without the confirmation dialog. The notice and the shared install
+call live in `apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; callers carry
+`SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
-callers; do not reintroduce the confirmation during alignment.
+callers; do not reintroduce the confirmation during alignment. A managed policy's feed stays the
+update source on every channel. Install-on-quit and early native (Squirrel.Mac) preparation stay
+off. Electron 44.10.1 pins Squirrel.Mac `fffea30e4a339a7f7d69a3391314b72548d209bd`,
+whose `downloadAndPrepareUpdate` arms installation after ordinary termination. Electron's
+public API has no prepare-without-arming or cancellation operation; changing
+`electron-updater.autoInstallOnAppQuit` cannot change that native guarantee.
+Keep native preparation behind explicit consent unless a qualified native adapter separates
+staging from commit. Outer `update-downloaded` proves only the archive download.
+After explicit consent, `MacUpdatePreparation.ts` uses Electron's public updater API and
+matches native `update-downloaded.updateURL` to the exact random loopback ZIP URL emitted
+by the pinned electron-updater patch (`nativeUpdateUrl`). Never replace this receipt with
+MacUpdater's unversioned `squirrelDownloadedUpdate` boolean. Preparation waits five minutes;
+a timeout retry rejoins that native operation. A terminal native error invalidates the
+download's install eligibility; retry refreshes the feed before reusing cached bytes and
+uses the normal download retry schedule. Preparing again requires fresh explicit consent.
+The install reservation spans `preparing`, both all-window save acknowledgements
+(`DesktopUpdateSave.prepare` then `prepareForRestart`), concurrent backend shutdown and native
+handoff. Backends remain running until the final acknowledgement. `quitting` becomes true
+before the final barrier to prevent new windows, and that barrier locks renderer input before
+saving; failure/interruption releases every lock before returning control.
+The compact control shows only a state-specific, reduced-motion-aware spinner, never long
+button copy. Its tooltip opens by itself with the progress, then for a few seconds with the reason
+a restart stopped (`apps/web/src/scient/desktopUpdate/useRestartProgressNotice.ts`); with the
+sidebar closed, progress is a corner toast.
+The version shown by an install caller remains binding even when its final feed check
+discovers and downloads a newer release. Late download events cannot replace the current
+offer, and update events cannot mutate an install's reserved release.
+Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
+`apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
+`DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
+carry only marked calls into them. The four-hour poller contains an unexpected failure per
+iteration instead of ending; keep that when aligning upstream's poller.
+Runtime Stable and Beta feeds use Scient's download mirror; Nightly keeps GitHub. A check the
+mirror cannot answer runs again against GitHub, and a failed mirror download keeps the rest of the
+run on GitHub. Outcome source attribution follows the selected feed when recorded, including
+after channel changes; an administrator's feed remains `administrator`. The build-time publisher stays GitHub so older
+clients and the published `app-update.yml` keep their release compatibility.
 The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
 and Scient-managed runtimes appear in a Scient-owned circle and card
 (`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
 `SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
 that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
 servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
-are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
-the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+are retained unmounted (knip entries) so their changes still merge. Scient replaces upstream's
+5-second restart countdown with an idle check (`scient/desktopUpdate/restartWhenIdle.ts`): when a
+pass that downloads this app finishes, this app restarts at once only while none of its own
+threads is working and Compute has no running work; otherwise the pill shows Update. Upstream's
+`waitForUpdateRestart` stays in place, unused. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
 A marked root mount delegates browser "update available" toasts to Scient's
@@ -239,7 +302,9 @@ Stop turns into a queued message joins the held queue. A stop made so a queued m
 (a `/goal`, or Send now into a running compaction) does not hold the queue
 (`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
-`SteeringCompletion.integration.test.ts` assert Scient's rule.
+`SteeringCompletion.integration.test.ts` assert Scient's rule. Send now on a held message is
+upstream's `queued-run.start`, with its order and refusals; the same file reads an older Scient
+client's `queue.resume` with a `runId` as that command.
 Upstream's release of unattended messages after a later completed run is composed: the
 terminal fence honours it as the one release without a command, and a message queued before a
 Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
@@ -247,8 +312,8 @@ Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
 The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
 `scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
-`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
-command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+`SCIENT-FORK queue-scient-parts` sections: failed-start Retry,
+command errors and the delayed "Queuing…" status. Take
 upstream's changes to the rest of the file as they are, including its single Send now action
 without reordering; agents still reorder through `scient_queue`.
 
@@ -259,6 +324,30 @@ committed Stop directly and releases its scope before declined-start finalizatio
 native offering and adopted provider work retain their receipt-aware control.
 Preserve upstream's effect ordering and transaction/cancellation machinery.
 The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
+
+Scient's switch planning also runs on ordinary sends, so a project-folder move replaces the
+native binding. For providers that negotiate per-thread workspaces in a pooled process,
+`ProviderSwitchService.ts` compares the last bound workspace recorded by
+`ProviderTurnStartService.ts` in the optional `nativeMetadata.cwd`, not the pooled process's
+launch cwd; older records keep the conservative session-cwd fallback. Marked seams in
+`ProviderEventIngestor.ts` and `RunExecutionService.ts` apply
+`scient-provider/RecordedWorkspace.ts`, so the recorded value wins over an adapter's cached copy
+of the same session's row. Detach passes Scient's optional `awaitRelease` (`provider-core`
+`ProviderAdapter.ts`), and a marked block in `Adapters/CodexAdapterV2.ts` then waits up to 5
+seconds for `thread/closed`, including a close still pending from an earlier idle unsubscribe,
+because the next owner may be another app-server process. `ProviderSessionManager.ts` remembers
+threads an idle unload released (`idleUnloadedProviderThreads`) so a later handoff detach still
+joins that release. Preserve these divergences.
+
+The same change pre-adopts two open upstream fixes in their touched hunks:
+[#30647](https://github.com/pingdotgg/t3code/pull/30647)'s detach of the held native thread
+(`ProviderSessionManager.ts`, without its per-thread config fixture churn) and
+[#33767](https://github.com/pingdotgg/t3code/pull/33767)'s Codex unload delay launch argument and
+closing-thread resume retry. When syncing, take upstream's version of those hunks, then reapply
+the marked Scient additions inside them: the `awaitRelease` detach argument and
+`idleUnloadedProviderThreads` fallback in `ProviderSessionManager.ts`, the release wait in
+`CodexAdapterV2.unloadThread`, the `expectedRuntime` release argument, and the linked-environments
+test assertions. See [provider lifecycle](docs/internals/providers.md#registry-and-routing).
 
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
@@ -404,9 +493,8 @@ Status layout entirely. The shelf therefore lives only in the Status layout, and
 the Sections view receives the complete inbox in normal order so the toggle can
 neither hide nor reorder a thread inside a section. The shelf setting still
 decodes to `false`, so the beta is opt-in. Separately, upstream's mobile update
-documentation was removed from user Help: `docs/internals/scient-mobile-release-hold.md`
-records that there is no supported Scient mobile app and prohibits presenting that
-channel as Scient distribution.
+documentation was removed from user Help; the mobile hold it recorded is now part of
+[Mobile release](docs/operations/mobile-release.md).
 
 The preceding qualified alignment is recorded in
 [the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md) ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
@@ -619,6 +707,218 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`0226239a41e1fd0649fdd2562421d8950db7f39c` is recorded in
+[the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md),
+whose 2026-11-19 extension adds the 41 official commits after `8cf97b5f06` in literal merge
+`22d54223bd7e175755010fb3395658e34ce3c945`. They let side chats keep attachments and context,
+offer fx backends per thread, tunnel another environment's localhost previews, and renew paired
+devices' sessions. Literal merge `fd911abf341715fb283a62d37690c9ca853042a8` has owned base
+`e1c4beb937cdcbf0abc69b3e58c8ebfe20b58334` and the frozen official target as parents, retaining
+the 63 official commits after `42763ff8b1`. The range translates the whole app into T3's ten
+languages, adding Swedish; Scient's wording inside T3's screens is translated with it, and
+Scient's own modules stay English. Fixes include service-worker pages identifying as Chrome and
+Run now keeping a paused one-time task. The alignment is Scient PR #1021. Release remains separate.
+
+The previous committed alignment through
+`42763ff8b12bfb534363df4dd5f8f5f759f54990` is recorded in
+[the 2026-11-18 42763ff8b1 receipt](docs/internals/t3-upstream-sync-20261118-42763ff8b1.md).
+Literal merge `07c3ec51f70ae063b45fadadeccd7df07e45befd` has owned base
+`e583aa41d560c43d07c22f359a23a4cbc68c1fd2` and the frozen official target as parents, retaining
+the 174 official commits after `e9a1e8699e`. The range adds T3's Issues (GitHub, GitLab, Azure
+DevOps, Forgejo and Linear trackers, issue links on threads and agent issue tools) beside
+fixes: a running Claude thread forks natively, saved secrets reach only their destination, and
+HTML previews swap revisions without a blank frame. T3's migrations 97-98 are Scient's 101-102.
+Release remains separate.
+
+An earlier committed alignment through
+`e9a1e8699e0b8530a27372de4a22e57cf1ebbe70` is recorded in
+[the 2026-11-17 e9a1e8699e receipt](docs/internals/t3-upstream-sync-20261117-e9a1e8699e.md).
+Literal merge `d9ea28b9ebad988f15a57f22e1377c3dd7c4e364` has owned base
+`f2b24cb2d03e3f1df87f43ef361412e3ac4b0f69` and the frozen official target as parents, retaining
+the 105 official commits after `47f90ee2e9`. The range is fixes and small features: Claude
+requests that never answer fail after 10 minutes, retried MCP and provider calls recheck their
+limits, snapshots copy between composers, themes can carry a background image, and T3's phone
+builds move to one shared local-build action. Release remains separate.
+
+An earlier committed alignment through
+`47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
+[the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
+Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
+`301abac0beec5be6f037b6168a68faca83effde5` and the frozen official target as parents, retaining
+the 28 official commits after `6b7027b1f4`. The range is fixes: checkpoints stop rehashing unchanged
+untracked files, a busy thread's lock delays only its own reactions, Pi follows a session file an
+extension moves to, and model choices survive catalog gaps. Release remains separate.
+
+The previous committed alignment through
+`6b7027b1f43eebc4c7edf5304236a0775b2d8928` is recorded in
+[the 2026-11-16 6b7027b1f4 receipt](docs/internals/t3-upstream-sync-20261116-6b7027b1f4.md).
+Literal merge `8bcb5e3cb27745baf2a9bda2a5883235ca7dde94` has owned base
+`fd426be8f43870f1df67a3382959e62dff9b89d6` and the frozen official target as parents, retaining
+the 53 official commits after `5070931521`. The range is fixes: work a dead provider process was
+running ends instead of staying Running, one thread's lock no longer stalls other threads' wakes
+and queued runs, file tabs keep their scroll position, and T3's migration 96 lands as Scient's 100. Release remains separate.
+
+The previous committed alignment through
+`507093152148c0d31c09bcd40e3ce4b5214a8557` is recorded in
+[the 2026-11-15 5070931521 receipt](docs/internals/t3-upstream-sync-20261115-5070931521.md).
+Literal merge `ef92b7b172029310fd364c57547fe2ae72dbafba` has owned base
+`30c828080be1b4cfeb5366a50bb8a351b4c93610` and the frozen official target as parents, retaining
+the 237 official commits after `7f6e403a88`; PR #949 carries it. The range is fixes and speed-ups:
+long threads open faster, restarts keep unaccepted prompts, Resume refuses a queue behind failed
+worktree setup, and T3's migration 95 lands as Scient's 99. Release remains separate.
+
+The previous committed alignment through
+`7f6e403a88815e5644efbdb6bc8625246f661095` is recorded in
+[the 2026-11-15 7f6e403a88 receipt](docs/internals/t3-upstream-sync-20261115-7f6e403a88.md).
+Literal merge `4f0837dd3bd1d732ded3fcf408eaa9bd62340d0a` has owned base
+`220f377211ff71cc8ee76c8a04710bc208699ba0` and the frozen official target as parents, retaining
+the 143 official commits after `2bee33eb19`; PR #937 carries it. Pi starts attached to its owned session file, failed
+turn starts settle, delegated tasks stop reading the parent's history, checkpoints cover
+submodules within Scient's capture deadline, and T3's migrations 92-94 land as Scient's 96-98.
+OpenCode wake continuations confirm their permission rules like every turn. Release remains
+separate.
+
+The previous committed alignment through
+`2bee33eb193a0430c9a0d8e24f8f684163f045a4` is recorded in
+[the 2026-11-14 2bee33eb19 receipt](docs/internals/t3-upstream-sync-20261114-2bee33eb19.md).
+Literal merge `1235ed4b9a21f02197748810dd2f1a3678a450df` has owned base
+`253ef0edc14f8d6d7c20506fd97aaef57176ae4e` and the frozen official target as parents, retaining
+the 104 official commits after `997b304dd6`; PR #929 carries it. Node moves to 26.13.1 with its
+SQLite 3.54.1, renaming a thread renames the Claude session, and provider switches on portable
+forks keep the inherited conversation. Scient keeps its lazy Files tree and pdf.js find. Release
+remains separate.
+
+The previous committed alignment through
+`997b304dd65f8fee1e4912cbe656b459695aa8e9` is recorded in
+[the 2026-11-14 997b304dd6 receipt](docs/internals/t3-upstream-sync-20261114-997b304dd6.md).
+Literal merge `745632a426ff2bca9bec21a3d89e86f6aa3eb37c` has owned base
+`4a01db6ca4fa116eac8e7f0456f7a67fdd522d4f` and the frozen official target as parents, retaining
+the 150 official commits after `4d5d5f89d4`; PR #921 carries it. Stopped threads resume natively where the agent
+supports it, a new thread's first message travels in its creation command with Scient's skill
+selection, and Scient keeps its staging-repository checkpoint capture. A reply cut at the output
+token limit keeps Scient's completed-with-notice outcome. Release remains separate.
+
+The previous committed alignment through
+`f313d0a6cb843551fb60e57a454a71e71a3a8c04` is recorded in
+[the 2026-11-13 f313d0a6cb receipt](docs/internals/t3-upstream-sync-20261113-f313d0a6cb.md).
+Literal merge `056b8ccc26884eb7c40f517fb3a302b595253bc0` has owned base
+`5067dcfb198bcf94ac6cb78838a1dbbaa9c0fae5` and the frozen official target as parents, retaining
+the 172 official commits after `f70e349eca`. Keep-awake now uses T3's server hold, deciding busy
+from Scient's work definition, and Scient's desktop switch is removed. A message sent after a
+stopped worktree setup waits for a worktree, as in T3. T3's three migrations are appended as 91
+to 93. Release remains separate.
+
+The previous committed alignment through
+`f70e349ecaef6560aecb889f77d6f03b9251edc9` is recorded in
+[the 2026-11-13 f70e349eca receipt](docs/internals/t3-upstream-sync-20261113-f70e349eca.md).
+Literal merge `96fa5a81ff02e5b97172362a3f2722ca9fe10eb9` has owned base
+`5d78d5d7fa5b7bf21db299b2c71897d779d2e62a` and the frozen official target as parents, retaining
+the 589 official commits after `eceeab4d5c`. Scient's copies of its own fixes T3 merged (#34595,
+#34575, #34252) and of the subagent tools-used note (#34821) give way to T3's code. T3's UI
+languages arrive with Scient's names. T3's four migrations are appended as 87 to 90. Antigravity
+keeps Scient's qualified ACP release while T3 moves to Google's native CLI. Release remains
+separate.
+
+An earlier committed alignment through
+`eceeab4d5c5bb02b58906978ff9e50bbd595ec19` is recorded in
+[the 2026-11-12 eceeab4d5c receipt](docs/internals/t3-upstream-sync-20261112-eceeab4d5c.md).
+Literal merge `24bf8e8936698b61e604963c41cf9bd5f016140a` has owned base
+`e95317fe8b7dff07b0b017599daa24e7bd4b296b` and the frozen official target as parents, retaining
+the 243 official commits after `44ebb2fe57`. Scient's copies of its own fixes T3 merged (#34460,
+#34461, #32040) give way to T3's code. "Continue threads after restarts" takes T3's default (on)
+and is turned on once for everyone. Grok skips an effort it cannot apply, as in T3. T3's two
+migrations are appended as 85 and 86. Release remains separate.
+
+An earlier committed alignment through
+`44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
+[the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
+Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
+`b54217ce65ea261004b3222eec44de843db04f56` and the frozen official target as parents, retaining
+the 61 official commits after `7171fdd771`. T3's timeline viewport rules land in Scient's reader
+scrolling. A restart that Stop already reached is still refused, so nothing starts while a
+provider shuts down. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
+[the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
+Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
+`a3cc2496dac3b2356f69864b73468fe7fdba33e4` and the frozen official target as parents, retaining
+the 80 official commits after `33db45effd`. Scient keeps its package install for the server
+runtime. T3's agent sign-in approval runs through Scient Connect, which merged first.
+`@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
+Release remains separate.
+
+An earlier committed alignment through
+`33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
+[the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
+Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base
+`b7b639186a2365393d73f5b68b748c86b02312ec` and the frozen official target as parents, retaining
+the 37 official commits after `402d0623d5`. T3's one-page Welcome replaces its wizard for hosted
+builds; Scient keeps Getting started. T3's "use in another app (MCP)" wizard is aligned with
+Scient names and stays dormant with T3 Connect. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`402d0623d5f4160859607e9b7c11fc829fbe3e18` is recorded in
+[the 2026-11-09 402d0623d5 receipt](docs/internals/t3-upstream-sync-20261109-402d0623d5.md).
+Literal merge `4ced9d1208a9bdf0116ed3d7e60b72e53452d42c` has owned base
+`8b328c6330bc95db3e011f49132e32bca862024e` and the frozen official target as parents, retaining
+the 83 official commits after `6417151c09`. Plan mode, the composer context meter and the legacy
+sidebar are removed as in T3. Model APIs can write titles and commit text, Claude and Codex can
+suggest the next prompt (on by default in Scient), the `scient` command installs on a fresh first
+launch, Pi offers speed tiers, and database space can be reclaimed from Settings. No migrations.
+Release remains separate.
+
+An earlier committed alignment through
+`6417151c093e54dbba0e6c824c69d03983793b9a` is recorded in
+[the 2026-11-08 6417151c09 receipt](docs/internals/t3-upstream-sync-20261108-6417151c09.md).
+Literal merge `aaf3b2af5b767d8b3d3ac3524e3314db3f642445` has owned base
+`fd01f549ad561c20c13994435dabb0effd67f91c` and the frozen official target as parents, retaining
+the 28 official commits after `4c3a9d5818`. HTML tools take a file path, a scheduled task can move
+to another thread, side chats start with the parent's reasoning level, and agent sessions pick up
+Linked environments changes. A starting turn may reopen its own reserved session for that. No
+migrations. Release remains separate.
+
+An earlier committed alignment through
+`4c3a9d58184f20bd76833bd599c3544d2c09e3eb` is recorded in
+[the 2026-11-07 4c3a9d5818 receipt](docs/internals/t3-upstream-sync-20261107-4c3a9d5818.md).
+Literal merge `23567dd575ff3e83b3276159f013e615430e7572` has owned base
+`8d32bf8e12f9951e0f5b6f33d1a85c3a415f04fc` and the frozen official target as parents, retaining
+the 61 official commits after `6577c6b618`. Archived threads can be deleted, a usage-limit
+auto-resume survives a restart, Cursor usage reads only the signed-in account (no Keychain), and
+ACP agents keep form questions and child tool output. T3's cloud dictation stays dormant with its
+local voice engine. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`6577c6b6185167c0e502fa01f9e8e8f2dee6ff25` is recorded in
+[the 2026-11-06 6577c6b618 receipt](docs/internals/t3-upstream-sync-20261106-6577c6b618.md).
+Literal merge `2a52792f87706bd55cee4aaced2c1bd1ad90719c` has owned base
+`d733f61e1df59ceab8ccc4c340f6b588bf105272` and the frozen official target as parents, retaining
+the 194 official commits after `4aab23cd72`. Provider writes are batched per transaction, secret
+requests and provider credentials can use a secret provider, PR comments reach the chat, and
+Ultracode works at any effort. T3's local voice engine is merged but dormant until the voice
+decision; Scient's voice stays the one users see. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`4aab23cd72d71ab3b58878482f3d22f93a088125` is recorded in
+[the 2026-11-05 4aab23cd72 receipt](docs/internals/t3-upstream-sync-20261105-4aab23cd72.md).
+Literal merge `eb043f39aaa91ab794aae028ea3cb6c75d26615d` has owned base
+`e3e90a0f7437ff4d66dff2374d2dc52cae7c890d` and the frozen official target as parents, retaining
+the 18 official commits after `67eebaca23`. A message can start a fresh session in the same thread
+(`/clear`, and scheduled tasks that reuse one thread), side chats inherit the parent's permissions,
+a thread with a pending question can be snoozed, and threads follow their worktree's branch. T3's
+migration 80 lands at Scient's 084. Release remains separate.
+
+An earlier committed alignment through
+`67eebaca23f8f7bc46e8817434087fc9c5acf8e3` is recorded in
+[the 2026-11-05 67eebaca23 receipt](docs/internals/t3-upstream-sync-20261105-67eebaca23.md).
+Literal merge `db85f90ef1a339864f8b33da730b3fca03959fe0` has owned base
+`adbdf535ee91f0db7c3105273b66af672e998432` and the frozen official target as parents, retaining
+the 32 official commits after `a21d788752`. T3's stricter Effect rules now cover Scient's own code
+(typed Schema errors, typed `Effect.try` failures, environment through `HostProcess.Environment`),
+idle agent tabs free a slot at the server's tab limit, silent Antigravity prompts time out, and
+clones can use host/owner/repo folders. No migrations. Release remains separate.
+
+An earlier committed alignment through
 `a21d788752695764028e6d26ba924f3963e05806` is recorded in
 [the 2026-11-05 a21d788752 receipt](docs/internals/t3-upstream-sync-20261105-a21d788752.md).
 Literal merge `de156f96e8b0e9a55a7231bd39f7e4cdf3d097aa` has owned base
@@ -629,7 +929,7 @@ agents ask for secrets through the card, Claude tool calls can render MCP Apps o
 server, and T3's merge of Scient's Pi stop-order fix retires Scient's copy. No migrations. Release
 remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `7c22e24e3fa1a3bb3a95f27aea000067f198fe7f` is recorded in
 [the 2026-11-04 7c22e24e3f receipt](docs/internals/t3-upstream-sync-20261104-7c22e24e3f.md).
 Literal merge `6d16ce63d44f32164b9157b43537d319c792e812` has owned base
@@ -1268,6 +1568,11 @@ handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
 version-cap ownership. Sharing the RPC implementation does not merge the two
 products' executable identities or state.
 
+Native question publication stays in `orchestration-v2/scient-provider/NativeQuestionPublication.ts`:
+the question item precedes its pending runtime request, and repeated notifications retain the
+request's identity and response authority. `NativeSessionAdapterV2.ts` calls it through marked
+seams; the MCP regression lives in `mcp/toolkits/thread/handlers.scient.integration.test.ts`.
+
 Scient's native subagent observations and compact chat disclosure are gated by
 `driverKind === "scient"` (and all-Scient groups in the renderer). Preserve the
 separate assignment/label, observed-only progress/model/usage, sparse terminal
@@ -1342,12 +1647,15 @@ dismissal of pending notifications; upstream's favicon badge remains on the web.
 window lifecycle remain owned by their current systems. See
 [answer attention](docs/internals/answer-attention.md).
 
-Conversation forks keep server-owned boundary resolution, durable provisioning,
+Conversation forks are T3's `thread.fork` with Scient's `scient` boundary and workspace
+options; the Orchestrator's one dispatch mount hands every fork that is not a side chat to
+`scient-fork/ConversationForkDispatch.ts`, which uses T3's `ThreadForkService` to build the
+thread. They keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared
 selection of submitted question-answer activities and independent file ownership;
 T3's question submission path remains unchanged. Preserve the read-authorized
-`orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
-typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+`orchestration.getForkOptions` and `orchestration.awaitFork` RPCs and the `threadForkOptions`
+capability, receipt-less refusals of conversation forks, and the pre-send readiness gate.
 Running local forks skip file capture; new-worktree captures retain exact attempt/ref/OID
 ownership through rejection and restart. Checkpoint enumeration remains bounded and streamed,
 and publication transfers only new staged objects while preserving connectivity and fsync.
@@ -1409,7 +1717,11 @@ projection lives under `scient/skills`; voice correction shares the existing gua
 generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
-replacement qualification, not merely an available Google archive.
+replacement qualification, not merely an available Google archive. T3 now installs Google's
+native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
+floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
+native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
+qualification first.
 
 Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
 worth proposing to T3:
@@ -1565,6 +1877,8 @@ inherited-host seams are limited to typed IPC/preload registration, one
 composer mount plus busy-state footer layout and an icon-only provider trigger,
 one ready-model-only citation-comment
 mount, and one desktop-packaging call into `scripts/lib/scient-voice-build.ts`.
+Dictation with ChatGPT adds one `voiceDictation` entry to the inherited Codex
+driver, built by the Scient-owned `apps/server/src/scient/voice/CodexChatGptDictation.ts`.
 Future T3 merges should preserve those narrow mounts rather than moving voice
 orchestration into inherited T3 components. See
 [Scient local voice architecture](docs/internals/scient-voice.md).
@@ -1701,8 +2015,7 @@ folder's New document in `FileBrowserPanel.tsx` (see "Side panel and Files bar")
 a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
-Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
-`scient/presentation`; upstream fixes must be ported by hand) mounted in
+the `dir` prop on T3's `chat/MarkdownCodeBlock.tsx`, mounted in
 `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 `MediaActions.tsx`, and in `index.css` an additive trailing block and two Markdown
@@ -1807,6 +2120,18 @@ merges must not restore `~/.t3` paths in these scripts. The
 Codex desktop handoff and its return addresses use Scient's registered
 `scient://` schemes, never `t3code://` or T3's hosted origin.
 
+T3's mobile workflows (`.github/workflows/mobile-*.yml`) keep their structure but
+run only when the owner sets repository variable `SCIENT_MOBILE_RELEASE=true`;
+the fork-preview and APK-mirror workflows need their own variables as well. They
+use GitHub-hosted runners with the Actions cache instead of Blacksmith sticky disks,
+take Scient's Expo project from `T3CODE_EAS_OWNER` and `T3CODE_EAS_PROJECT_ID`,
+and keep a development client as a run artifact because Scient has no shared
+native-client cache. Upstream refreshes must not restore the `pingdotgg/t3code`
+guards or Blacksmith labels. The hosted web build writes the phone app's
+`.well-known` link files (`infra/scient-web/well-known.mjs`): only `com.scientfactory.*`
+identifiers, with Android fingerprints from build-time variables. See
+[Mobile release](docs/operations/mobile-release.md).
+
 Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
 `scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,
 because process lists such as Windows Task Manager show those names.
@@ -1853,6 +2178,18 @@ truncation and selection checks in
 `apps/web/src/scient/files/fileTreeBidi.browser.test.ts`. Reversing filenames or
 setting the whole tree RTL is not a substitute for preserving each name's bidi
 paragraph.
+
+## Typing beside an open PDF
+
+The web client's PDF.js 6.4.299 carries `patches/pdfjs-dist@6.4.299.patch`, a
+single condition in the legacy viewer that Scient imports. On every `keyup` and
+`selectionchange` in the app, TextLayerBuilder re-appended each text layer's
+`endOfContent`. PDF.js's DrawLayer observes that move and reads
+`Selection.isCollapsed`, which forces a full layout, so typing in chat beside a long
+PDF paid for a document layout on every key. The patch skips the move when the
+node is already last. PDF.js main still has the unconditional append. Keep the
+patch until an upgrade includes an equivalent fix, then confirm
+`apps/web/src/scient/pdf/pdfTextLayerReset.browser.test.ts` passes without it.
 
 ## Side panel and Files bar
 
@@ -1927,6 +2264,69 @@ Two marked focus seams keep the caret where the person is typing:
 - `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
   takes the caret only if focus is still in the composer or nowhere in particular.
 
+## Google sign-in in Scient's browser
+
+Google refuses sign-in inside Electron, so Scient stops its sign-in pages and explains them
+([Accounts internals](docs/internals/scient-accounts.md#google-sign-in-in-scients-browser)).
+The logic lives in `apps/desktop/src/scient/browser/googleSignIn*.ts`; marked blocks in upstream
+files only connect it:
+
+- `preview/BrowserSession.ts`: each preview partition installs `guardGoogleSignIn` (it owns the
+  session's `onBeforeRequest`; Electron allows one listener per event).
+- `preview/Manager.ts`: the tab's failed load gets an agent-readable description and emits
+  `DesktopPreviewSignInBlockedEvent`; popups are watched; in-page navigations check for Google's
+  refusal; `subscribeSignInBlocked`.
+- `ipc/channels.ts`, `ipc/methods/preview.ts`, `preload.ts`, contracts `ipc.ts`: the event's
+  channel and `onSignInBlocked`.
+- web `ElectronBrowserHost.tsx` records it once per hosting window; `PreviewView.tsx` shows the
+  recovery instead of the generic unreachable page.
+
+## Browser import: cookies left behind
+
+Marked blocks say why an import copied less than it read, chiefly Windows' app-bound (`v20`)
+Chromium cookies, which Scient doesn't try to bypass
+([browser import](docs/user/browser-import.md#when-some-cookies-cant-be-copied)):
+
+- contracts `browserImport.ts`: the `appBoundEncryption` unavailable reason, the `writeFailed`
+  failure, and `skippedByReason`/`importedGoogle` on the result.
+- desktop `preview/BrowserImport/*`: Windows Chromium sources listed but unavailable; skipped rows
+  counted by cause.
+- web `browserImportWizard.logic.ts`, `BrowserImportWizard.tsx`: the protected-cookie notice, and
+  an import into Main counted in sign-ins, partial when it kept one of Main's own.
+
+## Git maintenance, untracked scans and owned processes
+
+Checkpoints are captured on T3's path (a private object directory under the repository's
+`objects`, linked in before `update-ref`), which never runs Git's automatic maintenance. Scient's
+server-owned upkeep runs it instead (`ScientCheckpointUpkeep.ts`, provided once in `server.ts`,
+requested from `GitVcsDriver.ts` after each capture), with one pack thread and a 256 MiB delta
+window. Detached maintenance escaped the app's process group, and on Git without the detached-lock
+fix (Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+`ScientCheckpointCapture.ts` keeps Scient's changed-file size limit, the 90-second whole-capture
+deadline shared with submodules, and the fork's commit witness, each a marked block in
+`GitVcsDriver.ts`.
+The server keeps a minute-by-minute memory record that outlives a crash
+(`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
+beside the upkeep).
+
+Marked blocks in T3-owned files, to offer upstream and then drop:
+
+- `GitVcsDriverCore.ts` and `GitVcsDriver.ts`: the worktree base fetch passes `--no-auto-gc`
+  (T3 does this for its status fetch and, since #38174, the storage cleanup's tracking-branch
+  fetch). Tested in `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042.
+- `GitVcsDriverCore.ts`: T3's backoff for a failed untracked-file listing (pingdotgg/t3code#34460,
+  from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
+  status reads share one running listing, and the error keeps the listing's `GitCommandError` as
+  `cause`. Tested in `GitVcsDriverCore.scient.test.ts`; offered as pingdotgg/t3code#34574.
+- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
+  (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
+  is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
+  server dies, the fd-3 watcher lists the CLI's live descendants in other groups before its group
+  kill. Only the agent's own tree, never terminals. Tested in `ClaudeProcessGroup.scient.test.ts`.
+  Reported as pingdotgg/t3code#34459 with this design as a proposal.
+
+When T3 takes an equal change, use its version and delete the block and its `.scient` test.
+
 ## Multiple app windows
 
 Scient Desktop can run several full app windows in one Electron process
@@ -1935,18 +2335,18 @@ Scient Desktop can run several full app windows in one Electron process
 files keep marked seams only. Paths below are relative to `apps/desktop/src`, or
 to `apps/web/src` after `web/`.
 
-| Area                      | T3 files with marked seams                                                                                                                              | What the seam does                                                                                                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Window registry           | `electron/ElectronWindow.ts`                                                                                                                            | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
-| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
-| Sender checks             | `ipc/DesktopIpc.ts`, `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts`                 | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
-| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                            | Change notices to other windows; Web Lock around writes                                                                                                                                              |
-| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                        | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
-| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                 | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
-| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                      | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
-| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                            | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
-| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                   | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
-| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`       | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
+| Area                      | T3 files with marked seams                                                                                                                                                                                           | What the seam does                                                                                                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Window registry           | `electron/ElectronWindow.ts`                                                                                                                                                                                         | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
+| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts`                                                              | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
+| Sender checks             | `ipc/DesktopIpc.ts` (T3 answers only the main window; Scient also answers its other app windows), `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts` | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
+| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                                                                                         | Change notices to other windows; Web Lock around writes                                                                                                                                              |
+| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                                                                                     | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
+| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                                                                              | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
+| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                                                                                   | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
+| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                                                                                         | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
+| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                                                                                | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
+| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`                                                                    | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
 
 Desktop test files that build `ElectronWindow`, `DesktopWindow` or `ElectronMenu`
 fakes carry marked `appWindows`, `openNewWindow` and `setDockMenu` members;
@@ -1975,3 +2375,162 @@ When aligning, check:
   `scient/multiWindow/previewHostWindows.ts`) or all `appWindows`.
 - **Shortcuts.** File > New Window uses `CmdOrCtrl+Alt+Shift+N`. If T3 binds it,
   decide which command keeps the key and update `docs/user/multiple-windows.md`.
+
+## Office preview limits
+
+T3's `apps/web/src/components/files/officeArchive.ts` bounds a Word file before its engine opens it.
+Its limits are the ones Scient measured against the `@betteroffice/docx` engine, which runs in its
+own worker; they reached T3 as pingdotgg/t3code#32040 and the file is T3's, unchanged. Scient's
+`WordDocument.tsx` adds one thing: once layout passes 1,000 pages it shows the first 1,000 with the
+"Preview limited" notice instead of replacing them with an error.
+
+## Office reader
+
+Word and PowerPoint files read with the PDF reader's controls: page number, zoom (buttons, keys
+and pinch), a sidebar of pages and find. The reader is `apps/web/src/scient/office`; T3's viewer
+still draws the pages, and its files keep marked seams:
+
+| T3 file                                              | Seam                                                                                                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `office/OfficePages.tsx`                             | `zoom` and `onWidth`; zooming keeps the middle of the view; wide pages scroll sideways; 2^25-pixel canvases; `onPlace` reports the page and point at the top                                           |
+| `office/WordDocument.tsx`, `Presentation.tsx`        | `ScientOfficeReader` instead of `OfficePages`; thumbnail paints and find; Word says when layout is complete. Presentation drops T3's previous/next slide bar, which the reader's page controls replace |
+| `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                                                        |
+| `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                                                        |
+
+Selected text on a page or slide quotes into chat as an Office quote (`OfficeCitation`, with the
+other quote kinds in `packages/contracts/src/fileCitations.ts`). `FilePreviewPanel.tsx` gives the
+reader its file and conversation (`OfficeFileContext`), and `AssistantCitationChip.tsx` names,
+links and reopens the quote in its existing Scient blocks.
+
+A file opened again returns to its page, point on it and zoom (`officeReaderPlace.ts`, kept for
+the window's session), unless a quote opens it at its own page.
+
+T3 remounts a workspace document preview whenever anything in the project may have changed: the
+key of `FilePreviewPanel.tsx`'s document branch carried the thread's workspace mutation id, which
+moves after every command, edit or tool call. An open Word file loaded again and went back to its
+first page while an agent worked. Scient keys that branch by the file alone and wraps it in
+`ScientFileRevisionBoundary` (`scient/fileSurfaces`), which checks the file's revision on each
+possible change and remounts only for a new one (a reload the reader asks for, from the header
+or the Files pane, still always remounts it); `AssetAccess.ts` reports the revision for every
+exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/t3code#32670 (issue #32669,
+`FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
+marked key in `FilePreviewPanel.tsx`.
+
+### Kept documents
+
+Switching to another file and back reopened a document from scratch: the PDF was downloaded and
+parsed again, and a Word file fetched, prepared and laid out again. `scient/documentCache` keeps
+the opened document (a pdf.js document; a prepared Office file with its engine session) for the
+last two files a reader left, within 64 MB per GB of the computer's memory (128 to 512 MB, each
+kind estimating what it holds), and drops it when its file's revision changes. The drawn pages
+are not kept. Seams:
+
+- `OpenXmlOfficeViewer.tsx` prepares through `acquireOfficeDocument`, keyed by
+  `DocumentIdentityContext`, which `ScientFileRevisionBoundary` provides once the file's revision
+  is known (it now opens the preview only after that first check).
+- `WordDocument.tsx` and `Presentation.tsx` open their engine in a session (`openWordSession`,
+  `openPresentationSession`: T3's effect bodies, moved) and the viewer subscribes to it; a
+  `session` slot keeps it with the cached document. Without a slot the viewer owns it, as in T3.
+- `pdfRuntime.ts`: `destroy()` leaves the document open; `useScientPdfReader.ts` leases it through
+  `acquirePdfDocument` and shows a kept PDF at once, without waiting for its pages to paint.
+- `DataFileTable` checks the file's revision before reading its rows again, instead of on every
+  workspace mutation.
+- `FilePreviewPanel.tsx`: the preview body is `ScientDocumentShelf` (was a `div` with the same
+  props), and the PDF and Office branches are `ShelfItem`s. The shelf keeps the last left views
+  mounted but hidden while their reader parks its lease (`lease.park`): kept views and kept
+  documents share one budget, which counts a hidden view's canvases. A hidden PDF pauses pdf.js's
+  rendering queue and drops pages out of view (`pdfRuntime.ts` `park`); `OfficePages.tsx` draws
+  only pages in view while hidden (`useShelfHidden`). A reload counts for the file shown when it
+  was asked (`useChangesWhileShown`), so it does not remount another file's hidden view.
+
+When T3 changes those viewers' open or layout code, carry it into the session functions.
+
+When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
+worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
+replace Scient's rather than run beside it.
+
+## Subagent thread fields
+
+T3's `makeSubagentChildThread` (`packages/provider-core/src/server/subagentProjection.ts`) builds a
+subagent from a copy of its parent thread. Delegated tasks and Claude's and Codex's native
+subagents all use it. A copy carried Scient's own thread state into every subagent: a subagent of a
+forked conversation claimed to be that fork, so `delegate_task` from a fork failed and fork, import,
+rollback and usage-limit readers misjudged the subagent. `SCIENT_DERIVED_THREAD_RESETS`
+(`scientDerivedThread.ts`) is spread after the copy inside the `derived-thread-fields` seam. It also
+resets the parent's opens, list position and snooze wake, as T3's own fork does. The seam's other
+line drops `delegatedFrom`, matching T3's open pingdotgg/t3code#30334 word for word; once T3 merges
+it, that line gives way to T3's. The field table in `scient-fork/DelegatedTaskFromFork.test.ts`
+decides every thread field for subagents, so an alignment that adds one fails typecheck until it
+is classified.
+
+## Copied guest links
+
+Forks made before #914 copied their source's `guestShare`, so an invite to the source could open
+the fork. A thread is always created without a share of its own, so a share already in its
+`thread.created` event was copied (`scient/guest/ownGuestShare.ts`). The `copied-guest-share`
+seams in T3's `ProjectionStore.findGuestShareThreadId` and `GuestShareService.authorize` refuse
+such a share, for invites and for sessions already redeemed. They protect forks already in users'
+databases, whose events still carry the copy, and need `thread.created` events to stay unpruned,
+as T3's maintenance keeps them. T3 has no copy path, so it needs no such check.
+
+## Agent tool recovery
+
+T3's background wait and `delegate_task` refuse calls an agent cannot repair, so Scient carries
+`background-wait recovery`, `delegate target recovery` and `ID recovery` seams until T3 takes the
+same behaviour (the upstream issue draft is in the analytics-failures review folder).
+
+- **Background wait.** `ProviderAdapterV2.backgroundWait` (Claude, OpenCode v2) is stamped on the
+  MCP credential in `ProviderSessionManager.prepareMcpSession`; `shownWithBackgroundWait` hides
+  `scient_background_wait` from every other provider. The adapters remember finished task ids
+  (`scientBackgroundWait.ts`, 64 per session) and return them as `settled`, and a registration
+  that matches nothing lists up to 5 running, unawaited ids through
+  `ThreadManagementBackgroundWaitError.running`. The tool, Claude note and OpenCode instruction say
+  to pass `taskIds: [id]` in a later response. The OpenCode tests' `settled` expectations sit in
+  the same seams.
+- **Delegation.** `resolveTarget` accepts the one advertised model whose slug, or last `/` segment,
+  matches the request ignoring case, and sends that slug; two matches are refused with both.
+  Refusals name the closest models or the usable instances (`DelegateTargetRecovery.ts`). The
+  capabilities description no longer promises that any catalog model works. `t3_thread_launch`
+  keeps T3's exact-model check and message.
+- **IDs.** `task_status` and `task_cancel` misses name the owning thread and its child, from
+  `orchestration_v2_projection_subagents`, each only when it is in the caller's project
+  (`DelegatedTaskOwner.ts`). The task and thread inputs say which ID they take.
+
+When T3 ships any of these, take its version and delete the matching seam, helper and test.
+
+## Thread route deletion
+
+`ThreadRouteView` takes T3's rule: a thread the sidebar shell lists is deleted only when the shell
+says so (`deletedAt`), and its detail status is consulted only while the shell does not list it
+(T3's `unlistedThreadDetail`, #19724). Scient no longer carries its `deleted thread status` seam,
+which also treated a listed thread as deleted when its detail status read `deleted`. That seam
+predates T3's unlisted-detail path and was written when a 404 was final. Since T3's #27722 and
+#25919, a 404 also means "not created yet" and is retried, so the seam sent a just-sent new thread,
+and clicks on it, to the start page until the next retry. Scient keeps one divergence here:
+`resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
+readable through fork lineage.
+
+## Repositories with nothing to branch from
+
+T3 refuses a new worktree only for a folder that is not a Git repository. A repository with no
+commit, no local branch and no remote passes its base check, then fails every worktree launch,
+and a scheduled task saved there with a worktree failed each run. Scient treats such a repository
+as a plain folder (`scient-fork/EmptyRepositoryWorkspace.ts`) unless the requested base resolves:
+the marked `isNonGitProject` entry in `ThreadLaunchService` makes task saves store a root
+strategy, and the marked `launch` normalization runs tasks already saved with a worktree at the
+root, as T3 does for Scratch. Only Git's "no remote configured" refusal counts as no remote.
+
+A message sent into a thread whose worktree setup failed waits behind T3's `worktreeSetupPending`
+hold until someone retries setup, and T3's scheduled-task wait gave up only after a day. The
+marked wait in `ScheduledTaskService.recordRunFailure` calls
+`scient/orchestration/WorktreeSetupHoldReport.ts`, which records that run as failed once it is
+stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only re-exports the
+predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
+T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
+equal change, use its version and delete the blocks, modules and tests.
+
+## Security policy
+
+`.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on
+`ScientFactory/scient-desktop`, not to T3's security address or policy page. Upstream edits to that
+file do not replace it; review them and keep Scient's contact.

@@ -17,21 +17,20 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { powerSaveBlocker } from "electron";
 
-import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import { KEEP_AWAKE_CHANNEL } from "../../ipc/channels.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
-import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import { keepsAwake, NO_HOLD, observeWork } from "./keepAwakeHold.ts";
-
-const WINDOWS_NOTICE =
-  "On Windows laptops with Modern Standby, battery power can end this a few minutes after the normal sleep time.";
 
 class KeepAwakePowerError extends Schema.TaggedError<KeepAwakePowerError>()("KeepAwakePowerError", {
   cause: Schema.Defect(),
 }) {}
 
+/**
+ * "Keep computer awake until done" for chosen threads. The app-wide hold is the server's
+ * (`keepAwakeWhileAgentsWork`), so this holds only for threads someone chose.
+ */
 export class DesktopKeepAwake extends Context.Service<
   DesktopKeepAwake,
   {
@@ -42,14 +41,11 @@ export class DesktopKeepAwake extends Context.Service<
 export const layer = Layer.effect(
   DesktopKeepAwake,
   Effect.gen(function* () {
-    const settings = yield* DesktopClientSettings.DesktopClientSettings;
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const http = yield* HttpClient.HttpClient;
     const lock = yield* Semaphore.make(1);
     let hold = NO_HOLD;
-    let appSetting = false;
     let blocker: number | null = null;
 
     const readWork = Effect.gen(function* () {
@@ -88,13 +84,9 @@ export const layer = Layer.effect(
       );
 
     const refresh = Effect.gen(function* () {
-      appSetting = yield* settings.get.pipe(
-        Effect.map(Option.exists((saved) => saved.keepComputerAwake)),
-        Effect.orElseSucceed(() => false),
-      );
-      const work = appSetting || hold.chosen.size > 0 ? yield* readWork : null;
+      const work = hold.chosen.size > 0 ? yield* readWork : null;
       const now = yield* Clock.currentTimeMillis;
-      hold = observeWork(hold, work, appSetting, now);
+      hold = observeWork(hold, work, now);
       yield* setBlocked(keepsAwake(hold, now));
     });
 
@@ -114,12 +106,7 @@ export const layer = Layer.effect(
               hold = { ...hold, chosen };
               yield* refresh;
             }
-            return {
-              appSetting,
-              active: blocker !== null,
-              threads: [...hold.chosen.keys()],
-              notice: environment.platform === "win32" ? WINDOWS_NOTICE : null,
-            };
+            return { threads: [...hold.chosen.keys()] };
           }),
         );
       }),

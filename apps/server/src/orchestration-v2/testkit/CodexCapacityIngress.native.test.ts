@@ -499,6 +499,15 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
                     peer.injections.push(frame.params?.items);
                     result = {};
                     break;
+                  // An idle release unsubscribes; the last subscriber's exit closes the thread.
+                  case "thread/unsubscribe":
+                    yield* emit({ id: frame.id, result: { status: "unsubscribed" } });
+                    yield* emit({ method: "thread/closed", params: { threadId: nativeId } });
+                    continue;
+                  // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+                  case "config/read":
+                    result = { config: {}, origins: {} };
+                    break;
                   case "turn/start": {
                     startup.mark(witness, "turn.input.decode.entry", "turn/start");
                     const params = yield* decodeTurnInput(frame.params).pipe(Effect.orDie);

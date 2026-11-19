@@ -142,7 +142,7 @@ const fixture = Effect.gen(function* () {
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-              getInstance: () => Effect.succeed(undefined),
+              getInstance: () => Effect.undefined,
             }),
             stores,
             sink,

@@ -2,6 +2,7 @@ import {
   ArtifactAuthority,
   LogicalDocumentKey,
   type AttachmentPdfLocator,
+  type PdfMaterial,
   PdfSourceDescriptor,
   type PdfSourceActions,
   type PdfSourceDescriptor as PdfSourceDescriptorType,
@@ -68,6 +69,7 @@ export function workspacePdfSource(input: {
     readonly sourceId: string;
     readonly attachmentId: string;
   };
+  readonly material?: PdfMaterial;
 }): PdfSourceDescriptorType {
   return PdfSourceDescriptor.make({
     _tag: "workspace-pdf",
@@ -82,6 +84,7 @@ export function workspacePdfSource(input: {
     relativePath: input.relativePath,
     ...(input.legacyLocator ? { legacyLocator: input.legacyLocator } : {}),
     ...(input.origin ? { origin: input.origin } : {}),
+    ...(input.material ? { material: input.material } : {}),
   });
 }
 
@@ -180,6 +183,25 @@ export function workspacePdfSourceForPreview(input: {
     relativePath: relativeSourcePath,
     legacyLocator: { absolutePath: sourcePath, threadId: input.threadId },
   });
+}
+
+/**
+ * What a PDF's bytes are known by apart from the signed URL that serves them, so a renewed
+ * URL does not reload the document. Null when the environment reports no revision.
+ */
+export function pdfContentKey(
+  source: PdfSourceDescriptorType,
+  asset: Pick<ResolvedPdfSource, "fileRevision">,
+): string | null {
+  switch (source._tag) {
+    case "generated-pdf":
+      return `generated:${source.revisionId}`;
+    case "attachment-pdf":
+      return "attachment";
+    case "workspace-pdf":
+    case "environment-pdf":
+      return asset.fileRevision === undefined ? null : `file:${asset.fileRevision}`;
+  }
 }
 
 export function usePdfSourceState(source: PdfSourceDescriptorType): AssetUrlState {

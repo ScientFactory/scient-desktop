@@ -14,11 +14,11 @@ import {
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
 import * as Duration from "effect/Duration";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { isolateManagedPythonPackages } from "./ManagedPythonPackageIsolation.ts";
 import { managedPythonFileCheck } from "./ManagedPythonScientificChecks.ts";
@@ -54,10 +54,10 @@ const PROCESS_TIMEOUT = Duration.minutes(30);
 const PROCESS_DRAIN_GRACE = Duration.seconds(3);
 const OUTPUT_TAIL_BYTES = 64 * 1024;
 
-class ManagedPythonProcessError extends Data.TaggedError("ManagedPythonProcessError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+class ManagedPythonProcessError extends Schema.TaggedError<ManagedPythonProcessError>()(
+  "ManagedPythonProcessError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
 
 const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   "import io, json",

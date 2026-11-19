@@ -652,6 +652,43 @@ describe("ThreadRouteView canonical detail admission", () => {
       }),
     ),
   );
+  it.live("keeps a listed thread open when its detail answered 404 before the thread existed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const _fixture = yield* Effect.acquireRelease(Effect.sync(_createFixture), (fixture) =>
+          Effect.promise(async () => {
+            await using _owner = fixture;
+          }),
+        );
+        _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+        yield* Effect.promise(() => _setupFixture0(_fixture));
+        _fixture.transport = makeTransport({ active: true });
+        controls.layer = _fixture.transport.layer;
+        yield* renderRoute(_fixture);
+        yield* waitForStarted(_fixture.transport.httpStarted);
+        // A just-created thread can still answer 404 to a load that raced its creation. The
+        // detail status reads "deleted" until the next retry; the shell listing the thread wins.
+        yield* inAct(
+          Effect.gen(function* () {
+            yield* _fixture.transport.reply(
+              Response.json(
+                {
+                  _tag: "EnvironmentResourceNotFoundError",
+                  code: "not_found",
+                  reason: "thread_not_found",
+                  traceId: "synthetic-not-created-yet",
+                },
+                { status: 404 },
+              ),
+            );
+            yield* waitForStatus(_fixture, "deleted");
+          }),
+        );
+        expect(_fixture.host.querySelector(`[data-chat-thread="${ref.threadId}"]`)).not.toBeNull();
+        expect(controls.navigate).not.toHaveBeenCalled();
+      }),
+    ),
+  );
   it.live(
     "keeps a reserved draft target mounted without polling its intentionally absent detail",
     () =>

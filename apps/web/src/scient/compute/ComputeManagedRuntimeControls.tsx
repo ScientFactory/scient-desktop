@@ -20,7 +20,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
@@ -377,7 +377,9 @@ export function ManagedRuntimeNotice({
           void runtime.act(retryAction);
         }
       : undefined);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "runtime error" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("runtime error"),
+  });
   if (!progress && !failure) return null;
   if (variant === "toolbar") {
     const headline = failure?.summary ?? null;

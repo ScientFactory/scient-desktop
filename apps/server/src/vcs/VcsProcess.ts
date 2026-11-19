@@ -33,10 +33,10 @@ export interface VcsProcessInput {
   readonly spawnCwd?: string;
   readonly stdin?: string;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
-  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
-  readonly stdinBytes?: Uint8Array;
+  // SCIENT-FORK:START — an awaited stdout consumer for checkpoint capture.
   readonly onStdoutChunkEffect?: ProcessRunner.ProcessRunInput["onStdoutChunkEffect"];
   // SCIENT-FORK:END
+  readonly onSpawn?: () => void;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
@@ -138,6 +138,29 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
+const REPOSITORY_SELECTORS = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+]);
+
+/**
+ * Unsets repository selectors the server inherited, such as a Git hook's `GIT_DIR`, so Git finds
+ * the repository from cwd. Spread it before a command's own env, which may still set them.
+ */
+export const unsetInheritedRepositoryEnv = (
+  inherited: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.keys(inherited)
+      .filter((name) => REPOSITORY_SELECTORS.has(platform === "win32" ? name.toUpperCase() : name))
+      .map((name) => [name, undefined]),
+  );
+
 const classifyNonZeroExit = (
   stderr: string,
   classifyFailure: VcsProcessInput["classifyFailure"],
@@ -213,13 +236,19 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        // SCIENT-FORK:START — binary stdin and an awaited stdout consumer.
-        ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+        // SCIENT-FORK:START — an awaited stdout consumer.
         ...(input.onStdoutChunkEffect !== undefined
           ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
           : {}),
         // SCIENT-FORK:END
+        ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
         env: {
+          ...(input.command === "git"
+            ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
+            : {}),
+          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
           ...input.env,
           ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
         },

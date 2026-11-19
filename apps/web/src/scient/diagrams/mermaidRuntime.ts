@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { LRUCache } from "~/lib/lruCache";
 import { dependencies } from "../../../package.json";
 import { renderMermaidSvg } from "../../components/chat/MermaidDiagram";
@@ -121,19 +122,27 @@ function estimateDiagramSize(source: string, rendered: CachedMermaidDiagram): nu
 }
 
 /** Keep the parser's source excerpt/caret for repair, without exposing a stack trace. */
-export class MermaidRenderError extends Error {
-  readonly details: string;
+export class MermaidRenderError extends Schema.TaggedError<MermaidRenderError>()(
+  "MermaidRenderError",
+  { cause: Schema.Defect() },
+) {
+  private get detail(): string {
+    return this.cause instanceof Error && this.cause.message.trim()
+      ? this.cause.message.trim()
+      : "Mermaid could not render this diagram.";
+  }
 
-  constructor(cause: unknown) {
-    const detail =
-      cause instanceof Error && cause.message.trim()
-        ? cause.message.trim()
-        : "Mermaid could not render this diagram.";
-    super(detail.split("\n")[0]?.slice(0, 240), { cause });
-    this.name = "MermaidRenderError";
-    this.details = detail.length > 8_000 ? `${detail.slice(0, 8_000)}\n[Error truncated]` : detail;
+  override get message(): string {
+    return this.detail.split("\n")[0]?.slice(0, 240) ?? "";
+  }
+
+  get details(): string {
+    const detail = this.detail;
+    return detail.length > 8_000 ? `${detail.slice(0, 8_000)}\n[Error truncated]` : detail;
   }
 }
+
+export const isMermaidRenderError = Schema.is(MermaidRenderError);
 
 function enqueueRender<T>(operation: () => Promise<T>): Promise<T> {
   const result = renderQueue.then(operation, operation);
@@ -224,6 +233,6 @@ export async function renderMermaidDiagram(
       ...(template.blocked ? { blocked: template.blocked } : {}),
     };
   } catch (cause) {
-    throw new MermaidRenderError(cause);
+    throw new MermaidRenderError({ cause });
   }
 }

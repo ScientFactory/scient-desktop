@@ -4,20 +4,9 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 
-import { BUNDLED_MODEL_MANIFEST } from "../provider/ModelManifest.ts";
+import { modelKey } from "@scientfactory/analytics";
 
-/**
- * Drivers whose model catalogs are published by the vendor. Other drivers
- * (OpenCode, Pi, ACP agents) list models from the user's own configuration,
- * such as local Ollama tags, so their model names stay out of analytics.
- */
-const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "antigravity",
-]);
+import { BUNDLED_MODEL_MANIFEST } from "../provider/ModelManifest.ts";
 
 export interface ProviderDimensions {
   readonly provider: string;
@@ -25,9 +14,7 @@ export interface ProviderDimensions {
 }
 
 /**
- * Anonymous provider and model for a model selection. Instance ids are
- * user-defined, so only the driver kind is reported. The model is reported
- * only when it comes from a vendor catalog and is not a user-added custom model.
+ * Provider driver and normalized model label; configured instance ids stay private.
  */
 export function providerDimensions(
   providers: ReadonlyArray<ServerProvider>,
@@ -35,10 +22,7 @@ export function providerDimensions(
 ): ProviderDimensions {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (provider === undefined) return { provider: "unknown" };
-  const model = provider.models.find((candidate) => candidate.slug === selection.model);
-  return VENDOR_CATALOG_DRIVERS.has(provider.driver) && model !== undefined && !model.isCustom
-    ? { provider: provider.driver, model: model.slug }
-    : { provider: provider.driver };
+  return { provider: provider.driver, model: modelKey(selection.model) };
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
@@ -128,9 +112,9 @@ function callerOrigin(input: {
 }
 
 /**
- * Settings the agent chose for a handoff, read only from closed enums and
- * booleans in the tool's arguments and result. Prompts, titles, and ids are
- * never read.
+ * Settings for a handoff, recorded only as closed enums and booleans derived
+ * from the tool's arguments and result. Prompts, titles, and ids are never
+ * recorded.
  */
 export function handoffSettings(tool: string, args: unknown, result: unknown): Fields {
   const input = asFields(args);
@@ -166,8 +150,13 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
       return defined({ delivery: stringField(output, "delivery") });
     case "t3_thread_send_attachments":
       return { delivery: "auto" };
-    case "schedule_task":
-      return { bindToCurrentThread: input.bindToCurrentThread !== false };
+    case "schedule_task": {
+      // Omitting the input lets the server decide, so read the saved task.
+      const bound = output.boundThreadId;
+      return bound === null || typeof bound === "string"
+        ? { bindToCurrentThread: bound !== null }
+        : {};
+    }
     default:
       return {};
   }

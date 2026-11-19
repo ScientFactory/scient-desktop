@@ -70,6 +70,87 @@ apps from the host or stop that server, then reconnect. To start fresh instead
 of copying, create an empty `~/.scient-next` folder on the host before
 connecting.
 
+## Scient Connect
+
+Scient Connect reaches your computers from anywhere without opening ports or
+setting up a VPN. Sign in to Scient on a computer and Scient Connect turns on
+for it: that computer appears in Scient on your other devices and at
+[app.scientfactory.com](https://app.scientfactory.com) in any browser.
+
+1. On the computer to share, open **Settings → Sharing & access** and sign in
+   with Google, Microsoft, GitHub or email.
+2. That's all. The first time, Scient downloads the tunnel program
+   (`cloudflared`) in the background, checks it against a pinned checksum,
+   installs it and connects. **Sharing & access** shows each step, and so does
+   the invite dialog if you are waiting to share a thread. If the network is
+   down or the relay is busy, Scient keeps trying.
+3. On another device, sign in with the same account. The computer is listed
+   under Scient Connect; select it to connect.
+
+To keep a computer off Scient Connect, turn **Scient Connect** off in
+**Sharing & access**. Scient remembers that for the computer, also after you
+sign out and back in, until you turn it on again. Signing out leaves the
+computer reachable for your account; turn Scient Connect off to stop that.
+Signing in with another account moves the computer to that account.
+
+On a server without a screen, run `scient connect` and open the printed link on
+any device to sign in. `scient connect status` checks the connection from that
+computer. When a connection fails, see
+[Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
+
+How it works: Scient's relay at `relay.scientfactory.com` keeps your account's
+list of computers and creates one private Cloudflare tunnel per computer, at an
+address under `scientusercontent.com`. Your threads, files and terminals travel
+directly between your device and that tunnel; the relay does not carry them.
+Cloudflare decrypts tunnel traffic at its edge before passing it on, as with
+any site behind Cloudflare. A computer that stays offline for a while loses its
+tunnel and gets a new one, at the same address, when it comes back.
+
+Each account can link a limited number of computers at once. **Settings →
+Sharing & access** shows how many are in use, and says so when a new computer
+doesn't fit. To free a place, select **Manage tunnels**, then **Deregister** a
+computer you no longer use, and turn Scient Connect on again.
+
+Scient Connect runs on macOS (Apple Silicon and Intel), Windows (x64, and ARM on
+Windows 11, which runs the x64 tunnel program) and Linux (x64 and arm64). A
+network that blocks GitHub downloads stops the first setup; **Sharing &
+access** shows the reason.
+
+A computer is reachable only while Scient runs on it: the desktop app, or
+`scient serve` on a server (see [headless server](background-service.md)). This
+is the same on macOS, Windows and Linux; Scient does not install a background
+service.
+
+### Approve new devices
+
+By default, any device signed in to your Scient Connect account can open a linked
+machine. To require approval instead, turn on **Require approval for new
+devices** with the Scient Connect settings in **Settings → Sharing & access** on the
+host, or when you first set up Scient Connect. Then someone who takes over your
+Scient Connect account cannot reach the machine from a new device without your
+approval. Review the devices that are already approved, described below.
+
+A new device waits and shows a code such as `K7QM-2XFD`. Approve it from a
+device that is already connected, using the prompt or **Settings → Sharing &
+access**. Check that the code matches the one on the waiting device. On a
+headless host, run `scient auth connect-device list` and then
+`scient auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
+and the device asks again when it retries. Deny keeps that device out until its
+request expires.
+
+Each device is approved once. Revoke it from **Scient Connect devices** in the same
+settings page, or with `scient auth connect-device revoke <code>`. With approval on,
+it has to ask again. With approval off, it can connect again on its own, so
+revoking in the app offers to turn approval on first. Devices that connected through
+Scient Connect while approval was off stay approved and appear in that list for you to
+review. A device that has not connected since you updated Scient asks for approval like
+a new one. Older apps cannot show the code, so update them before you turn approval on.
+
+### Share a thread with people
+
+People without Scient can join a thread in their browser, talk with you there and,
+if you allow it, with the agent. See [Invite people to a thread](./thread-rooms.md).
+
 ## Direct and private-network access
 
 Advanced deployments can run a separately managed
@@ -128,7 +209,9 @@ Scient connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
 again, after the other routes, if none of them connect. While connected over a
 later route, Scient checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+return to the app, and every minute, and moves back as soon as one works. A
+route whose machine refused this device's sign-in is marked **Sign-in
+refused**; pair that address again with **Add route** to use it.
 
 On web and desktop, select the route count under the machine's name in
 **Settings → Environments** to see its routes. Drag a route to change the order,
@@ -167,6 +250,13 @@ Tailnet IP, MagicDNS name, and an HTTPS MagicDNS endpoint. Tailscale HTTPS is
 off until you explicitly enable it. Turning it on asks Tailscale Serve to proxy
 private HTTPS traffic to the local Scient backend; turning it off removes that
 mapping.
+
+Your tailnet needs MagicDNS and HTTPS certificates enabled; see
+[Tailscale's HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+On Linux, Scient also needs permission to manage Tailscale; see
+[operator permission](https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission)
+for non-root users. If any of these is missing, Scient still starts but can't
+add the HTTPS route.
 
 This is an endpoint option, not a separate kind of Scient environment. LAN,
 custom HTTPS, Tailscale, and SSH connections all use the same environment and
@@ -235,9 +325,8 @@ in **Settings → Environments**. Use that
 exact action or copied command; see [Update Scient](updating.md). Changing the
 package or version can produce an incompatible server.
 
-Scient does not currently provide a public hosted relay for remote projects.
-Use desktop-managed SSH or a separately secured direct/private-network
-deployment.
+The hosted app at app.scientfactory.com follows the latest Scient release, so
+keep computers you open there updated.
 
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Scient launched; a server that was already
@@ -259,6 +348,9 @@ environment** in **Settings → Environments**. Scient restarts without a local
 server: local providers and terminals stop, WSL backends stay off, and other
 devices can no longer connect to this computer. Existing local projects, history,
 and saved connections are kept.
+If a [background service](./background-service.md) on this computer uses the same Scient home,
+the app still treats it as this computer: **Open in** and file reveal for its projects run here,
+whichever connection you reach it through.
 
 ## Browser on a remote environment
 
@@ -267,6 +359,17 @@ tabs from any device. The desktop app shows its own environment's tabs
 directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
+
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web and mobile apps keep streaming.
 
 The first tab downloads a headless Chrome, about 120 MB, into the Scient home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
@@ -313,8 +416,10 @@ the full path of the desktop app's `scient` launcher or of the Node runtime and
 server it runs from, so it works even where `scient` is not on your `PATH`. It
 keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
-can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
-reports what it would change.
+can mean the host has no fonts. It is safe to run again, and each run reloads
+the AppArmor profile: run it again if the browser reports a blocked sandbox on a
+host restored from an image or snapshot, where the profile can be on disk
+without being loaded. Without `sudo`, it only reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your Scient server runs as root, run it as a nonroot user to keep
@@ -353,15 +458,18 @@ off, its result arrives once it is back on.
 
 On the machine you will work from, open **Settings → Environments → Linked environments**,
 choose **Link**, and pick the other machine or enter its address. The list
-holds the machines this app knows. If this
-app is connected to that machine with a session that manages access there, it
-makes the pairing code itself; otherwise paste one from that machine's
-**Settings → Sharing & access**. From a terminal, use
+holds the machines this app knows. If this app has an address for that machine
+and is connected to it with a session that manages access there, it makes the
+pairing code itself; otherwise paste one from that machine's
+**Settings → Sharing & access**. An address you type always needs a pasted code.
+From a terminal, use
 `scient environment link <address> --pairing-code <code> --access <mode>`.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
-and the access, then approve.
+and the access, then approve. An address the agent gives that this app does
+not know for one of your machines also needs a pasted code. Paste one only for
+an address you trust: the code is sent there.
 
 - The access you pick is the most agents from this machine may do there. An
   agent also never gets more there than its own mode here.
@@ -388,8 +496,13 @@ Turn **Local environment** back on in the same place to restore the previous loc
 environment.
 
 Removing a saved remote environment from **Settings → Environments** forgets it on
-this device only. Scient hosts no relay, so there is no account-level
-registration left behind to revoke.
+this device only. A computer linked through Scient Connect stays on your
+account until you turn Scient Connect off on it, or remove it from your account
+in **Settings → Sharing & access**; that also deletes its tunnel.
+
+When the app connects to more than one environment, choose one at the top of the
+page. A desktop app with **Local environment** off can manage a background
+service on the same machine this way.
 
 A session with an open connection stays listed after its access credential
 expires.
@@ -407,6 +520,10 @@ bearer sessions get every permission, including managing access. A terminal or a
 full-access agent on the host can reach that as well, so a client that should not
 manage access also needs to go without `terminal:operate` and
 `orchestration:operate`.
+
+A paired device stays signed in while you keep using it, until you revoke it in
+**Settings → Sharing & access** on the host. One unused for 30 days, or paired
+with a host older than this release, has to pair again.
 
 To change an existing client's permissions, create a fresh pairing link with the
 scopes it needs. In a browser opened directly on the environment, open that link

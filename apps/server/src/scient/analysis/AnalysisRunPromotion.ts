@@ -369,11 +369,11 @@ export function promoteAnalysisRun(input: {
     });
 
     return yield* publish.pipe(
-      Effect.catch((failure) =>
+      Effect.tapError((failure) =>
         Effect.tryPromise({
           try: () => NodeFSP.rm(stagingPath, { recursive: true, force: true }),
           catch: () => failure,
-        }).pipe(Effect.andThen(Effect.fail(failure))),
+        }),
       ),
     );
   });

@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.connector-authoring",
+  "version": "0.1.0",
+  "category": "Connector creation",
+  "categoryDescription": "Make and fix connectors that give agents tools for a service.",
+  "displayOrder": 35,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}

@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { AccountsServiceShape } from "./AccountsService.ts";
+import { heldApiKeys } from "./keyLinks.ts";
 
 const PROJECT_FILES = [".env", ".env.local", ".env.development", ".env.production"];
 const SHELL_FILES = [
@@ -60,20 +61,18 @@ export const makePlainKeys = Effect.fn("PlainKeys.make")(function* (
   ];
   return {
     find: Effect.fn("PlainKeys.find")(function* (roots: ReadonlyArray<string>) {
-      const { accounts: saved } = yield* accounts.snapshot;
-      const known = new Set(
-        saved.flatMap((account) =>
-          account.details.kind === "api-key" && account.details.envName
-            ? [account.details.envName]
-            : [],
-        ),
-      );
+      // Kept means its value is in Accounts: two files can hold different keys under one name.
+      const held = yield* heldApiKeys(accounts);
       const found = yield* Effect.forEach(
         candidates(roots),
         (file) =>
           readSecrets(file).pipe(
             Effect.map((secrets) =>
-              secrets.map(({ name }): AccountPlainKey => ({ file, name, kept: known.has(name) })),
+              secrets.map(({ name, value }): AccountPlainKey => ({
+                file,
+                name,
+                kept: held.has(value),
+              })),
             ),
           ),
         { concurrency: 8 },

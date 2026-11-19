@@ -56,6 +56,8 @@ PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff 
 
 If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
 
+An account denounced in [.github/VOUCHED.td](.github/VOUCHED.td) has any issue or PR it opens closed when it is opened.
+
 ## What We Are Most Likely To Accept
 
 Small, focused bug fixes.

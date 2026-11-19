@@ -16,12 +16,18 @@ import {
   ExtensionSkillDocument,
   ConnectorAddInput,
   ConnectorAddResult,
+  ConnectorExport,
+  ConnectorExportInput,
   ConnectorRemoveInput,
   ConnectorStartSignInInput,
   ConnectorStartSignInResult,
   ConnectorTestInput,
   ConnectorTestResult,
+  ConnectorUndoInput,
   ConnectorUpdateInput,
+  LocalBundleInspectInput,
+  LocalImportablesResult,
+  LocalInspection,
   DiscoverCatalog,
   DiscoverEntry,
   DiscoverEntryInput,
@@ -61,6 +67,10 @@ export const SCIENT_EXTENSION_WS_METHODS = {
   extensionsConnectorUpdate: "extensions.connectors.update",
   extensionsConnectorRemove: "extensions.connectors.remove",
   extensionsConnectorTest: "extensions.connectors.test",
+  extensionsConnectorInspectLocal: "extensions.connectors.inspectLocal",
+  extensionsConnectorImportable: "extensions.connectors.importable",
+  extensionsConnectorUndo: "extensions.connectors.undo",
+  extensionsConnectorExport: "extensions.connectors.export",
   extensionsDiscoverSearch: "extensions.discover.search",
   extensionsDiscoverCatalog: "extensions.discover.catalog",
   extensionsDiscoverEntry: "extensions.discover.entry",
@@ -126,6 +136,26 @@ export const WsExtensionsConnectorRemoveRpc = Rpc.make(
 export const WsExtensionsConnectorTestRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsConnectorTest,
   { payload: ConnectorTestInput, success: ConnectorTestResult, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsConnectorInspectLocalRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsConnectorInspectLocal,
+  { payload: LocalBundleInspectInput, success: LocalInspection, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsConnectorImportableRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsConnectorImportable,
+  { payload: Schema.Struct({}), success: LocalImportablesResult, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsConnectorUndoRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsConnectorUndo,
+  { payload: ConnectorUndoInput, success: ExtensionsInventory, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsConnectorExportRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsConnectorExport,
+  { payload: ConnectorExportInput, success: ConnectorExport, error: ExtensionsRpcError },
 );
 
 export const WsExtensionsDiscoverSearchRpc = Rpc.make(

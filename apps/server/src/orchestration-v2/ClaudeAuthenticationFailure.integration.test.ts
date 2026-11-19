@@ -111,6 +111,7 @@ it.effect.each(
               Effect.gen(function* () {
                 const messages = yield* Queue.unbounded<SDKMessage>();
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -173,6 +174,7 @@ it.effect.each(
               }),
             forkSession: () => Effect.die("Auth fixture never forks native history"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });

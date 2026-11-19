@@ -1,15 +1,16 @@
-import {
-  type DesktopBridge,
-  type DesktopUpdateState,
-  managedUpdatesDenial,
-} from "@t3tools/contracts";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
+import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { DownloadIcon, LoaderCircleIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
+import { m } from "../../i18n/messages";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -18,10 +19,12 @@ import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
+  getDesktopUpdateBackgroundTooltip,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDownloadedVersion,
   getScientDesktopUpdateLabel,
   getDesktopUpdateIdleTooltip,
+  isBackgroundDesktopUpdate,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -34,6 +37,7 @@ import {
   showScientUpdateReadyNotice,
 } from "../../scient/desktopUpdate/updateReadyNotice";
 // SCIENT-FORK:END
+import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -60,13 +64,13 @@ import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic
 import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
 import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — a pass's restart countdown sits above the Restart pill, which restarts now.
-import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
-import { restartUpdateNow } from "./updateEverythingRun";
+// SCIENT-FORK:START — a downloaded update restarts at once only while nothing here is working.
+import { useLocalWorkBlocksRestart } from "../../scient/desktopUpdate/restartWhenIdle";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — replaces upstream's UpdateEverythingDialog: a pass asks beside the pill,
 // and only when it would stop running threads.
 import { UpdateEverythingAsk } from "../../scient/desktopUpdate/UpdateEverythingAsk";
+import { useRestartProgressNotice } from "../../scient/desktopUpdate/useRestartProgressNotice";
 import { confirmServerStops } from "../../scient/desktopUpdate/useOtherUpdates";
 // SCIENT-FORK:END
 
@@ -153,15 +157,19 @@ export function SidebarUpdateArchitectureWarning() {
 
 function SidebarUpdateArchitectureWarningContent() {
   const state = useDesktopUpdateState();
+  const messages = useMessages();
   const visible = shouldShowArm64IntelBuildWarning(state);
-  const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
+  const description =
+    state && visible ? getArm64IntelBuildWarningDescription(state, messages) : null;
 
   if (!visible || !description) return null;
 
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>
+        <T>Intel build on Apple Silicon</T>
+      </AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -189,12 +197,12 @@ export async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError) reportError(m(msg("Could not download update")), actionError);
     return result.completed;
   } catch (error) {
     reportError(
-      "Could not start update download",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      m(msg("Could not start update download")),
+      thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
     );
     return false;
   }
@@ -206,30 +214,47 @@ export function SidebarUpdatePill() {
 
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
+  const gt = useGT();
+  const messages = useMessages();
   // The desktop updates this machine, whose policy the primary environment reports.
-  const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
+  const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy(), messages);
   const [isActionPending, setIsActionPending] = useState(false);
   // SCIENT-FORK:START — replaces upstream's dialog open state: the pass waiting on its
   // question, with what it stops and what it admits.
   const [askingPass, setAskingPass] = useState<ReturnType<typeof confirmServerStops> | null>(null);
   // SCIENT-FORK:END
+  const [providerCheck, setProviderCheck] = useState<"button" | null>(null);
+  const isCheckingProviders = providerCheck === "button";
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
+  // Restart progress and the reason a restart stopped show beside it without hover.
+  const restartNotice = useRestartProgressNotice(state, releaseNotesTriggerId);
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
+  // The card Update opens stays until Restart or dismissal; a second press closes it.
+  const restartCardOpenRef = useRef(false);
+  // A download the user started shows its progress; the desktop's own stays behind the idle control.
+  const [userStartedDownload, setUserStartedDownload] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative ready notice when its owner unmounts
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
+  const localWorkBlocksRestart = useLocalWorkBlocksRestart();
   // Resolves true when the app is relaunching; a bulk pass passes `reportError` for its summary.
+  // A version installs only that downloaded build, never one that replaced it.
   const installFromFooter = (
     bridge: NonNullable<typeof window.desktopBridge>,
     reportError?: ReportLocalUpdateError,
+    expectedVersion?: string | null,
   ) => {
     updateReadyNoticeRef.current?.close();
     setIsActionPending(true);
-    return installDesktopUpdateNow(bridge, reportError).finally(() => setIsActionPending(false));
+    return installDesktopUpdateNow(
+      bridge,
+      reportError ?? restartNotice.reportFailure,
+      expectedVersion,
+    ).finally(() => setIsActionPending(false));
   };
   // SCIENT-FORK:END
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -257,26 +282,60 @@ function SidebarUpdateControl() {
     }
   }
 
-  const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
-  const isDownloading = state?.status === "downloading";
-  const localUpdateVersion =
-    state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
-  const everything = useUpdateEverything(localUpdateVersion);
   // SCIENT-FORK:START — the pill is this app's own update. Other updates join it only in a pass
   // that downloads this app, never in a running one, and only such a pass holds the pill.
   const run = useUpdateEverythingRun();
+  const isRunningEverything = run !== null && run.localVersion !== null;
+  // A download the desktop runs by itself leaves the control idle until the update is ready.
+  const backgroundUpdate = isBackgroundDesktopUpdate(
+    state,
+    userStartedDownload || isRunningEverything,
+  );
+  const updaterAction = state ? resolveDesktopUpdateButtonAction(state) : "none";
+  const action = backgroundUpdate ? "none" : updaterAction;
+  const isDownloading = state?.status === "downloading" && !backgroundUpdate;
+  const isPreparing = state?.status === "preparing";
+  const localUpdateVersion =
+    state && updaterAction !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
+  // SCIENT-FORK:END
+  const everything = useUpdateEverything(localUpdateVersion);
+  const checkProviderUpdates = useCheckProviderUpdates();
+  // SCIENT-FORK:START
   const runsEverything = shouldRunUpdateEverything(
     everything.hasUpdates && !isUpdateRunActive(run),
     isDownloading,
     action,
   );
-  const isRunningEverything = run !== null && run.localVersion !== null;
   // The question lasts only while Update would still run the pass; the next press asks again.
   if (!runsEverything && askingPass !== null) setAskingPass(null);
+  // A card for an update that is no longer ready would offer a refused restart.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative restart card when its update stops being installable
+  useEffect(() => {
+    if (action !== "install" && restartCardOpenRef.current) updateReadyNoticeRef.current?.close();
+  }, [action]);
+  // Restart is explicit; no second confirmation. A pass for other machines running when Restart is
+  // chosen, even one started after the card opened, is saved first, so its summary and restarting
+  // servers follow the relaunch.
+  const installLocal = useStableCallback(
+    (bridge: NonNullable<typeof window.desktopBridge>, version: string | null) => {
+      if (!isUpdateRunActive(run)) return installFromFooter(bridge, undefined, version);
+      saveUpdateEverythingResult({
+        localVersion: version,
+        updatedServers: 0,
+        updatedProviders: 0,
+        failures: [],
+        restarting: [],
+      });
+      return installFromFooter(bridge, undefined, version).then((installed) => {
+        if (!installed) clearSavedUpdateEverythingResult();
+        return installed;
+      });
+    },
+  );
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
-    isChecking: state?.status === "checking",
+    isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
@@ -289,16 +348,24 @@ function SidebarUpdateControl() {
     showCheckIcon,
   });
   const idleTooltip =
-    !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state, updatesDenial) : null;
-  const tooltip = runsEverything
-    ? everything.summary
-    : showUpdateDetails
-      ? state
-        ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
-      : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+    !showUpdateDetails && !showCheckIcon
+      ? // SCIENT-FORK: an idle control still says when an update is downloading behind it.
+        backgroundUpdate && state && updatesDenial === undefined
+        ? { title: getDesktopUpdateBackgroundTooltip(state, messages), detail: null }
+        : getDesktopUpdateIdleTooltip(state, updatesDenial, messages)
+      : null;
+  const tooltip =
+    isPreparing && state
+      ? getDesktopUpdateButtonTooltip(state, messages)
+      : runsEverything
+        ? everything.summary
+        : showUpdateDetails
+          ? state
+            ? getDesktopUpdateButtonTooltip(state, messages)
+            : gt("Update available")
+          : showCheckIcon
+            ? gt("Checking for updates…")
+            : (idleTooltip?.title ?? gt("Check for updates"));
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -306,12 +373,12 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
-  const isInteractionDisabled =
-    run?.phase !== "countdown" && (disabled || isActionPending || isRunningEverything);
-  // SCIENT-FORK:END
+  const isInteractionDisabled = isPreparing || disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
-    !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
+    !restartNotice.open &&
+    !isPreparing &&
+    !isRunningEverything &&
+    shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [releaseNotesTriggerFocusVisible, setReleaseNotesTriggerFocusVisible] = useState(false);
@@ -325,12 +392,6 @@ function SidebarUpdateControl() {
 
   const handleAction = async () => {
     const bridge = window.desktopBridge;
-    // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
-    if (run?.phase === "countdown") {
-      restartUpdateNow();
-      return;
-    }
-    // SCIENT-FORK:END
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
@@ -352,9 +413,35 @@ function SidebarUpdateControl() {
     }
 
     if (!bridge || !state) return;
+
+    if (action === "install" && state.errorContext !== "install") {
+      // SCIENT-FORK:START — Update opens the restart card; a second press closes it.
+      if (restartCardOpenRef.current) {
+        updateReadyNoticeRef.current?.close();
+        return;
+      }
+      releaseNotesPopoverHandle.close();
+      updateReadyNoticeRef.current?.close();
+      restartCardOpenRef.current = true;
+      updateReadyNoticeRef.current = showScientUpdateReadyNotice({
+        shell: bridge,
+        state,
+        anchor: document.getElementById(releaseNotesTriggerId),
+        install: (version) => installLocal(bridge, version),
+        persistent: true,
+        onClose: () => {
+          restartCardOpenRef.current = false;
+        },
+      });
+      // SCIENT-FORK:END
+      return;
+    }
+
     setIsActionPending(true);
 
     if (action === "download") {
+      // SCIENT-FORK: a download the user started shows its progress in the control.
+      setUserStartedDownload(true);
       void downloadLocalUpdate(bridge, {
         onDownloaded: (downloadedState) => {
           // SCIENT-FORK:START — offer Restart next to the button that started the download.
@@ -376,36 +463,25 @@ function SidebarUpdateControl() {
             releaseNotesPopoverHandle.close();
           }
           updateReadyNoticeRef.current?.close();
+          // The finished download offers Restart; restarting stays the user's choice.
           updateReadyNoticeRef.current = showScientUpdateReadyNotice({
             shell: bridge,
             state: downloadedState,
             anchor: document.getElementById(releaseNotesTriggerId),
-            install: () => installFromFooter(bridge),
+            install: (version) => installFromFooter(bridge, undefined, version),
           });
           // SCIENT-FORK:END
         },
-      }).finally(() => setIsActionPending(false));
+      }).finally(() => {
+        setIsActionPending(false);
+        setUserStartedDownload(false);
+      });
       return;
     }
 
     if (action === "install") {
-      // SCIENT-FORK:START — Restart is explicit; no second confirmation. A running pass for
-      // other machines is saved first, so its summary and restarting servers follow the relaunch.
-      if (isUpdateRunActive(run)) {
-        saveUpdateEverythingResult({
-          localVersion: localUpdateVersion,
-          updatedServers: 0,
-          updatedProviders: 0,
-          failures: [],
-          restarting: [],
-        });
-        void installFromFooter(bridge).then((installed) => {
-          if (!installed) clearSavedUpdateEverythingResult();
-        });
-      } else {
-        void installFromFooter(bridge);
-      }
-      // SCIENT-FORK:END
+      // SCIENT-FORK: a failed install retries directly.
+      void installLocal(bridge, state.downloadedVersion);
       return;
     }
 
@@ -413,18 +489,18 @@ function SidebarUpdateControl() {
       setIsCheckAnimationLatched(true);
       setCheckAnimationKey((key) => key + 1);
     }
-    void bridge
+    const appCheck = bridge
       .checkForUpdate()
       .then((result) => {
         if (result.checked) return;
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
+            title: gt("Could not check for updates"),
             description:
               updatesDenial ??
               result.state.message ??
-              "Automatic updates are not available in this build.",
+              gt("Automatic updates are not available in this build."),
           }),
         );
       })
@@ -432,12 +508,14 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: gt("Could not check for updates"),
+            description: thrownErrorMessage(error, m) ?? gt("Update check failed."),
           }),
         );
-      })
-      .finally(() => setIsActionPending(false));
+      });
+    setProviderCheck("button");
+    const providersChecked = checkProviderUpdates().finally(() => setProviderCheck(null));
+    void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
   };
 
   // SCIENT-FORK:START — servers restart only while they stop no more threads than agreed.
@@ -453,9 +531,13 @@ function SidebarUpdateControl() {
           : {}),
         // SCIENT-FORK:START — bulk and explicit Restart share the existing installer.
         ...(bridge && action !== "none"
-          ? { installLocal: (reportError) => installFromFooter(bridge, reportError) }
+          ? {
+              installLocal: (reportError) =>
+                installFromFooter(bridge, reportError, localUpdateVersion),
+            }
           : {}),
         admitServer,
+        localWorkBlocksRestart,
         // SCIENT-FORK:END
       }),
     );
@@ -464,8 +546,8 @@ function SidebarUpdateControl() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: gt("Could not update everything"),
+          description: thrownErrorMessage(error, m) ?? gt("An unexpected error occurred."),
         }),
       );
     }
@@ -475,7 +557,7 @@ function SidebarUpdateControl() {
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
-        isChecking: state?.status === "checking",
+        isChecking: state?.status === "checking" || isCheckingProviders,
         prefersReducedMotion,
       }),
     );
@@ -484,8 +566,11 @@ function SidebarUpdateControl() {
   // SCIENT-FORK:START — compact labels for this app's own update. Other machines and providers
   // have their own circle, which is all a browser shows.
   const updateLabel =
-    showUpdateIconState && state
-      ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
+    !isPreparing && showUpdateIconState && state
+      ? getScientDesktopUpdateLabel(
+          { ...state, downloadPercent: displayedDownloadPercent },
+          messages,
+        )
       : null;
   const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
     everything.run({ admitServer });
@@ -511,16 +596,17 @@ function SidebarUpdateControl() {
       type="button"
       aria-label={
         isDownloading && updateLabel
-          ? `Downloading update (${updateLabel})`
+          ? gt("Downloading update ({progress})", { progress: updateLabel })
           : updateLabel
-            ? `${updateLabel}: ${tooltip}`
+            ? gt("{label}: {tooltip}", { label: updateLabel, tooltip })
             : tooltip
       }
       aria-disabled={isInteractionDisabled || undefined}
+      aria-busy={isPreparing || undefined}
       className={cn(
         "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        showUpdateIconState
+        showUpdateIconState || isPreparing
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
               "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
@@ -558,7 +644,13 @@ function SidebarUpdateControl() {
         );
       }}
     >
-      {iconStatus === "available" ? (
+      {isPreparing ? (
+        <LoaderCircleIcon
+          aria-hidden="true"
+          className="size-[13px] shrink-0 animate-spin motion-reduce:animate-none"
+          strokeWidth={2.25}
+        />
+      ) : iconStatus === "available" ? (
         <DownloadIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
       ) : iconStatus === "downloaded" ? (
         // SCIENT-FORK: the clean ready-to-restart state is text-only, but the
@@ -594,6 +686,17 @@ function SidebarUpdateControl() {
     </button>
   );
 
+  // SCIENT-FORK:START — progress, then the reason a restart stopped, announced as they change.
+  const restartNoticeContent = restartNotice.open ? (
+    <div aria-live="polite" className="text-left" role="status">
+      {restartNotice.title ? <div className="font-medium">{restartNotice.title}</div> : null}
+      <div className={restartNotice.title ? "text-muted-foreground" : undefined}>
+        {restartNotice.description}
+      </div>
+    </div>
+  ) : null;
+  // SCIENT-FORK:END
+
   return (
     <SidebarMenuItem
       // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
@@ -617,48 +720,65 @@ function SidebarUpdateControl() {
           if (!details.isCanceled) setReleaseNotesOpen(open);
         }}
       >
-        <Tooltip disabled={showReleaseNotesPopover}>
+        <Tooltip
+          // SCIENT-FORK: the restart notice holds the tooltip open; hover cannot close it.
+          key={restartNotice.open ? "restart-notice" : isPreparing ? "preparing" : "update"}
+          disabled={showReleaseNotesPopover}
+          {...(restartNotice.open ? { open: true } : {})}
+        >
           <TooltipTrigger
             id={releaseNotesTriggerId}
             render={
-              <PopoverTrigger
-                {...(!showReleaseNotesPopover
-                  ? {
-                      "aria-controls": undefined,
-                      "aria-expanded": undefined,
-                      "aria-haspopup": undefined,
-                    }
-                  : {})}
-                closeDelay={150}
-                handle={releaseNotesPopoverHandle}
-                id={releaseNotesTriggerId}
-                openOnHover={showReleaseNotesPopover}
-                render={updateButton}
-              />
+              isPreparing ? (
+                <span className="inline-flex">{updateButton}</span>
+              ) : (
+                <PopoverTrigger
+                  {...(!showReleaseNotesPopover
+                    ? {
+                        "aria-controls": undefined,
+                        "aria-expanded": undefined,
+                        "aria-haspopup": undefined,
+                      }
+                    : {})}
+                  closeDelay={150}
+                  handle={releaseNotesPopoverHandle}
+                  id={releaseNotesTriggerId}
+                  openOnHover={showReleaseNotesPopover}
+                  render={updateButton}
+                />
+              )
             }
           />
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
-              className={showUpdateDetails ? "max-w-48 text-left" : undefined}
+              className={
+                // SCIENT-FORK: an off-screen control's notice is a corner toast instead.
+                restartNotice.open
+                  ? "max-w-56 text-left in-data-[anchor-hidden]:invisible"
+                  : showUpdateDetails
+                    ? "max-w-48 text-left"
+                    : undefined
+              }
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              {idleTooltip?.detail ? (
-                <div className="text-left">
-                  <div className="font-medium">{idleTooltip.title}</div>
-                  <div className="text-muted-foreground">{idleTooltip.detail}</div>
-                </div>
-              ) : (
-                <span className="whitespace-pre-line">{tooltip}</span>
-              )}
+              {restartNoticeContent ??
+                (!isPreparing && idleTooltip?.detail ? (
+                  <div className="text-left">
+                    <div className="font-medium">{idleTooltip.title}</div>
+                    <div className="text-muted-foreground">{idleTooltip.detail}</div>
+                  </div>
+                ) : (
+                  <span className="whitespace-pre-line">{tooltip}</span>
+                ))}
             </TooltipPopup>
           ) : null}
         </Tooltip>
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Update release notes"
+            aria-label={gt("Update release notes")}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (
@@ -689,7 +809,6 @@ function SidebarUpdateControl() {
           if (askingPass !== null) void runEverything(askingPass.admitServer);
         }}
       />
-      <UpdateRestartCountdown anchorId={releaseNotesTriggerId} run={run} />
       {/* SCIENT-FORK:END */}
     </SidebarMenuItem>
   );

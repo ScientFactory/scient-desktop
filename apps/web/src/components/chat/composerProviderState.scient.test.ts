@@ -58,7 +58,6 @@ it.each([undefined, "default", "invalid", "low"])(
         },
       ]),
       modelOptions: saved === undefined ? undefined : selections(["thinkingLevel", saved]),
-      planModeEnabled: false,
     });
     const expected = saved === "low" ? saved : "max";
     expect(state.promptEffort).toBe(expected);
@@ -82,7 +81,6 @@ it("does not dispatch a synthetic reasoning option for native Antigravity varian
       models,
       model: model.slug,
       modelOptions: undefined,
-      planModeEnabled: false,
     });
     expect(state.modelOptionsForDispatch).toBeUndefined();
     expect(state.promptEffort).toBeNull();
@@ -96,7 +94,6 @@ describe("strict Pi thinking", () => {
       model: MODEL,
       models: modelWith([strictThinking(false)]),
       modelOptions: selections(["thinking", "default"]),
-      planModeEnabled: false,
     });
     expect(state.modelOptionsForDispatch).toEqual(selections(["thinking", "default"]));
   });
@@ -107,7 +104,6 @@ describe("strict Pi thinking", () => {
       model: MODEL,
       models: modelWith([strictThinking(true)]),
       modelOptions: selections(["thinking", "max"]),
-      planModeEnabled: false,
     });
     expect(state.modelOptionsForDispatch).toEqual(selections(["thinking", "max"]));
   });
@@ -120,7 +116,6 @@ describe("strict Pi thinking", () => {
         model: MODEL,
         models: modelWith([strictThinking(empty)]),
         modelOptions: undefined,
-        planModeEnabled: false,
       });
       expect(state.modelOptionsForDispatch).toBeUndefined();
       if (empty) expect(state.promptEffort).toBeNull();

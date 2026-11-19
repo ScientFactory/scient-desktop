@@ -119,8 +119,13 @@ const handler = Effect.gen(function* () {
   }
 
   const granted =
-    thread !== null && (yield* runtime.isGranted({ connectorId, projectId: thread.projectId }));
-  if (!granted) {
+    thread !== null &&
+    (yield* runtime.isGranted({
+      connectorId,
+      projectId: thread.projectId,
+      providerInstanceId: scope.thread.providerInstanceId,
+    }));
+  if (!granted || thread === null) {
     // Same shape as a lost upstream grant: a JSON-RPC error for POST, never 401.
     return toServerResponse(
       connectorUnavailableResponse(
@@ -135,7 +140,14 @@ const handler = Effect.gen(function* () {
     if (value !== undefined) headers[name] = value;
   }
   yield* registry.touch(scope.thread.threadId);
-  const response = yield* runtime.forward({ connectorId, method, headers, body, scope });
+  const response = yield* runtime.forward({
+    connectorId,
+    method,
+    headers,
+    body,
+    scope,
+    location: { projectId: thread.projectId, worktreePath: thread.worktreePath },
+  });
   return toServerResponse(response);
 });
 

@@ -137,6 +137,8 @@ const removedEnvironmentKeys = new Set([
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
+  // An inherited pipe whose owner exited makes Electron-as-Node print Crashpad errors to stderr.
+  "CHROME_CRASHPAD_PIPE_NAME",
 ]);
 
 export interface AntigravityProfile {
@@ -282,9 +284,14 @@ export function antigravityAuthStageFailure(
 }
 
 // SCIENT-FORK:END
+// The 1.5 CLI answers `authenticate` with this internal error when it has no sign-in and no display.
+const NATIVE_CLI_NO_BROWSER_PREFIX = "No browser is available here";
+
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
-    (isAcpRequestError(error) && error.code === -32000) ||
+    (isAcpRequestError(error) &&
+      (error.code === -32000 ||
+        (error.code === -32603 && error.errorMessage.startsWith(NATIVE_CLI_NO_BROWSER_PREFIX)))) ||
     (isAcpTransportError(error) && error.detail === ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)
   );
 }
@@ -351,6 +358,15 @@ function antigravityEnvironment(
   };
 }
 
+class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkError>()(
+  "AntigravitySkillLinkError",
+  { link: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not link Antigravity user skills at ${this.link}.`;
+  }
+}
+
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini.
  * Project plugin skills separately so their MCP servers, hooks, rules and credentials stay isolated.
  * Failed links cost skills, never the session; existing real directories remain untouched. */
@@ -377,7 +393,10 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         // An empty folder is the harness's placeholder from a launch without the link.
         // rmdir refuses a non-empty folder, so content added meanwhile is never deleted.
         Effect.catch((error) =>
-          Effect.tryPromise(() => NodeFSP.rmdir(link)).pipe(
+          Effect.tryPromise({
+            try: () => NodeFSP.rmdir(link),
+            catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+          }).pipe(
             Effect.as(undefined),
             Effect.mapError(() => error),
           ),
@@ -388,9 +407,10 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         yield* fs.remove(link);
       }
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
-      yield* Effect.tryPromise(() =>
-        NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
-      );
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
+        catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+      });
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Antigravity user skills are not linked into the profile.", {
@@ -519,7 +539,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       spawner,
       helperExecutable,
       environment,
-      timeout: "5 seconds",
+      timeout: "30 seconds",
       onTimeout: () => authSupportError("Antigravity browser suppression verification timed out."),
     }),
     // SCIENT-FORK:END
@@ -563,7 +583,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
     readonly executablePath: string;
-    readonly harnessPath: string;
+    readonly harnessPath: string | null;
   };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
@@ -573,7 +593,20 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    args: input.profile.platform === "linux" ? ["--uid="] : [],
+    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
+    args:
+      input.installation.harnessPath === null
+        ? [
+            "acp",
+            "--gemini-dir",
+            input.profile.geminiHome,
+            "--app-data-dir",
+            // The CLI joins this beneath gemini-dir, including when the value is absolute.
+            "antigravity-acp",
+          ]
+        : input.profile.platform === "linux"
+          ? ["--uid="]
+          : [],
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(
@@ -582,7 +615,9 @@ export function buildAntigravityAcpSpawnInput(input: {
         input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
         input.runtimeTempDirectory,
       ),
-      ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath,
+      ...(input.installation.harnessPath === null
+        ? {}
+        : { ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath }),
     },
     extendEnv: false,
   };

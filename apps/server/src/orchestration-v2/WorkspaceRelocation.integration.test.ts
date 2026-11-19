@@ -36,7 +36,7 @@ const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.mergeAll(
       projectsLayer,
       Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.undefined,
       }),
     ),
   ),
@@ -132,6 +132,7 @@ for (const detached of [false, true]) {
           appThreadId: threadId,
           ownerNodeId: null,
           nativeThreadRef,
+          nativeMetadata: { cwd: "/tmp/workspace-before" },
           nativeConversationHeadRef: null,
           status: "idle",
           firstRunOrdinal: null,

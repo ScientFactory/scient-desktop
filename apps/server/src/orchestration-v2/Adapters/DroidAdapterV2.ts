@@ -3,6 +3,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -27,6 +28,7 @@ import {
 } from "../../provider/droid/DroidSubagents.ts";
 import type { DroidControlClientFactory } from "../../provider/droid/DroidControl.ts";
 import { rewindDroidSession } from "../../provider/droid/DroidRewind.ts";
+import { droidTurnEndReason, droidTurnFailure } from "../../provider/droid/DroidTurnFailure.ts";
 import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
 import { confirmDroidTurnAdmission } from "./DroidTurnAdmission.ts";
 import {
@@ -142,7 +144,12 @@ export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
         };
       return notification;
     },
-    createToolPresentation: makeDroidToolPresentation,
+    createToolPresentation: (turnInput) => makeDroidToolPresentation(turnInput),
+    // Droid keeps working after a background sub-agent ends past its turn, and marks no end
+    // to that work. Quiet spans inside it reached 12 s while the model thought or wrote a call.
+    enablePostSettleContinuation: true,
+    continuationSilence: (lastOutput) =>
+      lastOutput?.sessionUpdate === "agent_message_chunk" ? "20 seconds" : "40 seconds",
     allowOnceForSessionApproval: true,
     supportsImagePrompts: true,
     modelSupportsImages: (runtime, selection) =>
@@ -447,13 +454,20 @@ export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
               return Effect.failCause(cause);
             }),
             Effect.mapError((error) => {
-              if (isAcpRequestError(error))
+              if (isAcpRequestError(error)) {
+                const reason = droidTurnEndReason(error.data);
                 return new EffectAcpErrors.AcpRequestError({
                   ...error,
                   errorMessage: redact(error.errorMessage),
-                  data: typeof error.data === "string" ? redact(error.data) : undefined,
+                  data:
+                    typeof error.data === "string"
+                      ? redact(error.data)
+                      : reason === undefined
+                        ? undefined
+                        : { reason },
                   cause: undefined,
                 });
+              }
               if (isAcpProcessExitedError(error))
                 return new EffectAcpErrors.AcpProcessExitedError({
                   ...error,
@@ -539,15 +553,13 @@ export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
       return typeof model === "string" ? model : undefined;
     }),
     promptFailure: (cause) =>
-      makeProviderFailure({
-        cause,
-        message: redact(
-          isAcpRequestError(cause)
-            ? droidRequestFailureDetail(cause) || cause.message
-            : String(cause),
-        ),
-        class: "provider_error",
-      }),
+      isAcpRequestError(cause)
+        ? droidTurnFailure({
+            reason: droidTurnEndReason(cause.data),
+            detail: redact(droidRequestFailureDetail(cause) || cause.message),
+            now: DateTime.nowUnsafe(),
+          })
+        : makeProviderFailure({ cause, message: redact(String(cause)), class: "provider_error" }),
   };
   return makeAcpAdapterV2({ ...options, flavor });
 });

@@ -1,6 +1,6 @@
 import { ChildProcess } from "effect/process";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -14,6 +14,8 @@ export interface LocalOwnedProcessRequest {
    * back would undo sanitization. The default remains true for compatibility.
    */
   readonly extendEnv?: boolean;
+  /** `executable` is a complete, already escaped command line for the shell (Windows shims). */
+  readonly shell?: boolean;
 }
 
 export const LOCAL_OWNED_PROCESS_KILL_OPTIONS = {
@@ -25,12 +27,10 @@ const PROCESS_TREE_GRACE_ATTEMPTS = 50;
 const PROCESS_TREE_FORCE_EXIT_ATTEMPTS = 100;
 const PROCESS_TREE_EXIT_POLL = "20 millis";
 
-export class LocalOwnedProcessTreeExitError extends Data.TaggedError(
+export class LocalOwnedProcessTreeExitError extends Schema.TaggedError<LocalOwnedProcessTreeExitError>()(
   "LocalOwnedProcessTreeExitError",
-)<{
-  readonly pid: number;
-  readonly message: string;
-}> {}
+  { pid: Schema.Number, message: Schema.String },
+) {}
 
 /** Cached cancellation shared by owned execution and account-command adapters. */
 export const makeLocalOwnedProcessCleanup = Effect.fnUntraced(function* (
@@ -126,7 +126,7 @@ export function makeLocalOwnedProcess(
     cwd: request.cwd,
     env: request.environment,
     extendEnv: request.extendEnv ?? true,
-    shell: false,
+    shell: request.shell ?? false,
     detached: platform !== "win32",
     ...LOCAL_OWNED_PROCESS_KILL_OPTIONS,
     // Nothing types into a run, so its input ends at once: a tool that reads input after its file,

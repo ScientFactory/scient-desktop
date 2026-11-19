@@ -5,9 +5,11 @@ import {
   type FilePathCopyFormat,
   type FileSurfacePath,
 } from "../files/filePathClipboard";
+import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
-import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -19,14 +21,13 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
-  selectActiveRightPanel,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
 import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { setActivePreviewTab } from "../../previewStateStore";
-import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
+import { isBrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
@@ -62,7 +63,6 @@ interface RightPanelActionsInput {
   readonly rightPanelMaximized: boolean;
   readonly supportsPullRequests: boolean;
   readonly pullRequestsSurfaceAvailable: boolean;
-  readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
   readonly onDiffPanelOpen: (() => void) | undefined;
   readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
 }
@@ -91,7 +91,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     rightPanelMaximized,
     supportsPullRequests,
     pullRequestsSurfaceAvailable,
-    explicitDiffOpenRef,
     onDiffPanelOpen,
   } = input;
 
@@ -104,7 +103,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
       if (!diffOpen) {
-        explicitDiffOpenRef.current = activeThreadRef;
         useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
         onDiffPanelOpen?.();
       }
@@ -121,12 +119,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       }).then((result) => {
         if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
         const error = squashAtomCommandFailure(result);
-        if (error instanceof BrowserSettingsReadError) {
+        if (isBrowserSettingsReadError(error)) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to open browser",
-              description: error.message,
+              title: m(msg("Unable to open browser")),
+              description: errorDisplayMessage(error, m) ?? error.message,
             }),
           );
         }
@@ -137,7 +135,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const addDiffSurface = () => {
     if (!activeThreadRef || !diffAvailable) return;
     runAfterPendingFileSave("diff", () => {
-      explicitDiffOpenRef.current = activeThreadRef;
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
@@ -219,17 +216,18 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const activateRightPanelSurface = (surface: RightPanelSurface) => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave(surface.id, () => {
-      explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
-        surfaceKind: surface.kind,
-        diffOpen,
-        activeThreadRef,
-      });
       useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
       if (surface.kind === "preview" && surface.resourceId) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
       }
       if (surface.kind === "terminal") {
         focusTerminal(activeThreadRef, surface.activeTerminalId);
+      }
+      if (surface.kind === "side-chat") {
+        requestWorkspaceFocus({
+          area: "panel",
+          selector: `[data-side-chat-pane="${CSS.escape(surface.threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+        });
       }
       if (surface.kind === "diff" && !diffOpen) {
         onDiffPanelOpen?.();
@@ -284,8 +282,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy full path",
-          description: "This thread has no active workspace path.",
+          title: m(msg("Failed to copy full path")),
+          description: m(msg("This thread has no active workspace path.")),
         }),
       );
       return;
@@ -304,10 +302,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!diffAvailable || !activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
-      const diffOpen =
-        selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
-        "diff";
-      explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
@@ -318,10 +312,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
-      const diffOpen =
-        selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
-        "diff";
-      explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectToolCall(activeThreadRef, target);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();

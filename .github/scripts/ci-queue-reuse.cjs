@@ -3,12 +3,13 @@ const path = require("node:path");
 const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { validateResult } = require("./thread-transfer-report.cjs");
+const { validateResult, validateScenarios } = require("./thread-transfer-report.cjs");
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
+const { comparisonBase } = require("./ci-comparison-base.cjs");
 // The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
-const MAX_QUEUE_SEGMENTS = 4;
+const MAX_QUEUE_SEGMENTS = 6;
 const SCHEMA = 4;
 const RECEIPT_KEYS = [
   "schemaVersion",
@@ -27,8 +28,17 @@ const RECEIPT_KEYS = [
 ];
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
+// The test_web and test_server matrix sizes in ci.yml.
+const SHARDS = { web: 12, server: 16 };
+const TRANSFER_RESULT = "thread-transfer-result.json";
+const TRANSFER_SCENARIOS = "thread-transfer-scenarios.json";
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
+};
+/** A run that has not passed its gates, as opposed to evidence that is damaged or unreadable. */
+class Unqualified extends Error {}
+const qualified = (condition, message) => {
+  if (!condition) throw new Unqualified(message);
 };
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
 const directory = (env) => path.join(env.RUNNER_TEMP, "ci-queue-reuse");
@@ -53,6 +63,24 @@ function identity(context, env) {
     runAttempt,
     headSha: context.sha,
   };
+}
+
+// Compute recipe sealing reads `git log -1` on these recipes (apps/server/scripts/compute-recipes.ts).
+const RECIPE_HISTORY = "apps/server/src/scient/compute/managed-python";
+
+/** The object at `dir` in a root tree, or null when absent. */
+async function objectAt(github, repo, tree, dir) {
+  let sha = tree;
+  for (const name of dir.split("/")) {
+    const { data } = await github.rest.git.getTree({ ...repo, tree_sha: sha });
+    assert(data.sha === sha && !data.truncated && Array.isArray(data.tree), "Tree is unreadable");
+    const entry = data.tree.find((candidate) => candidate.path === name);
+    if (!entry) return null;
+    assert(SHA.test(entry.sha ?? ""), "Tree is unreadable");
+    if (entry.type !== "tree") return `${entry.type}:${entry.sha}`;
+    sha = entry.sha;
+  }
+  return sha;
 }
 
 async function commitOf(github, repo, sha) {
@@ -86,7 +114,6 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     );
     assert(pr.head?.repo?.full_name === who.repository, "Fork pull requests are never reused");
     assert(SHA.test(pr.base.sha) && SHA.test(pr.head.sha), "Invalid pull request comparison");
-    baseSha = pr.base.sha;
   } else {
     throw new Error("Not a pull request or the main merge queue");
   }
@@ -103,6 +130,10 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     reusedFrom = Number(needs.queue_ci.outputs.source_run_id);
     assert(positive(reusedFrom), "Reused qualification source is missing");
   }
+  // A reused run skips Overleaf Windows: the source receipt it verified recorded that pass.
+  const overleafWindows = reused
+    ? needs.queue_ci.outputs.overleaf_windows === "true"
+    : needs.overleaf_windows?.result === "success";
   const reports = Object.fromEntries(
     ["web", "server"].map((suite) => [
       suite,
@@ -112,21 +143,24 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     ]),
   );
   const commit = await commitOf(github, context.repo, who.headSha);
-  if (
-    context.eventName === "pull_request" &&
-    !(
-      commit.parents.length === 2 &&
-      commit.parents[0] === baseSha &&
-      commit.parents[1] === context.payload.pull_request.head.sha
-    )
-  ) {
-    // The gates compared against the event's base; reuse requires the tested merge to join it.
-    core.info("The tested merge commit does not join this PR's base and head; nothing recorded.");
-    return false;
+  if (context.eventName === "pull_request") {
+    // The gates compared against the main this merge was made on, not the event's base.
+    const pr = context.payload.pull_request;
+    baseSha = comparisonBase(context.payload, commit.parents);
+    if (
+      !(
+        commit.parents.length === 2 &&
+        commit.parents[0] === baseSha &&
+        commit.parents[1] === pr.head.sha
+      )
+    ) {
+      core.info("The tested commit is not a merge of this PR's head; nothing recorded.");
+      return false;
+    }
   }
   const receipt = {
     schemaVersion: SCHEMA,
-    overleafWindows: needs.overleaf_windows.result === "success",
+    overleafWindows,
     event: context.eventName,
     ...who,
     baseSha,
@@ -140,8 +174,11 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
   return true;
 }
 
-/** Reads exactly one bounded JSON member without extracting archive paths. */
-function readArchive(bytes, filename, limit, env = process.env) {
+/**
+ * Reads bounded JSON members without extracting archive paths. The archive may hold only the
+ * listed names, each once, and must hold the first; returns each member's bytes by name.
+ */
+function readArchive(bytes, members, limit, env = process.env) {
   const scratch = fs.mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), "ci-reuse-archive-"));
   try {
     const archive = path.join(scratch, "artifact.zip");
@@ -154,12 +191,22 @@ function readArchive(bytes, filename, limit, env = process.env) {
     })
       .trim()
       .split("\n");
-    assert(names.length === 1 && names[0] === filename, "Unexpected archive members");
-    return execFileSync("unzip", ["-p", archive, filename], {
-      maxBuffer: limit,
-      timeout: 30_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    assert(
+      names.includes(members[0]) &&
+        new Set(names).size === names.length &&
+        names.every((name) => members.includes(name)),
+      "Unexpected archive members",
+    );
+    return new Map(
+      names.map((name) => [
+        name,
+        execFileSync("unzip", ["-p", archive, name], {
+          maxBuffer: limit,
+          timeout: 30_000,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ]),
+    );
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -193,9 +240,17 @@ function matchesRun(run, current, who, event, headSha) {
     run.head_sha === headSha &&
     (event !== "merge_group" || run.head_branch?.startsWith("gh-readonly-queue/main/")) &&
     positive(run.id) &&
-    positive(run.run_attempt) &&
-    run.status === "completed" &&
-    run.conclusion === "success"
+    positive(run.run_attempt)
+  );
+}
+
+// Qualification is the run's gates, not its overall result: advisory jobs (ci-check.cjs
+// ADVISORY) can still be running, or have failed, after `Check` passed. A cancelled, timed-out
+// or not-yet-started run never qualifies, whatever its earlier jobs did.
+function qualifyingState(run) {
+  return (
+    run.status === "in_progress" ||
+    (run.status === "completed" && (run.conclusion === "success" || run.conclusion === "failure"))
   );
 }
 
@@ -218,7 +273,10 @@ function checkReceipt(receipt, expected) {
   );
 }
 
-/** The newest successful run of this workflow for one head, with its qualification receipt. */
+/**
+ * The newest run of this workflow for one head, when its `Check` and qualification receipt
+ * passed, with that receipt. An older run behind a newer unqualified one is never used.
+ */
 async function qualifiedRun({ github, repo, current, who, event, headSha, env, archiveReader }) {
   const api = github.rest.actions;
   const { data } = await api.listWorkflowRuns({
@@ -226,19 +284,51 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     workflow_id: current.workflow_id,
     event,
     head_sha: headSha,
-    status: "success",
     per_page: 20,
   });
   const run = data.workflow_runs.find((candidate) =>
     matchesRun(candidate, current, who, event, headSha),
   );
-  assert(run, `No successful exact-content ${event} run`);
+  qualified(run && qualifyingState(run), `No qualified exact-content ${event} run`);
   const artifacts = await github.paginate(api.listWorkflowRunArtifacts, {
     ...repo,
     run_id: run.id,
     per_page: 100,
   });
-  const download = async (name, filename, limit) => {
+  // "Re-run failed jobs" carries passing jobs into the new attempt under its number, but their
+  // artifacts keep the attempt they ran in. A carried job keeps its original start time.
+  const latest = await github.paginate(api.listJobsForWorkflowRun, {
+    ...repo,
+    run_id: run.id,
+    filter: "latest",
+    per_page: 100,
+  });
+  const attempts = [];
+  for (let attempt = 1; attempt < run.run_attempt; attempt++)
+    attempts[attempt] = await github.paginate(api.listJobsForWorkflowRunAttempt, {
+      ...repo,
+      run_id: run.id,
+      attempt_number: attempt,
+      per_page: 100,
+    });
+  const attemptOf = (name) => {
+    const matching = latest.filter((job) => job.name === name);
+    qualified(
+      matching.length === 1 &&
+        matching[0].conclusion === "success" &&
+        matching[0].run_attempt === run.run_attempt &&
+        typeof matching[0].started_at === "string",
+      `No single successful ${name} job`,
+    );
+    const { started_at } = matching[0];
+    for (let attempt = 1; attempt < run.run_attempt; attempt++) {
+      const earlier = attempts[attempt].filter((job) => job.name === name);
+      if (earlier.length === 1 && earlier[0].started_at === started_at) return attempt;
+    }
+    return run.run_attempt;
+  };
+  // Returns each JSON member by name; `members` lists what the artifact may hold, first required.
+  const downloadMembers = async (name, members, limit) => {
     const matching = artifacts.filter((artifact) => artifact.name === name && !artifact.expired);
     assert(
       matching.length === 1 && positive(matching[0].id),
@@ -263,17 +353,34 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
         "Artifact digest differs",
       );
     }
-    const raw = await archiveReader(bytes, filename, limit, env);
-    assert(Buffer.byteLength(raw) <= limit, "Artifact member is too large");
-    return JSON.parse(raw.toString());
+    const read = await archiveReader(bytes, members, limit, env);
+    return new Map(
+      [...read].map(([member, raw]) => {
+        assert(Buffer.byteLength(raw) <= limit, "Artifact member is too large");
+        return [member, JSON.parse(raw.toString())];
+      }),
+    );
   };
+  const download = async (name, filename, limit) =>
+    (await downloadMembers(name, [filename], limit)).get(filename);
+  // The receipt is written only when every qualifying job passed; `Check` then also requires the
+  // native gates and transfer evidence.
+  attemptOf("Check");
   const prefix = event === "merge_group" ? "queue" : "pr";
+  const receiptAttempt = attemptOf("Qualification receipt");
   const receipt = await download(
-    `ci-${prefix}-qualification-attempt-${run.run_attempt}`,
+    `ci-${prefix}-qualification-attempt-${receiptAttempt}`,
     "receipt.json",
     64 * 1024,
   );
-  return { run, receipt, download };
+  // A run that reused its source republished every report from its probe job.
+  const reportAttempt = (suite, shard) =>
+    attemptOf(
+      receipt.reusedFrom === null
+        ? `Test ${suite === "web" ? "Web" : "Server"} ${shard}`
+        : "Reuse exact CI",
+    );
+  return { run, receipt, receiptAttempt, download, downloadMembers, reportAttempt };
 }
 
 /**
@@ -281,11 +388,20 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
  * exact commit from its first parent, back to the commit main held before the push.
  */
 async function pushSegments(probe) {
+  // HEADGREEN may merge earlier entries on a later group's green Check, whose gates skip lanes
+  // only those entries changed; this push run is then their only qualification against main.
   const { github, repo, who, before } = probe;
   const segments = [];
   for (let head = who.headSha; head !== before;) {
     assert(segments.length < MAX_QUEUE_SEGMENTS, "Push is not covered by queue qualification");
-    const segment = await qualifiedRun({ ...probe, event: "merge_group", headSha: head });
+    const segment = await qualifiedRun({ ...probe, event: "merge_group", headSha: head }).catch(
+      (error) => {
+        if (segments.length === 0 || !(error instanceof Unqualified)) throw error;
+        throw new Error(
+          `Earlier queue entry lacks successful qualification; HEADGREEN may have merged it on a later group's green Check: ${error.message}`,
+        );
+      },
+    );
     checkReceipt(segment.receipt, {
       schemaVersion: SCHEMA,
       event: "merge_group",
@@ -293,7 +409,7 @@ async function pushSegments(probe) {
       workflow: WORKFLOW,
       workflowSha: head,
       runId: segment.run.id,
-      runAttempt: segment.run.run_attempt,
+      runAttempt: segment.receiptAttempt,
       headSha: head,
     });
     const commit = await commitOf(github, repo, head);
@@ -309,9 +425,9 @@ async function pushSegments(probe) {
 }
 
 /**
- * Reuse PR CI only for identical base/content, workflow at the tested commit, and content already
- * on the PR head. Path-limited recipe history must follow that head: test/queue merge timestamps
- * differ. Forks and every other case run normal CI.
+ * Reuse PR CI only for identical base/content and workflow at the tested commit. Both merges join
+ * the same base and head, so change gates and history reads agree, except a path-limited read
+ * where both sides changed: it finds the merge itself, whose timestamp differs. Forks run normally.
  */
 async function queueSegments(probe) {
   const { github, repo, who, context } = probe;
@@ -328,10 +444,16 @@ async function queueSegments(probe) {
     "Queue commit does not merge one pull request onto its base",
   );
   const prHead = commit.parents[1];
-  assert(
-    (await commitOf(github, repo, prHead)).tree === commit.tree,
-    "The pull request does not already contain its queue base",
-  );
+  const head = await commitOf(github, repo, prHead);
+  if (head.tree !== commit.tree) {
+    const recipes = (tree) => objectAt(github, repo, tree, RECIPE_HISTORY);
+    const merged = await recipes(commit.tree);
+    const base = await recipes((await commitOf(github, repo, group.base_sha)).tree);
+    assert(
+      merged === base || merged === (await recipes(head.tree)),
+      "Main and the pull request both changed Compute recipes",
+    );
+  }
   const segment = await qualifiedRun({ ...probe, event: "pull_request", headSha: prHead });
   checkReceipt(segment.receipt, {
     schemaVersion: SCHEMA,
@@ -339,7 +461,7 @@ async function queueSegments(probe) {
     repository: who.repository,
     workflow: WORKFLOW,
     runId: segment.run.id,
-    runAttempt: segment.run.run_attempt,
+    runAttempt: segment.receiptAttempt,
     baseSha: group.base_sha,
     treeSha: commit.tree,
     reusedFrom: null,
@@ -392,23 +514,25 @@ async function restore({ github, context, core, env = process.env, archiveReader
       assert(source.receipt.workflowSha === who.workflowSha, "Qualification receipt differs");
     const staged = new Map();
     if (source.receipt.reports.server) {
-      const transfer = await source.download(
+      // Runs since T3's per-scenario report also carry its rows; older runs hold only the result.
+      const transfer = await source.downloadMembers(
         "thread-transfer-results",
-        "thread-transfer-result.json",
+        [TRANSFER_RESULT, TRANSFER_SCENARIOS],
         64 * 1024,
       );
-      validateResult(transfer);
-      staged.set("thread-transfer-result.json", transfer);
+      validateResult(transfer.get(TRANSFER_RESULT));
+      staged.set(TRANSFER_RESULT, transfer.get(TRANSFER_RESULT));
+      if (transfer.has(TRANSFER_SCENARIOS)) {
+        validateScenarios(transfer.get(TRANSFER_SCENARIOS));
+        staged.set(TRANSFER_SCENARIOS, transfer.get(TRANSFER_SCENARIOS));
+      }
     }
-    for (const [suite, count] of [
-      ["web", 3],
-      ["server", 8],
-    ]) {
+    for (const [suite, count] of Object.entries(SHARDS)) {
       if (!source.receipt.reports[suite]) continue;
       for (let shard = 1; shard <= count; shard++) {
         const filename = `vitest-${suite}-${shard}.json`;
         const report = await source.download(
-          `vitest-${suite}-${shard}-attempt-${source.run.run_attempt}`,
+          `vitest-${suite}-${shard}-attempt-${source.reportAttempt(suite, shard)}`,
           filename,
           MAX_REPORT,
         );
@@ -421,6 +545,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
       const { data: latest } = await api.getWorkflowRun({ ...repo, run_id: run.id });
       assert(
         matchesRun(latest, current, who, run.event, run.head_sha) &&
+          qualifyingState(latest) &&
           latest.run_attempt === run.run_attempt,
         "Source run changed during reuse",
       );
@@ -434,6 +559,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
       `https://github.com/${who.repository}/actions/runs/${source.run.id}`,
     );
     core.setOutput("source_event", source.run.event);
+    core.setOutput("overleaf_windows", String(source.receipt.overleafWindows));
     for (const suite of ["web", "server"])
       core.setOutput(`${suite}_reports`, String(source.receipt.reports[suite]));
     core.setOutput("candidate", "true");
@@ -449,4 +575,4 @@ async function restore({ github, context, core, env = process.env, archiveReader
   }
 }
 
-module.exports = { writeReceipt, restore, readArchive };
+module.exports = { writeReceipt, restore, readArchive, SHARDS };

@@ -2,9 +2,11 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
@@ -14,12 +16,31 @@ import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 // SCIENT-FORK:START — Extensions mutations share the destination settings grant.
 import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
+import { SCIENT_SKILL_GUARDED_RPC_SCOPES } from "./scient/skillsPermissions.ts";
+import {
+  SCIENT_SOURCES_GUARDED_HTTP_SCOPES,
+  scientPaperRequestScopes,
+} from "./scient/sourcesPermissions.ts";
+export * from "./scient/sourcesPermissions.ts";
+// Linked results write project files, so they take the file-write grant.
+import { AuthFilesystemWriteScope } from "./auth.ts";
 // SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  // SCIENT-FORK:START — linked results: placing, updating and undoing write project files, as
+  // any file write does; re-run starts a run.
+  [WS_METHODS.computeResultsPlaceFigure]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsRerun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeResultsPlaceLatex]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUpdateFiles]: AuthFilesystemWriteScope,
+  [WS_METHODS.computeResultsUndoUpdate]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
   ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — personal skills read local files and change the user's skills.
+  ...SCIENT_SKILL_GUARDED_RPC_SCOPES,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: recheck credential and settings authority at execution.
   [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
@@ -35,12 +56,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsPapersRequest]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPapersContinue]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPapersList]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSignInAsPerson]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUniversitySignIn]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUniversityBrowse]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUniversitySearch]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPlainKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepPlainKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUnlinkKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsRestoreKeptKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,
@@ -55,15 +78,42 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsFillValues]: AuthSettingsWriteScope,
   [WS_METHODS.accountsMatchSignIn]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileChoose]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMainFilled]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMainBackfilled]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMainFolded]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileRetire]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsSeen]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsKeepTyped]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsQualify]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsReceive]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsApplied]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsWithdraw]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsSignOutLocal]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileSendLog]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileResend]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileSignedOut]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMainWithdrawn]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileShared]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfilesUnshared]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsBind]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsForget]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSenderKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsKeepSenderKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
   // SCIENT-FORK:END
   [WS_METHODS.documentsExportServerBrowserPdf]: AuthPreviewOperateScope,
   [WS_METHODS.documentsNavigateServerBrowser]: AuthPreviewOperateScope,
+  [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
+  // Restarts the server, as an update does.
+  [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
+  [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
+  // Listing models spends the stored API key, so only those who can choose a model may.
+  [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
@@ -76,6 +126,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pullRequestsSetFilesViewed]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesCreate]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesUpdate]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesReact]: AuthSourceControlWriteScope,
+  // A tracker credential and a project's binding are settings, saved under the same grant.
+  [WS_METHODS.issueTrackersConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.issueTrackersBindProject]: AuthSettingsWriteScope,
   // Writing a guide runs a model on this environment's providers, which reading one does not.
   [WS_METHODS.pullRequestsGenerateReviewGuide]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
@@ -110,12 +168,22 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
+  // SCIENT-FORK: a room invite hands thread access to someone outside, like a guest link.
+  [WS_METHODS.threadRoomInvite]: AuthAccessWriteScope,
+  [WS_METHODS.threadRoomInviteLink]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
+
+// SCIENT-FORK:START — HTTP commands checked like guarded RPCs; the server's RPC table excludes them.
+const CLIENT_GUARDED_HTTP_SCOPES = {
+  ...SCIENT_SOURCES_GUARDED_HTTP_SCOPES,
+} as const;
+export type ClientGuardedHttpTag = keyof typeof CLIENT_GUARDED_HTTP_SCOPES;
+// SCIENT-FORK:END
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
@@ -139,6 +207,12 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // SCIENT-FORK:START — guarded HTTP commands and Library paper requests share this check.
+  const paperScopes = scientPaperRequestScopes(method, input);
+  if (paperScopes !== undefined) return paperScopes;
+  if (Object.hasOwn(CLIENT_GUARDED_HTTP_SCOPES, method))
+    return [CLIENT_GUARDED_HTTP_SCOPES[method as ClientGuardedHttpTag]];
+  // SCIENT-FORK:END
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];

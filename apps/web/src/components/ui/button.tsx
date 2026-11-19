@@ -23,6 +23,8 @@ const buttonVariants = cva(
       size: {
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
+        "compact-sm":
+          "h-6 gap-1 rounded-md px-1.5 text-2xs sm:text-2xs font-normal before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
         icon: "size-9 sm:size-8",
         "icon-header":
@@ -32,6 +34,7 @@ const buttonVariants = cva(
           "size-5 rounded-sm p-0 before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3",
         "icon-tiny": "size-4 p-0 [&_svg:not([class*='size-'])]:size-3",
         "icon-sm": "size-8 sm:size-7",
+        "icon-sm-pill": "size-8 rounded-full before:rounded-full sm:size-7",
         "icon-xl":
           "size-11 sm:size-10 [&_svg:not([class*='size-'])]:size-5 sm:[&_svg:not([class*='size-'])]:size-4.5",
         "icon-xs":
@@ -42,6 +45,7 @@ const buttonVariants = cva(
         multiline:
           "min-h-9 px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] whitespace-normal sm:min-h-8",
         sm: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] sm:h-7",
+        "sm-pill": "h-8 gap-1.5 rounded-full px-2.5 sm:h-7",
         "sm-multiline":
           "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",
         toolbar: "h-6 px-1 text-2xs font-normal",
@@ -85,6 +89,10 @@ const buttonVariants = cva(
         overlay: "border-transparent bg-black/70 text-white/65 [:hover,[data-pressed]]:bg-black/90",
         "round-primary":
           "rounded-full before:rounded-full not-disabled:inset-shadow-[0_1px_--theme(--color-white/16%)] border-primary bg-primary text-primary-foreground shadow-primary/24 shadow-xs [:active,[data-pressed]]:inset-shadow-[0_1px_--theme(--color-black/8%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:bg-primary/90",
+        // SCIENT-FORK:START — a round red button that ends a voice call, the twin of round-primary.
+        "round-destructive":
+          "rounded-full before:rounded-full not-disabled:inset-shadow-[0_1px_--theme(--color-white/16%)] border-destructive bg-destructive text-white shadow-destructive/24 shadow-xs [:active,[data-pressed]]:inset-shadow-[0_1px_--theme(--color-black/8%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:bg-destructive/90",
+        // SCIENT-FORK:END
         secondary:
           "border-transparent bg-secondary text-secondary-foreground [:active,[data-pressed]]:bg-secondary/80 [:hover,[data-pressed]]:bg-secondary/90",
         selected:
@@ -136,6 +144,9 @@ const inlineButtonVariants = cva(
   {
     defaultVariants: { tone: "default" },
     variants: {
+      touchTarget: {
+        padded: "pointer-coarse:min-h-11 pointer-coarse:px-1.5",
+      },
       tone: {
         default: "text-foreground",
         muted: "text-muted-foreground hover:text-foreground",
@@ -151,11 +162,12 @@ const inlineButtonVariants = cva(
 export function InlineButton({
   className,
   tone,
+  touchTarget,
   render,
   ...props
 }: useRender.ComponentProps<"button"> & VariantProps<typeof inlineButtonVariants>) {
   const defaultProps = {
-    className: cn(inlineButtonVariants({ tone }), className),
+    className: cn(inlineButtonVariants({ tone, touchTarget }), className),
     "data-slot": "inline-button",
     type: render ? undefined : ("button" as const),
   };

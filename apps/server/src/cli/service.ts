@@ -20,7 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand, resolveEntryPath } from "./invocation.ts";
+import { resolveCliCommand, resolveEntryPath, resolveHostCliHint } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -51,14 +51,37 @@ export const upsertServiceEnv = (
   entries: Readonly<Record<string, string | undefined>>,
 ): string => {
   const written = new Set<string>();
-  const lines = contents.split("\n").flatMap((line) => {
-    const key = SERVICE_ENV_KEY.exec(line)?.[1];
-    if (key === undefined || !Object.hasOwn(entries, key)) return [line];
+  const source = contents.split("\n");
+  const lines: string[] = [];
+  for (let index = 0, offset = 0; index < source.length;) {
+    const line = source[index]!;
+    const match = SERVICE_ENV_KEY.exec(line);
+    let end = index + 1;
+    if (match !== null) {
+      // util.parseEnv lets a quoted value run to its closing quote across lines,
+      // skipping only spaces, tabs and CRs before the opening quote.
+      const rest = line.slice(match[0].length).replace(/^[ \t\r]+/u, "");
+      const quote = rest[0];
+      if ((quote === '"' || quote === "'" || quote === "`") && !rest.includes(quote, 1)) {
+        const closing = contents.indexOf(quote, offset + line.length);
+        if (closing !== -1) {
+          end += contents.slice(offset + line.length, closing).split("\n").length - 1;
+        }
+      }
+    }
+    const span = source.slice(index, end);
+    offset += span.reduce((length, part) => length + part.length + 1, 0);
+    index = end;
+    const key = match?.[1];
+    if (key === undefined || !Object.hasOwn(entries, key)) {
+      lines.push(span.join("\n"));
+      continue;
+    }
     const value = entries[key];
-    if (value === undefined || written.has(key)) return [];
+    if (value === undefined || written.has(key)) continue;
     written.add(key);
-    return [`${key}=${value}`];
-  });
+    lines.push(`${key}=${value}`);
+  }
   while (lines.at(-1) === "") lines.pop();
   for (const [key, value] of Object.entries(entries)) {
     if (value !== undefined && !written.has(key)) lines.push(`${key}=${value}`);
@@ -95,6 +118,13 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
+  // Before the downgrade check, which reads this home's state, not the service's.
+  if (status.otherBaseDir !== undefined) {
+    return yield* new BootService.BootServiceOtherBaseDirError({
+      installedBaseDir: status.otherBaseDir,
+      baseDir,
+    });
+  }
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
   }
@@ -132,14 +162,19 @@ export function formatServiceChange(
   return `Service ${result.previouslyInstalled ? "updated" : "installed"} · t3@${packageJson.version}\nLog: ${result.plan.logPath}`;
 }
 
+const MEMORY_CONTROLLER_DISABLED =
+  "the kernel's memory cgroup controller is disabled. Add `cgroup_enable=memory` to the kernel command line and reboot.";
+
 function formatProtection(
   protection: ServiceProtection.ServiceProtectionState | undefined,
 ): ReadonlyArray<string> {
   if (protection === undefined) return [];
   return [
-    protection.unprotected === undefined
-      ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
-      : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
+    !protection.memoryControllerAvailable
+      ? `  Memory protection: unavailable, ${MEMORY_CONTROLLER_DISABLED}`
+      : protection.unprotected === undefined
+        ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
+        : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
     ...(protection.oomScoreAdj === undefined ? [] : [`  OOM score: ${protection.oomScoreAdj}`]),
   ];
 }
@@ -151,14 +186,26 @@ export function formatServiceStatus(
   protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
-    return "Scient service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
+    return "Scient service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler";
   }
   if (!status.installed) {
     return "Scient service\n  Status: not installed\n  Next: Use this installation's service install command.";
   }
+  if (status.otherBaseDir !== undefined) {
+    return [
+      "Scient service",
+      "  Status: installed for another Scient home",
+      `  Base dir: ${status.otherBaseDir}`,
+      `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
+    ].join("\n");
+  }
   const installedVersion = status.installedVersion ?? cliVersion;
+  // SCIENT-FORK:START — problems name this installation's repair command.
+  const commands =
+    repairCommand === undefined ? undefined : { install: repairCommand, restart: repairCommand };
+  // SCIENT-FORK:END
   const problems = (status.problems ?? []).map(
-    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem, commands)}`,
   );
   if (
     !status.current &&
@@ -228,7 +275,8 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         }
         yield* Console.log(formatServiceChange(result));
         if (!result.previouslyInstalled) {
-          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+          const upCommand = yield* resolveHostCliHint("up", flags.baseDir);
+          yield* Console.log(`Run \`${upCommand}\` to choose how your other devices reach it.`);
         }
       }),
     ),
@@ -274,7 +322,9 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
             ? `Restarted the Scient service${onVersion}.`
             : outcome === "queued"
               ? `Queued a restart of the Scient service${onVersion}. This session runs inside the service and disconnects when it goes down.\nLogs: ${status.logPath}`
-              : "Scient service is not installed.",
+              : status.otherBaseDir !== undefined
+                ? `The Scient service serves ${status.otherBaseDir}, so it was not restarted. Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to restart it.`
+                : "Scient service is not installed.",
         );
       }),
     ),
@@ -300,7 +350,7 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
           path.resolve(installedBaseDir) !== path.resolve(baseDir)
         ) {
           yield* Console.log(
-            "The installed service runs another Scient home, so it was not removed. Pass its --base-dir.",
+            `The Scient service serves ${installedBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(installedBaseDir)}\` to remove it.`,
           );
           return;
         }
@@ -441,10 +491,16 @@ const serviceProtectCommand = Command.make("protect", {
               ...formatDropIns([plan.managerDefaults, ...plan.user]),
             ].join("\n"),
           );
+          const memoryController = yield* ServiceProtection.memoryControllerAvailable;
+          if (!memoryController) {
+            yield* Console.log(`Only the OOM scores can apply: ${MEMORY_CONTROLLER_DISABLED}`);
+          }
           if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
           yield* ServiceProtection.applyProtection(plan);
           yield* Console.log(
-            "Protected Scient. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
+            memoryController
+              ? "Protected Scient. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`."
+              : "Protected Scient's OOM score; the server takes it after `t3 service restart`. Memory protection applies once the kernel's memory controller is enabled. Undo with `t3 service protect --undo`.",
           );
         }).pipe(Effect.provide(ProcessRunner.layer)),
       );

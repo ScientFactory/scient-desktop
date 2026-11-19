@@ -92,10 +92,10 @@ describe("Scient analytics contract", () => {
     ).toBe(false);
     const freeText = normalizeInheritedEvent(
       "provider.turn.sent",
-      { provider: "a sentence, not a driver", model: "Not A Model Id!" },
+      { provider: "a sentence, not a driver", model: "  Lab   Model 7B!  " },
       context,
     );
-    expect(freeText?.properties).toMatchObject({ provider: "other", modelKey: "other" });
+    expect(freeText?.properties).toMatchObject({ provider: "other", modelKey: "lab model 7b!" });
   });
 
   it("attributes Pi and its model but never sends an endpoint address", () => {
@@ -138,8 +138,103 @@ describe("Scient analytics contract", () => {
     expect(modelKey("claude-opus-5-5")).toBe("claude-opus-5-5");
     expect(modelKey("anthropic/claude-opus-5-5")).toBe("claude-opus-5-5");
     expect(modelKey("lab-model-alpha")).toBe("lab-model-alpha");
-    expect(modelKey("a model name with spaces")).toBe("other");
+    expect(modelKey("gemini-4-argon")).toBe("gemini-4-argon");
+    expect(modelKey("A Model\tName  with Spaces")).toBe("a model name with spaces");
+    expect(modelKey(`x${"y".repeat(300)}`)).toHaveLength(120);
+    for (const privateLooking of [
+      "https://models.example.test/v1",
+      "/Users/someone/model.gguf",
+      "C:\\models\\local.gguf",
+      "someone@example.test",
+    ])
+      expect(modelKey(privateLooking)).toBe("other");
+    expect(modelKey("   ")).toBe("unknown");
     expect(modelKey(undefined)).toBe("unknown");
+  });
+
+  it("names the model that did a turn's work, with how many models the turn used", () => {
+    const usage = (properties: Record<string, unknown>) =>
+      normalizeInheritedEvent(
+        "provider.turn.completed",
+        { provider: "claudeAgent", terminalStatus: "completed", ...properties },
+        context,
+      )?.properties;
+    expect(
+      usage({
+        model: "claude-opus-5-5",
+        mixedModels: true,
+        mainModel: "claude-opus-5-5",
+        modelCount: 2,
+      }),
+    ).toMatchObject({ modelKey: "claude-opus-5-5", modelCount: 2 });
+    expect(usage({ model: "claude-opus-5-5", mixedModels: true })).toMatchObject({
+      modelKey: "claude-opus-5-5",
+    });
+    expect(usage({ model: "claude-opus-5-5", observedModel: "gemini-4-argon" })).toMatchObject({
+      modelKey: "gemini-4-argon",
+      observedModel: "gemini-4-argon",
+    });
+    const semantic = normalizeInheritedEvent(
+      "provider.turn.completed",
+      { provider: "omp", model: "gemini-4-argon", browserToolCalls: 7, browserToolFailures: 2 },
+      context,
+    )?.properties;
+    expect(semantic).toMatchObject({
+      modelKey: "gemini-4-argon",
+      browserToolCalls: 7,
+      browserToolFailures: 2,
+    });
+  });
+
+  it("says why a sign-in failed and which page it waited on, from closed values only", () => {
+    const failed = normalizeInheritedEvent(
+      "provider.lifecycle.failed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "waiting_for_browser",
+        failureClass: "unknown",
+        failureReason: "timeout",
+        signInPage: "manual_fallback",
+      },
+      context,
+    );
+    expect(failed?.properties).toMatchObject({
+      failureReason: "timeout",
+      signInPage: "manual_fallback",
+    });
+    const completed = normalizeInheritedEvent(
+      "provider.lifecycle.completed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "verifying",
+        signInPage: "primary",
+        failureReason: "timeout",
+      },
+      context,
+    );
+    expect(completed?.properties).toMatchObject({ signInPage: "primary" });
+    expect(completed?.properties).not.toHaveProperty("failureReason");
+    const started = normalizeInheritedEvent(
+      "provider.lifecycle.started",
+      { provider: "claudeAgent", action: "sign-in", stage: "starting", signInPage: "primary" },
+      context,
+    );
+    expect(started?.properties).not.toHaveProperty("signInPage");
+    const stray = normalizeInheritedEvent(
+      "provider.lifecycle.failed",
+      {
+        provider: "claudeAgent",
+        action: "sign-in",
+        stage: "waiting_for_browser",
+        failureReason: "the user's browser at /private/path",
+        signInPage: "https://example.invalid",
+      },
+      context,
+    );
+    expect(stray?.properties).not.toHaveProperty("signInPage");
+    expect(JSON.stringify(stray)).not.toContain("private");
   });
 
   it("uses bounded duration and failure values", () => {
@@ -165,6 +260,44 @@ describe("Scient analytics contract", () => {
         failureClass: "unknown",
       },
     });
+    // The run's hash and the agent build pass; anything shaped otherwise is dropped.
+    const run = (runRef: string, providerVersion: string) =>
+      normalizeInheritedEvent(
+        "provider.turn.failed",
+        { provider: "scient", runRef, providerVersion, started: false },
+        context,
+      )?.properties;
+    expect(run("0123456789abcdef", "0.1.11")).toMatchObject({
+      runRef: "0123456789abcdef",
+      providerVersion: "0.1.11",
+      started: false,
+    });
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("runRef");
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("providerVersion");
+  });
+
+  it("keeps an extension's public identity: hosts, registry and plugin names", () => {
+    const properties = {
+      owner: "scient",
+      extensionKind: "connector",
+      connector: "io.github.acme/search",
+      connectorHost: "mcp.notion.com",
+      extensionName: "Notion",
+      plugin: "gmail",
+      marketplace: "openai-curated",
+      tool: "search_pages",
+      outcome: "ok",
+    };
+    const event = normalizeInheritedEvent("extension.tool.called", properties, context);
+    expect(event?.properties).toMatchObject(properties);
+    expect(
+      eventContractViolation({
+        name: "extension.tool.called",
+        privacyLevel: "product",
+        consentLevel: "product",
+        properties: event?.properties ?? {},
+      }),
+    ).toBeNull();
   });
 
   it("records events and fields without a Scient normalizer, as T3 does", () => {

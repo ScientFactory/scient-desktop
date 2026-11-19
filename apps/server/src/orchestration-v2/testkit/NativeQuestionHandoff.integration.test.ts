@@ -40,6 +40,7 @@ import { ServerConfig } from "../../config.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CLAUDE_MODEL_SELECTION } from "./fixtures/shared.ts";
+import { forkConversation } from "./ConversationForkCommand.ts";
 
 const settings = Schema.decodeSync(ClaudeSettings)({});
 const encodeSdkOffer = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -82,6 +83,7 @@ it.live(
                 const frames = child ? childFrames : sourceFrames;
                 if (!child) options = input.options;
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -116,6 +118,7 @@ it.live(
             forkSession: () =>
               Effect.die("Portable history must not restore native fork authority"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -242,9 +245,15 @@ it.live(
               },
             ),
           ).pipe(Effect.forkChild);
+          // The session writes the request and the run writes its item, so wait for both.
           const waiting = yield* waitForProjection(threadId, (projection) =>
             projection.runtimeRequests.some(
-              (request) => request.kind === "user_input" && request.status === "pending",
+              (request) =>
+                request.kind === "user_input" &&
+                request.status === "pending" &&
+                projection.turnItems.some(
+                  (item) => item.type === "user_input_request" && item.requestId === request.id,
+                ),
             ),
           );
           const request = waiting.runtimeRequests.find(
@@ -396,7 +405,7 @@ it.live(
           assert.deepEqual(yield* forks.getOptions(forkCommand), available);
           yield* assertNoForkAdviceMutation;
           yield* fileSystem.writeFile(stored, evidenceBytes);
-          yield* forks.dispatch(forkCommand);
+          yield* forkConversation(forkCommand);
           const child = yield* orchestrator.getThreadProjection(childId);
           assert.deepEqual(child.runtimeRequests, []);
           assert.deepEqual(child.providerSessions, []);

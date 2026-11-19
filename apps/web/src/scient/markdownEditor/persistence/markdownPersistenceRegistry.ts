@@ -15,6 +15,7 @@ import {
 } from "@scientfactory/scient-markdown";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { randomUUID } from "~/lib/utils";
 import { isScientMarkdownDocumentPath } from "../markdownDocumentPaths";
@@ -217,7 +218,12 @@ export function canMoveInPlace(lease: MarkdownPersistenceLease): boolean {
  */
 const REGISTRY_GENERATION = 15;
 
-class CheckpointAdmissionError extends Error {}
+class CheckpointAdmissionError extends Schema.TaggedError<CheckpointAdmissionError>()(
+  "CheckpointAdmissionError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+const isCheckpointAdmissionError = Schema.is(CheckpointAdmissionError);
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -309,18 +315,18 @@ export class MarkdownPersistenceRegistry {
           entry.transport !== transport ||
           this.entries.get(projectFileOperationKey(entry.target)) !== entry
         )
-          throw new CheckpointAdmissionError(
-            "This reviewed current no longer owns its recovery journal.",
-          );
+          throw new CheckpointAdmissionError({
+            message: "This reviewed current no longer owns its recovery journal.",
+          });
         await writer.flushAuthorizedCurrentReview(snapshot);
         if (
           entry.checkpoint !== writer ||
           entry.transport !== transport ||
           this.entries.get(projectFileOperationKey(entry.target)) !== entry
         )
-          throw new CheckpointAdmissionError(
-            "This reviewed current moved during durable admission.",
-          );
+          throw new CheckpointAdmissionError({
+            message: "This reviewed current moved during durable admission.",
+          });
       },
       write: async (intent) => {
         const entry = getEntry();
@@ -353,17 +359,18 @@ export class MarkdownPersistenceRegistry {
           )
             throw new Error("This file publication moved before durable admission.");
         } catch (cause) {
-          throw new CheckpointAdmissionError(
-            cause instanceof Error
-              ? cause.message
-              : "The publication checkpoint could not be committed.",
-            { cause },
-          );
+          throw new CheckpointAdmissionError({
+            message:
+              cause instanceof Error
+                ? cause.message
+                : "The publication checkpoint could not be committed.",
+            cause,
+          });
         }
         return transport.write(intent);
       },
       classifyFailure: (error) =>
-        error instanceof CheckpointAdmissionError ? "terminal" : transport.classifyFailure(error),
+        isCheckpointAdmissionError(error) ? "terminal" : transport.classifyFailure(error),
     };
   }
 

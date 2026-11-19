@@ -1,15 +1,31 @@
 # Overleaf manuscript engine
 
-The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
-and agent tools ([Overleaf agent tools](scient-overleaf-agent-tools.md)), both
-through `OverleafSync`; no screen calls them yet, and nothing synchronizes
-automatically. Its plan, contract, owner decisions
-and status live on the working-documents PR
-[#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
-closed rather than merged; this file records what is implemented.
-The planned workflow is manual, folder-first synchronization through a private
-bare Git repository. The workspace's repository and checkpoint index do not
-participate in its merge protocol.
+Status: Draft
+Owner: Yaacov
+Created: 2026-10-09
+Last updated: 2026-11-10
+Purpose: Describes mounted Overleaf synchronization, source and publication authority, recovery and remaining qualification.
+Doc type: Current implementation
+
+Folder connection, synced-folder settings and conflict-review screens are
+mounted. They and the [agent tools](scient-overleaf-agent-tools.md) use the
+authenticated routes (`/api/scient/overleaf/v1/*`) through `OverleafSync`.
+Synchronization is requested explicitly; background remote-state checks do not
+send changes. The workflow is folder-first, through a private bare Git
+repository. The workspace's repository and checkpoint index do not participate
+in its merge protocol. See [Overleaf Help](../user/overleaf.md) for the mounted
+workflow; the earlier working-documents PR
+[#535](https://github.com/ScientFactory/scient-desktop/pull/535) is historical
+design context, not the status of today's integration.
+
+Production application uses plain file publication and file history on every
+host, as described in [saving workspace files](scient-file-saving.md). Native
+publication details below describe older retained records and explicit test
+paths, not the mechanism of a new production sync. The service's current
+[editor-saving boundary](#saving-open-editors) applies before operations that
+may write the linked folder. Source inspection at `8006e7bbdab5d2a724a628a2f3c4d3c6d81821ea`
+on 2026-11-10 confirms mounted integration; it does not establish real-cloud or
+installed-platform qualification.
 
 `OverleafRepository` uses system Git 2.39 or newer and `merge-tree` with an
 explicit base. Each conflict decision covers the paths connected by renames or
@@ -88,7 +104,22 @@ fallback installation boundary that cannot be confirmed requires forced review,
 including older fallback records where installation may have completed. Recovery never repeats
 an uncertain installation over a later save or deletion.
 
-The two retained mutation methods on `WorkspaceFileSystem` use the same
+### Current publication and legacy retained records
+
+`WorkspaceFileMutations` defaults to plain publication for saves and Overleaf
+writes. Its `applyStep` keeps earlier material in the step's folder and file
+history, checks the file/group and publishes under the same ownership as a
+save. Native retained publication finishes older unfinished records; the
+`nativeSaves` flag selects a retained-publication implementation for tests.
+
+The retained-native mechanism described in the remainder of this local
+application section records the older implementation and its qualification
+fixtures. Its native lease and exchange guarantees must not be inferred for a
+new plain application. Separate identity, privacy and platform-admission checks
+can still use the helper. Current plain publication and its known limits are
+owned by the saving guide.
+
+In that retained-native implementation, the two mutation methods on `WorkspaceFileSystem` use the same
 canonical-path locks as saves, creates and renames. Their filesystem critical
 section is not interrupted by fiber cancellation. Each record includes staged
 file identity (device and inode), expected bytes and retention locations before
@@ -268,7 +299,40 @@ server defaults to its own installed resources and may explicitly set the
 absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`. Both paths require the
 production receipt, SHA-256 digest, matching host architecture, native executable
 format, executable permissions and protocol capabilities. Symlinks and resources
-writable by another user are refused; Windows checks owner and write ACLs. The
+writable by another user are refused. On Windows, for every helper, PowerShell
+prints the security descriptor (`Get-Acl`, SDDL) of the helper, its receipt, its
+folder and each folder above; the server reads them and refuses an owner, or a
+write or delete right, held by anyone but the user, SYSTEM, Administrators or
+TrustedInstaller. The script uses only a cmdlet and a property read, so it runs
+the same under Constrained Language Mode (AppLocker, WDAC), and `whoami` gives
+the user's SID. A descriptor it cannot read refuses. So that a per-user install
+also passes in a `/D=` folder that other users may add files to (a drive's
+subfolder, a CI temporary folder), the Windows installer protects its install
+folder after the running-app check and before the old version is uninstalled or
+any file is copied (`scripts/scient/installFolderProtection.ts`). It leaves the
+folder's permissions as they are for a machine-wide install, or when the folder
+or any folder above it is a link or cannot be read. It works through one handle
+to the folder itself, checked as a directory owned by the user, SYSTEM or
+Administrators whose real path is the install path. This app's previous install
+(registered there, with its uninstaller) gets the protected access list (the
+user, SYSTEM and Administrators) in one operation, without propagating to the
+old files, which the old uninstaller moves out. An empty folder that is neither
+encrypted nor compressed and that Windows reports has no named streams is deleted
+through that handle and, like a missing one, created again already protected:
+when the installer creates or replaces it, nothing can be added to it or opened
+in it first. (A missing `/D=` folder is first created by the template's
+initialization with inherited permissions; if something is added to it before
+the protection runs, it is no longer empty and keeps its permissions.) If a folder
+above is swapped for a link while the folder is being created, an empty
+protected folder may remain where the link pointed; it is never deleted, since
+the installer cannot prove it made it. The installer then holds the folder open without delete
+sharing until its files are copied, and every installed file inherits the list.
+Any other folder keeps its own permissions (files are still installed there, as
+before), and the check above decides whether saving works there. The helper is looked for
+when first needed. A pass is used at once and checked again in the background
+once ten minutes old; a refusal is checked again at the next use. A helper that
+fails a check, or that can no longer be launched and is being checked again, is
+given to no new use; an operation already holding it finishes with it. The
 helper is never discovered from the workspace or PATH. Development uses the
 helper staged beside its server bundle.
 
@@ -373,7 +437,7 @@ Each publication attempt records its operation, request, plan digest,
 workspace authority, parent, candidate and base generation; those never
 change, and only its classification may move forward: `unknown` to
 `accepted`, `out-of-date`, `not-sent` or `superseded-unresolved`, and
-`superseded-unresolved` to `accepted`. Each outcome needs its kind of evidence.
+`superseded-unresolved` to `accepted` or `not-sent`. Each outcome needs its kind of evidence.
 A new attempt takes a fresh number and is recorded `unknown` on the current
 base, before any send. Acceptance adopts exactly the candidate on the base it
 was built for; a rejection or `not-sent` leaves the base alone. A base change
@@ -442,7 +506,11 @@ volume UUID plus the folder's file ID, never the device number, so a disk mounte
 again under another path is recognized. macOS resolves the UUID through `diskutil`.
 Linux reads it from the held object with `FS_IOC_GETFSUUID`, falling back to a unique
 `/dev/disk/by-uuid` entry for the mount's block device. Btrfs identities also include
-the subvolume ID, and kept copies must share the manuscript's subvolume. Linux
+the subvolume ID, and kept copies must share the manuscript's subvolume. ext4 and XFS
+give a new file a freed inode number at once, so Linux identities also carry the inode
+generation (`FS_IOC_GETVERSION`); a folder recreated at a link's path is never taken
+for the linked one. Records written before the generation was read match by inode
+until the server records it, at startup or at the link's next operation. Linux
 admission checks held-folder `fstatfs` magic and `/proc/self/mountinfo`: ext4, XFS and
 Btrfs are accepted; memory filesystems, overlay, network/virtual filesystems, FUSE,
 FAT/exFAT and NTFS drivers are refused. New identities carry platform and version
@@ -629,7 +697,13 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
 - **Bulk changes.** The coordinator registers the barrier's settler: a bulk
   change of a checkout with a pending apply recovers it inline when the
   reservation is free, and is refused otherwise. Structural copies in the
-  folder always refuse it, including any the inline recovery finds.
+  folder always refuse it, including any the inline recovery finds. An unlinked
+  record with a pending apply or structural copies refuses it too
+  (`unlinked-unfinished-sync`) until the folder is linked again, which finishes
+  it; its status reports them as reasons. It holds nothing back once linking can
+  no longer finish it: its folder is gone from its recorded place or replaced
+  there, or a standing link owns that folder. Only records holding something are
+  looked up, so an idle link whose folder can't be examined holds nothing back.
 - **Listing kept copies** compares each copy by its stamp and reads again only
   a changed or extra version. One listing reads at most one inventory's total;
   a file past that budget, or larger than a restore reads (a kept copy or the
@@ -781,8 +855,12 @@ section 9):
    of the checkout does not wait for the network. `accepted` makes the
    publication tree the base in the same replacement. `out-of-date` keeps the adopted
    base. Overleaf's rate limit answers before anything is sent, so after the waits
-   below it records `not-sent` (`send-refused`). Anything else stays `unknown`, as
-   does an attempt whose finalizing write fails.
+   below it records `not-sent` (`send-refused`), as does a push Git gave up on before
+   any pack went out: Git missing, or a failed ref advertisement (exit 128 with that
+   step's own message: access refused, project not found, Overleaf unreachable). The
+   result carries the reason. A failure after the pack went out exits 1 with no ref
+   status and stays `unknown`, as does anything else and an attempt whose finalizing
+   write fails.
 
 **Rate limit.** Overleaf answers about 40 Git requests a minute, then refuses for up
 to 30 s with `no git access` and `Rate-limit exceeded` (measured 2026-10-31). Its
@@ -801,8 +879,12 @@ only:
 - the candidate commit is reachable from the head.
 
 An unknown attempt on the current base becomes the base when accepted. A
-superseded one is only marked accepted, and the later base stays. Absent
-evidence changes nothing, including when Overleaf still holds the parent. The
+superseded one is only marked accepted, and the later base stays. An attempt
+with no such evidence whose parent the head has moved on from, without the
+candidate, is recorded `not-sent`: Overleaf's branch only moves forward and a
+push applies only on the head it was sent against, so it never landed and never
+can. Otherwise absent evidence changes nothing, including when Overleaf still
+holds the parent. The
 review warns about each unresolved attempt (`unresolved-publication`), and the
 confirmation must acknowledge it. Nothing is ever resent.
 
@@ -1037,9 +1119,12 @@ screens alike (the screens' own window answers like any other).
   save runs once more; a file still unsaved then fails, as edited again or as
   not placed.
 
-## Remaining integration gates
+## Remaining integration qualification
 
-Automated tests cannot settle these; each is checked by hand before a release.
+The screens, routes and editor-save integration exist. The remaining work here
+is qualification of the environments below, not mounting that integration.
+These are release requirements, not a record that this documentation update
+performed them. Automated tests alone cannot settle them.
 
 - **Overleaf Cloud itself.** A local bare Git remote does not reproduce the Cloud Git
   bridge's history and acknowledgement behaviour. A disposable Cloud project is synced

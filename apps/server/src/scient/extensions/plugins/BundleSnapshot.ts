@@ -10,6 +10,8 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import * as Schema from "effect/Schema";
+
 export interface BundleFile {
   readonly relativePath: string;
   readonly bytes: Uint8Array;
@@ -51,9 +53,9 @@ export interface SnapshotOptions {
   ) => Promise<void>;
 }
 
-export class BundleRejected extends Error {
-  override readonly name = "BundleRejected";
-}
+export class BundleRejected extends Schema.TaggedError<BundleRejected>()("BundleRejected", {
+  message: Schema.String,
+}) {}
 
 /** Version-control and Finder metadata never belong to a bundle snapshot. */
 const IGNORED_ENTRY_NAMES: Readonly<Record<string, true>> = { ".git": true, ".DS_Store": true };
@@ -98,17 +100,21 @@ export async function snapshotBundle(
 ): Promise<BundleSnapshot> {
   const limits = options.limits ?? DEFAULT_BUNDLE_LIMITS;
   const checkAborted = () => {
-    if (options.signal?.aborted) throw new BundleRejected("Reading the bundle was cancelled.");
+    if (options.signal?.aborted)
+      throw new BundleRejected({ message: "Reading the bundle was cancelled." });
   };
   let requestedStat;
   try {
     requestedStat = await NodeFSP.lstat(root);
   } catch (error) {
-    if (isNodeError(error, "ENOENT")) throw new BundleRejected("No directory exists at that path.");
+    if (isNodeError(error, "ENOENT"))
+      throw new BundleRejected({ message: "No directory exists at that path." });
     throw error;
   }
   if (requestedStat.isSymbolicLink() || !requestedStat.isDirectory()) {
-    throw new BundleRejected("The plugin path must be a real directory, not a link or a file.");
+    throw new BundleRejected({
+      message: "The plugin path must be a real directory, not a link or a file.",
+    });
   }
   const rootIdentity = identityOf(requestedStat);
   await options.beforeRead?.("", "root");
@@ -130,16 +136,22 @@ export async function snapshotBundle(
     try {
       stat = await NodeFSP.lstat(absolutePath);
     } catch {
-      throw new BundleRejected(`${describe(relativePath)} disappeared while the bundle was read.`);
+      throw new BundleRejected({
+        message: `${describe(relativePath)} disappeared while the bundle was read.`,
+      });
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new BundleRejected(`${describe(relativePath)} is not a real directory.`);
+      throw new BundleRejected({ message: `${describe(relativePath)} is not a real directory.` });
     }
     if (expected !== undefined && !sameIdentity(stat, expected)) {
-      throw new BundleRejected(`${describe(relativePath)} changed while the bundle was read.`);
+      throw new BundleRejected({
+        message: `${describe(relativePath)} changed while the bundle was read.`,
+      });
     }
     if ((await NodeFSP.realpath(absolutePath)) !== absolutePath) {
-      throw new BundleRejected(`${describe(relativePath)} resolves outside the bundle.`);
+      throw new BundleRejected({
+        message: `${describe(relativePath)} resolves outside the bundle.`,
+      });
     }
     return identityOf(stat);
   }
@@ -150,26 +162,32 @@ export async function snapshotBundle(
     listed: NodeFS.Stats,
   ): Promise<Uint8Array> {
     if (listed.nlink > 1) {
-      throw new BundleRejected(`Bundle file '${relativePath}' is a hard link; copy it instead.`);
+      throw new BundleRejected({
+        message: `Bundle file '${relativePath}' is a hard link; copy it instead.`,
+      });
     }
     if (listed.size > limits.fileBytes) {
-      throw new BundleRejected(`Bundle file '${relativePath}' exceeds the per-file limit.`);
+      throw new BundleRejected({
+        message: `Bundle file '${relativePath}' exceeds the per-file limit.`,
+      });
     }
     await options.beforeRead?.(relativePath, "file");
     let handle;
     try {
       handle = await NodeFSP.open(absolutePath, OPEN_FLAGS);
     } catch (error) {
-      throw new BundleRejected(
-        isNodeError(error, "ELOOP")
+      throw new BundleRejected({
+        message: isNodeError(error, "ELOOP")
           ? `Bundle entry '${relativePath}' is a symbolic link.`
           : `Bundle file '${relativePath}' could not be opened.`,
-      );
+      });
     }
     try {
       const opened = await handle.stat();
       if (!opened.isFile()) {
-        throw new BundleRejected(`Bundle entry '${relativePath}' is not a regular file.`);
+        throw new BundleRejected({
+          message: `Bundle entry '${relativePath}' is not a regular file.`,
+        });
       }
       if (
         !sameIdentity(opened, listed) ||
@@ -177,12 +195,14 @@ export async function snapshotBundle(
         opened.mtimeMs !== listed.mtimeMs ||
         opened.ctimeMs !== listed.ctimeMs
       ) {
-        throw new BundleRejected(
-          `Bundle file '${relativePath}' changed while the bundle was read.`,
-        );
+        throw new BundleRejected({
+          message: `Bundle file '${relativePath}' changed while the bundle was read.`,
+        });
       }
       if (opened.nlink > 1) {
-        throw new BundleRejected(`Bundle file '${relativePath}' is a hard link; copy it instead.`);
+        throw new BundleRejected({
+          message: `Bundle file '${relativePath}' is a hard link; copy it instead.`,
+        });
       }
       const budget = Math.min(limits.fileBytes, limits.bytes - totalBytes);
       const chunks: Buffer[] = [];
@@ -194,11 +214,12 @@ export async function snapshotBundle(
         if (bytesRead === 0) break;
         size += bytesRead;
         if (size > budget) {
-          throw new BundleRejected(
-            size > limits.fileBytes
-              ? `Bundle file '${relativePath}' exceeds the per-file limit.`
-              : "The bundle exceeds the total size limit.",
-          );
+          throw new BundleRejected({
+            message:
+              size > limits.fileBytes
+                ? `Bundle file '${relativePath}' exceeds the per-file limit.`
+                : "The bundle exceeds the total size limit.",
+          });
         }
         chunks.push(chunk.subarray(0, bytesRead));
       }
@@ -216,7 +237,9 @@ export async function snapshotBundle(
   ): Promise<void> {
     checkAborted();
     if (depth > limits.depth) {
-      throw new BundleRejected(`The bundle nests directories deeper than ${limits.depth}.`);
+      throw new BundleRejected({
+        message: `The bundle nests directories deeper than ${limits.depth}.`,
+      });
     }
     await options.beforeRead?.(prefix, "directory");
     const verified = await verifyDirectory(directoryPath, prefix, identity);
@@ -227,7 +250,9 @@ export async function snapshotBundle(
         checkAborted();
         entryCount += 1;
         if (entryCount > limits.entries) {
-          throw new BundleRejected(`The bundle contains more than ${limits.entries} entries.`);
+          throw new BundleRejected({
+            message: `The bundle contains more than ${limits.entries} entries.`,
+          });
         }
         names.push(entry.name);
       }
@@ -241,27 +266,35 @@ export async function snapshotBundle(
       if (IGNORED_ENTRY_NAMES[name] === true) continue;
       const relativePath = prefix === "" ? name : `${prefix}/${name}`;
       if (name.includes("\\")) {
-        throw new BundleRejected(`Bundle entry '${relativePath}' must use a portable file name.`);
+        throw new BundleRejected({
+          message: `Bundle entry '${relativePath}' must use a portable file name.`,
+        });
       }
       const absolutePath = NodePath.join(directoryPath, name);
       let stat;
       try {
         stat = await NodeFSP.lstat(absolutePath);
       } catch {
-        throw new BundleRejected(`Bundle entry '${relativePath}' disappeared while it was read.`);
+        throw new BundleRejected({
+          message: `Bundle entry '${relativePath}' disappeared while it was read.`,
+        });
       }
       if (stat.isSymbolicLink()) {
-        throw new BundleRejected(`Bundle entry '${relativePath}' is a symbolic link.`);
+        throw new BundleRejected({ message: `Bundle entry '${relativePath}' is a symbolic link.` });
       }
       if (stat.isDirectory()) {
         await walk(absolutePath, relativePath, depth + 1, identityOf(stat));
         continue;
       }
       if (!stat.isFile()) {
-        throw new BundleRejected(`Bundle entry '${relativePath}' is not a regular file.`);
+        throw new BundleRejected({
+          message: `Bundle entry '${relativePath}' is not a regular file.`,
+        });
       }
       if (files.length >= limits.files) {
-        throw new BundleRejected(`The bundle contains more than ${limits.files} files.`);
+        throw new BundleRejected({
+          message: `The bundle contains more than ${limits.files} files.`,
+        });
       }
       const bytes = await readFile(absolutePath, relativePath, stat);
       // The parent is still the directory that was listed. This does not rule
@@ -278,10 +311,10 @@ export async function snapshotBundle(
   try {
     finalRoot = await NodeFSP.lstat(root);
   } catch {
-    throw new BundleRejected("The bundle root disappeared while the bundle was read.");
+    throw new BundleRejected({ message: "The bundle root disappeared while the bundle was read." });
   }
   if (finalRoot.isSymbolicLink() || !sameIdentity(finalRoot, rootIdentity)) {
-    throw new BundleRejected("The bundle root changed while the bundle was read.");
+    throw new BundleRejected({ message: "The bundle root changed while the bundle was read." });
   }
   files.sort((left, right) => compareStrings(left.relativePath, right.relativePath));
   return { files, digest: digestBundleFiles(files) };

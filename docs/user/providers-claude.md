@@ -97,6 +97,10 @@ When you set this field, Scient points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+File paths in the `--settings` and `--append-system-prompt-file` launch arguments
+can start with `~` for the home directory of the machine running Scient. Any
+other relative path is read from the thread's project folder, or its worktree.
+
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 Scient uses the Claude configuration on the connected server.
@@ -116,16 +120,16 @@ In Settings, open your Claude provider and set **Auto-compact after** to a token
 reaches about 300,000 tokens, without changing the model's context window. Leave the field
 empty to keep Claude Code's default behavior.
 
-You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter. The meter is off by default; see
-[commands and skills](./composer.md#commands-and-skills) to enable it. Claude Code
-compacts automatically whether the meter is on or off.
+You can also send `/compact` in an existing conversation. Claude Code also
+compacts automatically. To see context usage, see
+[commands and skills](./composer.md#commands-and-skills).
 
 When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
 sends your message. Click the chip to switch it to **Keep** and keep the full
-history for that message. The cache lasts about an hour on a Claude
+history for that message. The mobile app shows no chip: an eligible message sent
+from it summarizes first. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
@@ -160,8 +164,9 @@ If the same skill name exists in more than one folder, the one in the Claude con
 wins, the same way Claude Code resolves it.
 
 Use `$` in the composer to select a skill. A skill set to `off` in Claude Code's
-`skillOverrides` is left out of both composer menus. Enabled installed Claude plugins also
-contribute skills under names such as `plugin:review`. Skills marked `disable-model-invocation`
+`skillOverrides` is left out of both composer menus. Enabled installed Claude plugins,
+and plugins synced from your claude.ai account, also contribute skills under names
+such as `plugin:review`. Skills marked `disable-model-invocation`
 can still be started by you. Invoke those one per message: Claude directly runs
 only the last named skill and may try to start earlier ones through its Skill
 tool, which refuses skills reserved for manual invocation.
@@ -173,6 +178,19 @@ To show Claude task lists in the web and desktop apps, add
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step. Unfinished tasks also stay in a bar
 above the composer until they are done, the session changes, or you dismiss them.
+
+## Claude in Chrome
+
+Claude threads can use the Claude in Chrome extension, which works in your own
+Chrome with its sign-ins. Scient sessions load it only when asked: add `--chrome`
+to **Launch arguments** in the Claude instance's settings in **Settings > Providers**.
+It applies to sessions that start after you save. Set up the extension as you would
+for Claude Code first; see Claude Code's [Chrome guide](https://code.claude.com/docs/en/chrome).
+
+The instance must be signed in with `/login` on a direct Anthropic plan. Instances
+that use an API key or a `claude setup-token` token don't get it, even with
+`--chrome`, and neither do third-party providers such as Amazon Bedrock. Claude Code
+doesn't support it in WSL.
 
 ## I Want Work And Personal Claude Accounts
 
@@ -222,6 +240,9 @@ Display name: Claude Personal
 Binary path: claude
 CLAUDE_CONFIG_DIR path: ~/.claude_personal_home
 ```
+
+On mobile, tap **Add Claude account** in **Settings > Providers** and enter a name and the
+config folder. The login itself still happens on the environment's machine.
 
 Use the email shown in Settings to confirm each provider is using the intended account. The email is
 visible initially so accounts can be distinguished; select it to hide or show it.

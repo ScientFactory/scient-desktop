@@ -1,8 +1,11 @@
 import "vite-plus/test/config";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown needs the asset path when it reads this config.
+import * as NodePath from "node:path";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
@@ -18,17 +21,26 @@ import { CLI_BUNDLE_ALIASES } from "../../scripts/lib/cli-bundle-aliases.ts";
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = packageJson.version.includes("-beta.")
+const serverManifestPath = NodePath.join(import.meta.dirname, "package.json");
+// The desktop packager passes APP_VERSION; it can equal the manifest at a commit tagged otherwise.
+const buildVersion =
+  process.env.APP_VERSION?.trim() ||
+  resolveTaggedSourceVersion(NodePath.join(import.meta.dirname, "../.."), packageJson.version);
+const cliBuildChannel = buildVersion.includes("-beta.")
   ? "beta"
-  : /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
+  : /^[^-+]+-(?:nightly|preview)\./.test(buildVersion)
     ? "nightly"
     : "latest";
 
 // tsdown SEA needs one chunk (sourcemaps count) and Node >=25.7, so package separately.
+// "bundle" emits the embedded CLI. "1" builds dist-exe/t3 from the bootstrap.
 // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
-// "1" builds dist-exe/t3 here; "bundle" stops at bin.mjs for scripts/cli.ts to inject (linux-arm64).
+// "bootstrap" stops at bin.mjs for scripts/cli.ts to inject (linux-arm64).
 const packMode = process.env.T3CODE_PACK_EXE;
-const packExecutable = packMode === "1" || packMode === "bundle";
+const packBootstrap = packMode === "1" || packMode === "bootstrap";
+const packExecutable = packBootstrap || packMode === "bundle";
+const cliAssetDir = process.env.T3CODE_CLI_ASSET_DIR ?? "";
+if (packExecutable && !cliAssetDir) throw new Error("Build the executable with build:exe.");
 // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
 // No linux-arm64: --build-sea output cannot load on 16/64 KiB page kernels, so it builds natively.
 const SEA_TARGETS = {
@@ -86,24 +98,39 @@ export default mergeConfig(
     },
     pack: {
       alias: CLI_BUNDLE_ALIASES,
-      entry: packExecutable
+      plugins: [
+        {
+          // Every server module reads its version from this manifest import.
+          name: "t3code:build-version",
+          load(id) {
+            if (NodePath.resolve(id) !== serverManifestPath) return;
+            return {
+              code: JSON.stringify({ ...packageJson, version: buildVersion }),
+              moduleType: "json",
+            };
+          },
+        },
+      ],
+      // SEA embeds one entry; expose the history worker as a hidden subcommand.
+      entry: packBootstrap
         ? ["src/bin.ts"]
-        : [
-            "src/bin.ts",
-            // SCIENT-FORK:START — execute the real bundled engine from installed qualification.
-            "src/overleaf-packaging-probe.ts",
-            // SCIENT-FORK:END
-            "src/analytics-worker.ts",
-            "src/claude-history-worker.ts",
-            "src/pdf-validation-worker.ts",
-            "src/tool-discovery-worker.ts",
-            "src/pdf.worker.ts",
-          ],
-      outDir: packExecutable ? "dist-exe" : "dist",
+        : packExecutable
+          ? ["src/binMain.ts"]
+          : [
+              "src/bin.ts",
+              // SCIENT-FORK:START — execute the real bundled engine from installed qualification.
+              "src/overleaf-packaging-probe.ts",
+              // SCIENT-FORK:END
+              "src/analytics-worker.ts",
+              "src/claude-history-worker.ts",
+              "src/pdf-validation-worker.ts",
+              "src/tool-discovery-worker.ts",
+              "src/pdf.worker.ts",
+            ],
+      outDir: packBootstrap ? "dist-exe" : packExecutable ? cliAssetDir : "dist",
       sourcemap: !packExecutable,
       clean: true,
-      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
-      // SEA can only resolve built-ins; keep dynamic imports inside its one module.
+      // SEA can only resolve built-ins; keep dynamic imports inside each emitted module.
       ...(packExecutable ? { outputOptions: { codeSplitting: false } } : {}),
       ...(packMode === "1"
         ? {
@@ -111,14 +138,21 @@ export default mergeConfig(
               fileName: SCIENT_DESKTOP_IDENTITY.cliCommandName,
               outDir: "dist-exe",
               ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
-              seaConfig: { useCodeCache: false },
+              // Node SEA useCodeCache breaks import(), which the server needs.
+              seaConfig: {
+                useCodeCache: false,
+                // The bootstrap loads the embedded CLI with require(esm).
+                execArgv: ["--require-module"],
+                assets: { "binMain.mjs": NodePath.join(cliAssetDir, "binMain.mjs") },
+              },
             },
           }
         : {}),
       deps: {
         // alwaysBundle=false has no opinion; neverBundle must retain transitive native acceleration.
         alwaysBundle: shouldBundleCliDependency,
-        neverBundle: (id: string) => isExternalCliDependency(id),
+        neverBundle: (id: string) =>
+          (packBootstrap && id === "./binMain.ts") || isExternalCliDependency(id),
         onlyBundle: false,
       },
       banner: {

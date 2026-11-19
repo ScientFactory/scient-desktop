@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
 
 const defaultPath = NodeURL.fileURLToPath(
-  new URL("../fixtures/contract-v10.json", import.meta.url),
+  new URL("../fixtures/contract-v11.json", import.meta.url),
 );
 const args = process.argv.slice(2);
 const check = args.includes("--check");
@@ -28,7 +28,10 @@ for (const path of paths.length === 0
   ? [defaultPath]
   : paths.map((path) => NodePath.resolve(path))) {
   if (check) {
-    if ((await NodeFSP.readFile(path, "utf8")) !== body)
+    if (
+      JSON.stringify(JSON.parse(await NodeFSP.readFile(path, "utf8"))) !==
+      JSON.stringify(JSON.parse(body))
+    )
       throw new Error(`Stale analytics contract fixture: ${path}`);
   } else {
     await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });

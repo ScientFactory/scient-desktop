@@ -8,19 +8,69 @@ Companion feature: **Accounts** (see [Secrets integration](#secrets-integration)
 One place where a user sees and manages everything that extends what Scient and
 its agents can do, regardless of who owns it:
 
-| Layer                                                   | Owner                                | Who can use it                                     |
-| ------------------------------------------------------- | ------------------------------------ | -------------------------------------------------- |
-| Scient connectors and Scient plugins                    | Scient                               | All agents, subject to connector transport support |
-| Claude Code-format shared plugins                       | The installing agent's plugin system | Claude Code and Scient Agent                       |
-| Account apps: Codex store apps and claude.ai connectors | The provider account                 | Codex only or Claude only                          |
+| Layer                                                                 | Owner                                | Who can use it                                              |
+| --------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| Scient connectors and Scient plugins                                  | Scient                               | All agents, subject to connector transport support          |
+| Claude Code-format shared plugins                                     | The installing agent's plugin system | Claude Code and Scient Agent                                |
+| Account apps: Codex store apps, ChatGPT apps and claude.ai connectors | The provider account                 | Codex, Scient Agent or Claude, each through its own sign-in |
 
 Discover prefers Scient's connector where the curated catalog's `agentStores`
 mapping identifies the same service in an agent store. Google's account apps
 remain in the account layer; Scient does not add Google's official MCP servers.
 
+**Account services** (`apps/web/src/scient/extensions/accountServices.ts`) are
+the services that exist only as account apps: Gmail, Google Calendar and Google
+Drive, each mapped to its ChatGPT app id and its claude.ai connector name. Each
+shows as one row, in Discover's categories and search and, once any agent has
+it, in Installed. Every other ChatGPT app an agent reports is a service too
+(`accountServicesFrom`), installed when an agent holds a row for it or reaches
+it through its account (`installedAccountServices`). Each agent's route comes from its own
+inventory:
+
+- Scient Agent: its `chatgpt` server rows.
+- Claude: its `claudeai` rows.
+- Codex: its plugins' apps. A Scient Agent signed in to the same ChatGPT email
+  also speaks for Codex, since apps belong to the account.
+
+"Works with" lists the agents that have the service, with the step each other
+agent still needs (connect, or sign in). **Connect** opens the next provider
+page in the system browser: ChatGPT's page for the app first, since one
+ChatGPT connection serves Codex and Scient Agent, then claude.ai's connector
+page.
+
+Links are never guessed. ChatGPT pages are built exactly as Codex builds its
+install links (`chatgpt.com/apps/<name with each other character as ->/<app id>`).
+claude.ai links come only from `claudeConnectors.json`: each connector's "Add to
+Claude" address (`claude.ai/directory/<id>`) from Anthropic's public directory,
+refreshed with `node scripts/generate-claude-connectors.mjs`. A ChatGPT app with
+no claude.ai connector of the same name (or an alias, such as Outlook to
+Microsoft 365) gets no Claude route at all. Returning refreshes the agents' inventories. The provider sections
+no longer repeat these services' rows, and a category's store list hides a
+Codex store entry for one of them. Adding a service is a data change in that
+file.
+
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
 before the UI updates. The UI never predicts success.
+
+## Agent tool loading
+
+Scient Agent 0.1.4 and later on OMP 18.18 or later, and stock OMP 18.18 and later,
+keep a small Scient core loaded: Compute, paper retrieval, messaging, HTML rendering,
+thread inspection and management, delegation, secrets and skill discovery. Other Scient
+and connector tools remain callable through `xd://` devices. Older runtimes receive
+all schemas directly. The bridge passes service ownership metadata so runtimes with
+grouped catalogs can list a service once and expose its individual tools on demand.
+Each service's description is the first line of its MCP server's `instructions`. Scient's
+own server sends `SCIENT_MCP_INSTRUCTIONS`, which Codex also shows for its namespace.
+
+Pi's `tool_search` finds only tools that are not loaded yet. On completion gateways the
+bridge loads every schema, so its guidance says that loaded tools are called directly
+and that an empty search does not mean a capability is missing.
+
+Custom-model connections to OpenRouter carry Scient's app headers (`HTTP-Referer`,
+`X-OpenRouter-Title`). OMP adds its own headers only for its built-in `openrouter`
+provider.
 
 ## Product surface
 
@@ -41,19 +91,33 @@ access.
   entry in one category.
 - **All MCP servers** (`/settings/extensions/all`) — the MCP Registry, paged,
   with its own search; curated servers appear here in their curated shape.
-- **Installed** (`/settings/extensions/installed`) — Connected services (with
-  **Add by URL**), Scient plugins (with **Install from folder**), then one
-  **From <agent>** section per provider instance with its plugins and MCP
-  servers. A **Works with** filter narrows every section to what one provider
-  instance can use. Provider sections show six entries with a header toggle to
-  show the rest.
+- **Add your own** — one button in the top bar of Discover and Installed (and a
+  link under Discover search results) opens one dialog for everything outside
+  the catalog: a connector file or folder, a Scient plugin folder
+  (`inspectLocal` answers `kind: "plugin"`), a server another app runs, a pasted
+  `https://` address (handed to the URL form), or **Run a command…** (connectors tab only). The
+  import list leaves out servers that cannot start here (program not found, or
+  Codex `env_vars` that are neither in the environment nor keys).
+- **Installed** (`/settings/extensions/installed`) — one **Yours** table:
+  Scient's connectors and installed bundles, account apps (one row per service,
+  naming every agent that has it), then each agent's plugins and own MCP
+  servers; **Built into Scient** follows. Each thing is one row: a plugin two
+  agents share, a server that belongs to a plugin or stands behind a listed
+  app, and Codex's `codex_apps` gateway add none. Type is Connector, App,
+  Plugin, MCP server or Built in. A **Works with** filter narrows the table to
+  what one of the person's agents can use, honouring a connector's chosen
+  agents. The table shows 24 rows with a header toggle to show the rest.
 - **Detail pages** (`/settings/extensions/item/…`) — one per connector, catalog
   or registry entry, Scient plugin, provider plugin and provider MCP server. The
   header carries the entry's identity and its primary action (Add, Remove,
   Uninstall, or who manages it). Below it, cards:
   - **Connection** (connectors) — status with Sign in or Reconnect, Test, the
-    Use with agents switch, and Available in (all projects or selected
-    projects).
+    Use with agents switch, Agents (all agents or selected agents) and
+    Projects (all projects or selected projects). A connector's
+    optional `agents` list is stored on its record; delivery skips other agents
+    with `agent-deselected`, and the proxy re-checks the session's agent on
+    every request. Discover's **+** asks for the agents first when more than one
+    takes connectors.
   - **Tools** (connectors) — listed only on request ("See tools" runs Test);
     the result belongs to the connector's current sign-in generation and is
     discarded when it changes.
@@ -123,7 +187,8 @@ endorsement. The source URLs are development inputs only.
 
 ### Model
 
-A connector is a remote MCP server reached over Streamable HTTP. Scient owns the
+A connector is a remote MCP server reached over Streamable HTTP, or a program
+Scient runs locally ([local connectors](#local-connectors)). Scient owns the
 vendor credential; agents never receive it.
 
 ```text
@@ -166,7 +231,8 @@ ConnectorRecord {
   serverName: string;             // unique MCP server name delivered to agents
   displayName: string;
   url: string;                    // canonical https endpoint (RFC 8707 resource)
-  source: { type: "registry"; name: string; version: string } | { type: "url" } | { type: "plugin"; pluginId: string };
+  source: { type: "registry"; name: string; version: string } | { type: "url" } | { type: "plugin"; pluginId: string }
+        | { type: "local"; registry?: { name: string; version: string } };
   auth:
     | { type: "none" }
     | { type: "oauth"; credentialRef: SecretRef }       // tokens + client registration
@@ -176,6 +242,8 @@ ConnectorRecord {
   authRevision: number;           // credential generation; absent in older records = 0
   availability: GrantScope;       // which projects receive it (shared with Secrets)
   createdAt; updatedAt;
+  local?: { kind: "bundle" | "command" | "package"; runtime: "scient-node" | "system";
+            command; args; environment; secretsRef?; ownedDirectory?; version?; author? };
 }
 GrantScope = { type: "all-projects" } | { type: "projects"; projectIds: ProjectId[] }
 ```
@@ -391,6 +459,17 @@ become `_`, a leading digit gains a `_` prefix, and a name that is too long or
 already taken becomes its first 55 characters plus `_` and 8 hex digits of
 SHA-256(`<server>\0<tool>`). Calls use the original tool name.
 
+Scient Agent 0.1.4 with OMP 18.18.0 or newer registers connector tools as
+discoverable `xd://` devices. Native `read` lists their schemas and `write`
+calls them; Scient's own tools, including discovery and turn controls, stay
+essential. Desktop gates this on the executable's verified `--runtime-info`,
+then passes the mode to the extension through `SCIENT_AGENT_CONNECTOR_LOAD_MODE`.
+Earlier versions and external OMP keep all tools essential. Custom tools were
+already discoverable in Scient Agent 0.1.0; the later gate also requires the
+mounted-tool restoration fixes for revived subagents. Runtime settings can
+still expose discoverable tools top-level (`tools.xdev: false`) or inline their
+documentation (`tools.xdevDocs: inline`), increasing request cost.
+
 Reserved server names: `scient`, `t3-code`, `t3_code`, `t3code`. Connector names
 are `[a-z0-9_-]{1,48}`, unique, and suffixed `_2`, `_3` on collision. Planning
 skips a connector whose name the provider instance last reported as one of its
@@ -421,6 +500,267 @@ never shows a withheld connector as delivered.
 A session without an MCP injection channel (for example an external OpenCode
 server) records a receipt with no deliveries and every eligible connector
 skipped as `transport-unsupported`, replacing any earlier session's receipt.
+
+### Local connectors
+
+A local connector is a connector whose source is `local`: an MCP server Scient
+runs as a stdio program on the server host. Everything above (delivery,
+availability, enablement, receipts, the proxy and its redaction, Test) applies
+unchanged; only the upstream differs. `forward` hands a local record's exchange to
+`LocalConnectorProcesses` instead of `fetch`, which serves the program as
+Streamable HTTP:
+
+- One process per proxy session: `initialize` without a session starts a process
+  and returns its session id, which the proxy maps to the agent's own id as for any
+  vendor session. A stdio server serves one client, so sessions are never shared.
+- A request's response goes to the POST that carried it, as SSE. Other server
+  messages go to the oldest open POST stream, else the GET stream, else a backlog of
+  100 replayed to the next GET. Non-JSON stdout lines are dropped; a line over 32 MiB
+  stops the session.
+- `DELETE`, a crash, 30 minutes without requests (swept every minute), Remove, Turn
+  off, Restart (`extensions.connectors.update` with `restart: true`) and shutdown stop
+  the process tree (Scient's `DuplexProcess`). Pending requests are answered with a
+  JSON-RPC error; later requests on that session get 404, so the agent starts a
+  new one. At most 8 sessions per connector and 32 in all; the least recently used
+  idle one is stopped to make room.
+- A failure to start or a crash is recorded as `lastError` with the program's last
+  stderr line, key values removed; the first successful answer clears it.
+  `ConnectorSummary.local.running` counts live sessions and the change feed
+  advances when one starts or stops.
+
+**Every local connector is a folder with an MCP Bundle `manifest.json`**
+(`LocalConnectors`). Scient reads the manifest each time it starts the program
+(cached by modification time), so editing the folder and choosing Restart applies
+the change. The record keeps only the folder, whether Scient made it (`owned`,
+removed with the connector), plain answers (`settings`) and linked keys (`keys`):
+
+- `local-bundle`: a `.mcpb`, `.dxt` or `.zip` file is unpacked into
+  `<stateDir>/connectors/<name>-<id>` (links and entries outside the folder refused,
+  executable bits kept, 2 GiB and 100,000 entries at most); a folder with
+  `manifest.json` is used in place.
+- `local-command`, `local-package` (a registry entry's `localPackage`: npm via
+  `npx -y`, PyPI via `uvx`, recorded with `source.registry`) and `local-import` (a
+  stdio server from Claude Desktop, Claude Code's `~/.claude.json` including its
+  per-folder servers, Codex's `config.toml`, Cursor's `mcp.json`, or a project's or
+  chosen folder's `.mcp.json`) get a generated manifest (type `binary`, author
+  "Added in Scient") in Scient's connectors folder. Plain variables are written as
+  they are; key-like ones (`*KEY`, `*TOKEN`, `*SECRET`, `*PASSWORD`, …) and declared
+  package variables become `user_config` questions. An imported server keeps its
+  folder as `_meta["com.scientfactory.scient"].workingDirectory`.
+  `extensions.connectors.importable` lists importable servers by name and command;
+  variable values stay on the server, and Add reads the source again.
+- `extensions.connectors.inspectLocal` returns a bundle's name, questions and any
+  reason it cannot run here, or the servers of a folder's `.mcp.json`.
+
+The program runs in its own folder unless the manifest's Scient `_meta` names
+`project` (the thread's worktree, else its project folder) or an absolute folder.
+It gets the user's environment without Scient's internal variables
+(`agentProcessEnvironment`, as agents get it). `${__dirname}`, `${HOME}`,
+`${DESKTOP}`, `${DOCUMENTS}`, `${DOWNLOADS}`, `${/}` and `${user_config.*}` are filled
+at start; a whole-argument multi-value setting becomes one argument per value; `uv`
+bundles default to `uv run --project <dir> <entry>`; `platform_overrides` for the
+host replace `command` and `args` and merge `env`. Node bundles run on Scient's own
+executable with `ELECTRON_RUN_AS_NODE=1` (system `node` for a single-executable
+server); other commands resolve on PATH, and Windows `.cmd`/`.bat` shims run through
+`cmd.exe` with escaped arguments (`resolveSpawnCommand`). A missing program fails Add
+with a plain reason ("Needs uv …").
+
+**Keys are Accounts API-key accounts linked to the connector**, never copies.
+`settings` holds plain answers; `keys` maps a `sensitive` question to an
+`account:<id>:token` ref. Add and setup take a chosen account, or save a pasted value
+as a new account (or as the new value of the account that key already uses); an
+unanswered key links an existing account whose `envName` matches. At start each key
+resolves through `AccountsService.resolveBound` with the `local-connector` consumer
+(no site; Off switches and the account's project scope apply against the thread's
+project; uses appear in Accounts activity). Values reach the program only through its
+environment: a manifest that puts a key in `args` is refused at Add. Values of at
+least 16 characters join the proxy's redaction set. Removing a connector keeps its
+Accounts keys.
+
+**Needs setup.** A missing required answer or key (or a linked key Accounts refuses)
+does not block Add or delivery. `ConnectorSummary.local.missing` names what is
+missing and the row shows Needs setup; Test returns `needs-setup`. Until it is set up,
+a session starts Scient's setup answerer (`<stateDir>/connectors/.scient-setup.mjs`
+on Scient's Node) instead of the program: it lists the manifest's declared tools
+and answers every call with what is missing and to call `scient_connector_setup`.
+`extensions.connectors.update` with `localSetup` (the page's Edit setup) and the
+agent tool `scient_connector_setup` save answers and keys and restart the
+connector: the setup answerer stops, so the agent's next request gets 404 and a new
+session reaches the program. `scient_connector_setup` saves plain answers the agent
+collected in chat; each missing key goes through `scient_account_add`'s private
+secret card, or links a matching saved key without one; `replaceKeys` asks again for
+a key the program rejected.
+
+The record keeps `url` as `scient-local:<connectorId>` (unique, never fetched). Older
+Scient versions cannot decode `source.type: "local"`, so they preserve such records
+verbatim instead of treating them as remote connectors.
+
+### Agent-made connectors
+
+Agents build, fix and improve local connectors with three tools in the Accounts toolkit
+(`LocalConnectorAuthoring`), next to `scient_connector_setup` and the tools for any connector
+(below):
+
+- `scient_connector_copy` writes an installed connector's folder, or the template from the
+  built-in `connector-authoring` skill, into `connectors/<slug>/` of the calling thread's folder.
+  Scient does the writing, so sandboxed agents can edit the result. A taken name gets the next
+  free one (`name-2`). A `connectors` folder that is a link, or a target whose real path leaves
+  the thread's folder, is refused. For an installed connector it also returns the status,
+  `lastError` and the log tail.
+- `scient_connector_check` starts a folder's manifest outside any record, with the launcher
+  installed connectors use. It can borrow an installed connector's settings, keys and sign-in, or
+  use a named sign-in. It lists the tools, runs the sample `calls`, and stops the program. Missing
+  keys or a missing sign-in are reported, and the program still starts. A malformed Scient `_meta`
+  block is a problem, never a silent default.
+- `scient_connector_save` checks again, then either adds the folder as the user's own connector
+  (owned, on, all projects) or swaps it into an existing one. A vendor's bundle (`owned: false`)
+  becomes the user's own copy (`forkedFrom`). Settings, keys and the sign-in link are kept, and
+  the connector restarts.
+
+**Package code.** Copying an npm or PyPI package connector (a generated `npx -y pkg@v` or
+`uvx pkg==v` manifest) also brings its code in (`PackageSource`), with the tool that runs it:
+`npm install` puts the package in `package/` and its dependencies in `node_modules/`;
+`uv pip install --no-deps --target` puts a PyPI package (with its `.dist-info`) in `package/`,
+its `Requires-Dist` go to `pyproject.toml` (`package = false`), and `server.py` calls its console
+script. The manifest is rewritten to run from the folder with the same arguments and setup:
+`node` on Scient's own Node, or `uv run --project`. `.venv` and `__pycache__` are left out of
+copies, saves and exports, since uv makes them again and a moved `.venv` no longer runs. The
+copy's `source` says where to edit, or why the code isn't there (no npm or uv). Measured:
+`@mcp-z/mcp-gmail` 2.3.3 is 4,465 files and 49 MB with its dependencies, inside the
+20,000-file and 200 MB folder limits; `mcp-server-fetch` is 25 files. A copied command that runs
+a script outside its folder names that script in `source`.
+
+**Any connector.** Three more tools (`ConnectorAgentControl`) work on hosted and local
+connectors alike through the calls the Extensions page makes:
+
+- `scient_connector_list {query?}`: each connector's server name, kind (hosted or local), on or
+  off, status (`ready`, `needs-setup`, `needs-sign-in`, `error`, `off`), last error (one line)
+  and what is missing. With `query`, up to 10 Discover entries (Scient's picks, then the
+  Registry) with whether an agent can add each, or why not.
+- `scient_connector_add {from}`: a Discover or Registry name, an https MCP address, or a
+  `.mcpb`/`.zip` path, through `connectors.add` (on, all projects), then the connector test for
+  its tools, using what the chat's project may use. A hosted entry that needs an API key or the
+  user's own OAuth app asks for it in the private secret card, as `scient_connector_setup` does:
+  the key becomes an Accounts key bound to the connector, the app's client ID and secret go to
+  the connector; nothing passes through the chat. Entries that need an address or GitHub's
+  Source Control account are refused with that reason. A local add records `changedBy: agent`.
+- `scient_connector_control {connector, action}`: `on`/`off` and `restart` through
+  `connectors.update`; `sign-in` for a hosted OAuth connector starts `startSignIn` with Scient's
+  own loopback origin and opens the authorization page as the user's own tab in the chat's
+  browser (no agent holds it, so there is nothing to take over), or returns the link when the
+  chat has no browser. A local connector's sign-in points
+  at `scient_account_sign_in` with its linked account. Removing stays the user's.
+
+`scient_connector_check {connector, calls?}` without a folder runs `connectors.test` on the
+installed connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
+project counts as missing, and makes the `calls` through the same client. A connector reaches a
+provider session only when the session starts, so this is how an agent uses one it added or saved
+in the same chat; the add, save and `on` messages say so. Both checks pass every returned field (tool names, descriptions,
+parameter schemas, call results, errors, logs) through `ConnectorRedaction.redactText` with the
+program's keys (however short) and session cookies, in any encoding; a cut never shows part of
+a credential, because the word it splits is left out.
+
+**History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
+rollback, and keeps 10 entries per connector, fewer when they pass 100 MB together (the newest
+always stays, never with a gap), in
+`<stateDir>/connector-history/<connectorId>/` (`created`, `replaced`, `removed`; a removal keeps
+the record so it can come back). `extensions.connectors.undo` restores the newest entry.
+Undoing a connector's creation is not offered, because Remove keeps a copy and has its own Undo.
+Undo links the sign-in again for the manifest it restores. Save, Undo, remove, copy and export
+of one connector, and setup through `connectors.update`, take a per-connector lock, so they
+never interleave.
+Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possible.
+`extensions.connectors.export` returns a local connector as `.mcpb`.
+
+**Logs.** `ConnectorLogs` keeps the last 16 KB of each local connector's stderr in
+`<stateDir>/connector-logs/<connectorId>.log`, across restarts, with keys and cookies removed.
+It is deleted with the connector.
+
+**Studying a site.** `preview_network` lists a tab's recent requests and shows one request's
+headers and bodies. Its masking is defence in depth, not the boundary, because an agent can
+already run `preview_evaluate` in the same tab. What it guarantees: no value Scient knows is
+secret for the tab, of 4 characters or more, appears in any URL, header or body it returns.
+Those values are the tab's cookies for the listed addresses, the Cookie, Authorization and
+Set-Cookie values of its kept requests, and its password fields. Each request keeps the values
+learned when it was recorded, and a listing covers exactly the requests it returns. Each value
+is searched for as written raw, percent- or form-encoded, JSON-escaped, as HTML references
+(decimal, hex or any named one), and as standard or URL-safe base64 at each alignment, with no
+minimum length. The output is searched for these forms and never decoded. Values of 1 to 3
+characters are not hidden: hiding "en" or "1" everywhere would garble pages and protect nothing.
+Best effort: values named like secrets, and unknown token-looking values, are hidden by parsing
+HTML and XML (with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings
+or `data-` attributes, one level deep). A format Scient cannot parse is left out.
+
+Bodies are read from the browser only through the tab's own CDP session, never with
+Playwright's `response.body()`, which may fetch the address again in full when a body comes back
+as no text. The session counts each request's decoded bytes (`Network.dataReceived`, final at
+`loadingFinished`); the page's own numbers are never used. Only the main frame's answers are
+matched: a subframe in its own process or a service worker is counted on another session.
+Playwright reports a dedicated worker's answers as the main frame's, and its bytes are counted on
+the worker's own session: once a page has had a dedicated worker, all its bodies are left out.
+Only requests the session saw from their start have a count, and a count still loading is never
+dropped to make room. As an answer arrives, the requests with its method, address and status are
+pinned; once they settle, those that failed before any answer (a page cancelling a request and
+asking again) are dropped, and exactly one must remain: it is then the answer's own. Its count is settled once the
+answer finishes and kept with the request, and the body is read by that request's id with
+`Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error. Only documents and XHR/fetch answers are read: the browser keeps those as received, while a script, style or image comes from its cache, which a later load of the address can replace with a larger body.
+None, or more than one, and the body is left out. Text comes back as UTF-8, up to 3 bytes per
+counted byte, so every read reserves and is capped at 3 × its count, within 24 MB at once, the
+same for bodies read as they arrive and for an agent's request. A left-out GET body's note,
+masked like any other output, names the rule that left it out and tells the agent to fetch it in
+the page with `preview_evaluate`, streaming and stopping at 1 MiB; other methods are never
+repeated. Headers named like secrets are hidden, except the HTTP/2 pseudo-headers `:authority`,
+`:method`, `:scheme`, `:status` and `:protocol`; `:path` is masked as the URL is.
+
+The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
+to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with
+a note. Known values are found by one Aho-Corasick automaton per written form, so the work does
+not depend on how long the values are. Each masking call also has a fixed budget of 32 million
+character comparisons; past it the body is left out as too costly to mask, never shown unmasked.
+Reading the tab's cookies and password fields waits at most 300 ms and is reused for 3 seconds,
+and an empty list returns at once.
+
+### Signed-in connectors
+
+A manifest's `_meta["com.scientfactory.scient"].signIn: { site }` (https, or `http://localhost`
+and `http://127.0.0.1`) means the program needs the user signed in to that site. Setup and
+`scient_connector_setup` link an Accounts website sign-in for the site (`local.signIn`), or list
+it as missing. At each start, `connectorSessions` reads the site's current cookies from the
+sign-in's browser profile in a hidden tab, writes them as owner-only files under
+`<secretsDir>/connector-sessions/<connectorId>/`, and passes these environment variables:
+
+- `SCIENT_SIGN_IN_SITE`
+- `SCIENT_SIGN_IN_COOKIES` (JSON)
+- `SCIENT_SIGN_IN_COOKIES_TXT` (Netscape)
+- `SCIENT_SIGN_IN_USER_AGENT`
+
+The program never gets the password. Every response event is checked against the connector's
+current credentials, so cookies from a new sign-in during a call are covered too, and earlier
+values stay. Keys are redacted from 16 characters wherever they appear. Cookie values are
+redacted from 6 characters, but only as whole tokens, so ordinary output is never mangled. Base64 of
+either is redacted too, and for cookies the whole-token test is applied after decoding. Every exchange checks the sign-in again: whether it exists, covers the site,
+is on, has global agent access and is in the project's scope. If not, the running copies stop and
+the session files are deleted. A university's own sign-in service stays in the browser.
+
+**Expiry.** A tool result whose text starts with `SCIENT_SIGN_IN_EXPIRED` makes the process host:
+
+1. Let the session's other calls finish on the old process, for up to 30 s.
+2. Sign in again (`guardedSignIn` with the unattended `connector` caller: saved password and
+   authenticator code; at most once per 2 minutes per sign-in).
+3. Use a newer session the profile already holds, if there is one.
+4. Rewrite the files and start a fresh process inside the same agent session, replaying the
+   handshake.
+5. Retry only the calls that reported expiry, once.
+
+A call cut off by the swap returns an "outcome unknown" error and is never replayed. If the
+session ends while it waits (the agent closes it, the program exits, the sign-in is revoked), no
+new process starts. When the
+site needs the person, the agent is told to sign in, and the connector shows Needs sign-in with a
+Sign in button.
+
+**Development candidates** can trust a local test site's certificate: the desktop app reads SPKI
+hashes from `server-browser/dev-trusted-spki.txt` in its own state folder, only when
+`VITE_DEV_SERVER_URL` is set and the app is not packaged.
 
 ### Receipts
 
@@ -479,6 +819,20 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   and uninstall are re-read and verified. Foreign Claude installs are read-only
   from this section. No configuration, environment, or credentials from an MCP
   definition are projected into the UI.
+- **Scient Agent's ChatGPT apps**: the apps its own ChatGPT sign-in has
+  connected, from `apps --json` through the same executable, root and gate.
+  The command runs only when `--runtime-info` lists it in `hostCommands`; an
+  older agent would read the word as a prompt. Rows carry scope `chatgpt`,
+  the tool count and the app's `chatgpt.com/apps/<slug>/<id>` page, and read
+  "Scient Agent only" with the reason "Uses Scient Agent's own ChatGPT account".
+  A signed-out agent reports none. The agent calls ChatGPT's apps server
+  (`chatgpt.com/backend-api/ps/mcp`, the one the Codex apps use) itself; Scient
+  never holds the token. Conversations, and not title or other one-off runs,
+  start with `SCIENT_AGENT_CHATGPT_APPS=all`: the agent then registers every
+  connected app's tools as discoverable `<app>__<tool>` tools under `xd://`,
+  leaving out ChatGPT's own `connector_openai_*` features. **Add more on
+  ChatGPT** opens `chatgpt.com/apps`. When the same service is also a delivered
+  Scient connector, the agent currently receives both.
 
 ### Shared plugins source
 
@@ -689,15 +1043,18 @@ rejected with a named reason.
   model.
 - **Scient bundles do not carry code.** Nothing from a bundle is executed:
   no local MCP server processes, no scripts, no UI code. Shared native plugins
-  use the separate agent-owned path above.
+  use the separate agent-owned path above, and local MCP servers are added as
+  [local connectors](#local-connectors).
 
 ## Discover: curated catalog and MCP Registry
 
 **Curated catalog.** `apps/server/src/scient/extensions/discover/curatedCatalog.ts`
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
-a short description, categories (`featured`, `research`, `data`, `code`,
-`writing`, `communication`, `design`), a website, the MCP Registry entry when
+a short description, categories (`most-used`, then `papers`, `biology`,
+`code`, `data`, `physics-math`, `files`, `communication`, `projects`,
+`figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
+a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
 an initialize result, or 401 with `WWW-Authenticate`); the verification date
@@ -707,7 +1064,7 @@ named `scient.curated/<id>` with the verification date as its version; clients
 install it by URL.
 
 `extensions.discover.catalog` returns the non-empty categories in that order,
-each with up to 6 preview entries (entries whose first non-featured category is
+each with up to 6 preview entries (entries whose first category other than `most-used` is
 the section come first, then the rest, in catalog order) and its `total`.
 `extensions.discover.search` takes a required `scope`, so local results never
 wait on the network:
@@ -766,10 +1123,19 @@ lists the `streamable-http` remotes served over https, decided after URL
 variables are substituted (fixed `value` first, then `default`), plus
 unresolved templates whose scheme is not a literal non-https one; a remote
 `requiresInput` when it has a required header or an unresolved URL variable;
-`installable` = at least one such remote without required input. Otherwise
-`unsupportedReason` explains why: package-only (local) servers "Runs locally —
-local servers are not supported yet", required configuration, non-https
-endpoints, or another transport (for example legacy SSE).
+`installable` = at least one such remote without required input, or else a
+`localPackage`: the first npm or PyPI stdio package whose arguments all have fixed
+values or defaults, with its declared environment variables, or a `localBundle`: an
+`mcpb` package with an https address and `fileSha256`. Runtime arguments are allowed
+only when Scient applies them already (`-y`/`--yes` for npx, passed once). A bundle is
+added through the `registry-bundle` target: downloaded under the connector egress rules (public
+https only, each redirect checked, 200 MB at most), kept only if
+its SHA-256 matches, then unpacked like a picked `.mcpb`. Otherwise `unsupportedReason`
+says why, from the first package when there is one: Docker (OCI), a registry Scient
+doesn't run (NuGet, Cargo), another transport, runner options it doesn't pass, or a
+required argument without a value; else required configuration, non-https endpoints,
+or another remote transport (for example legacy SSE). The entry's page offers "Make
+with an agent" for entries that can't be added.
 
 ## Secrets integration
 
@@ -839,10 +1205,11 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 
 ## Open decisions
 
-- **Scient bundles and direct registry installs carrying code** remain outside
-  the shared native plugin path: local registry processes and plugin UI are
-  not supported. Shared plugins with hooks, MCP servers, or modules are approved
-  for native installation with the store review state shown when available.
+- **Scient bundles carrying code** remain outside the shared native plugin path,
+  and plugin UI is not supported. Local registry packages and MCP Bundles run as
+  [local connectors](#local-connectors). Not yet: OCI and remote `.mcpb` registry
+  packages, `.mcpb` signature checks, opening a `.mcpb` from the file manager, and
+  Accounts bindings for local keys.
 - **Writing provider-native config** (export a connector into
   `~/.codex/config.toml` for use outside Scient): not built; the proxy covers
   every in-Scient session. Revisit only for standalone CLI use.
@@ -853,12 +1220,27 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 - **Other agents**: inventory still depends on each provider exposing a verified
   owner interface. Codex, Claude, and Scient Agent have the paths above.
 
-GitHub uses a bearer personal access token by default, linked from its add dialog.
-Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
-“Sign in with GitHub” through the existing connector OAuth/PKCE flow and callback.
-It stays hidden when unset; registering the Scient OAuth app and configuring the
-provider's callback/client requirements remain prerequisites for live sign-in.
-Only user-added URLs expose custom OAuth client settings.
+GitHub's hosted MCP server has no dynamic client registration, so its connector
+borrows Source Control's GitHub credential (`source-control` auth) instead of
+connector OAuth. The GitHub driver's `credential` capability returns Source
+Control's effective credential in Source Control's order (saved token, Scient
+for GitHub app sign-in, `GH_TOKEN`, `gh`) with the login `GET /user` reports for
+that token; the record stores only that login. A pinned login gets its own
+credential or none, never another account's: none sets `needs-credential`. The
+token goes only to `https://api.githubcopilot.com/mcp/` and paths below it,
+checked on add and on every request; a 401 hands that token back to its own
+source and replays once with a different one. Credential errors carry no source
+text. Listings and session starts follow Source Control at most once a minute:
+GitHub is added when nothing points at that server and
+`githubFromSourceControlDeclined` (set when the user removes GitHub, cleared
+when they add it) is unset, and Source Control connectors move between
+`connected` and `needs-credential` without touching enablement or availability.
+
+Scient for GitHub (client ID `Iv23lieBEtqTwH75xtnk`, device flow, no secret) is
+the default app sign-in on every server; `T3CODE_GITHUB_APP_CLIENT_ID` overrides
+it, and an empty value turns it off. Device sign-in from the add dialog shows
+the code and opens `github.com/login/device` in Scient's browser. A token remains
+available. Only user-added URLs expose custom OAuth client settings.
 
 ## Plugin key detection
 

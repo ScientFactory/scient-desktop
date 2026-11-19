@@ -17,7 +17,9 @@ You are in Scient, a project workspace for code and science. The user reads your
 
 Replies render LaTeX math, Markdown images, and fenced \`mermaid\`, \`vega-lite\` (JSON) and \`plotly\` (self-contained figure JSON) blocks. Put a chart or diagram that fits one in your reply as that block, and explain it nearby. Show a visual without being asked when it says more than prose. Start Mermaid with its diagram type. Do not wrap them in HTML or JavaScript or embed base64 images.
 
-Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.`;
+Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.
+
+For questions about Scient itself, read its help pages, listed at https://scientfactory.com/docs/index.json.`;
 
 /** Upstream's browser rules in Scient's copy, with each tool named as this provider sees it. */
 const buildScientBrowserAwareness = (tools: ScientToolProjection): string =>
@@ -28,48 +30,39 @@ const buildScientBrowserAwareness = (tools: ScientToolProjection): string =>
       (_match, name: `preview_${string}`) => `\`${tools.name(name)}\``,
     );
 
-export const SCIENT_BROWSER_AWARENESS = buildScientBrowserAwareness(
-  CANONICAL_SCIENT_TOOL_PROJECTION,
-);
-
 /** Included only when the session may build project documents. */
 const buildScientDocumentAwareness = (tools: ScientToolProjection): string => `## Scient PDF builds
 For a requested PDF deliverable, use \`${tools.name("scient_pdf_build")}\` to build an existing project HTML source, \`${tools.name("scient_latex_build")}\` to build an existing project LaTeX source, and \`${tools.name("scient_document_export")}\` to export an existing project Markdown document.${tools.deferred ? ` If any is deferred, load its exact name through \`ToolSearch\` first.` : ""}`;
 
-export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
-  CANONICAL_SCIENT_TOOL_PROJECTION,
-);
-
 /** Included with document authority: the Overleaf tools need no grant of their own. */
 const buildScientOverleafAwareness = (tools: ScientToolProjection): string => `## Scient Overleaf
-A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. The tools need no approval: do what the user asked. Only a conflict stops a sync.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
-
-export const SCIENT_OVERLEAF_AWARENESS = buildScientOverleafAwareness(
-  CANONICAL_SCIENT_TOOL_PROJECTION,
-);
+A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. The tools need no approval: do what the user asked. Settle reported conflicts; report other problems.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
 
 /** Included when this provider can receive turn-scoped Scient skills. */
 const buildScientSkillsAwareness = (tools: ScientToolProjection): string => `## Scient skills
-Scient skills are instructions the user manages in Scient, separate from your provider's own skills. On a substantive task, follow this turn's Scient skill scope note; without one, call \`${tools.name("scient_skills_list")}\`. Load a skill with \`${tools.name("scient_skill_load")}\` before you follow it; load one the user selected directly.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skills give guidance only and grant no tools or permissions.`;
-
-export const SCIENT_SKILLS_AWARENESS = buildScientSkillsAwareness(CANONICAL_SCIENT_TOOL_PROJECTION);
+Scient skills are instructions the user manages in Scient, separate from your provider's own skills. On a substantive task, follow this turn's Scient skill scope note; without one, call \`${tools.name("scient_skills_list")}\`. Load a skill with \`${tools.name("scient_skill_load")}\` before you follow it; load one the user selected directly. Save a skill the user keeps with \`${tools.name("scient_skill_save")}\`, not in your provider's own skills folder.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skills give guidance only and grant no tools or permissions.`;
 
 const buildScientComputeAwareness = (tools: ScientToolProjection): string => `## Scient Compute
 Run data analysis and figures with \`${tools.name("scient_compute_run")}\`, not a shell interpreter: the user sees each run and variables persist. \`${tools.name("scient_compute_sessions")}\` finds the user's sessions, such as an open file. \`${tools.name("scient_compute_inventory")}\` shows what is installed for any language. For \`.ipynb\` files use \`${tools.name("scient_notebook_read")}\`, \`${tools.name("scient_notebook_edit")}\` and \`${tools.name("scient_notebook_run")}\`.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
-export const SCIENT_COMPUTE_AWARENESS = buildScientComputeAwareness(
-  CANONICAL_SCIENT_TOOL_PROJECTION,
-);
-
 /** The sign-in sentence needs the browser grant as well as Accounts. */
 const buildScientPapersAwareness = (tools: ScientToolProjection, browser: boolean): string =>
   `## Scient papers
-For a paper by DOI, title or publisher link, call \`${tools.name("scient_paper_get")}\` first: it uses the user's free legal copies and university access. For more than a few papers, use \`${tools.name("scient_papers_queue")}\`.${browser ? ` \`${tools.name("preview_open")}\` signs in by itself on sites with a saved sign-in; its \`accountsNote\` says what to do when it could not.` : ""}${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
+To fetch a paper, call \`${tools.name("scient_paper_get")}\` first with its DOI or link (for a title, find one): it uses the user's free legal copies and university access. For more than a few papers, use \`${tools.name("scient_papers_queue")}\`.${browser ? ` \`${tools.name("preview_open")}\` signs in by itself on sites with a saved sign-in; its \`accountsNote\` says what to do when it could not.` : ""}${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
-export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
-  CANONICAL_SCIENT_TOOL_PROJECTION,
-  true,
-);
+const buildScientConnectorsAwareness = (tools: ScientToolProjection): string =>
+  `## Scient connectors
+When the user needs a service, find one with \`${tools.name("scient_connector_list")}\` and add it with \`${tools.name("scient_connector_add")}\`; if none fits, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it (\`${tools.name("scient_connector_copy")}\`) or sign it in again (\`${tools.name("scient_connector_control")}\`). A hosted connector's tools name their host: before sending the user's private data through a host that is not the service's own, tell the user who receives it and ask once.`;
+
+/**
+ * Included with Library access, so literature work starts in the Library rather than on the web.
+ * The answer rules are the ones the "Ask the Library" composer sentence was measured with.
+ */
+const buildScientLibraryAwareness = (
+  tools: ScientToolProjection,
+  skills: boolean,
+): string => `## Scient Library
+Start literature or citation work in the project's Library, before web search: \`${tools.name("scient_sources_list")}\` (\`total\` is its size), \`${tools.name("scient_sources_add")}\` by DOI, PMID, arXiv ID or ISBN (\`identifierList\` for several). Answer literature questions from its papers, not memory: search their full text with \`${tools.name("scient_sources_search")}\` and \`${tools.name("scient_sources_read_text")}\`, give the paper and page for each claim, and check quotes with \`${tools.name("scient_sources_quote_check")}\` before giving them. If the Library does not answer, say so; you may then use the web, and say you did. Cite with keys from the \`references.bib\` that \`${tools.name("scient_sources_bibliography")}\` manages.${skills ? " To check or fix a document's references, load the `references` skill first." : ""}${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
 /**
  * Compose only the blocks whose tools this session's list can show. The
@@ -96,7 +89,10 @@ export function buildScientAwareness(
       ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
       : []),
     ...(has("skills:read") ? [buildScientSkillsAwareness(tools)] : []),
-    ...(has("accounts") ? [buildScientPapersAwareness(tools, has("preview"))] : []),
+    ...(has("sources:read") ? [buildScientLibraryAwareness(tools, has("skills:read"))] : []),
+    ...(has("accounts")
+      ? [buildScientPapersAwareness(tools, has("preview")), buildScientConnectorsAwareness(tools)]
+      : []),
   ].join("\n\n");
 }
 
@@ -113,6 +109,7 @@ export const buildScientPromptAwareness = (capabilities: ReadonlySet<string>): s
 const PROJECT_AWARENESS_GRANTS: ReadonlySet<string> = new Set<McpCapability>([
   "compute",
   "documents:build",
+  "sources:read",
 ]);
 
 /**

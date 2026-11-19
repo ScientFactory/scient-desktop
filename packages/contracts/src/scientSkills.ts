@@ -10,6 +10,19 @@ export type ScientSkillInvocationPolicy = typeof ScientSkillInvocationPolicy.Typ
 export const ScientSkillActivationScope = Schema.Literals(["project", "user"]);
 export const ScientSkillInventoryScope = Schema.Literals(["project", "user"]);
 
+/** A personal skill's folder and history, shown on its row. */
+export const PersonalSkillDetails = Schema.Struct({
+  /** The skill's folder on the environment's computer. */
+  folder: TrimmedNonEmptyString,
+  /** Where it came from: a file name, a web address, "Pasted text" or an agent. */
+  source: Schema.optional(TrimmedNonEmptyString),
+  updatedAt: Schema.optional(TrimmedNonEmptyString),
+  changedBy: Schema.optional(Schema.Literals(["you", "agent"])),
+  /** An earlier version, or the change that made it, can be undone. */
+  canUndo: Schema.Boolean,
+});
+export type PersonalSkillDetails = typeof PersonalSkillDetails.Type;
+
 export const ScientSkillCatalogItem = Schema.Struct({
   releaseKey: TrimmedNonEmptyString,
   id: TrimmedNonEmptyString,
@@ -26,6 +39,7 @@ export const ScientSkillCatalogItem = Schema.Struct({
   defaultActive: Schema.Boolean,
   active: Schema.Boolean,
   invocationPolicy: ScientSkillInvocationPolicy,
+  personal: Schema.optional(PersonalSkillDetails),
 });
 export type ScientSkillCatalogItem = typeof ScientSkillCatalogItem.Type;
 
@@ -74,11 +88,111 @@ export const ScientSkillSetProjectPreferenceInput = Schema.Struct({
   invocationPolicy: ScientSkillInvocationPolicy,
 });
 
+/** Something the user gives to add skills from. */
+export const PersonalSkillSource = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("path"), path: TrimmedNonEmptyString }),
+  Schema.Struct({ type: Schema.Literal("url"), url: TrimmedNonEmptyString }),
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256 * 1024)),
+    name: Schema.optional(TrimmedNonEmptyString),
+  }),
+]);
+export type PersonalSkillSource = typeof PersonalSkillSource.Type;
+
+export const PersonalSkillInspectInput = Schema.Struct({ source: PersonalSkillSource });
+
+/** One skill found in a source: ready to add, or material an agent can finish. */
+export const PersonalSkillCandidate = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  name: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  status: Schema.Literals(["ready", "needs-agent"]),
+  /** Why an agent is needed, in plain words. */
+  reason: Schema.optional(TrimmedNonEmptyString),
+  /** Fixes Scient made or files it left out, in plain words. */
+  notes: Schema.Array(TrimmedNonEmptyString),
+  /** A personal skill already has this name; adding replaces it, with Undo. */
+  exists: Schema.Boolean,
+  /** A skill built into Scient or a plugin has this name; it cannot be added as is. */
+  conflict: Schema.optional(TrimmedNonEmptyString),
+  /** For an agent: the file or folder to finish from, and its text when short. */
+  material: Schema.optional(
+    Schema.Struct({ path: TrimmedNonEmptyString, text: Schema.optional(Schema.String) }),
+  ),
+});
+export type PersonalSkillCandidate = typeof PersonalSkillCandidate.Type;
+
+export const PersonalSkillInspection = Schema.Union([
+  /** Not a skill source: a connector or plugin, handled by the connector path. */
+  Schema.Struct({ kind: Schema.Literal("none") }),
+  Schema.Struct({
+    kind: Schema.Literal("skills"),
+    stagingId: TrimmedNonEmptyString,
+    sourceLabel: TrimmedNonEmptyString,
+    candidates: Schema.Array(PersonalSkillCandidate),
+  }),
+]);
+export type PersonalSkillInspection = typeof PersonalSkillInspection.Type;
+
+export const PersonalSkillAddInput = Schema.Struct({
+  stagingId: TrimmedNonEmptyString,
+  keys: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1)),
+});
+
+export const PersonalSkillAddResult = Schema.Struct({
+  added: Schema.Array(TrimmedNonEmptyString),
+  inventory: ScientSkillInventory,
+});
+export type PersonalSkillAddResult = typeof PersonalSkillAddResult.Type;
+
+export const PersonalSkillNameInput = Schema.Struct({ name: TrimmedNonEmptyString });
+
+export const PersonalSkillExport = Schema.Struct({
+  fileName: TrimmedNonEmptyString,
+  base64: Schema.String,
+});
+export type PersonalSkillExport = typeof PersonalSkillExport.Type;
+
+/** A skill another agent on this computer has, which Scient can copy in. */
+export const ImportableSkill = Schema.Struct({
+  app: Schema.Literals(["claude", "codex", "cursor", "agents"]),
+  appLabel: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  description: Schema.optional(TrimmedNonEmptyString),
+  folder: TrimmedNonEmptyString,
+  /** A personal skill already has this name. */
+  added: Schema.Boolean,
+});
+export type ImportableSkill = typeof ImportableSkill.Type;
+
+export const ImportableSkillsResult = Schema.Struct({ skills: Schema.Array(ImportableSkill) });
+export type ImportableSkillsResult = typeof ImportableSkillsResult.Type;
+
+/** Why a step with personal skills failed, as a fixed code for counting failures. */
+export const PersonalSkillFailure = Schema.Literals([
+  "not-found",
+  "too-large",
+  "unreadable",
+  "unsafe",
+  "download-failed",
+  "nothing-found",
+  "invalid-skill",
+  "name-taken",
+  "limit",
+  "expired",
+  "no-history",
+  "write-failed",
+  "unavailable",
+]);
+export type PersonalSkillFailure = typeof PersonalSkillFailure.Type;
+
 export class ScientSkillManagementError extends Schema.TaggedError<ScientSkillManagementError>()(
   "ScientSkillManagementError",
   {
     operation: TrimmedNonEmptyString,
     message: TrimmedNonEmptyString,
+    reason: Schema.optional(PersonalSkillFailure),
   },
 ) {}
 

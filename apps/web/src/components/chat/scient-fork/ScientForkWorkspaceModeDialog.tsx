@@ -88,6 +88,8 @@ export type ScientForkSubmission =
 interface ScientForkDialogProps {
   readonly disabled: boolean;
   readonly source: ScientForkSource;
+  /** SCIENT-FORK: `/fork-worktree` opens the card with New worktree switched on. */
+  readonly initialNewWorktree?: boolean;
   readonly titleOverrideSupported: boolean;
   readonly worktreeAvailability: ForkWorktreeAvailability;
   /** Shown for a fork in the current workspace when it works somewhere else. */
@@ -180,6 +182,7 @@ export function ScientForkDialog({
 export function ScientForkWorkspaceModeDialog({
   disabled,
   source,
+  initialNewWorktree = false,
   proposedTitle,
   titleOverrideSupported,
   worktreeAvailability,
@@ -245,9 +248,22 @@ export function ScientForkWorkspaceModeDialog({
     if (open) {
       setTitleDraft(proposedTitle);
       setTitleEdited(false);
-      setNewWorktree(false);
+      setNewWorktree(initialNewWorktree);
     }
   }
+
+  // SCIENT-FORK:START — a saved fork that failed for good unlocks the card; its
+  // title and worktree choice stay as the user's own instead of resetting.
+  const [unlockedRetry, setUnlockedRetry] = useState(false);
+  if (open && !locked && retryTitle !== undefined && !unlockedRetry) {
+    setUnlockedRetry(true);
+    setTitleDraft(retryTitle);
+    // A title that was the automatic proposal keeps following it.
+    setTitleEdited(retryTitle !== proposedTitle);
+    setNewWorktree(retryWorkspaceMode === "new-worktree");
+  }
+  if ((!open || locked) && unlockedRetry) setUnlockedRetry(false);
+  // SCIENT-FORK:END
 
   // Follow live sibling-title changes only until the user edits the proposal.
   if (open && !titleEdited && !disabled && !locked && titleDraft !== proposedTitle) {
@@ -255,10 +271,11 @@ export function ScientForkWorkspaceModeDialog({
   }
 
   const displayedTitle = locked && retryTitle !== undefined ? retryTitle : titleDraft;
+  // A switch that cannot be used shows off, even when `/fork-worktree` asked for it.
   const selectedNewWorktree =
     locked && retryWorkspaceMode !== undefined
       ? retryWorkspaceMode === "new-worktree"
-      : newWorktree;
+      : newWorktree && worktreeAvailability.available;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the title input DOM node on the next animation frame after the dialog opens
   useEffect(() => {

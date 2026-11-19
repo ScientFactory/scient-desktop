@@ -1,7 +1,8 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
-  type AccountSummary,
+  type AccountId,
+  type EnvironmentId,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -12,8 +13,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import type { AccountSessionScope } from "../accounts/AccountsService.ts";
-import { guardedSignIn } from "../accounts/agent/guardedSignIn.ts";
+import { guardedSignIn, type SignInCaller } from "../accounts/agent/guardedSignIn.ts";
 import { isPdf } from "./paperLookup.ts";
 import { PaperPage, pageState, paperPageScript, pdfAddressFor } from "./paperPage.ts";
 
@@ -26,6 +26,18 @@ const BOT_CHECK_WAIT_MS = 20_000;
 const SETTLE_MS = 2_000;
 
 const decodePage = Schema.decodeUnknownOption(PaperPage);
+
+const termsTabs = new Map<PreviewTabId, { environmentId: EnvironmentId; profileId: string }>();
+
+/** A persisted queue cannot grant control over an unrelated browser tab. */
+export function ownsPaperTermsTab(
+  tabId: PreviewTabId,
+  environmentId: EnvironmentId,
+  profileId: string,
+) {
+  const owner = termsTabs.get(tabId);
+  return owner?.environmentId === environmentId && owner.profileId === profileId;
+}
 
 /**
  * Fetches inside the page, so the site's own session applies, and saves the result as a download.
@@ -60,6 +72,7 @@ export type FetchResult =
       readonly reason:
         | "sign-in"
         | "bot-check"
+        | "terms"
         | "refused"
         | "paywall"
         | "institution"
@@ -70,19 +83,40 @@ export type FetchResult =
       readonly openUrl: string;
       /** The profile the page opened in, where a sign-in has to happen. */
       readonly profileId: string;
+      readonly tabId?: PreviewTabId;
       /** The journal's "Access through your institution" button, when it showed one. */
       readonly institutionUrl?: string;
+      /** The saved sign-in that didn't sign in here, for the person to sign in to. */
+      readonly signInAccountId?: AccountId;
     };
 
 export interface PageRequest {
-  readonly session: AccountSessionScope;
   readonly url: string;
-  /** Where the university's session lives; the default profile otherwise. */
-  readonly profileId: string | undefined;
-  /** The saved sign-in for a page that asks for one. */
-  readonly signIn: (url: string) => AccountSummary | undefined;
+  /** The profile it opens in, decided and allowed by the caller. */
+  readonly profileId: string;
+  readonly termsTabId?: PreviewTabId;
+  /** Who the sign-in on a page that asks for one is for. */
+  readonly caller: Extract<SignInCaller, { kind: "paper" }>;
   readonly accept: (bytes: Uint8Array) => Effect.Effect<boolean>;
 }
+
+/** The profile a page opens in when no university names one: the browser's default. */
+export const defaultPaperProfile = Effect.gen(function* () {
+  const invocation = yield* AgentInvocationContext;
+  const broker = yield* PreviewAutomationBroker;
+  const status = yield* broker
+    .invoke<PreviewAutomationStatus>({
+      scope: invocation,
+      operation: "status",
+      input: {},
+      updateCurrentTab: false,
+    })
+    .pipe(Effect.option);
+  return Option.match(status, {
+    onNone: () => DEFAULT_BROWSER_PROFILE_ID,
+    onSome: ({ defaultProfileId }) => defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
+  });
+});
 
 /**
  * Opens a page in a hidden tab and follows it to the PDF. It tries the PDF first and reads the
@@ -90,7 +124,7 @@ export interface PageRequest {
  * access: publishers that show "Purchase access" still hand a recognised university the PDF.
  */
 export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (request: PageRequest) {
-  const { session, url, signIn, accept } = request;
+  const { url, caller, accept } = request;
   const invocation = yield* AgentInvocationContext;
   const broker = yield* PreviewAutomationBroker;
   const fs = yield* FileSystem.FileSystem;
@@ -113,24 +147,37 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
             new AccountsError({ reason: "unavailable", message: "The page could not be opened." }),
         ),
       );
-  const status = yield* invoke<PreviewAutomationStatus>("status", {});
+  const { profileId } = request;
+  const heldTermsTab =
+    request.termsTabId && ownsPaperTermsTab(request.termsTabId, invocation.environmentId, profileId)
+      ? yield* invoke<unknown>(
+          "evaluate",
+          { expression: paperPageScript },
+          request.termsTabId,
+        ).pipe(
+          Effect.map(decodePage),
+          Effect.map((page) =>
+            Option.isSome(page) && page.value.terms ? request.termsTabId : undefined,
+          ),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : undefined;
   const open = { url, reuseExistingTab: false, open: false };
-  const chosen = request.profileId ?? status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const opened = yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId: chosen });
+  const opened = yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId });
   const tab = opened.tabId;
   if (!tab) return yield* new AccountsError({ reason: "unavailable", message: "No browser tab." });
-  const profileId = chosen;
   const known = new Set((opened.downloads ?? []).map((item) => item.path));
 
   const stopped = (
     outcome: "needs-sign-in" | "blocked" | "no-access",
     reason: Extract<FetchResult, { reason: unknown }>["reason"],
     message: string,
+    openUrl = url,
   ): FetchResult => ({
     status: outcome,
     reason,
     message,
-    openUrl: url,
+    openUrl,
     profileId,
   });
   const read = invoke<unknown>("evaluate", { expression: paperPageScript }, tab).pipe(
@@ -189,6 +236,7 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
     return yield* arrived(NAVIGATED_DOWNLOAD_WAIT_MS);
   });
 
+  let kept = false;
   const run = Effect.gen(function* () {
     const tried = new Set<string>();
     let signedIn = false;
@@ -214,6 +262,17 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
           }
           break;
         }
+        case "terms":
+          kept = heldTermsTab === undefined;
+          if (kept) termsTabs.set(tab, { environmentId: invocation.environmentId, profileId });
+          return {
+            ...stopped(
+              "blocked",
+              "terms",
+              `${new URL(page.url).hostname} needs the user to review and accept its terms.`,
+            ),
+            tabId: heldTermsTab ?? tab,
+          };
         case "bot-check":
           return stopped(
             "blocked",
@@ -221,25 +280,27 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
             `${new URL(page.url).hostname} wants a person to pass its check.`,
           );
         case "sign-in": {
-          const account = signedIn ? undefined : signIn(page.url);
-          if (!account)
-            return stopped(
-              "needs-sign-in",
-              "sign-in",
-              `${new URL(page.url).hostname} asks for a sign-in.`,
-            );
-          const result = yield* guardedSignIn(session, account, {
-            tabId: tab,
-            automatic: true,
-            authorized: true,
-            engine: { userRun: true, stopAtCode: true },
+          const asks = `${new URL(page.url).hostname} asks for a sign-in.`;
+          if (signedIn) return stopped("needs-sign-in", "sign-in", asks);
+          const result = yield* guardedSignIn({
+            page: { tabId: tab, url: page.url },
+            profileId,
+            signIn: { find: page.url },
+            caller,
           });
+          if (result.outcome === "none" || result.outcome === "choose")
+            return stopped("needs-sign-in", "sign-in", asks);
+          // A sign-in waiting at a second factor keeps this tab, for the person to finish there.
+          if (result.pending) kept = true;
           if (result.outcome !== "signed-in")
-            return stopped(
-              "needs-sign-in",
-              "sign-in",
-              result.message ?? "The sign-in did not finish.",
-            );
+            return {
+              ...stopped(
+                "needs-sign-in",
+                "sign-in",
+                result.message ?? "The sign-in did not finish.",
+              ),
+              ...(result.accountId ? { signInAccountId: result.accountId } : {}),
+            };
           signedIn = true;
           continue;
         }
@@ -277,5 +338,9 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
     }
     return stopped("no-access", "unclear", "The page has no PDF.");
   });
-  return yield* run.pipe(Effect.ensuring(invoke("close", {}, tab).pipe(Effect.ignore)));
+  return yield* run.pipe(
+    Effect.ensuring(
+      Effect.suspend(() => (kept ? Effect.void : invoke("close", {}, tab).pipe(Effect.ignore))),
+    ),
+  );
 });

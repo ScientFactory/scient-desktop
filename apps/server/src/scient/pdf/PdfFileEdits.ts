@@ -121,13 +121,11 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
         }),
       ),
   }),
-  Effect.catch((error) =>
-    Effect.fail(
-      isPdfEditError(error)
-        ? error
-        : new ScientPdfEditError({
-            message: "The PDF could not be saved. Reload it before continuing.",
-          }),
-    ),
+  Effect.mapError((error) =>
+    isPdfEditError(error)
+      ? error
+      : new ScientPdfEditError({
+          message: "The PDF could not be saved. Reload it before continuing.",
+        }),
   ),
 );

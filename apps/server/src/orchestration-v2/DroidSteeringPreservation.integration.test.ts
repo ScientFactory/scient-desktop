@@ -1,4 +1,5 @@
 /** Native causal preservation cases; no injected provider receipts or scheduling replacements. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as NodeUtil from "node:util";
 import * as Logger from "effect/Logger";
@@ -196,7 +197,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const fs = yield* FileSystem.FileSystem;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   // Optional synthetic receipts survive the test reporter suppressing successful stdout.
-  const receiptDirectory = process.env.DROID_STEER_RECEIPTS;
+  const receiptDirectory = (yield* HostProcess.Environment).DROID_STEER_RECEIPTS;
   if (receiptDirectory !== undefined)
     yield* fs.makeDirectory(receiptDirectory, { recursive: true });
   const record = (phase: string, value: unknown) =>
@@ -274,7 +275,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       enabled: true,
       binaryPath: peer.binaryPath,
     }),
-    environment: { PATH: process.env.PATH },
+    environment: { PATH: (yield* HostProcess.Environment).PATH },
     sensitiveEnvironmentValues: [],
     makeRuntime: (input: Parameters<DroidAdapterV2Options["makeRuntime"]>[0]) =>
       makeDroidAcpRuntime({
@@ -437,7 +438,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const orchestrator = Context.get(services, OrchestratorV2);
   const rawWorker = Context.get(services, OrchestrationEffectWorkerV2);
   const awaitClaimable = Effect.gen(function* () {
-    const deadline = yield* rawWorker.nextClaimableAt;
+    const deadline = yield* rawWorker.nextClaimableAt();
     if (Option.isNone(deadline)) return false;
     const wait =
       DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
@@ -1106,7 +1107,7 @@ it.effect.each(
       const gate = yield* barrier();
       if (window === "probe") h.hooks.afterReserve = gate.park;
       else h.hooks.beforeConsume = gate.park;
-      const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
+      const execution = yield* h.worker.runOnce().pipe(Effect.forkScoped);
       yield* gate.entered;
       const claimed = yield* h.observe(`parked-${window}`, command);
       heldOwner(claimed.projection, initial);
@@ -1369,7 +1370,7 @@ it.effect.each(
         );
         if (window === "probe") h.hooks.afterReserve = gate.park;
         else h.hooks.beforeConsume = gate.park;
-        yield* h.worker.runOnce.pipe(Effect.forkScoped);
+        yield* h.worker.runOnce().pipe(Effect.forkScoped);
         yield* gate.entered;
       } else yield* h.worker.drain(12);
       yield* h.stop(initial.runs[0]!.id);
@@ -2062,7 +2063,7 @@ it.effect.each(
       const gate = yield* barrier();
       if (window === "probe") h.hooks.afterReserve = gate.park;
       else h.hooks.beforeConsume = gate.park;
-      const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
+      const execution = yield* h.worker.runOnce().pipe(Effect.forkScoped);
       yield* trace.at("older-reservation-entered", gate.entered);
       const newer = yield* h.send("newer", initial.runs[0]!.id);
       trace.admissionCommands.push(newer);
@@ -2167,7 +2168,7 @@ it.effect.each(
       const gate = yield* barrier();
       if (window === "cancel-write") h.hooks.cancel = gate.park;
       else h.hooks.afterCancel = gate.park;
-      const execution = yield* h.worker.runOnce.pipe(Effect.forkScoped);
+      const execution = yield* h.worker.runOnce().pipe(Effect.forkScoped);
       yield* gate.entered;
       if (window === "cancel-settled")
         yield* h.waitFor((p) => p.providerTurns[0]?.status !== "running");

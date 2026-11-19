@@ -755,6 +755,181 @@ class TestSourceCache(unittest.TestCase):
             self.assertNotIn("/project", sys.path)
 
 
+class TestWriteRecorder(unittest.TestCase):
+    """The in-kernel record of the figure and table files a cell writes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.events = {}
+        shell = types.SimpleNamespace(
+            events=types.SimpleNamespace(
+                register=lambda name, callback: cls.events.setdefault(name, []).append(callback)
+            )
+        )
+        # Audit hooks cannot be removed; this one stays inert outside the cells run below.
+        recorder = bridge.PYTHON_RICH_DISPLAY_SETUP.split("# Note which figure and table", 1)[1]
+        # The kernel starts in the project folder, which is where reads are recorded.
+        cls.project = tempfile.TemporaryDirectory()
+        previous = os.getcwd()
+        os.chdir(cls.project.name)
+        try:
+            exec(
+                "# Note which figure and table" + recorder,
+                {"_scient_shell": shell, "os": os, "sys": sys, "json": json},
+            )
+        finally:
+            os.chdir(previous)
+        cls.take = staticmethod(sys.modules["_scient_compute_writes"].take)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.project.cleanup()
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(dir=self.project.name)
+        self.root = os.path.realpath(self.directory.name)
+        self.addCleanup(self.directory.cleanup)
+
+    def pre(self, code):
+        info = types.SimpleNamespace(raw_cell=code)
+        for callback in self.events["pre_run_cell"]:
+            callback(info)
+        return info
+
+    def post(self, info):
+        for callback in self.events["post_run_cell"]:
+            callback(types.SimpleNamespace(info=info))
+
+    def run_cell(self, code, body):
+        # IPython's order: no pre_run_cell for a blank cell, post_run_cell always.
+        info = types.SimpleNamespace(raw_cell=code) if not code.strip() else self.pre(code)
+        try:
+            body()
+        finally:
+            self.post(info)
+
+    def cell(self, body):
+        self.run_cell("the cell", body)
+        return json.loads(self.take())
+
+    def path(self, *parts):
+        return os.path.join(self.root, *parts)
+
+    def test_records_figures_and_tables_however_and_wherever_they_are_written(self):
+        import pathlib
+        import shutil
+
+        deep = self.path(*["nested"] * 12)
+        os.makedirs(deep)
+
+        def body():
+            with open(os.path.join(deep, "a.png"), "wb") as file:
+                file.write(b"png")
+            pathlib.Path(self.path("b.svg")).write_text("<svg/>")
+            os.close(os.open(self.path("c.csv").encode(), os.O_WRONLY | os.O_CREAT))
+            with open(self.path("staging.tmp"), "w") as file:
+                file.write("x")
+            os.replace(self.path("staging.tmp"), self.path("d.png"))
+            shutil.copyfile(self.path("d.png"), self.path("e.png"))
+            with open(self.path("d.png"), "rb") as file:
+                file.read()
+            with open(self.path("notes.txt"), "w") as file:
+                file.write("not an output")
+
+        record = self.cell(body)
+        self.assertEqual(
+            sorted(record["paths"]),
+            sorted([
+                os.path.join(deep, "a.png"),
+                self.path("b.svg"),
+                self.path("c.csv"),
+                self.path("d.png"),
+                self.path("e.png"),
+            ]),
+        )
+
+    def test_records_project_files_read_with_their_state_when_opened(self):
+        with open(self.path("cohort.csv"), "w") as file:
+            file.write("id\n1\n")
+        opened = os.stat(self.path("cohort.csv"))
+        with tempfile.NamedTemporaryFile("w", delete=False) as outside:
+            outside.write("not in the project")
+        self.addCleanup(os.remove, outside.name)
+
+        def body():
+            for _ in range(2):
+                with open(self.path("cohort.csv")) as file:
+                    file.read()
+            with open(outside.name) as file:
+                file.read()
+            with open(self.path("cohort.csv"), "a") as file:
+                file.write("2\n")
+
+        record = self.cell(body)
+        self.assertEqual(
+            record["reads"],
+            [[self.path("cohort.csv"), opened.st_size, str(opened.st_mtime_ns), str(opened.st_ctime_ns)]],
+        )
+        self.assertFalse(record["readsTruncated"])
+
+    def test_a_cell_that_raises_after_saving_still_reports_the_save(self):
+        def body():
+            with open(self.path("saved.png"), "wb") as file:
+                file.write(b"png")
+            raise ValueError("after the save")
+
+        with self.assertRaises(ValueError):
+            self.cell(body)
+        # The bridge reads the record after the reply, whatever the cell's outcome.
+        self.assertEqual(json.loads(self.take())["paths"], [self.path("saved.png")])
+
+    def test_records_only_inside_a_cell_and_hands_each_record_out_once(self):
+        with open(self.path("outside.png"), "wb") as file:
+            file.write(b"png")
+        self.run_cell("  ", lambda: None)
+        self.assertEqual(json.loads(self.take())["paths"], [])
+        record = self.cell(lambda: open(self.path("inside.svg"), "w").close())
+        self.assertEqual(record["paths"], [self.path("inside.svg")])
+        self.assertEqual(json.loads(self.take())["paths"], [])
+
+    def test_a_nested_blank_cell_does_not_end_the_cell_that_ran_it(self):
+        def body():
+            self.run_cell("", lambda: None)
+            open(self.path("after-nested.svg"), "w").close()
+
+        self.assertEqual(self.cell(body)["paths"], [self.path("after-nested.svg")])
+
+    def test_a_lost_cell_lifecycle_gives_no_record(self):
+        def body():
+            self.pre("nested, never finished")
+            open(self.path("lost.svg"), "w").close()
+
+        self.assertIsNone(self.cell(body))
+        # An interrupted async cell ends with a result of None.
+        self.pre("interrupted")
+        for callback in self.events["post_run_cell"]:
+            callback(None)
+        self.assertIsNone(json.loads(self.take()))
+        self.assertEqual(
+            self.cell(lambda: open(self.path("next.svg"), "w").close())["paths"],
+            [self.path("next.svg")],
+        )
+
+    def test_the_line_that_installed_the_recorder_does_not_spoil_the_next_record(self):
+        self.post(types.SimpleNamespace(raw_cell="exec(setup)"))
+        self.assertEqual(
+            self.cell(lambda: open(self.path("first.svg"), "w").close())["paths"],
+            [self.path("first.svg")],
+        )
+
+    def test_keeps_a_bounded_record(self):
+        def body():
+            for index in range(300):
+                open(self.path("figure-%d.png" % index), "wb").close()
+
+        self.assertEqual(len(self.cell(body)["paths"]), 256)
+
+
 class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
     """Submitting work, and what happens when submitting fails."""
 
@@ -1174,6 +1349,57 @@ class TestBridgeCorrelation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(types, ["stream", "execution-complete"])
         self.assertEqual(self._messages()[-1]["payload"]["outcome"], "succeeded")
         self.assertIsNone(self.b._mapping.active_request_id)
+
+    async def test_completion_carries_the_kernels_record_of_written_files(self):
+        record = {"paths": ["/project/out/a.png"]}
+        client = FakeKernelClient(
+            iopub=[iopub("status", {"execution_state": "idle"})],
+            shell=[
+                shell_reply({"status": "ok"}),
+                shell_reply(
+                    {
+                        "status": "ok",
+                        "user_expressions": {
+                            "writes": {
+                                "status": "ok",
+                                "data": {"text/plain": repr(json.dumps(record))},
+                            }
+                        },
+                    },
+                    parent="msg-2",
+                ),
+            ],
+        )
+        client.executed.append("the cell")
+        self.b._kernel_client = client
+        self.b._records_writes = True
+        self.b._mapping.active_request_id = "req-1"
+        await self.b._correlate("req-1", "msg-1")
+        self.assertEqual(self._messages()[-1]["payload"]["writes"], record)
+        query = client.execute_requests[-1]
+        self.assertTrue(query["silent"])
+        self.assertFalse(query["store_history"])
+        self.assertEqual(query["user_expressions"], {"writes": bridge.WRITE_RECORD_EXPRESSION})
+
+    async def test_completion_without_a_readable_record_leaves_it_out(self):
+        client = FakeKernelClient(
+            iopub=[iopub("status", {"execution_state": "idle"})],
+            shell=[
+                shell_reply({"status": "ok"}),
+                shell_reply(
+                    {"status": "ok", "user_expressions": {"writes": {"status": "error"}}},
+                    parent="msg-2",
+                ),
+            ],
+        )
+        client.executed.append("the cell")
+        self.b._kernel_client = client
+        self.b._records_writes = True
+        self.b._mapping.active_request_id = "req-1"
+        await self.b._correlate("req-1", "msg-1")
+        payload = self._messages()[-1]["payload"]
+        self.assertEqual(payload["outcome"], "succeeded")
+        self.assertNotIn("writes", payload)
 
     async def test_ignores_output_belonging_to_another_execution(self):
         self.b._kernel_client = FakeKernelClient(

@@ -30,6 +30,14 @@ mobile activation, or a product-policy change.
    actual range. If implementation evidence invalidates a decision, stop, explain it, and update the
    protocol through review rather than working around it.
 
+## Cadence
+
+Align once a day: one batch up to the official tip at the time it starts, with one owner and one
+open alignment at a time. Each alignment costs about the same review and CI work whatever its size
+up to a few hundred commits, so more frequent alignments mostly add sessions. A fix upstream ships
+for security, data loss or a broken release aligns at once, on its own. Ranges past about 300
+commits took 36–44 hours to land; split them at a reviewed boundary instead.
+
 ## 1. Freeze exact boundaries
 
 Before mutation:
@@ -101,9 +109,14 @@ their callers; a clean merge can mount the same behavior twice.
 Look beyond overlaps when upstream changes a shared API or a quality gate. Trace its untouched
 Scient consumers and the affected server, web, desktop, or mobile entry points. For example, a lint
 rule changing from advisory to mandatory can fail Scient-only files even when Git reports no
-conflict. If a previous receipt records an upstream deprecation, warning ceiling, or migration
-debt, check whether this range enforces it; record the scope and stable replacement API before
-starting a broad rewrite. An impact signal is a prompt for this review, not an instruction to run
+conflict. When upstream narrows what a shared read loads, give each Scient caller that needed the
+dropped data its own source, and remember that a thread created earlier in the same command exists
+only as pending events, not in the store. Scient fields on an upstream record travel wherever
+upstream copies that record; the field table in
+`apps/server/src/orchestration-v2/scient-fork/DelegatedTaskFromFork.test.ts` fails typecheck until
+each new thread field is classified for subagents. If a previous receipt records an upstream
+deprecation, warning ceiling, or migration debt, check whether this range enforces it; record the
+scope and stable replacement API before starting a broad rewrite. An impact signal is a prompt for this review, not an instruction to run
 every possible test or to accept an upstream policy without composition.
 
 Git's recorded conflict resolutions (`rerere`) may fill a working-tree file, but `start` leaves
@@ -131,10 +144,11 @@ Classify each overlap before resolving it:
 - **Scient-owned policy:** retain the existing Scient decision and its guard.
   Distinguish an approved product decision from an implementation limitation or an earlier agent's
   assumption; existing code or a historical receipt alone does not establish user intent.
-  `AGENTS.md` is Scient-owned policy. Review upstream changes to it even when Git
-  merges them without conflicts. Incorporate applicable technical guidance without
-  restoring upstream team authority, contradictory instructions, or duplicated
-  procedures.
+  `AGENTS.md` and Scient policy in linked guides are Scient-owned. Review upstream
+  changes to those policies even when Git merges them without conflicts; moving
+  a rule into a guide does not transfer policy authority to upstream. Incorporate
+  applicable technical guidance without restoring upstream team authority,
+  contradictory instructions or duplicated procedures.
 - **Composition:** preserve both behaviors at the narrowest stable seam.
 - **Incompatible rollout:** keep the underlying compatible machinery when useful, but gate the
   capability and command path until every required surface is safe.
@@ -210,8 +224,9 @@ Every alignment explicitly reviews:
 - provider inventory, model selection, agent awareness, system-installed and Scient-managed runtime
   paths, assisted sign-in/install/repair/update/remove/sign-out capabilities, and passive-probe safety;
 - browser/preview authorization, file and attachment schemas, asset access, and old-client replay;
-- analytics allowlists and consent, provider identity, OTLP, cloud, relay, hosted web, and mobile
-  release holds;
+- analytics allowlists and consent, provider identity, OTLP, and mobile release holds;
+- Scient Connect's relay and hosted app, which are live: follow
+  [Aligning with T3](../operations/scient-connect.md#aligning-with-t3) when a range touches them;
 - service, updater, signing, notarization, tag, npm, stable/nightly, and publication authority; and
 - contributor trust, workflow permissions, secrets, and supply-chain policy.
 
@@ -477,7 +492,9 @@ git diff --check
 ```
 
 `pnpm alignment:gates` runs this list without the desktop host's live-profile variables,
-continues past failures and prints the receipt table. Its typecheck includes workspace Vite
+continues past failures and prints the receipt table. Its test gate runs every package even
+when one fails and runs the server files in parallel, then reruns a few failed server files
+alone as a diagnostic. Full runs from different worktrees queue behind one lock. Its typecheck includes workspace Vite
 tasks, but a failed aggregate can leave packages unscheduled; record task coverage and qualify
 missing packages separately ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
 where the repository-wide aggregate is not yet a supported local lane, record the test row as
@@ -565,7 +582,8 @@ integration record should not need a follow-up edit just to keep that status cur
 Stop and ask for a product decision when the clean composition would:
 
 - expose a currently unsupported client or persisted-state contract;
-- activate a release, cloud, mobile, telemetry, identity, or credential boundary;
+- activate a release, cloud, mobile, telemetry, identity, or credential boundary (T3's changes to
+  Scient Connect, which is already on, are not a new activation; a new hosted service or account is);
 - remove an intentionally supported system-managed or Scient-managed provider path;
 - require destructive user-data migration or reinterpret an existing migration;
 - weaken a Scient-owned authorization, privacy, sandbox, or supply-chain control beyond what

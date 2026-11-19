@@ -4,8 +4,34 @@ import {
   resolveResumableScientOnboardingStep,
   resolveScientOnboardingEntry,
   resolveScientOnboardingJourney,
+  shouldAskScientProfile,
   shouldDismissScientOnboardingOnManualExit,
 } from "./policy";
+
+describe("shouldAskScientProfile", () => {
+  const ready = {
+    status: "completed" as const,
+    asked: false,
+    answered: false,
+    shellBootstrapped: true,
+    primaryEnvironmentReady: true,
+    operateAccess: "granted" as const,
+  };
+
+  it("asks once of someone past onboarding who never answered", () => {
+    expect(shouldAskScientProfile(ready)).toBe(true);
+    expect(shouldAskScientProfile({ ...ready, status: "dismissed" })).toBe(true);
+    expect(shouldAskScientProfile({ ...ready, asked: true })).toBe(false);
+    expect(shouldAskScientProfile({ ...ready, answered: true })).toBe(false);
+  });
+
+  it("leaves first-run onboarding and unready environments alone", () => {
+    expect(shouldAskScientProfile({ ...ready, status: "unseen" })).toBe(false);
+    expect(shouldAskScientProfile({ ...ready, status: "in-progress" })).toBe(false);
+    expect(shouldAskScientProfile({ ...ready, shellBootstrapped: false })).toBe(false);
+    expect(shouldAskScientProfile({ ...ready, operateAccess: "pending" })).toBe(false);
+  });
+});
 
 describe("resolveScientOnboardingEntry", () => {
   const ready = {

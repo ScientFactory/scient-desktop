@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
@@ -29,7 +30,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi model discovery", () => {
           const { environment } = ompLiveInstance(root, {
             blockEgress: true,
             baseEnv: {
-              PATH: process.env.PATH ?? "",
+              PATH: (yield* HostProcess.Environment).PATH ?? "",
               ANTHROPIC_API_KEY: "synthetic-catalog-key",
               OPENAI_API_KEY: "synthetic-catalog-key",
               GEMINI_API_KEY: "synthetic-catalog-key",

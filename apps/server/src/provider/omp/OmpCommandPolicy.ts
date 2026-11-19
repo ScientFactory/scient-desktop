@@ -49,6 +49,13 @@ const OMP_QUALIFIED_COMMANDS = [
   "trace",
 ] as const;
 
+/**
+ * Commands of Scient's own extensions: a status report and an idempotent model reload. The
+ * catalog names no extension, so a third-party extension of the same name would run too; it
+ * already runs code of its own.
+ */
+const SCIENT_EXTENSION_COMMANDS = new Set(["scient-status", "scient-models-refresh"]);
+
 const mutators = new Set<string>(OMP_SESSION_MUTATOR_COMMANDS);
 const qualified = new Set<string>(OMP_QUALIFIED_COMMANDS);
 
@@ -94,6 +101,10 @@ export const compileOmpCommandCatalog = (
     for (const alias of command.aliases ?? []) {
       const trimmed = clean(alias);
       if (trimmed) known.add(trimmed);
+    }
+    if (command.source === "extension" && SCIENT_EXTENSION_COMMANDS.has(name)) {
+      allowed.add(name);
+      continue;
     }
     if (
       !qualified.has(name) ||

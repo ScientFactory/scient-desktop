@@ -19,9 +19,9 @@ import { ConversationImportNotice } from "./importDialog.logic";
 function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) {
-    throw new ConversationImportNotice(
-      "The destination isn't connected. Reconnect it and try again.",
-    );
+    throw new ConversationImportNotice({
+      message: "The destination isn't connected. Reconnect it and try again.",
+    });
   }
   return connection;
 }
@@ -42,7 +42,7 @@ export async function createConversationImportUpload(
     }),
   );
   const url = resolveAssetUrl(connection.httpBaseUrl, upload.relativeUrl);
-  if (url === null) throw new ConversationImportNotice(UNSAFE_UPLOAD);
+  if (url === null) throw new ConversationImportNotice({ message: UNSAFE_UPLOAD });
   const target = new URL(url);
   const environment = new URL(connection.httpBaseUrl);
   if (
@@ -53,7 +53,7 @@ export async function createConversationImportUpload(
     target.search !== "" ||
     target.hash !== ""
   ) {
-    throw new ConversationImportNotice(UNSAFE_UPLOAD);
+    throw new ConversationImportNotice({ message: UNSAFE_UPLOAD });
   }
   return { ...upload, url };
 }
@@ -92,14 +92,18 @@ export function uploadConversationFile(
       settle();
       if (request.status >= 200 && request.status < 300) resolve();
       else
-        reject(new ConversationImportNotice("The destination didn't accept the file. Try again."));
+        reject(
+          new ConversationImportNotice({
+            message: "The destination didn't accept the file. Try again.",
+          }),
+        );
     });
     request.addEventListener("error", () => {
       settle();
       reject(
-        new ConversationImportNotice(
-          "The file couldn't be sent. Check the connection and try again.",
-        ),
+        new ConversationImportNotice({
+          message: "The file couldn't be sent. Check the connection and try again.",
+        }),
       );
     });
     request.addEventListener("abort", () => {

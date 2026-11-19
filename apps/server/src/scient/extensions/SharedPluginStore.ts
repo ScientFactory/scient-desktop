@@ -16,7 +16,7 @@ import {
   readLocalPluginSkill,
 } from "./LocalPluginContents.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
-import { readPluginJson } from "./LocalPluginFiles.ts";
+import { readPluginJson, tryLocalPluginRead } from "./LocalPluginFiles.ts";
 
 const Name = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,62}[a-zA-Z0-9])?$/),
@@ -344,7 +344,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         );
         const logo =
           plugin.logo && pluginDir
-            ? yield* Effect.tryPromise(() =>
+            ? yield* tryLocalPluginRead(() =>
                 readContainedPluginIcon(pluginRoot, path.resolve(pluginDir, plugin.logo!)),
               ).pipe(Effect.orElseSucceed(() => undefined))
             : undefined;

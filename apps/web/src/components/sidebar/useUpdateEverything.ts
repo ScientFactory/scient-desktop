@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { useLayoutEffect, useRef } from "react";
@@ -7,8 +8,9 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentUpdateStatesAtom } from "~/state/server";
+import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
@@ -29,7 +31,6 @@ import {
   settleUpdateRunMachine,
   showUpdateEverythingResult,
   waitForServerUpdateHandoff,
-  waitForUpdateRestart,
 } from "./updateEverythingRun";
 // SCIENT-FORK:START — T3 npm publication does not qualify a Scient server artifact.
 import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverReleaseAvailability";
@@ -53,8 +54,6 @@ import { releaseUpdateRunServer } from "~/scient/desktopUpdate/updateRunServers"
 import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
 
-const UPDATE_RESTART_DELAY_MS = 5_000;
-
 /** Servers this desktop app runs; they update with it. */
 export function isHostedByThisApp(
   environment: ReturnType<typeof useEnvironments>["environments"][number],
@@ -75,6 +74,7 @@ export type ReportLocalUpdateError = (title: string, description: string) => voi
 export function useUpdateEverything(localUpdateVersion: string | null) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
+  const resolve = useMessages();
   const environmentIds = environmentIdsKey(environments.map(({ environmentId }) => environmentId));
   const sessionStates = useAtomValue(environmentSessionStatesAtom(environmentIds));
   const updateStates = useAtomValue(environmentUpdateStatesAtom(environmentIds));
@@ -91,6 +91,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const { targets: behindServers, skipped: unreachable } = collectServerUpdateTargets(
     machines,
     targetVersion,
+    resolve,
   );
   // SCIENT-FORK:START — do not advertise or dispatch an unqualified exact artifact target.
   const needsExactArtifact = behindServers.some(
@@ -132,25 +133,31 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
   const providers = useProviderUpdates();
   const updateServer = useServerUpdate();
-
-  const view = describeUpdateEverything({
-    localVersion: localUpdateVersion,
-    localMachines: machines.filter((machine) => machine.hostedByThisApp),
-    servers,
-    skipped,
-    // SCIENT-FORK:START — managed runtimes are part of the pass.
-    providerMachines: [
-      ...providers.machines.map((machine) => ({
-        environmentId: machine.environmentId,
-        label: machine.label,
-        providers: machine.candidates.map(
-          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-        ),
-      })),
-      ...managedRuntimeProviderMachines(managedRuntimes.targets),
-    ],
-    // SCIENT-FORK:END
+  const stageServerUpdate = useAtomCommand(serverEnvironment.stageServerUpdate, {
+    reportFailure: false,
   });
+
+  const view = describeUpdateEverything(
+    {
+      localVersion: localUpdateVersion,
+      localMachines: machines.filter((machine) => machine.hostedByThisApp),
+      servers,
+      skipped,
+      // SCIENT-FORK:START — managed runtimes are part of the pass.
+      providerMachines: [
+        ...providers.machines.map((machine) => ({
+          environmentId: machine.environmentId,
+          label: machine.label,
+          providers: machine.candidates.map(
+            (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+          ),
+        })),
+        ...managedRuntimeProviderMachines(managedRuntimes.targets),
+      ],
+      // SCIENT-FORK:END
+    },
+    resolve,
+  );
 
   return {
     // SCIENT-FORK:START — managed runtimes are part of the pass.
@@ -167,10 +174,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
       installLocal,
       // SCIENT-FORK:START — the circle admits each server again when its restart is due.
       admitServer,
+      // This app restarts at the end only when nothing here is working; otherwise Restart waits.
+      localWorkBlocksRestart = () => true,
     }: {
       downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       admitServer?: (target: ServerUpdateTarget) => boolean;
+      localWorkBlocksRestart?: () => boolean;
       // SCIENT-FORK:END
     }) => {
       const localFailures: Array<string> = [];
@@ -231,7 +241,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               if (runOutcome.status !== "updated") {
                 providerFailures.set(
                   run.environmentId,
-                  runOutcome.status === "failed" ? runOutcome.line : "Provider update interrupted",
+                  runOutcome.status === "failed"
+                    ? runOutcome.line
+                    : resolve(msg("Provider update interrupted")),
                 );
               }
               return runOutcome;
@@ -259,10 +271,32 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             return [...outcomes, ...managedRuntimeRunOutcomes(managedRuns)];
             // SCIENT-FORK:END
           },
+          ...(providers.machines.length > 0
+            ? {
+                stageServers: () =>
+                  new Map(
+                    servers
+                      .filter(
+                        (server) =>
+                          machines.find((machine) => machine.environmentId === server.environmentId)
+                            ?.serverConfig?.environment.capabilities.serverUpdateStaging === true,
+                      )
+                      .map((server) => [
+                        server.environmentId,
+                        stageServerUpdate({
+                          environmentId: server.environmentId,
+                          input: { targetVersion: server.targetVersion, stageOnly: true },
+                        }),
+                      ]),
+                  ),
+              }
+            : {}),
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
           // settled as not updated, named in the summary, and offered Retry once eligible again.
-          updateServers: async () => {
+          updateServers: async (staged) => {
+            // Downloads finish first, so eligibility and admission are read just before restarts.
+            await Promise.all(servers.map((server) => staged.get(server.environmentId)));
             const current = currentConfirmedServerTargets(servers, committedServersRef.current);
             const withdrawn = servers.filter(
               (server) => !current.some((target) => target.environmentId === server.environmentId),
@@ -326,7 +360,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             providers: outcome.providers,
           });
         if (outcome.localReady && installLocal) {
-          if (await waitForUpdateRestart(UPDATE_RESTART_DELAY_MS)) {
+          // SCIENT-FORK: replaces upstream's restart countdown with an idle check.
+          if (!localWorkBlocksRestart()) {
             setUpdateEverythingRun(
               (run) => run && { ...run, phase: "installing", restartAt: null },
             );

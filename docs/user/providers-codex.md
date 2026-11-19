@@ -52,6 +52,34 @@ Scient checks for qualified managed releases in the background and again when yo
 Update plan. It never installs one automatically. **Repair** installs the latest qualified release (or
 the installed one, when that is newer), so it can also bring a newer release.
 
+## Allow more time for provider checks
+
+If an authenticated Codex installation reports “Timed out while checking Codex
+app-server provider status,” set `T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` in the
+Scient server's environment and restart it. See [Provider check timeouts](./install.md#provider-check-timeouts)
+for configuration and other providers.
+
+## Generate images
+
+Codex can generate images directly in a Scient thread when your Codex version,
+model, and account support native image generation.
+
+If Codex reports that its image tool is unavailable, image generation may be
+disabled in its configuration. In **Settings > Providers**, edit your existing
+Codex provider and add this to **Launch arguments**, keeping any other arguments:
+
+```text
+-c features.image_generation=true
+```
+
+This enables the feature for that provider in Scient without changing your shared
+Codex configuration. You do not need another provider instance or a separate image
+API key. The flag does not add image support to an unsupported model or account.
+
+Launch arguments apply to Codex sessions started after you save them. Start a new
+thread with the same Codex provider and ask it to generate an image. The completed
+image appears in the thread.
+
 ## Why Use More Than One Account?
 
 Common reasons:
@@ -116,6 +144,15 @@ reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory
 contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
+## Use Daybreak
+
+Models with cyber access programs show a Cyber Access option in the model
+options. It starts on Standard, or on Daybreak when `config.toml` in your Codex
+home sets `daybreak = true` or the model only runs under Daybreak. Your choice carries
+over to new threads. Custom models do not offer it. If Codex rejects a turn
+because your login lacks the program, switch Cyber Access back to Standard or
+sign in to Codex with an account that has it.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and
@@ -125,9 +162,11 @@ spend limit to continue sooner.
 
 ## Send feedback to OpenAI
 
-In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
-issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
-and share with OpenAI employees.
+In an existing Codex thread, send `/feedback-openai` or `/feedback-openai` followed by a
+description of the issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID
+that you can copy and share with OpenAI employees. In the desktop app, `/feedback` sends
+[feedback to the Scient team](./feedback.md) instead; in the web app, Codex's command keeps the
+name `/feedback`.
 
 ## Answer questions while Codex works
 

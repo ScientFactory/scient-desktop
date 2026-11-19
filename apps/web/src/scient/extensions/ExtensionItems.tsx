@@ -9,6 +9,7 @@ import type {
   ServerProviderMcpServer,
   ServerProviderPlugin,
   ProviderStoreApp,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
@@ -29,21 +30,28 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
+import {
+  fixConnectorPrompt,
+  improveConnectorPrompt,
+  useConnectorAgentChat,
+} from "./connectorAgentChat";
 import { ActionError, SignInBlockedNotice } from "./ExtensionsFeedback";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
+import { AddForAgents } from "./AgentPicker";
 import {
   providerExtensionAudience,
+  providerServerConnectLabel,
   providerServerDisplayName,
   connectorActions,
   connectorStatusText,
   entryName,
   entryNeedsSetup,
-  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
   TEST_OUTCOME_LABELS,
+  connectorAudience,
 } from "./extensionsView";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
@@ -85,6 +93,11 @@ function useOpenExtension() {
         return void navigate({
           to: "/settings/extensions/item/provider/$instanceId/server/$serverName",
           params: { instanceId: target.instanceId, serverName: target.serverName },
+        });
+      case "account":
+        return void navigate({
+          to: "/settings/extensions/item/account/$serviceId",
+          params: { serviceId: target.serviceId },
         });
     }
   };
@@ -178,6 +191,14 @@ function ConnectorMenuItems({
       >
         {connector.enabled ? "Turn off" : "Turn on"}
       </MenuItem>
+      {connector.local !== undefined ? (
+        <MenuItem disabled={actions.locked} onClick={() => void actions.restart()}>
+          Restart
+        </MenuItem>
+      ) : null}
+      {connector.local !== undefined ? (
+        <LocalConnectorMenuItems connector={connector} actions={actions} />
+      ) : null}
       <MenuSeparator />
       <MenuItem
         variant="destructive"
@@ -185,6 +206,60 @@ function ConnectorMenuItems({
         onClick={() => void actions.remove()}
       >
         Remove
+      </MenuItem>
+    </>
+  );
+}
+
+/** Problem text an agent fixing the connector starts from: its folder problem, then its error. */
+export function connectorProblem(connector: ConnectorSummary): string | undefined {
+  return connector.local?.problem ?? connector.lastError;
+}
+
+/** A local connector's agent chats, Undo and Export; shared by its row and its page. */
+export function LocalConnectorMenuItems({
+  connector,
+  actions,
+}: {
+  readonly connector: ConnectorSummary;
+  readonly actions: ConnectorActionsState;
+}) {
+  const { environmentId } = useExtensionsEnvironment();
+  const startChat = useConnectorAgentChat(environmentId);
+  const problem = connectorProblem(connector);
+  return (
+    <>
+      {startChat !== undefined && problem !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void startChat(
+              fixConnectorPrompt(connector.displayName, connector.serverName, problem),
+              "fix",
+            )
+          }
+        >
+          Fix with an agent
+        </MenuItem>
+      ) : null}
+      {startChat !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void startChat(
+              improveConnectorPrompt(connector.displayName, connector.serverName),
+              "improve",
+            )
+          }
+        >
+          Improve with an agent
+        </MenuItem>
+      ) : null}
+      {connector.local?.canUndo ? (
+        <MenuItem disabled={actions.locked} onClick={() => void actions.undo()}>
+          Undo last change
+        </MenuItem>
+      ) : null}
+      <MenuItem disabled={actions.locked} onClick={() => void actions.exportBundle()}>
+        Export
       </MenuItem>
     </>
   );
@@ -204,11 +279,14 @@ export function ConnectorItem({
     <ExtensionRow
       target={target}
       name={entry ? entryName(entry) : connector.displayName}
+      audience={connectorAudience(connector)}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
-      tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
-      facts={entryFacts(entry)
-        .map(([, value]) => value)
-        .join(" · ")}
+      tagline={
+        (entry ? entryTagline(entry) : undefined) ??
+        connector.description ??
+        connector.local?.commandLine ??
+        connector.url
+      }
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
@@ -244,7 +322,10 @@ export function EntryItem({ entry }: { readonly entry: DiscoverEntry }) {
 
 function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
   const { environmentId, callbackOrigin } = useExtensionsEnvironment();
-  const [showToken, setShowToken] = useState(false);
+  // The add form, with the agents chosen for it (none chosen: every agent).
+  const [setup, setSetup] = useState<{
+    readonly agents?: ReadonlyArray<ProviderInstanceId>;
+  } | null>(null);
   const actions = useAddEntry(entry);
   const open = useOpenExtension();
   const target: ExtensionTarget = { kind: "server", name: entry.name };
@@ -256,27 +337,34 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         name={name}
         iconUrl={entry.iconUrl}
         tagline={entryTagline(entry)}
-        facts={entryFacts(entry)
-          .map(([, value]) => value)
-          .join(" · ")}
         status={actions.busy === "add" ? "Adding…" : null}
         trailing={
           entry.installedConnectorId === undefined ? (
-            <Button
-              size="icon-sm"
-              variant="ghost-muted"
-              aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
-              disabled={actions.canAdd && actions.locked}
-              onClick={() =>
-                entryNeedsSetup(entry)
-                  ? setShowToken(true)
-                  : actions.canAdd
-                    ? void actions.add()
-                    : open(target)
-              }
-            >
-              <PlusIcon aria-hidden />
-            </Button>
+            actions.canAdd || entryNeedsSetup(entry) ? (
+              <AddForAgents
+                name={name}
+                disabled={actions.locked}
+                onAdd={(agents) =>
+                  entryNeedsSetup(entry)
+                    ? setSetup(agents === undefined ? {} : { agents })
+                    : void actions.add(agents)
+                }
+                trigger={
+                  <Button size="icon-sm" variant="ghost-muted" aria-label={`Add ${name}`}>
+                    <PlusIcon aria-hidden />
+                  </Button>
+                }
+              />
+            ) : (
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                aria-label={`Why ${name} can't be added`}
+                onClick={() => open(target)}
+              >
+                <PlusIcon aria-hidden />
+              </Button>
+            )
           ) : null
         }
         feedback={
@@ -285,13 +373,16 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
           ) : null
         }
       />
-      {showToken ? (
+      {setup ? (
         <AddConnectorDialog
           open
-          onOpenChange={setShowToken}
+          onOpenChange={(next) => {
+            if (!next) setSetup(null);
+          }}
           environmentId={environmentId}
           callbackOrigin={callbackOrigin}
           entry={entry}
+          agents={setup.agents}
         />
       ) : null}
     </>
@@ -338,6 +429,7 @@ export function PluginItem({ plugin }: { readonly plugin: ScientPluginSummary })
       name={plugin.displayName}
       glyph={pluginGlyph(plugin)}
       tagline={plugin.description}
+      type={plugin.origin === "built-in" ? undefined : "Plugin"}
       status={plugin.origin === "bundle" && !plugin.enabled ? "Off" : null}
       trailing={
         <ItemMenu name={plugin.displayName} target={target}>
@@ -381,9 +473,7 @@ export function ProviderPluginItem({
       target={target}
       name={name}
       audience={providerExtensionAudience(provider, plugin)}
-      tagline={[plugin.description, plugin.sourceLabel ?? `${label} plugin`]
-        .filter(Boolean)
-        .join(" · ")}
+      tagline={plugin.description}
       status={
         !plugin.enabled
           ? "Off"
@@ -425,15 +515,10 @@ export function ProviderPluginItem({
   );
 }
 
-export function mcpServerSummary(server: ServerProviderMcpServer): string {
-  return [
-    server.toolCount === undefined
-      ? null
-      : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`,
-    server.pluginId ? `from ${server.pluginId}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+export function mcpServerSummary(server: ServerProviderMcpServer): string | undefined {
+  return server.toolCount === undefined
+    ? undefined
+    : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`;
 }
 
 export function ProviderServerItem({
@@ -456,13 +541,15 @@ export function ProviderServerItem({
       target={target}
       name={providerServerDisplayName(server)}
       audience={providerExtensionAudience(provider, server)}
+      // An app the agent has through its own account, not a server it runs.
+      type={server.scope === "chatgpt" || server.scope === "claudeai" ? "App" : undefined}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={
         <ItemMenu name={server.name} target={target}>
           {server.canStartSignIn === true || server.connectUrl ? (
             <MenuItem disabled={actions.locked} onClick={() => void actions.signIn()}>
-              {server.connectUrl ? "Connect on claude.ai" : "Sign in"}
+              {providerServerConnectLabel(server) ?? "Sign in"}
             </MenuItem>
           ) : null}
         </ItemMenu>
@@ -521,7 +608,7 @@ export function ProviderAppConnect({
           )
         }
       >
-        Connect {app.name}
+        Connect in ChatGPT
       </Button>
       <ActionFeedback feedback={lock.feedback} />
     </>

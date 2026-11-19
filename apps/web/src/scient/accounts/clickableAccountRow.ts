@@ -4,7 +4,9 @@ export function clickableAccountRow(open: () => void): ComponentPropsWithoutRef<
   const owns = (event: { target: EventTarget; currentTarget: HTMLElement }) =>
     event.target instanceof Element &&
     event.currentTarget.contains(event.target) &&
-    !event.target.closest('button, a, input, [role="menuitem"], [data-slot="menu-trigger"]');
+    !event.target.closest(
+      'button, a, input, select, [role="menuitem"], [data-slot="menu-trigger"]',
+    );
   return {
     role: "button",
     tabIndex: 0,

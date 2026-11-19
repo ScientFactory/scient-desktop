@@ -20,6 +20,11 @@ on:
       managed_python:
         type: boolean
         default: true
+      # Only the Compute product case changed: run it alone, on Linux with Python 3.12.
+      # Every real-kernel run includes it.
+      python_product:
+        type: boolean
+        default: false
       # `linux` when only broad inputs (dependencies, configuration, workspace
       # code) changed; see compute-ci-gate.mjs. Anything else runs all four.
       platforms:
@@ -57,6 +62,13 @@ jobs:
       run:
         shell: bash
     steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -65,14 +77,34 @@ jobs:
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+      # No package cache in this workflow: on the Macs restoring the 0.9–1.6 GB store took longer
+      # than installing the filtered workspace from the registry (Apple Silicon 102–174 s against
+      # 41–52 s), and the cache's post step packed it again after every job. Windows and Linux
+      # measured the same either way.
+      # pnpm accepts an earlier pass for the same lockfile and policy, so a cached record skips
+      # re-checking every package's registry metadata (13-29 s on the Intel Mac).
+      - name: Keep pnpm metadata beside the job
+        run: echo "pnpm_config_cache_dir=$RUNNER_TEMP/pnpm-metadata" >> "$GITHUB_ENV"
+      - name: Restore lockfile verification
+        id: pnpm_verified
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
+      - name: Save lockfile verification
+        if: ${{ github.event_name != 'merge_group' && steps.pnpm_verified.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
       # The production provisioner downloads pinned private uv/CPython and uses
       # the checked-in lock. No ambient pip environment can satisfy this test.
       - name: Seal candidate recipe metadata
@@ -81,31 +113,99 @@ jobs:
         env:
           EXPECTED_TARGET: ${{ fromJSON('{"ubuntu-24.04":"linux-x64","macos-15":"darwin-arm64","macos-15-intel":"darwin-x64","windows-2025":"win32-x64"}')[matrix.runner] }}
         run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, process.env.EXPECTED_TARGET)'
+      # Windows qualifies recipes in managed_recipes, beside this, its longest job.
+      - name: Qualify recipes
+        if: ${{ matrix.runner != 'windows-2025' }}
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MANAGED_PYTHON: "1"
+          MPLBACKEND: Agg
+        run: vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
       - name: Qualify base, every toolkit combination, and retained kernels
         working-directory: apps/server
         env:
           SCIENT_TEST_MANAGED_PYTHON: "1"
           MPLBACKEND: Agg
-        run: >-
-          vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1 &&
-          vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1
+        run: vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1
+
+  managed_recipes:
+    if: ${{ inputs.managed_python && inputs.platforms != 'linux' }}
+    name: Managed Python recipes / windows-2025
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      # pnpm accepts an earlier pass for the same lockfile and policy, so a cached record skips
+      # re-checking every package's registry metadata (13-29 s on the Intel Mac).
+      - name: Keep pnpm metadata beside the job
+        run: echo "pnpm_config_cache_dir=$RUNNER_TEMP/pnpm-metadata" >> "$GITHUB_ENV"
+      - name: Restore lockfile verification
+        id: pnpm_verified
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: |
+            args:
+              - --filter=t3...
+      - name: Save lockfile verification
+        if: ${{ github.event_name != 'merge_group' && steps.pnpm_verified.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
+      - name: Seal candidate recipe metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Assert native qualification target
+        run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, "win32-x64")'
+      - name: Qualify recipes
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MANAGED_PYTHON: "1"
+          MPLBACKEND: Agg
+        run: vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
-    if: ${{ inputs.real_kernel }}
-    name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
+    if: ${{ inputs.real_kernel || inputs.python_product }}
+    name: Real kernel / ${{ matrix.runner }}${{ matrix.python != 'both' && format(' / Python {0}', matrix.python) || '' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Macs run both versions in one job: their runner slots are the scarcest. Windows, where
+      # setup is cheap beside the two suites, runs each version on its own runner.
       matrix:
-        runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
-        # Both ends of the supported range, because the failures this suite
-        # catches are version-dependent asyncio and kernel-startup behaviour:
-        # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
-        # user is most likely to already have.
-        python: ["3.10", "3.12"]
-
+        include: ${{ fromJSON(!inputs.real_kernel && '[{"runner":"ubuntu-24.04","python":"3.12"}]' || inputs.platforms == 'linux' && '[{"runner":"ubuntu-24.04","python":"both"}]' || '[{"runner":"ubuntu-24.04","python":"both"},{"runner":"macos-15","python":"both"},{"runner":"macos-15-intel","python":"both"},{"runner":"windows-2025","python":"3.10"},{"runner":"windows-2025","python":"3.12"}]') }}
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -114,33 +214,58 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
+      # pnpm accepts an earlier pass for the same lockfile and policy, so a cached record skips
+      # re-checking every package's registry metadata (13-29 s on the Intel Mac).
+      - name: Keep pnpm metadata beside the job
+        run: echo "pnpm_config_cache_dir=$RUNNER_TEMP/pnpm-metadata" >> "$GITHUB_ENV"
+      - name: Restore lockfile verification
+        id: pnpm_verified
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
+      - name: Save lockfile verification
+        if: ${{ github.event_name != 'merge_group' && steps.pnpm_verified.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
 
-      - name: Setup Python ${{ matrix.python }}
+      # Both ends of the supported range, because the failures this suite
+      # catches are version-dependent asyncio and kernel-startup behaviour:
+      # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
+      # user is most likely to already have. A Mac job runs both, one after the
+      # other, since Mac runners are the scarcest.
+      - name: Setup Python 3.10
+        if: ${{ matrix.python == 'both' || matrix.python == '3.10' }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.10"
 
-      - name: Install kernel dependencies
-        shell: bash
+      # Importing the font manager builds matplotlib's font cache: over a minute on a fresh
+      # Windows runner, which otherwise lands inside the suite's 90-second figure step.
+      - name: Install kernel dependencies on Python 3.10
+        if: ${{ matrix.python == 'both' || matrix.python == '3.10' }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
+          python -c "import matplotlib.font_manager"
 
       # The absolute path rather than `python`: this value becomes the launch
       # plan's executable, so resolving it once here is what makes the kernel
-      # under test the interpreter this job set up.
-      - name: Run the real-kernel integration suite
+      # under test the interpreter this step set up.
+      - name: Run the real-kernel integration suite on Python 3.10
+        if: ${{ matrix.python == 'both' || matrix.python == '3.10' }}
         working-directory: apps/server
-        shell: bash
         env:
           # Headless runners have no display, and a figure that opened a window
           # would hang the execution the test is waiting on.
@@ -155,19 +280,79 @@ jobs:
             src/scient/compute/FreshCompute.integration.test.ts \
             src/preview/PortScannerPythonCompute.integration.test.ts
 
+      - name: Setup Python 3.12
+        if: ${{ matrix.python == 'both' || matrix.python == '3.12' }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      # Importing the font manager builds matplotlib's font cache: over a minute on a fresh
+      # Windows runner, which otherwise lands inside the suite's 90-second figure step.
+      - name: Install kernel dependencies on Python 3.12
+        if: ${{ matrix.python == 'both' || matrix.python == '3.12' }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
+          python -c "import matplotlib.font_manager"
+
+      # The absolute path rather than `python`: this value becomes the launch
+      # plan's executable, so resolving it once here is what makes the kernel
+      # under test the interpreter this step set up.
+      - name: Run the real-kernel integration suite on Python 3.12
+        if: ${{ inputs.real_kernel && (matrix.python == 'both' || matrix.python == '3.12') }}
+        working-directory: apps/server
+        env:
+          # Headless runners have no display, and a figure that opened a window
+          # would hang the execution the test is waiting on.
+          MPLBACKEND: Agg
+        run: |
+          set -euo pipefail
+          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export SCIENT_TEST_PYTHON
+          vp test run \
+            src/scient/compute/PythonKernel.integration.test.ts \
+            src/scient/compute/PythonComputeService.integration.test.ts \
+            src/scient/compute/FreshCompute.integration.test.ts \
+            src/preview/PortScannerPythonCompute.integration.test.ts
+
+      # The gateway, durable service and a real kernel together: saved, dirty and restored
+      # source, retained figure bytes, and a relocated workspace refused. Linux only; the
+      # kernel suites above cover each platform and interpreter.
+      - name: Run the Compute product case on Python 3.12
+        if: ${{ runner.os == 'Linux' && (matrix.python == 'both' || matrix.python == '3.12') }}
+        working-directory: apps/server
+        env:
+          MPLBACKEND: Agg
+        run: |
+          set -euo pipefail
+          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export SCIENT_TEST_PYTHON
+          report="$RUNNER_TEMP/compute-product.json"
+          vp test run src/scient/compute/ComputeProduct.integration.test.ts \
+            --reporter=default --reporter=json --outputFile.json="$report"
+          # The suite skips without SCIENT_TEST_PYTHON; a skip must not pass as a run.
+          node -e 'const r = require(process.argv[1]); if (r.numPassedTests !== 1 || r.numTotalTests !== 1) { console.error("Expected exactly one Compute product case to run", r.numPassedTests, r.numTotalTests); process.exit(1); }' "$report"
+
   real_languages:
     if: ${{ inputs.real_kernel }}
-    name: Real R and Julia / ${{ matrix.runner }}
+    name: Real R and Julia / ${{ matrix.runner }}${{ matrix.part != 'all' && format(' / {0}', matrix.part) || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # The three proofs share nothing but setup. Macs run them in one job, since their runner
+      # slots are the scarcest; Windows and Linux run each on its own runner, set up the same way.
       matrix:
-        runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
+        include: ${{ fromJSON(inputs.platforms == 'linux' && '[{"runner":"ubuntu-24.04","part":"people"},{"runner":"ubuntu-24.04","part":"files"},{"runner":"ubuntu-24.04","part":"kernels"}]' || '[{"runner":"ubuntu-24.04","part":"people"},{"runner":"ubuntu-24.04","part":"files"},{"runner":"ubuntu-24.04","part":"kernels"},{"runner":"windows-2025","part":"people"},{"runner":"windows-2025","part":"files"},{"runner":"windows-2025","part":"kernels"},{"runner":"macos-15","part":"all"},{"runner":"macos-15-intel","part":"all"}]') }}
     defaults:
       run:
         shell: bash
     steps:
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -176,14 +361,30 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
+      # pnpm accepts an earlier pass for the same lockfile and policy, so a cached record skips
+      # re-checking every package's registry metadata (13-29 s on the Intel Mac).
+      - name: Keep pnpm metadata beside the job
+        run: echo "pnpm_config_cache_dir=$RUNNER_TEMP/pnpm-metadata" >> "$GITHUB_ENV"
+      - name: Restore lockfile verification
+        id: pnpm_verified
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
+      - name: Save lockfile verification
+        if: ${{ github.event_name != 'merge_group' && steps.pnpm_verified.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+          key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
 
       # A system install on purpose: nothing here is Scient-managed.
       - name: Setup Python
@@ -202,6 +403,7 @@ jobs:
       # Before anything is installed into this Python: it stands for a person's plain Python, on a
       # computer with nothing that can host the bridge.
       - name: Run on what people have
+        if: ${{ matrix.part == 'all' || matrix.part == 'people' }}
         working-directory: apps/server
         run: |
           set -euo pipefail
@@ -210,6 +412,7 @@ jobs:
           vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
 
       - name: Run real files and scan this computer
+        if: ${{ matrix.part == 'all' || matrix.part == 'files' }}
         working-directory: apps/server
         env:
           SCIENT_TEST_RUN_TABLE: "1"
@@ -218,9 +421,11 @@ jobs:
         run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
 
       - name: Install the bridge host's packages
+        if: ${{ matrix.part == 'all' || matrix.part == 'kernels' }}
         run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
 
       - name: Run real R and Julia kernels
+        if: ${{ matrix.part == 'all' || matrix.part == 'kernels' }}
         working-directory: apps/server
         env:
           SCIENT_TEST_KERNEL_DIR: ${{ runner.temp }}/scient-kernels

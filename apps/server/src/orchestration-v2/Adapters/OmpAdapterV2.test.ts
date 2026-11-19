@@ -7,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import {
   OmpSettings,
   ChatAttachmentId,
+  CheckpointId,
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   MessageId,
@@ -20,6 +21,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
@@ -106,6 +108,8 @@ const harness = Effect.fnUntraced(function* (
     readonly shutdownUncertain?: boolean;
     readonly shutdownSignalConfirmed?: boolean;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
+    readonly promptSuggestions?: boolean;
+    readonly onAccountSignedOut?: Effect.Effect<void>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -145,6 +149,7 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" as const,
   };
   const adapter = yield* makeOmpAdapterV2({
+    ...(behavior?.onAccountSignedOut ? { onAccountSignedOut: behavior.onAccountSignedOut } : {}),
     target,
     instanceId,
     settings: yield* decodeOmpSettings({
@@ -280,6 +285,9 @@ const harness = Effect.fnUntraced(function* (
     ...(behavior?.initialNativeThreadId === undefined
       ? {}
       : { initialNativeThreadId: behavior.initialNativeThreadId }),
+    ...(behavior?.promptSuggestions === undefined
+      ? {}
+      : { promptSuggestions: Effect.succeed(behavior.promptSuggestions) }),
   };
   yield* behavior?.prepareOpen?.(openInput, adapter) ?? Effect.void;
   const runtime = yield* adapter.openSession(openInput);
@@ -481,6 +489,22 @@ const ordinaryToolsHarness = Effect.fnUntraced(function* (
   ];
   const tool = (id: string) =>
     latestTools().find((item) => item.nativeItemRef?.nativeId?.endsWith(`:${id}`));
+  const isCall = (item: OrchestrationV2TurnItem, id: string) =>
+    item.nativeItemRef?.nativeId?.endsWith(`:${id}`) === true;
+  /** The call's latest row, typed or generic. */
+  const row = (id: string) =>
+    h.recorded
+      .flatMap((event) =>
+        event.type === "turn_item.updated" && isCall(event.turnItem, id) ? [event.turnItem] : [],
+      )
+      .at(-1);
+  const untilRow = (id: string, status: string) =>
+    h.takeUntil(
+      (event) =>
+        event.type === "turn_item.updated" &&
+        isCall(event.turnItem, id) &&
+        event.turnItem.status === status,
+    );
   const untilTool = (id: string, status?: string) =>
     h.takeUntil(
       (event) =>
@@ -499,7 +523,7 @@ const ordinaryToolsHarness = Effect.fnUntraced(function* (
     });
     return yield* h.takeUntil((event) => event.type === "turn.terminal");
   });
-  return { ...h, tool, latestTools, untilTool, stop: () => stop };
+  return { ...h, tool, row, untilRow, latestTools, untilTool, stop: () => stop };
 });
 const nativeToolStart = (id: string, name: string, args: unknown) => ({
   type: "tool_execution_start",
@@ -980,6 +1004,258 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
+  it.effect("offers Scient Agent's prediction of the next message after a completed turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+          responseData: (frame) =>
+            frame.type === "predict_next_message" ? { text: " Plot the residuals " } : undefined,
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+          promptSuggestions: true,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.finish();
+        const offered = yield* h.takeUntil((event) => event.type === "prompt_suggestion.updated");
+        assert.deepInclude(offered, {
+          threadId: h.input.threadId,
+          runId: h.input.runId,
+          text: "Plot the residuals",
+        });
+      }),
+    ),
+  );
+  it.effect("keeps a session working when its agent has no next-message command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+          commandError: (frame) =>
+            frame.type === "predict_next_message"
+              ? "Unknown command: predict_next_message"
+              : undefined,
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+          promptSuggestions: true,
+        });
+        for (const ordinal of [1, 2]) {
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make(`suggestion-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`suggestion-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`suggestion-root-${ordinal}`),
+          });
+          yield* peer.finish();
+          const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+          assert.deepInclude(terminal, { status: "completed" });
+        }
+        assert.isTrue(peer.state.frames.some((frame) => frame.type === "predict_next_message"));
+        assert.isFalse(h.recorded.some((event) => event.type === "prompt_suggestion.updated"));
+      }),
+    ),
+  );
+  it.effect("continues a turn that ended early by prompting, since the RPC has no resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        const { message, ...turn } = h.input;
+        if (h.runtime.resumeTurn === undefined)
+          return yield* Effect.die("Scient Agent offers no manual continuation");
+        yield* h.runtime.resumeTurn({ ...turn, messageId: message.messageId });
+        yield* peer.finish();
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        assert.deepInclude(terminal, { status: "completed" });
+        assert.deepEqual(
+          peer.state.prompts.map((prompt) => [prompt.frame.type, prompt.frame.message]),
+          [["prompt", "Continue where you left off."]],
+        );
+      }),
+    ),
+  );
+  it.effect("asks for the model catalog again once when a turn's discovery times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const silenced = yield* Deferred.make<void>();
+        let silenceNextDiscovery = false;
+        const discovery = (frame: { readonly type: string }) => {
+          if (frame.type !== "get_available_models" || !silenceNextDiscovery) return false;
+          silenceNextDiscovery = false;
+          return true;
+        };
+        const h = yield* modelHarness({
+          silentReply: discovery,
+          holdReply: (frame) =>
+            frame.type === "get_available_models" && silenceNextDiscovery
+              ? Deferred.succeed(silenced, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        silenceNextDiscovery = true;
+        const starting = yield* h.start(1, "vendor/a", "high").pipe(Effect.forkScoped);
+        yield* Deferred.await(silenced);
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(starting).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        yield* h.peer.finish();
+        const terminal = yield* h.terminal();
+        assert.deepInclude(terminal, { status: "completed" });
+        assert.equal(
+          h.peer.state.log.filter((entry) => entry.startsWith("get_available_models")).length,
+          2,
+        );
+      }),
+    ),
+  );
+  it.effect.each([
+    {
+      caseTitle: "carries the usage-limit reset time Scient Agent reports",
+      resetAt: Date.parse("2026-11-13T18:30:00.000Z"),
+      expected: "2026-11-13T18:30:00.000Z",
+    },
+    {
+      caseTitle: "reports no usage-limit reset time when Scient Agent sends none",
+      resetAt: undefined,
+      expected: undefined,
+    },
+  ])("$caseTitle", ({ resetAt, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const failed = {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus: 429,
+          errorMessage: "429 Usage limit reached",
+        };
+        yield* peer.emit([
+          { type: "agent_start" },
+          { type: "message_end", messageId: "limited", message: failed },
+          { type: "agent_end", messages: [failed], isTerminal: true, yielded: true },
+          {
+            type: "prompt_result",
+            id: peer.state.frames.find((frame) => frame.type === "prompt")?.id,
+            agentInvoked: true,
+            status: "error",
+            sessionSettled: true,
+            error: {
+              message: "429 Usage limit reached",
+              httpStatus: 429,
+              retryable: true,
+              ...(resetAt === undefined ? {} : { resetAt }),
+            },
+          },
+        ]);
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(terminal.failure?.class, "usage_limit");
+        assert.equal(terminal.failure?.resetAt, expected);
+      }),
+    ),
+  );
+
+  it.effect("refuses to steer a running Scient Agent turn with /plan", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const turn = yield* h.takeUntil((event) => event.type === "provider_turn.updated");
+        if (turn.type !== "provider_turn.updated") return yield* Effect.die("Missing native turn");
+        const steered = yield* Effect.result(
+          h.runtime.steerTurn({
+            runId: h.input.runId,
+            threadId: h.input.threadId,
+            providerThread: h.input.providerThread,
+            providerTurnId: turn.providerTurn.id,
+            message: { ...h.input.message, text: "/plan analyse the data" },
+          }),
+        );
+        assert.equal(steered._tag, "Failure");
+        assert.isFalse(peer.state.frames.some((frame) => frame.type === "steer"));
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      caseTitle: "names a failure by the most specific kind Scient Agent reports",
+      kinds: ["transient", "auth-failed"],
+      expectedCode: "auth-failed",
+    },
+    {
+      caseTitle: "names a failure by its HTTP status when an older agent sends no kinds",
+      kinds: undefined,
+      expectedCode: "http_401",
+    },
+  ])("$caseTitle", ({ kinds, expectedCode }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const failed = {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus: 401,
+          errorMessage: "401 invalid API key",
+        };
+        yield* peer.emit([
+          { type: "agent_start" },
+          { type: "message_end", messageId: "refused", message: failed },
+          { type: "agent_end", messages: [failed], isTerminal: true, yielded: true },
+          {
+            type: "prompt_result",
+            id: peer.state.frames.find((frame) => frame.type === "prompt")?.id,
+            agentInvoked: true,
+            status: "error",
+            sessionSettled: true,
+            error: {
+              message: "401 invalid API key",
+              httpStatus: 401,
+              retryable: false,
+              ...(kinds === undefined ? {} : { kinds }),
+            },
+          },
+        ]);
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(terminal.failure?.class, "provider_error");
+        assert.equal(terminal.failure?.code, expectedCode);
+        assert.equal(terminal.failure?.httpStatus, 401);
+      }),
+    ),
+  );
+
   it.effect("budgets several native OMP images together against one serialized frame", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1036,7 +1312,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
   it.effect("reports the native OMP frame limit when even a file reference cannot fit", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const h = yield* imageHarness(1024);
+        // SCIENT-FORK:START — Scient's extra event types make the session's event filter line 1,031 bytes.
+        const h = yield* imageHarness(1280);
+        // SCIENT-FORK:END
         const failure = yield* Effect.result(
           h.runtime.startTurn({
             ...h.input,
@@ -1047,14 +1325,18 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               // names keep it over the limit however short the temp directory is.
               attachments: yield* Effect.forEach(
                 Array.from({ length: 8 }, (_, i) => i),
-                (i) => h.image(`frame-${i}-${"x".repeat(120)}`, 8192),
+                // SCIENT-FORK:START — longer names keep the reference over the larger limit.
+                (i) => h.image(`frame-${i}-${"x".repeat(200)}`, 8192),
+                // SCIENT-FORK:END
               ),
             },
           }),
         );
         assert.equal(failure._tag, "Failure");
         if (failure._tag !== "Failure") return yield* Effect.die("Oversized frame reached OMP");
-        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1024-byte frame limit");
+        // SCIENT-FORK:START — the limit set above.
+        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1280-byte frame limit");
+        // SCIENT-FORK:END
         assert.lengthOf(h.peer.state.prompts, 0);
       }),
     ),
@@ -1799,7 +2081,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               data: row.entry?.toolData,
             }));
           yield* h.peer.emit([
-            nativeToolStart("shell", "bash", { command: "printf synthetic" }),
+            nativeToolStart("shell", "find", { pattern: "*.synthetic" }),
             nativeToolStart("file", "read", { path: "note.txt" }),
             { type: "tool_stream_update", toolCallId: "shell", update: { text: "first line" } },
             { type: "tool_stream_update", toolCallId: "file", update: { text: "file text" } },
@@ -1841,9 +2123,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             {
               id: shell.id,
               kind: "work",
-              title: "bash",
+              title: "find",
               status: "inProgress",
-              data: { input: { command: "printf synthetic" }, output: "first line" },
+              data: { input: { pattern: "*.synthetic" }, output: "first line" },
             },
             {
               id: file.id,
@@ -1854,7 +2136,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             },
           ]);
           yield* h.peer.emit([
-            nativeToolEnd("shell", "bash", { content: [{ type: "text", text: "final line" }] }),
+            nativeToolEnd("shell", "find", { content: [{ type: "text", text: "final line" }] }),
             nativeToolEnd("file", "read", {}),
           ]);
           yield* h.untilTool("file", "completed");
@@ -1862,9 +2144,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             {
               id: shell.id,
               kind: "work",
-              title: "bash",
+              title: "find",
               status: "completed",
-              data: { input: { command: "printf synthetic" }, output: "final line" },
+              data: { input: { pattern: "*.synthetic" }, output: "final line" },
             },
             {
               id: file.id,
@@ -1897,7 +2179,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const h = yield* ordinaryToolsHarness();
         yield* h.peer.emit([
-          nativeToolStart("shell", "bash", { command: "sleep 10" }),
+          nativeToolStart("shell", "find", { pattern: "*.slow" }),
           { type: "tool_stream_update", toolCallId: "shell", update: { text: "partial text" } },
         ]);
         yield* h.takeUntil(
@@ -1922,7 +2204,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(finalTools.length, 1);
         assert.isBelow(finalTools[0]!.index, terminal);
         assert.equal(h.tool("shell")?.status, trigger === "stop" ? "interrupted" : "failed");
-        assert.deepEqual(h.tool("shell")?.input, { command: "sleep 10" });
+        assert.deepEqual(h.tool("shell")?.input, { pattern: "*.slow" });
         assert.equal(h.tool("shell")?.output, "partial text");
         assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
       }),
@@ -1934,10 +2216,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const h = yield* ordinaryToolsHarness();
         yield* h.peer.emit([
-          nativeToolStart("shell", "bash", { command: "false" }),
+          nativeToolStart("shell", "find", { pattern: "*.missing" }),
           nativeToolEnd(
             "shell",
-            "bash",
+            "find",
             { content: [{ type: "text", text: "exit code 1" }] },
             true,
           ),
@@ -1945,8 +2227,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.untilTool("shell", "failed");
         yield* h.peer.emit([
           { type: "tool_stream_update", toolCallId: "shell", update: { text: "late" } },
-          nativeToolStart("shell", "bash", { command: "echo late" }),
-          nativeToolEnd("shell", "bash", {}),
+          nativeToolStart("shell", "find", { pattern: "*.late" }),
+          nativeToolEnd("shell", "find", {}),
           nativeToolStart("barrier", "read", { path: "barrier.txt" }),
         ]);
         yield* h.untilTool("barrier", "running");
@@ -1960,7 +2242,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           2,
         );
         assert.equal(h.tool("shell")?.status, "failed");
-        assert.deepEqual(h.tool("shell")?.input, { command: "false" });
+        assert.deepEqual(h.tool("shell")?.input, { pattern: "*.missing" });
         assert.equal(h.tool("shell")?.output, "exit code 1");
       }),
     ),
@@ -1982,15 +2264,19 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         const event = yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.type === "command_execution" &&
             typeof event.turnItem.output === "string",
         );
         assert.isBelow(Buffer.byteLength(encodeDiagnostic(event)), 16 * 1024);
-        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        const running = h.row("shell");
+        assert.ok(running?.type === "command_execution");
+        assert.equal(running.input, "printf large");
         assert.equal(h.runtime.providerSession.status, "running");
         yield* h.stop();
-        assert.equal(h.tool("shell")?.status, "interrupted");
-        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        const stopped = h.row("shell");
+        assert.ok(stopped?.type === "command_execution");
+        assert.equal(stopped.status, "interrupted");
+        assert.equal(stopped.input, "printf large");
       }),
     ),
   );
@@ -2017,15 +2303,48 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.type === "command_execution" &&
             typeof event.turnItem.output === "string",
         );
-        const encoded = encodeDiagnostic(h.latestTools());
+        const encoded = encodeDiagnostic(h.row("shell"));
         assert.notInclude(encoded, secret.slice(0, -1));
         assert.include(encoded, "[REDACTED]");
         assert.isBelow(Buffer.byteLength(encoded), 16 * 1024);
         yield* h.stop();
-        assert.notInclude(encodeDiagnostic(h.latestTools()), secret.slice(0, -1));
+        assert.notInclude(encodeDiagnostic(h.row("shell")), secret.slice(0, -1));
+      }),
+    ),
+  );
+
+  it.effect("redacts credentials from a computer call's title and app before projection", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const secret = "opaque-fixture-credential-abcdefghijk";
+        const h = yield* ordinaryToolsHarness({ SYNTHETIC_API_KEY: secret });
+        yield* h.peer.emit([
+          nativeToolStart("look", "eval", {
+            language: "js",
+            title: `Type ${secret}`,
+            code: `await computer.window({ app: "${secret}" });`,
+          }),
+        ]);
+        yield* h.untilTool("look", "running");
+        assert.equal(h.tool("look")?.toolSurface, "computer");
+        assert.notInclude(encodeDiagnostic(h.tool("look")), secret.slice(0, -1));
+        yield* h.peer.emit([
+          {
+            type: "tool_execution_update",
+            toolCallId: "look",
+            toolName: "eval",
+            partialResult: {
+              details: { statusEvents: [{ op: "computer", detail: `desktop.window(${secret})` }] },
+            },
+          },
+          nativeToolEnd("look", "eval", { content: [{ type: "text", text: "done" }] }),
+        ]);
+        yield* h.untilTool("look", "completed");
+        assert.notInclude(encodeDiagnostic(h.tool("look")), secret.slice(0, -1));
+        yield* h.stop();
       }),
     ),
   );
@@ -2057,6 +2376,98 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.stop();
       }),
     ),
+  );
+
+  it.effect(
+    "shows native OMP shell, file and search calls as typed rows and images from any tool",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* ordinaryToolsHarness();
+          const missing = "ls: missing: No such file or directory";
+          yield* h.peer.emit([
+            nativeToolStart("shell", "bash", { command: "ls missing" }),
+            { type: "tool_stream_update", toolCallId: "shell", update: { text: missing } },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.output === missing,
+          );
+          const png = Buffer.from("synthetic image bytes").toString("base64");
+          yield* h.peer.emit([
+            nativeToolEnd(
+              "shell",
+              "bash",
+              {
+                content: [{ type: "text", text: `${missing}\nExit code 1` }],
+                details: { exitCode: 1 },
+              },
+              true,
+            ),
+            nativeToolStart("change", "edit", { path: "notes.md" }),
+            nativeToolEnd("change", "edit", {
+              content: [{ type: "text", text: "Updated notes.md" }],
+              details: {
+                path: "/work/notes.md",
+                diff: "-1|old",
+                oldText: "old\n",
+                newText: "new\n",
+              },
+            }),
+            nativeToolStart("search", "web_search", { query: "dna origami" }),
+            nativeToolEnd("search", "web_search", {
+              content: [{ type: "text", text: "1 source" }],
+              details: {
+                response: {
+                  provider: "synthetic",
+                  sources: [{ title: "Folding DNA", url: "https://example.org/a", snippet: "x" }],
+                },
+              },
+            }),
+            nativeToolStart("picture", "generate_image", { subject: "a cell" }),
+            nativeToolEnd("picture", "generate_image", {
+              content: [{ type: "text", text: "Generated 1 image(s)" }],
+              details: { images: [{ mimeType: "image/png", data: png }] },
+            }),
+          ]);
+          yield* h.untilRow("picture", "completed");
+          const shell = h.row("shell");
+          assert.ok(shell?.type === "command_execution");
+          assert.deepInclude(shell, {
+            status: "failed",
+            title: null,
+            input: "ls missing",
+            exitCode: 1,
+          });
+          assert.equal(shell.output, `${missing}\nExit code 1`);
+          const change = h.row("change");
+          assert.ok(change?.type === "file_change");
+          assert.equal(change.fileName, "/work/notes.md");
+          assert.include(change.diffStr, "-old\n+new");
+          const search = h.row("search");
+          assert.ok(search?.type === "web_search");
+          assert.deepEqual(search.patterns, ["dna origami"]);
+          assert.deepEqual(search.results, [
+            { title: "Folding DNA", url: "https://example.org/a", snippet: "x" },
+          ]);
+          const picture = h.row("picture");
+          assert.ok(picture?.type === "dynamic_tool");
+          assert.deepInclude(picture.output, {
+            content: [
+              { type: "text", text: "Generated 1 image(s)" },
+              { type: "image", mimeType: "image/png", data: png },
+            ],
+          });
+          const node = h.recorded.findLast(
+            (event) => event.type === "node.updated" && event.node.id === shell.nodeId,
+          );
+          assert.ok(node?.type === "node.updated");
+          assert.equal(node.node.kind, "tool_call");
+          yield* h.stop();
+        }),
+      ),
   );
 
   it.effect(
@@ -2319,6 +2730,142 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("records each turn's message entry and rewinds by branching before a later one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Each turn adds its user message and a reply; `since` lists only what came after.
+        const listed: Array<{ id: string; parentId: string | null; role: string }> = [];
+        const branched: Array<string> = [];
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          responseData: (frame) => {
+            if (frame.type === "get_entries") {
+              const since = Reflect.get(frame, "since");
+              const ordinal = listed.length / 2 + 1;
+              const parentId = listed.at(-1)?.id ?? null;
+              listed.push(
+                { id: `user-${ordinal}`, parentId, role: "user" },
+                { id: `reply-${ordinal}`, parentId: `user-${ordinal}`, role: "assistant" },
+              );
+              const from = since === undefined ? 0 : listed.findIndex((e) => e.id === since) + 1;
+              return {
+                entries: listed.slice(from).map((entry) => ({
+                  type: "message",
+                  id: entry.id,
+                  parentId: entry.parentId,
+                  // Later than any send: the test clock starts at the epoch.
+                  timestamp: "2999-01-01T00:00:00.000Z",
+                  message: { role: entry.role },
+                })),
+                leafId: listed.at(-1)!.id,
+              };
+            }
+            if (frame.type === "switch_session") {
+              const sessionPath = String(Reflect.get(frame, "sessionPath"));
+              peer.state.sessionFile = sessionPath;
+              peer.state.sessionOrdinal = Number(/models-session-(\d+)/u.exec(sessionPath)?.[1]);
+              return { cancelled: false };
+            }
+            if (frame.type === "branch") {
+              branched.push(String(Reflect.get(frame, "entryId")));
+              peer.state.sessionOrdinal++;
+              peer.state.sessionFile = undefined;
+              return { text: "", cancelled: false };
+            }
+            return undefined;
+          },
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        const turns = () => [
+          ...new Map(
+            h.recorded.flatMap((event) =>
+              event.type === "provider_turn.updated"
+                ? [[event.providerTurn.id, event.providerTurn] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        for (const ordinal of [1, 2]) {
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make(`rewind-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`rewind-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`rewind-root-${ordinal}`),
+          });
+          yield* peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+        }
+        const [first, second] = turns();
+        assert.ok(first && second);
+        assert.deepInclude(first.nativeTurnRef, { nativeId: "user-1", strength: "strong" });
+        assert.deepInclude(second.nativeTurnRef, { nativeId: "user-2", strength: "strong" });
+        assert.deepEqual(
+          peer.state.frames.flatMap((frame) =>
+            frame.type === "get_entries" ? [Reflect.get(frame, "since") ?? null] : [],
+          ),
+          [null, "reply-1"],
+        );
+        const before = h.recorded.findLast((event) => event.type === "provider_thread.updated");
+        assert.ok(before?.type === "provider_thread.updated");
+        const snapshot = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("rewind-checkpoint"),
+            appRunOrdinal: 1,
+            providerTurn: first,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2"]);
+        assert.notEqual(
+          snapshot.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
+        const unrecorded = yield* h.runtime
+          .rollbackThread({
+            providerThread: snapshot.providerThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("start"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [
+              { ...first, nativeTurnRef: { ...first.nativeTurnRef!, strength: "weak" } },
+            ],
+          })
+          .pipe(Effect.flip);
+        assert.equal(unrecorded._tag, "ProviderAdapterRollbackThreadError");
+        assert.deepEqual(branched, ["user-2"]);
+        // A retry after a failed file restore starts from the conversation still on record.
+        const retried = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("retry"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2", "user-1"]);
+        assert.includeMembers(
+          peer.state.frames.map((frame) => frame.type),
+          ["switch_session"],
+        );
+        assert.notEqual(
+          retried.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
+      }),
+    ),
+  );
+
   it.effect.each(
     ([true, false] as const).map((accepted) => ({
       caseTitle: `retains an unknown native OMP outcome on process loss with accepted=${accepted}`,
@@ -2337,7 +2884,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* peer.promptDelivered();
         yield* peer.emit([
           { type: "agent_start" },
-          nativeToolStart("unconfirmed-tool", "bash", { command: "could still have run" }),
+          nativeToolStart("unconfirmed-tool", "find", { pattern: "could still have run" }),
         ]);
         yield* h.takeUntil(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
@@ -2348,6 +2895,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           return yield* Effect.die("Missing unknown native outcome");
         assert.equal(terminal.status, "failed");
         assert.equal(terminal.failure?.class, "unknown");
+        assert.equal(terminal.failure?.code, "process_exit");
         assert.include(terminal.failure?.message ?? "", "outcome is unknown");
         assert.equal(terminal.threadDisposition, "broken");
         assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
@@ -2398,7 +2946,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   providerInstanceId: input.modelSelection.instanceId,
                   endpoint: "http://127.0.0.1:43123/mcp",
                   authorizationHeader: token,
-                  capabilities: new Set(["preview", "skills:read", "sources:read"]),
+                  capabilities: new Set([
+                    "orchestration",
+                    "preview",
+                    "skills:read",
+                    "sources:read",
+                  ]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
                   connectors: [],
                 })
@@ -2441,6 +2994,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.notInclude(bootstrap.value.awareness, "inherited awareness");
         assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
         assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
+        assert.include(bootstrap.value.awareness, "<runtime_info>");
+        // Without the rules an OMP parent waited on its delegates instead of ending its turn.
+        assert.equal(
+          bootstrap.value.awareness.includes("Follow a running delegate's `next`"),
+          granted,
+        );
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
         // A session without connectors keeps the bootstrap's original shape.
         assert.isUndefined(bootstrap.value.connectors);
@@ -3338,6 +3897,78 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("shows computer calls on the computer surface with their screenshots", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.runtime.startTurn(h.input);
+        const screenshot = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+        for (const event of [
+          {
+            type: "tool_execution_start",
+            toolCallId: "look",
+            toolName: "eval",
+            args: {
+              language: "js",
+              title: "Look at the document",
+              code: 'const win = await computer.window({ app: "TextEdit" }); await win.screenshot();',
+            },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "look",
+            toolName: "eval",
+            result: { content: [{ type: "text", text: "screenshot 14214" }, screenshot] },
+          },
+          {
+            type: "tool_execution_start",
+            toolCallId: "read-tree",
+            toolName: "eval",
+            args: { language: "js", code: "console.log(await win.ax());" },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "read-tree",
+            toolName: "eval",
+            isError: true,
+            result: {
+              content: [{ type: "text", text: "ToolError: PermissionDenied" }],
+              details: {
+                statusEvents: [
+                  {
+                    op: "computer",
+                    error:
+                      "PermissionDenied: macOS Accessibility permission is not granted to Scient, which macOS holds responsible for omp",
+                  },
+                ],
+              },
+            },
+          },
+        ])
+          yield* Queue.offer(h.notifications, { _tag: "Event", event });
+        const seen = new Map<string, OrchestrationV2TurnItem>();
+        yield* h.takeUntil((event) => {
+          if (event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool")
+            seen.set(event.turnItem.id, event.turnItem);
+          return [...seen.values()].filter((item) => item.status !== "running").length === 2;
+        });
+        const items = [...seen.values()];
+        const look = items.find((item) => item.title === "Look at the document");
+        const tree = items.find((item) => item !== look);
+        if (look?.type !== "dynamic_tool" || tree?.type !== "dynamic_tool")
+          return yield* Effect.die("Missing computer items");
+        assert.equal(look.toolSurface, "computer");
+        assert.equal(look.toolSource?.name, "TextEdit");
+        assert.deepEqual(look.output, {
+          content: [{ type: "text", text: "screenshot 14214" }, screenshot],
+        });
+        assert.equal(tree.toolSurface, "computer");
+        assert.equal(tree.title, "Computer use");
+        assert.deepEqual(tree.toolPermissionsNeeded, ["accessibility"]);
+      }),
+    ),
+  );
+
   it.effect("refuses foreign native OMP history and rejects unregistered host tools", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3538,6 +4169,120 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect("fills a native subagent's thread with its saved steps, once each", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"] }],
+          initial: { provider: "test", id: "selected" },
+        });
+        peer.state.pendingAsyncWork = true;
+        let sessionDir: string | undefined;
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: (options) => {
+            sessionDir = options.sessionDir;
+            return peer.makeProcess(options);
+          },
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        if (!sessionDir) return yield* Effect.die("Missing session directory");
+        const transcript = h.path.join(sessionDir, "parent", "Check.jsonl");
+        NodeFS.mkdirSync(h.path.dirname(transcript), { recursive: true });
+        const record = (id: string, message: unknown) =>
+          `${JSON.stringify({ type: "message", id, parentId: null, message })}\n`;
+        const call = { type: "toolCall", id: "call-1", name: "eval", arguments: { code: "2+2" } };
+        NodeFS.writeFileSync(
+          transcript,
+          record("a1", { role: "user", content: [{ type: "text", text: "Assignment" }] }) +
+            record("a2", { role: "assistant", content: [call] }),
+        );
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: {
+              id: "check",
+              status: "started",
+              description: "Check",
+              sessionFile: transcript,
+            },
+          },
+        ]);
+        const spawned = yield* h.takeUntil((event) => event.type === "subagent.updated");
+        if (spawned.type !== "subagent.updated") return yield* Effect.die("Missing child");
+        const childThreadId = spawned.subagent.childThreadId;
+        const running = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        if (running.type !== "turn_item.updated" || running.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing running step");
+        assert.equal(running.turnItem.threadId, childThreadId);
+        assert.equal(running.turnItem.status, "running");
+        assert.deepEqual(running.turnItem.input, { code: "2+2" });
+        // The answer is in both the saved conversation and the ending frame.
+        NodeFS.appendFileSync(
+          transcript,
+          record("a3", {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "eval",
+            content: [{ type: "text", text: "4" }],
+          }) +
+            record("a4", {
+              role: "assistant",
+              content: [{ type: "text", text: "Two plus two is 4." }],
+            }),
+        );
+        // Work settles before the last read of the saved steps.
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: { id: "check", status: "completed", output: "Two plus two is 4." },
+          },
+          { type: "session_settled" },
+        ]);
+        yield* TestClock.adjust("3 seconds");
+        const settled = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.status === "completed",
+        );
+        if (settled.type !== "turn_item.updated" || settled.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing finished step");
+        assert.equal(settled.turnItem.id, running.turnItem.id);
+        assert.equal(settled.turnItem.output, "4");
+        yield* TestClock.adjust("3 seconds");
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "assistant_message",
+        );
+        const childItems = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.threadId === childThreadId
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          // In display order: the answer follows the steps it came from.
+          [...new Set(childItems.map((item) => item.id))]
+            .map((id) => childItems.findLast((candidate) => candidate.id === id)!)
+            .toSorted((left, right) => left.ordinal - right.ordinal)
+            .map((item) => [
+              item.type,
+              item.type === "assistant_message" ? item.text : item.status,
+            ]),
+          [
+            ["dynamic_tool", "completed"],
+            ["assistant_message", "Two plus two is 4."],
+          ],
+        );
+      }),
+    ),
   );
 
   it.effect(
@@ -3844,6 +4589,59 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
       ),
   );
 
+  // SCIENT-FORK:START — warming that stops on a five-minute cache times its idle compaction.
+  it.effect("records the entry warming stopped on as a session-scoped thread update", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-16T12:21:00Z"));
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", contextWindow: 200_000 }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: peer.makeProcess,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([{ type: "agent_start" }]);
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const arrivedAt = DateTime.toEpochMillis(yield* DateTime.now);
+        const stoppedAt = arrivedAt - 2 * 60_000;
+        const stopped = (promptCache?: object) => ({
+          type: "cache_warming_stopped",
+          reason: "30-minute idle safety limit reached",
+          stoppedAt,
+          ...(promptCache === undefined ? {} : { promptCache }),
+        });
+        const recorded = (event: ProviderAdapterV2Event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.promptCacheWarmingStopped !== undefined;
+        yield* peer.emit([
+          stopped({ tier: "short", touchedAt: stoppedAt - 60_000, ttlMs: 300_000 }),
+        ]);
+        const marked = yield* h.takeUntil(recorded);
+        assert.isTrue(marked.type === "provider_thread.updated");
+        if (marked.type !== "provider_thread.updated") return;
+        assert.isTrue(marked.sessionScoped);
+        // Delivery was delayed; persistence must retain the agent's earlier stop time.
+        assert.deepEqual(marked.providerThread.promptCacheWarmingStopped, {
+          stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt + 240_000)),
+        });
+        // A stop that left no readable entry clears it.
+        yield* peer.emit([stopped()]);
+        const cleared = yield* h.takeUntil(recorded);
+        assert.isTrue(
+          cleared.type === "provider_thread.updated" &&
+            cleared.providerThread.promptCacheWarmingStopped === null,
+        );
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
+
   it.effect(
     "compacts through a real turn and retains the summary, counts, and post-compaction meter",
     () =>
@@ -4000,6 +4798,43 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
           ),
         );
         assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
+      }),
+    ),
+  );
+
+  it.effect("says how to sign a signed-out account in again, and has its list read again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshed = yield* Deferred.make<void>();
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          onAccountSignedOut: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([
+          { type: "agent_start" },
+          {
+            type: "notice",
+            level: "warning",
+            source: "auth",
+            message:
+              "ChatGPT account a@example.invalid was signed out automatically. Run /login to sign in again.",
+          },
+        ]);
+        const notice = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.message ===
+              "ChatGPT account a@example.invalid was signed out automatically. Sign in again with Reconnect in the composer, or in Settings › Providers.",
+        );
+        yield* Deferred.await(refreshed);
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
       }),
     ),
   );

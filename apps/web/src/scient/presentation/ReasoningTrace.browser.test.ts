@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+// The app loads this stylesheet through index.css; importing it here would hide a lost import.
 import "../../index.css";
-import "./scient-reasoning-trace.css";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host?.remove();

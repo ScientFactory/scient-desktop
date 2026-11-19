@@ -1,6 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Host-owned namespace adapter. Policy, records and recovery stay in the mutation service. */
-import { validatePublicationArtifact } from "@t3tools/shared/scientPublicationArtifact";
+import {
+  armNativeCheckDeadline,
+  NativeCheckDeadlineError,
+  validatePublicationArtifact,
+  WindowsPermissionsRefusedError,
+} from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -118,14 +123,10 @@ export interface NativeFilePublicationRequest {
   /** bound-object is for qualification only and does not satisfy normal-save authority. */
   readonly authority?: NativeFileAuthority;
 }
-class NativeFilePublicationError extends Error {
-  readonly result: NativeFilePublicationResult | null;
-  constructor(message: string, result: NativeFilePublicationResult | null) {
-    super(message);
-    this.name = "NativeFilePublicationError";
-    this.result = result;
-  }
-}
+class NativeFilePublicationError extends Schema.TaggedError<NativeFilePublicationError>()(
+  "NativeFilePublicationError",
+  { message: Schema.String, result: Schema.optional(Result) },
+) {}
 
 /** A server running from the app's archive. macOS calls its folder `Resources`. */
 export const isPackagedServerDirectory = (moduleDirectory: string) =>
@@ -133,36 +134,208 @@ export const isPackagedServerDirectory = (moduleDirectory: string) =>
     moduleDirectory.toLowerCase().endsWith(NodePath.join("resources", archive, "apps/server/dist")),
   );
 
-/** Explicit host configuration never falls through to a different executable. */
-export async function resolveNativeFilePublicationHelperPath(
-  configuredPath?: string,
-): Promise<string | undefined> {
+/** Why one check of a helper candidate failed; `elapsedMs` is that attempt's time. */
+export interface NativeHelperCheckFailure {
+  readonly attempt: number;
+  readonly stage: "artifact" | "capabilities";
+  readonly elapsedMs: number;
+  readonly error: unknown;
+}
+type NativeHelperFailureReport = (failure: NativeHelperCheckFailure) => void;
+
+/**
+ * Validates a candidate and asks its capabilities. A first launch after install can outlast a
+ * check's deadline, so a check stopped by its own deadline runs once more; a refusal is final.
+ */
+async function checkHelperCandidate(
+  candidate: string,
+  onFailure: NativeHelperFailureReport | undefined,
+  checks: Record<NativeHelperCheckFailure["stage"], (helper: string) => Promise<unknown>>,
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    const startedAt = performance.now();
+    let stage: NativeHelperCheckFailure["stage"] = "artifact";
+    try {
+      await checks.artifact(candidate);
+      stage = "capabilities";
+      await checks.capabilities(candidate);
+      return true;
+    } catch (error) {
+      try {
+        onFailure?.({ attempt, stage, elapsedMs: performance.now() - startedAt, error });
+      } catch {
+        // A report never changes the answer.
+      }
+      if (attempt > 1 || !(error instanceof NativeCheckDeadlineError)) return false;
+    }
+  }
+}
+/** Installed servers only inspect their own resources; cwd, PATH and project files grant no authority. */
+function helperCandidate(configuredPath: string | undefined) {
   const platform = HostProcess.Platform.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
   const moduleDirectory = NodeSea.isSea()
     ? NodePath.dirname(process.execPath)
     : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-  // Source development has a separate, explicit build location. Installed servers
-  // only inspect their own resources; cwd, PATH and project files grant no authority.
+  // Source development has a separate, explicit build location.
   const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
   const desktop = isPackagedServerDirectory(moduleDirectory);
-  const candidate =
+  return (
     configuredPath ??
     (desktop
       ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
       : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
         (source
           ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
-          : NodePath.join(moduleDirectory, "file-exchange", binary))));
-  try {
-    await validatePublicationArtifact(candidate);
-    await nativeFilePublicationCapabilities(candidate);
-    return candidate;
-  } catch {
-    // Explicit configuration never falls through to another helper.
-    return undefined;
-  }
+          : NodePath.join(moduleDirectory, "file-exchange", binary))))
+  );
 }
+
+/**
+ * Explicit host configuration never falls through to a different executable. `onFailure`
+ * hears why a candidate was refused; the answer stays the same.
+ */
+export async function resolveNativeFilePublicationHelperPath(
+  configuredPath?: string,
+  onFailure?: NativeHelperFailureReport,
+): Promise<string | undefined> {
+  const candidate = helperCandidate(configuredPath);
+  return (await checkHelperCandidate(candidate, onFailure, {
+    artifact: validatePublicationArtifact,
+    capabilities: (helper) => nativeFilePublicationCapabilities(helper),
+  }))
+    ? candidate
+    : undefined;
+}
+
+/** How long a pass is used before it is checked again, in the background. */
+export const HELPER_RECHECK_MS = 10 * 60_000;
+/**
+ * How long a refusal stands before an ordinary ask checks again. On Windows a check launches
+ * PowerShell, so without it every save would wait for one before being refused.
+ */
+export const HELPER_REFUSAL_RECHECK_MS = 60_000;
+interface HelperCheck {
+  readonly result: Promise<string | undefined>;
+  /** Holds every caller until it settles. */
+  readonly suspect: boolean;
+  started: boolean;
+}
+/**
+ * A pass is used at once and checked again in the background once old; a permission refusal
+ * stands a minute, any other refusal is asked again at once. A suspect check, asked after a
+ * failure, waits for any check under way and gives the helper to nobody until it settles.
+ */
+function helperAcceptance(
+  check: (
+    candidate: string,
+  ) => Promise<{ readonly helper: string | undefined; readonly holdRefusal: boolean }>,
+) {
+  /** When each accepted helper's passing check began. */
+  const accepted = new Map<string, number>();
+  /** When each refused helper's last check ended. */
+  const refused = new Map<string, number>();
+  /** The check running, or waiting for the one before it, by helper. */
+  const checks = new Map<string, HelperCheck>();
+  const start = (candidate: string, suspect: boolean, after?: Promise<unknown>) => {
+    const entry: HelperCheck = {
+      suspect,
+      started: false,
+      result: (after ?? Promise.resolve())
+        .then(async () => {
+          entry.started = true;
+          const startedAt = performance.now();
+          const { helper, holdRefusal } = await check(candidate);
+          if (helper === undefined) {
+            accepted.delete(candidate);
+            if (holdRefusal) refused.set(candidate, performance.now());
+            else refused.delete(candidate);
+          } else {
+            accepted.set(candidate, startedAt);
+            refused.delete(candidate);
+          }
+          return helper;
+        })
+        .finally(() => {
+          if (checks.get(candidate) === entry) checks.delete(candidate);
+        }),
+    };
+    checks.set(candidate, entry);
+    return entry.result;
+  };
+  const passed = (candidate: string) => {
+    const acceptedAt = accepted.get(candidate);
+    if (acceptedAt === undefined) return undefined;
+    if (!checks.has(candidate) && performance.now() - acceptedAt >= HELPER_RECHECK_MS)
+      void start(candidate, false);
+    return candidate;
+  };
+  const helper = (candidate: string, revalidate: boolean): Promise<string | undefined> => {
+    const running = checks.get(candidate);
+    if (revalidate)
+      return running?.suspect && !running.started
+        ? running.result
+        : start(candidate, true, running?.result);
+    if (running?.suspect) return running.result;
+    const current = passed(candidate);
+    if (current !== undefined) return Promise.resolve(current);
+    if (running) return running.result;
+    const refusedAt = refused.get(candidate);
+    if (refusedAt !== undefined && performance.now() - refusedAt < HELPER_REFUSAL_RECHECK_MS)
+      return Promise.resolve(undefined);
+    return start(candidate, false);
+  };
+  return {
+    helper,
+    accepted: (candidate: string) =>
+      checks.get(candidate)?.suspect ? undefined : passed(candidate),
+    launchFailed: (candidate: string) => {
+      if (accepted.has(candidate)) void helper(candidate, true);
+    },
+  };
+}
+export const nativeFilePublicationInternals = { checkHelperCandidate, helperAcceptance };
+/** Why each refused helper was refused, from its latest check, so a host can say why. */
+const latestRefusals = new Map<string, ReadonlyArray<NativeHelperCheckFailure>>();
+const acceptance = helperAcceptance(async (candidate) => {
+  // Only a refusal PowerShell gave is held; a missing file or a deadline is asked again at once.
+  let holdRefusal = false;
+  const failures: NativeHelperCheckFailure[] = [];
+  const helper = await resolveNativeFilePublicationHelperPath(candidate, (failure) => {
+    failures.push(failure);
+    holdRefusal = failure.error instanceof WindowsPermissionsRefusedError;
+  });
+  if (helper === undefined) latestRefusals.set(candidate, failures);
+  else latestRefusals.delete(candidate);
+  return { helper, holdRefusal };
+});
+/** Why the helper for `configuredPath` was last refused: each failed check, or none recorded. */
+export function nativeFilePublicationHelperRefusal(configuredPath?: string): string | undefined {
+  const failures = latestRefusals.get(helperCandidate(configuredPath));
+  if (failures === undefined) return undefined;
+  if (failures.length === 0) return "No helper at the installed path.";
+  return failures
+    .map(
+      (failure) =>
+        `attempt ${failure.attempt}, ${failure.stage}, ${Math.round(failure.elapsedMs)} ms: ${
+          failure.error instanceof Error ? failure.error.message : String(failure.error)
+        }`,
+    )
+    .join("; ");
+}
+/** The helper `resolveNativeFilePublicationHelperPath` finds, as `helperAcceptance` keeps it. */
+export function nativeFilePublicationHelper(
+  configuredPath?: string,
+  { revalidate = false } = {},
+): Promise<string | undefined> {
+  return acceptance.helper(helperCandidate(configuredPath), revalidate);
+}
+/** The helper for `configuredPath` if it has passed its checks and is not being checked again. */
+export function acceptedNativeFilePublicationHelper(configuredPath?: string) {
+  return acceptance.accepted(helperCandidate(configuredPath));
+}
+/** An accepted helper that could not be launched may have been removed or replaced. */
+const helperLaunchFailed = (helperPath: string) => acceptance.launchFailed(helperPath);
 /** Helper commands the Windows helper's `--serve=1` process answers; they only read. */
 const servedQuery = (args: ReadonlyArray<string>) =>
   (args[0] === "--windows=1" && ["info", "flags", "private"].includes(args[1] ?? "")) ||
@@ -209,7 +382,9 @@ function helperServer(helperPath: string): HelperServer {
     child.once("close", exited);
     // A helper that never started emits no `close`.
     child.once("error", () => {
-      if (child.pid === undefined) exited();
+      if (child.pid !== undefined) return;
+      helperLaunchFailed(helperPath);
+      exited();
     });
   });
   let answering: PromiseWithResolvers<string> | undefined;
@@ -225,10 +400,9 @@ function helperServer(helperPath: string): HelperServer {
   const retire = (reason: string) => {
     stopRouting();
     answering?.reject(
-      new NativeFilePublicationError(
-        `Native publication reply unknown: ${reason}, stderr=${stderr}`,
-        null,
-      ),
+      new NativeFilePublicationError({
+        message: `Native publication reply unknown: ${reason}, stderr=${stderr}`,
+      }),
     );
     answering = undefined;
     child.kill();
@@ -263,10 +437,9 @@ function helperServer(helperPath: string): HelperServer {
       if (served[1] === "0") waiter.resolve(reply);
       else
         waiter.reject(
-          new NativeFilePublicationError(
-            `Native publication reply unknown: exit=${served[1]}, stderr=${stderr}`,
-            null,
-          ),
+          new NativeFilePublicationError({
+            message: `Native publication reply unknown: exit=${served[1]}, stderr=${stderr}`,
+          }),
         );
       reply = "";
       if (!closing) {
@@ -302,10 +475,9 @@ export async function invokeNativeHelper(
   args: ReadonlyArray<string>,
 ): Promise<string> {
   if (!NodePath.isAbsolute(helperPath))
-    throw new NativeFilePublicationError(
-      "Native helper path must be host-owned and absolute.",
-      null,
-    );
+    throw new NativeFilePublicationError({
+      message: "Native helper path must be host-owned and absolute.",
+    });
   const body =
     HostProcess.Platform.defaultValue() === "win32" &&
     servedQuery(args) &&
@@ -326,11 +498,11 @@ export async function invokeNativeHelper(
   }
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const child = NodeChildProcess.spawn(helperPath, args, {
-    // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
-    ...(args[1] === "capabilities" ? { timeout: 10_000 } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
+  // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
+  const pastDeadline = args[1] === "capabilities" ? armNativeCheckDeadline(child) : () => false;
   let stdout = "",
     stderr = "",
     overflow = false;
@@ -346,15 +518,18 @@ export async function invokeNativeHelper(
   });
   child.on("error", (error) => {
     spawnError = error;
+    if (child.pid === undefined) helperLaunchFailed(helperPath);
   });
   // No abort/timeout race: even an abandoned waiter leaves this owner awaiting real retirement.
   child.on("close", (code, signal) => {
-    if (spawnError || code !== 0 || signal !== null || overflow) {
+    // A refusal already seen (no launch, too long a reply) stays one after the deadline.
+    if (pastDeadline() && !spawnError && !overflow)
+      reject(new NativeCheckDeadlineError("capabilities"));
+    else if (spawnError || code !== 0 || signal !== null || overflow) {
       reject(
-        new NativeFilePublicationError(
-          `Native publication reply unknown: ${spawnError?.message ?? `exit=${code}, signal=${signal}, stderr=${stderr}`}`,
-          null,
-        ),
+        new NativeFilePublicationError({
+          message: `Native publication reply unknown: ${spawnError?.message ?? `exit=${code}, signal=${signal}, stderr=${stderr}`}`,
+        }),
       );
     } else resolve(stdout);
   });
@@ -365,10 +540,9 @@ function parseResult(value: string): NativeFilePublicationResult {
   try {
     return decodeResult(value);
   } catch {
-    throw new NativeFilePublicationError(
-      "Invalid native publication reply; namespace outcome unknown.",
-      null,
-    );
+    throw new NativeFilePublicationError({
+      message: "Invalid native publication reply; namespace outcome unknown.",
+    });
   }
 }
 /** Helper replies already given, keyed by helper identity and the root's canonical
@@ -399,7 +573,9 @@ const capabilitiesKey = async (helperPath: string, rootPath: string | undefined)
 /** A generic inquiry deliberately cannot authorize creation on an unspecified volume. */
 export async function nativeFilePublicationCapabilities(helperPath: string, rootPath?: string) {
   if (rootPath !== undefined && (!NodePath.isAbsolute(rootPath) || rootPath.includes("\0")))
-    throw new NativeFilePublicationError("Native capability root must be an absolute path.", null);
+    throw new NativeFilePublicationError({
+      message: "Native capability root must be an absolute path.",
+    });
   const key = await capabilitiesKey(helperPath, rootPath);
   const known = key === null ? undefined : knownCapabilities.get(key);
   if (known !== undefined) return known;
@@ -412,7 +588,9 @@ export async function nativeFilePublicationCapabilities(helperPath: string, root
   try {
     capabilities = decodeCapabilities(reply);
   } catch {
-    throw new NativeFilePublicationError("Invalid native publication capability reply.", null);
+    throw new NativeFilePublicationError({
+      message: "Invalid native publication capability reply.",
+    });
   }
   if (key !== null) knownCapabilities.set(key, capabilities);
   return capabilities;
@@ -421,19 +599,20 @@ function validatePaths(
   paths: Pick<NativeFileBinding, "rootPath" | "parentRelativePath" | "recordPath">,
 ) {
   if (!NodePath.isAbsolute(paths.rootPath) || !NodePath.isAbsolute(paths.recordPath))
-    throw new NativeFilePublicationError("Native roots must be canonical absolute paths.", null);
+    throw new NativeFilePublicationError({
+      message: "Native roots must be canonical absolute paths.",
+    });
   const components = paths.parentRelativePath.split(
     HostProcess.Platform.defaultValue() === "win32" ? /[\\/]/u : "/",
   );
   if (NodePath.isAbsolute(paths.parentRelativePath) || components.some((part) => part === ".."))
-    throw new NativeFilePublicationError(
-      "Parent must be a canonical root-relative directory.",
-      null,
-    );
+    throw new NativeFilePublicationError({
+      message: "Parent must be a canonical root-relative directory.",
+    });
   if (
     [paths.rootPath, paths.parentRelativePath, paths.recordPath].some((path) => path.includes("\0"))
   )
-    throw new NativeFilePublicationError("Invalid native binding path.", null);
+    throw new NativeFilePublicationError({ message: "Invalid native binding path." });
 }
 export async function bindNativeFilePublication(
   helperPath: string,
@@ -460,10 +639,10 @@ export async function bindNativeFilePublication(
     ]),
   );
   if (result.code !== 0 || !result.binding.root || !result.binding.parent || !result.binding.record)
-    throw new NativeFilePublicationError(
-      `Native binding refused (${result.codeDomain}:${result.code}).`,
+    throw new NativeFilePublicationError({
+      message: `Native binding refused (${result.codeDomain}:${result.code}).`,
       result,
-    );
+    });
   const identity = (entry: NativeFileIdentity): NativeFileIdentity => ({
     dev: entry.dev,
     ino: entry.ino,
@@ -523,10 +702,10 @@ export async function bindNativeFilePublicationParent(
     ]),
   );
   if (result.code !== 0 || !result.binding.root || !result.binding.parent)
-    throw new NativeFilePublicationError(
-      `Native parent binding refused (${result.codeDomain}:${result.code}).`,
+    throw new NativeFilePublicationError({
+      message: `Native parent binding refused (${result.codeDomain}:${result.code}).`,
       result,
-    );
+    });
   return {
     rootPath,
     parentRelativePath,
@@ -545,7 +724,9 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   validatePaths({ ...binding, recordPath: binding.rootPath });
   const separators = HostProcess.Platform.defaultValue() === "win32" ? /[\\/:\0]/u : /[/\0]/u;
   if (!name || name === "." || name === ".." || separators.test(name))
-    throw new NativeFilePublicationError("Native directory names must be single components.", null);
+    throw new NativeFilePublicationError({
+      message: "Native directory names must be single components.",
+    });
   return [
     "--directory=1",
     operation,
@@ -631,17 +812,15 @@ async function nativePrivateRetentionDirectory(
   create: boolean,
 ): Promise<string> {
   if (!NodePath.isAbsolute(absolutePath) || absolutePath.includes("\0"))
-    throw new NativeFilePublicationError(
-      "Retention directory must be an absolute host-owned path.",
-      null,
-    );
+    throw new NativeFilePublicationError({
+      message: "Retention directory must be an absolute host-owned path.",
+    });
   const destination = NodePath.normalize(absolutePath);
   const parent = NodePath.dirname(destination);
   if (parent === destination)
-    throw new NativeFilePublicationError(
-      "A volume root cannot be a private retention directory.",
-      null,
-    );
+    throw new NativeFilePublicationError({
+      message: "A volume root cannot be a private retention directory.",
+    });
   if (await alreadyPrivate(destination)) return destination;
   // Taken before the helper looks: a change after it moves the change time past this.
   const before = await privateKey(destination);
@@ -684,10 +863,10 @@ async function nativePrivateRetentionDirectory(
         ? result.flush.sourceDirectory > 0 || result.flush.destinationDirectory > 0
         : result.flush.sourceDirectory !== 0 || result.flush.destinationDirectory !== 0))
   )
-    throw new NativeFilePublicationError(
-      `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
+    throw new NativeFilePublicationError({
+      message: `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
       result,
-    );
+    });
   // Kept only for the very folder the helper looked at, found already standing. Windows
   // identities are not Node's, so there the folder must stand unchanged across the check.
   if (
@@ -708,7 +887,9 @@ function nativeFilePublicationArguments(
   for (const name of [sourceName, destinationName]) {
     const separators = HostProcess.Platform.defaultValue() === "win32" ? /[\\/:\0]/u : /[/\0]/u;
     if (!name || name === "." || name === ".." || separators.test(name))
-      throw new NativeFilePublicationError("Native entry names must be single components.", null);
+      throw new NativeFilePublicationError({
+        message: "Native entry names must be single components.",
+      });
   }
   return [
     "--protocol=1",
@@ -727,13 +908,6 @@ function nativeFilePublicationArguments(
     destinationName,
   ];
 }
-export async function runNativeFilePublication(
-  helperPath: string,
-  request: NativeFilePublicationRequest,
-) {
-  return parseResult(await invokeNativeHelper(helperPath, nativeFilePublicationArguments(request)));
-}
-
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {
   readonly processId?: number;
@@ -783,12 +957,13 @@ export async function withNativeFilePublicationLease<T>(
     bindings.length === 0 ||
     bindings.length > NATIVE_LEASE_FOLDER_LIMIT
   )
-    throw new NativeFilePublicationError(
-      "A publication lease needs an absolute host helper and 1–256 bound parents.",
-      null,
-    );
+    throw new NativeFilePublicationError({
+      message: "A publication lease needs an absolute host helper and 1–256 bound parents.",
+    });
   if (options.signal?.aborted)
-    throw new NativeFilePublicationError("Publication lease acquisition cancelled.", null);
+    throw new NativeFilePublicationError({
+      message: "Publication lease acquisition cancelled.",
+    });
   const arguments_ = ["--lease=1", options.mode];
   for (const binding of bindings) {
     validatePaths({ ...binding, recordPath: binding.rootPath });
@@ -823,7 +998,7 @@ export async function withNativeFilePublicationLease<T>(
       }
     | undefined;
   const failProtocol = (message: string) => {
-    protocolError ??= new NativeFilePublicationError(message, null);
+    protocolError ??= new NativeFilePublicationError({ message });
     if (!acquired) ready.reject(protocolError);
   };
   child.stdout.setEncoding("utf8");
@@ -852,7 +1027,9 @@ export async function withNativeFilePublicationLease<T>(
             );
           } else if (acquisitionCancelled) {
             ready.reject(
-              new NativeFilePublicationError("Publication lease acquisition cancelled.", null),
+              new NativeFilePublicationError({
+                message: "Publication lease acquisition cancelled.",
+              }),
             );
           } else {
             acquired = true;
@@ -876,10 +1053,10 @@ export async function withNativeFilePublicationLease<T>(
           )
             command.result.reject(
               protocolError ??
-                new NativeFilePublicationError(
-                  "Native command did not retire with a complete reply; namespace outcome unknown.",
-                  null,
-                ),
+                new NativeFilePublicationError({
+                  message:
+                    "Native command did not retire with a complete reply; namespace outcome unknown.",
+                }),
             );
           else command.result.resolve(command.reply);
         } else if (pending && !pending.reply) {
@@ -891,6 +1068,7 @@ export async function withNativeFilePublicationLease<T>(
     }
   });
   child.on("error", (error) => {
+    if (child.pid === undefined) helperLaunchFailed(helperPath);
     failProtocol(`Native lease process failed: ${error.message}`);
   });
   child.stdin.on("error", (error) => {
@@ -911,10 +1089,9 @@ export async function withNativeFilePublicationLease<T>(
       pending.retired.resolve();
       pending.result.reject(
         protocolError ??
-          new NativeFilePublicationError(
-            "Native lease ended before command retirement; namespace outcome unknown.",
-            null,
-          ),
+          new NativeFilePublicationError({
+            message: "Native lease ended before command retirement; namespace outcome unknown.",
+          }),
       );
       pending = undefined;
     }
@@ -924,7 +1101,9 @@ export async function withNativeFilePublicationLease<T>(
     if (!acquired) {
       acquisitionCancelled = true;
       ready.reject(
-        new NativeFilePublicationError("Publication lease acquisition cancelled.", null),
+        new NativeFilePublicationError({
+          message: "Publication lease acquisition cancelled.",
+        }),
       );
       child.kill();
     }
@@ -955,18 +1134,18 @@ export async function withNativeFilePublicationLease<T>(
           held.parentIdentity.ino === requiredRecord.ino,
       );
     if ((parentRequired && !covered) || !recordCovered)
-      throw new NativeFilePublicationError(
-        "Namespace mutation requires an exclusive lease on every actual parent.",
-        null,
-      );
+      throw new NativeFilePublicationError({
+        message: "Namespace mutation requires an exclusive lease on every actual parent.",
+      });
     if (pending)
-      throw new NativeFilePublicationError(
-        "Native commands must retire serially inside a publication lease.",
-        null,
-      );
+      throw new NativeFilePublicationError({
+        message: "Native commands must retire serially inside a publication lease.",
+      });
     const payload = Buffer.from(`${arguments_.join("\0")}\0`, "utf8");
     if (payload.length > 65536)
-      throw new NativeFilePublicationError("Native command frame exceeds the bound.", null);
+      throw new NativeFilePublicationError({
+        message: "Native command frame exceeds the bound.",
+      });
     const frame = Buffer.allocUnsafe(payload.length + 4);
     frame.writeUInt32BE(payload.length);
     payload.copy(frame, 4);
@@ -986,7 +1165,9 @@ export async function withNativeFilePublicationLease<T>(
       if (!alive || !acquired || releasing || protocolError)
         throw (
           protocolError ??
-          new NativeFilePublicationError("Native publication ownership is not held.", null)
+          new NativeFilePublicationError({
+            message: "Native publication ownership is not held.",
+          })
         );
     },
     run: async (request) =>
@@ -1003,10 +1184,9 @@ export async function withNativeFilePublicationLease<T>(
           NodePath.join(held.rootPath, held.parentRelativePath) === directory,
       );
       if (!binding || !name || name === "." || name === ".." || /[/\\:\0]/u.test(name))
-        throw new NativeFilePublicationError(
-          "Removal needs a held directory and a single name.",
-          null,
-        );
+        throw new NativeFilePublicationError({
+          message: "Removal needs a held directory and a single name.",
+        });
       return runArguments(
         ["--remove=1", operation, binding.parentIdentity.dev, binding.parentIdentity.ino, name],
         binding,
@@ -1033,7 +1213,9 @@ export async function withNativeFilePublicationLease<T>(
       // oxlint-disable-next-line no-unsafe-finally -- Failed lease retirement must override the body result; publication cannot report success.
       throw (
         protocolError ??
-        new NativeFilePublicationError("Native publication lease failed to retire.", null)
+        new NativeFilePublicationError({
+          message: "Native publication lease failed to retire.",
+        })
       );
   }
 }
@@ -1056,10 +1238,10 @@ export async function removeNativeRetainedEntry(
       ? result.flush.sourceDirectory > 0
       : result.flush.sourceDirectory !== 0)
   )
-    throw new NativeFilePublicationError(
-      `Retained removal refused (${result.codeDomain}:${result.code}, flush=${result.flush.sourceDirectory}).`,
+    throw new NativeFilePublicationError({
+      message: `Retained removal refused (${result.codeDomain}:${result.code}, flush=${result.flush.sourceDirectory}).`,
       result,
-    );
+    });
   const current =
     HostProcess.Platform.defaultValue() === "win32"
       ? await import("./WindowsNativeFile.ts").then(({ windowsFileIdentity }) =>
@@ -1070,10 +1252,10 @@ export async function removeNativeRetainedEntry(
     String(current?.dev) !== result.binding.parent?.dev ||
     String(current?.ino) !== result.binding.parent?.ino
   )
-    throw new NativeFilePublicationError(
-      "Retained folder moved during removal; journal settlement is pending.",
+    throw new NativeFilePublicationError({
+      message: "Retained folder moved during removal; journal settlement is pending.",
       result,
-    );
+    });
 }
 
 const LinuxFolderInquiry = Schema.Struct({
@@ -1095,6 +1277,7 @@ const LinuxFolderInquiry = Schema.Struct({
         Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u),
       ),
       fileId: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
+      generation: Schema.String.check(Schema.isPattern(/^\d{1,10}$/u)),
       subvolumeId: Schema.NullOr(Schema.String.check(Schema.isPattern(/^\d{1,40}$/u))),
     }),
   ),
@@ -1108,7 +1291,7 @@ export async function nativeLinuxFileIdentity(
   directoryOnly: boolean,
   helperPath?: string,
 ) {
-  const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
+  const helper = helperPath ?? (await nativeFilePublicationHelper());
   if (helper === undefined) return null;
   const { identity, reason } = decodeLinuxFolderInquiry(
     await invokeNativeHelper(helper, [

@@ -1,9 +1,6 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  providerInstanceEntriesFor,
-  resolveDefaultModelSettingsSelection,
-} from "./providerInstances";
+import { providerInstanceEntriesFor } from "./providerInstances";
 
 function provider(input: {
   provider: ProviderDriverKind;
@@ -37,14 +34,6 @@ function provider(input: {
   };
 }
 
-const model = (slug: string, isCustom = false, isDefault = false) => ({
-  slug,
-  name: slug,
-  isCustom,
-  ...(isDefault ? { isDefault: true } : {}),
-  capabilities: {},
-});
-
 describe("providerInstanceEntriesFor", () => {
   it("uses canonical provider order and keeps custom instances beneath their default", () => {
     const providers = [
@@ -73,78 +62,5 @@ describe("providerInstanceEntriesFor", () => {
       "antigravity_personal",
       "cursor",
     ]);
-  });
-});
-
-// regression: 67ab5e432f fix(settings): keep the default model's reasoning
-describe("resolveDefaultModelSettingsSelection", () => {
-  const claude = ProviderInstanceId.make("claudeAgent");
-  const stored = {
-    instanceId: claude,
-    model: "claude-opus-4-8",
-    options: [{ id: "effort", value: "high" }],
-  };
-  const codexReady = provider({
-    provider: ProviderDriverKind.make("codex"),
-    instanceId: "codex",
-    models: [model("gpt-5.6", false, true)],
-  });
-
-  // regression: 67ab5e432f fix(settings): keep the default model's reasoning effort as chosen (#394)
-  it.each([{ enabled: false }, { availability: "unavailable" as const }])(
-    "keeps showing the saved default, not a stand-in, when its provider is %o",
-    (state) => {
-      const providers = [
-        codexReady,
-        provider({
-          provider: ProviderDriverKind.make("claudeAgent"),
-          instanceId: "claudeAgent",
-          models: [model("claude-opus-4-8")],
-          ...state,
-        }),
-      ];
-
-      expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
-        selection: stored,
-        storedUnavailable: true,
-      });
-    },
-  );
-
-  it("shows a saved default whose provider is available as-is", () => {
-    const providers = [
-      codexReady,
-      provider({
-        provider: ProviderDriverKind.make("claudeAgent"),
-        instanceId: "claudeAgent",
-        models: [model("claude-opus-4-8")],
-      }),
-    ];
-
-    expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
-      selection: stored,
-      storedUnavailable: false,
-    });
-  });
-
-  it("keeps a saved default whose provider instance is gone", () => {
-    expect(resolveDefaultModelSettingsSelection([codexReady], stored)).toEqual({
-      selection: stored,
-      storedUnavailable: true,
-    });
-  });
-
-  it("does not call a saved default unavailable before any provider is reported", () => {
-    expect(resolveDefaultModelSettingsSelection([], stored)).toEqual({
-      selection: null,
-      storedUnavailable: false,
-    });
-  });
-
-  it("shows the fallback new threads would use when nothing is saved", () => {
-    expect(resolveDefaultModelSettingsSelection([codexReady], null)).toEqual({
-      selection: { instanceId: "codex", model: "gpt-5.6" },
-      storedUnavailable: false,
-    });
   });
 });

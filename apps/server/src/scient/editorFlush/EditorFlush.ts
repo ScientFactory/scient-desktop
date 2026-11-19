@@ -23,9 +23,18 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { identifyFolder, locateFile, type FolderIdentity } from "./folderIdentity.ts";
+
+class FolderIdentityError extends Schema.TaggedError<FolderIdentityError>()("FolderIdentityError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "The folder could not be found or examined.";
+  }
+}
 
 export interface EditorFlushFolderInput {
   /** Absolute path of the checkout. */
@@ -353,9 +362,10 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
 
   const flushFolder: EditorFlush["Service"]["flushFolder"] = Effect.fn("EditorFlush.flushFolder")(
     function* (input) {
-      const identity = yield* Effect.tryPromise(() =>
-        identifyFolder(input.checkoutRoot, input.folder),
-      ).pipe(Effect.option);
+      const identity = yield* Effect.tryPromise({
+        try: () => identifyFolder(input.checkoutRoot, input.folder),
+        catch: (cause) => new FolderIdentityError({ cause }),
+      }).pipe(Effect.option);
       if (identity._tag === "None")
         return {
           _tag: "FolderUnavailable",

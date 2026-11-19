@@ -11,14 +11,14 @@ export const SCIENT_PRODUCT_NAME = "Scient";
  * no longer matches upstream text fails the agent-copy test.
  */
 export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, string]> = [
-  // Scient offers no T3 Connect tunnel.
+  // Scient offers no T3 Connect tunnel; a webhook needs the environment's own public URL.
   [
-    "No `webhookUrl`: T3 Connect remote access is off.",
-    "No `webhookUrl`: this environment has no public URL; the user must make one reachable, such as with Tailscale or their own HTTPS proxy.",
+    "only creation returns it, with T3 Connect and run permission.",
+    "only creation returns it, given run permission and a public URL for this environment, such as through Tailscale or the user's own HTTPS proxy.",
   ],
   [
-    "Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",
-    "Absent: this environment has no public URL; the user must make one reachable, such as with Tailscale or their own HTTPS proxy.",
+    "Creation may omit it without T3 Connect remote access or run permission.",
+    "Creation may omit it without run permission or a public URL for this environment.",
   ],
   // A thread credential reaches only its own project's threads.
   [
@@ -34,19 +34,16 @@ export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, stri
     "`projectId`: one project, else yours, else all outside a thread.",
     "`projectId`: inside a thread, only yours; outside a thread, one project, else all.",
   ],
-  // Keys worth keeping go into Scient Accounts; request_secret stays for one-time secrets.
+  // API keys and tokens go into Scient Accounts; request_secret stays for codes used once.
   [
     "only the user can give: call `request_secret`, not a chat ask or a handoff.",
-    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key to keep, or `request_secret` for a one-time one, not a chat ask or a handoff.",
+    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key or token, `request_secret` for a one-time code, not a chat ask or a handoff.",
   ],
-  [
-    "Asked how to give one: call now.",
-    "Asked how to give one: ask now with this or `scient_account_add`.",
-  ],
+  ["Asked how: call now.", "Asked how: ask now; API keys: `scient_account_add`."],
   // Scient chat renders chart and diagram fences inline.
   [
-    "show any visual the user asks for here: pass its HTML to `html_preview`, then `html_render`.",
-    "show any visual the user asks for here: a fenced `mermaid`, `vega-lite` or `plotly` block when one fits, otherwise pass its HTML to `html_preview`, then `html_render`.",
+    "show any visual the user asks for here: pass an HTML file path or inline HTML to `html_preview`, then `html_render`.",
+    "show any visual the user asks for here: a fenced `mermaid`, `vega-lite` or `plotly` block when one fits, otherwise pass an HTML file path or inline HTML to `html_preview`, then `html_render`.",
   ],
 ];
 

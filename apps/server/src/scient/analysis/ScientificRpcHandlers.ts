@@ -7,6 +7,7 @@
  */
 import { WS_METHODS, WsRepositoryRpcGroup, WsScientificRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import type { makeComputeConsoleNotebook } from "../compute/ComputeConsoleNotebook.ts";
@@ -15,7 +16,10 @@ import type * as NotebookStore from "../notebook/NotebookStore.ts";
 import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type * as DataTables from "../data/DataTables.ts";
+import type { ResultOperations } from "../results/resultOperations.ts";
 import type * as AnalysisService from "./AnalysisService.ts";
+
+const ACTIVE_WORK_CHECK_INTERVAL = "1 second";
 
 export const makeScientificRpcHandlers = ({
   observeRpcEffect,
@@ -27,6 +31,7 @@ export const makeScientificRpcHandlers = ({
   saveConsoleNotebook,
   computeNotebookOutputs,
   dataTables,
+  results,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStreamEffect"> & {
   readonly analysis: AnalysisService.AnalysisService["Service"];
   readonly computeGateway: ComputeRpcGateway;
@@ -35,6 +40,7 @@ export const makeScientificRpcHandlers = ({
   readonly saveConsoleNotebook: ReturnType<typeof makeComputeConsoleNotebook>;
   readonly computeNotebookOutputs: ReturnType<typeof makeComputeNotebookOutputs>;
   readonly dataTables: DataTables.DataTables["Service"];
+  readonly results: ResultOperations;
 }) =>
   WsScientificRpcGroup.of({
     [WS_METHODS.analysisStartRun]: (input) =>
@@ -77,11 +83,19 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeInspectRuntimes, computeGateway.inspectRuntimes(input), {
         "rpc.aggregate": "compute",
       }),
-    [WS_METHODS.computeActiveWork]: () =>
-      observeRpcEffect(
-        WS_METHODS.computeActiveWork,
-        Effect.all([computeGateway.activeWork, analysis.activeRunCount]).pipe(
-          Effect.map(([sessions, files]) => ({ count: sessions + files })),
+    // Counting reads memory only, so it checks here each second and sends only changes.
+    [WS_METHODS.subscribeComputeActiveWork]: () =>
+      observeRpcStreamEffect(
+        WS_METHODS.subscribeComputeActiveWork,
+        Effect.succeed(
+          Stream.tick(ACTIVE_WORK_CHECK_INTERVAL).pipe(
+            Stream.mapEffect(() =>
+              Effect.all([computeGateway.activeWork, analysis.activeRunCount]),
+            ),
+            Stream.map(([sessions, files]) => sessions + files),
+            Stream.changes,
+            Stream.map((count) => ({ count })),
+          ),
         ),
         { "rpc.aggregate": "compute" },
       ),
@@ -167,6 +181,38 @@ export const makeScientificRpcHandlers = ({
       }),
     [WS_METHODS.computeSaveOutput]: (input) =>
       observeRpcEffect(WS_METHODS.computeSaveOutput, saveComputeOutput(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsResolve]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsResolve, results.resolve(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsList]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsList, results.list(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsPlaceFigure]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsPlaceFigure, results.placeFigure(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsRerun]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsRerun, results.rerun(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsPlaceLatex]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsPlaceLatex, results.placeLatex(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsPlacements]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsPlacements, results.placements(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsUpdateFiles]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsUpdateFiles, results.updateFiles(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeResultsUndoUpdate]: (input) =>
+      observeRpcEffect(WS_METHODS.computeResultsUndoUpdate, results.undoUpdate(input), {
         "rpc.aggregate": "compute",
       }),
     [WS_METHODS.computeSubmitCells]: (input) =>

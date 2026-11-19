@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
@@ -115,7 +116,11 @@ export default function() {
           "--extension",
           extension,
         ],
-        env: { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: root + "/profile" },
+        env: {
+          PATH: (yield* HostProcess.Environment).PATH,
+          HOME: root,
+          PI_CODING_AGENT_DIR: root + "/profile",
+        },
       });
       const inventory = yield* client.getAvailableModels();
       expect(inventory.models.find((model) => model.provider === "scient_xai")).toMatchObject({

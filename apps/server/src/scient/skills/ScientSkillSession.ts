@@ -11,11 +11,22 @@ import type { ProviderDriverKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import type { AgentSkillCatalogStatus } from "../operations/AgentInvocationContext.ts";
+import * as PersonalSkills from "./PersonalSkills.ts";
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
+
+class ProjectSkillReadError extends Schema.TaggedError<ProjectSkillReadError>()(
+  "ProjectSkillReadError",
+  { projectRoot: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not read the project skills in ${this.projectRoot}.`;
+  }
+}
 
 /**
  * Every built-in provider has an explicit MCP transport decision. This is
@@ -108,6 +119,7 @@ export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSess
 const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
   const skillRegistry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+  const personalSkills = yield* PersonalSkills.PersonalSkills;
 
   const resolveRelease = (
     registry: ScientSkillRegistry.ScientSkillCatalogView,
@@ -136,6 +148,8 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
   const resolve: ScientSkillSessionPlannerShape["resolve"] = Effect.fn(
     "ScientSkillSessionPlanner.resolve",
   )(function* (input) {
+    // Personal skills are folders the user or an agent may have just changed.
+    yield* personalSkills.refresh;
     const { snapshot, snapshotIsComplete } = yield* policy.readState;
     const registry = yield* skillRegistry.current;
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
@@ -160,7 +174,10 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     let projectRoot: string | undefined;
     if (input.projectRoot) {
       const requestedProjectRoot = input.projectRoot;
-      const lock = yield* Effect.tryPromise(() => readProjectSkillLock(requestedProjectRoot)).pipe(
+      const lock = yield* Effect.tryPromise({
+        try: () => readProjectSkillLock(requestedProjectRoot),
+        catch: (cause) => new ProjectSkillReadError({ projectRoot: requestedProjectRoot, cause }),
+      }).pipe(
         Effect.orElseSucceed(() => ({
           status: "invalid" as const,
           rootPath: requestedProjectRoot,
@@ -199,9 +216,10 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         }
       }
 
-      const projectCatalog: ProjectSkillCatalog = yield* Effect.tryPromise(() =>
-        loadProjectSkillCatalog(requestedProjectRoot),
-      ).pipe(
+      const projectCatalog: ProjectSkillCatalog = yield* Effect.tryPromise({
+        try: () => loadProjectSkillCatalog(requestedProjectRoot),
+        catch: (cause) => new ProjectSkillReadError({ projectRoot: requestedProjectRoot, cause }),
+      }).pipe(
         Effect.catch(() =>
           Effect.sync(() => {
             projectCatalogReadFailed = true;
@@ -349,7 +367,3 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
 });
 
 export const layer = Layer.effect(ScientSkillSessionPlanner, make());
-
-export const live = layer.pipe(
-  Layer.provideMerge(Layer.merge(ScientSkillRegistry.layer, ScientSkillPolicy.layer)),
-);

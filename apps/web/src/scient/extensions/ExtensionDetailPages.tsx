@@ -2,6 +2,7 @@ import ChatMarkdown from "../../components/ChatMarkdown";
 import { ConnectorToolsList } from "./ConnectorToolsList";
 import { PluginContents } from "./PluginContents";
 import {
+  AccountId,
   type ConnectorSummary,
   type ConnectorTestResult,
   type DiscoverCatalog,
@@ -9,6 +10,7 @@ import {
   type ExtensionComponent,
   ExtensionsError,
   type ProjectId,
+  type ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProviderMcpServer,
   type ServerProviderPlugin,
@@ -25,7 +27,13 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { toastManager } from "../../components/ui/toast";
+import { shellEnvironment } from "../../state/shell";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { LocalSetupDialog } from "./LocalSetupFields";
+
 import { WorksWithValue } from "./WorksWith";
+import { AddForAgents, useConnectorAgents } from "./AgentPicker";
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -42,28 +50,43 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
-import { ActionFeedback, mcpServerSummary } from "./ExtensionItems";
 import {
-  BackLink,
+  ActionFeedback,
+  connectorProblem,
+  LocalConnectorMenuItems,
+  mcpServerSummary,
+} from "./ExtensionItems";
+import {
+  fixConnectorPrompt,
+  makeFromEntryPrompt,
+  useConnectorAgentChat,
+} from "./connectorAgentChat";
+import { ErrorNote } from "./ExtensionsFeedback";
+import { siteHost } from "./LocalSetupFields";
+import { useSignIn } from "../accounts/useSignIn";
+import {
+  BackToList,
   ExtensionsPage,
   GHOST_LINK_CLASS,
   MutedLine,
   SECTION_HEADING_CLASS,
+  useBackToList,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
 import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
 import { extensionsDiscoverEntry } from "./extensionsState";
 import {
   type ProviderExtensionGroup,
-  catalogEntries,
   providerExtensionAudience,
   collectProviderExtensionGroups,
   connectorActions,
   connectorAuthLabel,
+  connectorFacts,
   connectorSourceLabel,
   entryName,
   entryNeedsSetup,
   entryFacts,
+  providerServerConnectLabel,
   providerServerDisplayName,
   entrySourceLabel,
   entryTagline,
@@ -73,18 +96,21 @@ import {
   TEST_OUTCOME_LABELS,
   urlHost,
   workspaceLabel,
+  connectorAudience,
 } from "./extensionsView";
+import { useInstalledEntries } from "./installedEntries";
 import { providerInventoryMessage } from "./providerInventory";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 
 type BackTo = "discover" | "installed";
 
+/** Back to the list the page was opened from; `to` is used when it was opened directly. */
 function DetailBack({ to }: { readonly to: BackTo }) {
   return to === "discover" ? (
-    <BackLink to="/settings/extensions">Discover</BackLink>
+    <BackToList fallback="/settings/extensions" fallbackLabel="Discover" />
   ) : (
-    <BackLink to="/settings/extensions/installed">Installed</BackLink>
+    <BackToList fallback="/settings/extensions/installed" fallbackLabel="Installed" />
   );
 }
 
@@ -312,9 +338,9 @@ function formatDate(iso: string | undefined): string | undefined {
   return iso === undefined ? undefined : DATE_FORMAT.format(new Date(iso));
 }
 
-/** Curated categories by their section titles; "featured" is a shelf, not a category. */
+/** Curated categories by their section titles; "most-used" is a shelf, not a category. */
 function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalog | null) {
-  const categories = entry?.categories.filter((category) => category !== "featured") ?? [];
+  const categories = entry?.categories.filter((category) => category !== "most-used") ?? [];
   if (categories.length === 0) return undefined;
   return categories
     .map(
@@ -449,16 +475,30 @@ function ToolsSection({
 
 function connectionState(connector: ConnectorSummary): string {
   if (connector.status === "needs-auth") return "Needs sign-in";
-  if (connector.status === "needs-credential") return "Key missing";
+  if (connector.status === "needs-credential") {
+    return connector.auth.type === "source-control" ? "Account missing" : "Key missing";
+  }
+  if (connector.local !== undefined) return "Runs on this computer";
   return connector.auth.type === "none" ? "No account needed" : "Signed in";
 }
 
 function connectionDetail(connector: ConnectorSummary, busy: string | null): string {
   if (busy === "sign-in") return "Opening sign-in…";
   if (connector.status === "needs-credential") {
+    if (connector.auth.type === "source-control") {
+      return `Source Control no longer has ${connector.auth.account}. Sign in to GitHub again.`;
+    }
     return connector.auth.type === "credential" && connector.auth.storage === "bound"
       ? "The secret this service used is no longer available."
       : "The stored key is gone. Remove this service and add it again.";
+  }
+  if (connector.local !== undefined) {
+    const { running, missing, problem } = connector.local;
+    if (problem !== undefined) return problem;
+    if (missing.length > 0) return `Needs ${missing.join(", ")}`;
+    return running === 0
+      ? "Starts when an agent uses it"
+      : `${running} ${running === 1 ? "copy" : "copies"} running, one per chat`;
   }
   return connector.auth.type === "none"
     ? (urlHost(connector.url) ?? connector.url)
@@ -466,7 +506,7 @@ function connectionDetail(connector: ConnectorSummary, busy: string | null): str
 }
 
 /**
- * "Available in" with the projects it names. A saved project deleted since
+ * "Projects" with the projects it names. A saved project deleted since
  * shows as "Deleted project". Every change leaves deleted projects out: the
  * server refuses a list that names one, and dropping it only narrows where
  * the service is available.
@@ -496,9 +536,9 @@ function AvailabilityRows({
     sendProjects(enabled ? [...others, projectId] : others);
   };
   return (
-    <div role="group" aria-label="Available in" className="divide-y divide-border">
+    <div role="group" aria-label="Projects" className="divide-y divide-border">
       <CardRow>
-        <span className="min-w-0 flex-1 text-sm text-foreground">Available in</span>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Projects</span>
         <span className="w-44">
           <NativeSelect
             size="sm"
@@ -579,9 +619,26 @@ function ConnectorDetail({
   readonly entry: DiscoverEntry | undefined;
   readonly back: BackTo;
 }) {
-  const { inventory, catalog } = useExtensionsEnvironment();
+  const { inventory, catalog, environmentId, canWrite } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
+  const backToList = useBackToList();
   const allowed = connectorActions(connector);
+  const [editing, setEditing] = useState(false);
+  const startChat = useConnectorAgentChat(environmentId);
+  const signInPerson = useSignIn(environmentId);
+  const problem = connectorProblem(connector);
+  const local = connector.local;
+  const signIn = local?.signIn;
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
+  const revealFolder = async (folder: string) => {
+    const result = await openInEditor({
+      environmentId,
+      input: { cwd: folder, editor: "file-manager", reveal: true },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Unable to show the folder", description: folder });
+    }
+  };
   const name = entry ? entryName(entry) : connector.displayName;
   const iconUrl = entry?.iconUrl ?? connector.iconUrl;
   const tagline = (entry ? entryTagline(entry) : undefined) ?? connector.description;
@@ -601,7 +658,12 @@ function ConnectorDetail({
             <Button
               variant="destructive-outline"
               disabled={actions.locked}
-              onClick={() => void actions.remove()}
+              onClick={() =>
+                // Its own page has nothing left to show; a catalog entry's page shows the entry again.
+                void actions.remove().then((removed) => {
+                  if (removed && back === "installed") backToList();
+                })
+              }
             >
               Remove
             </Button>
@@ -622,15 +684,11 @@ function ConnectorDetail({
             </div>
             {allowed.signIn ? (
               <PrimaryAction
-                icon={allowed.signIn === "sign-in" ? LogInIcon : RefreshCwIcon}
+                icon={LogInIcon}
                 disabled={!actions.canSignIn}
                 onClick={() => void actions.signIn()}
               >
-                {actions.busy === "sign-in"
-                  ? "Opening…"
-                  : allowed.signIn === "sign-in"
-                    ? "Sign in"
-                    : "Reconnect"}
+                {actions.busy === "sign-in" ? "Opening…" : "Sign in"}
               </PrimaryAction>
             ) : null}
             <MoreMenu label={`More for ${name} connection`}>
@@ -645,8 +703,41 @@ function ConnectorDetail({
               >
                 Test
               </MenuItem>
+              {connector.local !== undefined ? (
+                <>
+                  <MenuItem disabled={actions.locked} onClick={() => void actions.restart()}>
+                    Restart
+                  </MenuItem>
+                  <MenuItem onClick={() => void revealFolder(connector.local!.directory)}>
+                    Show in folder
+                  </MenuItem>
+                  <LocalConnectorMenuItems connector={connector} actions={actions} />
+                </>
+              ) : null}
             </MoreMenu>
           </CardRow>
+          {local !== undefined && (local.changedBy !== undefined || local.forkedFrom) ? (
+            <CardRow>
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                {[
+                  local.forkedFrom ? `Your copy of ${local.forkedFrom}` : null,
+                  `Changed by ${local.changedBy === "agent" ? "an agent" : "you"} on ${formatDate(connector.updatedAt)}`,
+                ]
+                  .filter(Boolean)
+                  .join(". ")}
+              </span>
+              {local.canUndo ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={actions.locked}
+                  onClick={() => void actions.undo()}
+                >
+                  Undo last change
+                </Button>
+              ) : null}
+            </CardRow>
+          ) : null}
           <CardRow>
             <span className="min-w-0 flex-1 text-sm text-foreground">Use with agents</span>
             <Switch
@@ -656,6 +747,12 @@ function ConnectorDetail({
               onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
             />
           </CardRow>
+          <AgentRows
+            connector={connector}
+            name={name}
+            locked={actions.locked}
+            setAgents={actions.setAgents}
+          />
           <AvailabilityRows
             connector={connector}
             name={name}
@@ -663,8 +760,88 @@ function ConnectorDetail({
             setAvailability={actions.setAvailability}
           />
         </div>
-        {connector.lastError ? (
-          <p className="text-sm text-destructive-foreground">{connector.lastError}</p>
+        {problem !== undefined ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <ErrorNote message={problem} />
+            </div>
+            {local !== undefined && startChat !== undefined ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void startChat(
+                    fixConnectorPrompt(connector.displayName, connector.serverName, problem),
+                    "fix",
+                  )
+                }
+              >
+                Fix with an agent
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {local !== undefined && (local.setup.length > 0 || signIn !== undefined) ? (
+          <div className={CARD_CLASS}>
+            {signIn !== undefined ? (
+              <CardRow>
+                <span className="min-w-0 flex-1 text-sm text-foreground">
+                  Sign-in to {siteHost(signIn.site)}
+                </span>
+                <span className="truncate text-sm text-muted-foreground">
+                  {signIn.state === "missing"
+                    ? "Missing"
+                    : signIn.state === "needs-user"
+                      ? "Needs sign-in"
+                      : signIn.account}
+                </span>
+                {signIn.state === "needs-user" && signIn.accountId !== undefined ? (
+                  <Button
+                    size="sm"
+                    disabled={!canWrite || actions.locked}
+                    // The next time its session ends, the connector takes the one the person made.
+                    onClick={() => void signInPerson(AccountId.make(signIn.accountId!))}
+                  >
+                    Sign in
+                  </Button>
+                ) : null}
+              </CardRow>
+            ) : null}
+            {local.setup.map(({ field, value, account }) => (
+              <CardRow key={field.key}>
+                <span className="min-w-0 flex-1 text-sm text-foreground">{field.title}</span>
+                <span className="truncate text-sm text-muted-foreground">
+                  {field.sensitive
+                    ? (account ?? (field.required ? "Missing" : "Not set"))
+                    : value === undefined
+                      ? field.required
+                        ? "Missing"
+                        : "Not set"
+                      : Array.isArray(value)
+                        ? value.join(", ")
+                        : String(value)}
+                </span>
+              </CardRow>
+            ))}
+            <CardRow>
+              <span className="min-w-0 flex-1" />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canWrite}
+                onClick={() => setEditing(true)}
+              >
+                Edit setup
+              </Button>
+            </CardRow>
+          </div>
+        ) : null}
+        {editing && connector.local !== undefined ? (
+          <LocalSetupDialog
+            connector={{ ...connector, local: connector.local }}
+            environmentId={environmentId}
+            onClose={() => setEditing(false)}
+          />
         ) : null}
         <div className="grid gap-1 empty:hidden">
           <ActionFeedback feedback={actions.feedback} waitingForSignIn={actions.waitingForSignIn} />
@@ -680,16 +857,36 @@ function ConnectorDetail({
       <AboutCard
         rows={[
           fact("Added on", formatDate(connector.createdAt)),
-          ...entryFacts(entry),
+          ...connectorFacts(entry, connector),
           fact("Category", categoryLabel(entry, catalog)),
           fact("Website", entry?.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
           fact(
             "Repository",
             entry?.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
           ),
-          ["Works with", <WorksWithValue key="works-with" />],
-          ["Sign-in used", connectorAuthLabel(connector.auth)],
-          ["URL", <Mono key="url">{connector.url}</Mono>],
+          [
+            "Works with",
+            <WorksWithValue key="works-with" audience={connectorAudience(connector)} />,
+          ],
+          ...(connector.local === undefined
+            ? ([
+                // Connection already says when there is no sign-in.
+                connector.auth.type === "none"
+                  ? null
+                  : ["Sign-in used", connectorAuthLabel(connector.auth)],
+                ["URL", <Mono key="url">{connector.url}</Mono>],
+              ] satisfies ReadonlyArray<Fact | null>)
+            : [
+                fact("Version", connector.local.version),
+                fact("Author", connector.local.author),
+                fact(
+                  "Runs",
+                  connector.local.commandLine === undefined ? null : (
+                    <Mono key="runs">{connector.local.commandLine}</Mono>
+                  ),
+                ),
+                ["Folder", <Mono key="folder">{connector.local.directory}</Mono>] satisfies Fact,
+              ]),
           ["Server name", <Mono key="server-name">{connector.serverName}</Mono>],
           ["Source", connectorSourceLabel(source, curated, pluginName)],
         ]}
@@ -703,9 +900,9 @@ function ConnectorDetail({
  * entries carry its id, registry connectors are looked up by registry name.
  */
 function ConnectorDetailContent({ connectorId }: { readonly connectorId: string }) {
-  const { environmentId, inventory, inventoryError, catalog } = useExtensionsEnvironment();
+  const { environmentId, inventory, inventoryError } = useExtensionsEnvironment();
   const connector = inventory?.connectors.find((item) => item.connectorId === connectorId);
-  const fromCatalog = catalogEntries(catalog).find(
+  const fromCatalog = useInstalledEntries().find(
     (item) => item.installedConnectorId === connectorId,
   );
   const registryName =
@@ -753,11 +950,13 @@ function ServerDetail({
   onAddWithOptions,
 }: {
   readonly entry: DiscoverEntry;
-  readonly onAddWithOptions: () => void;
+  /** Opens the add form, for the chosen agents (absent: every agent). */
+  readonly onAddWithOptions: (agents?: ReadonlyArray<ProviderInstanceId>) => void;
 }) {
-  const { catalog, providers } = useExtensionsEnvironment();
+  const { catalog, providers, environmentId } = useExtensionsEnvironment();
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
   const actions = useAddEntry(entry);
+  const startChat = useConnectorAgentChat(environmentId);
   const name = entryName(entry);
   const tagline = entryTagline(entry);
   const catalogOnly = isCatalogOnlyEntry(entry);
@@ -771,16 +970,22 @@ function ServerDetail({
           tagline={tagline}
           actions={
             <>
-              <PrimaryAction
-                icon={PlusIcon}
+              <AddForAgents
+                name={name}
                 disabled={!actions.canAdd || actions.locked}
-                onClick={() => (entryNeedsSetup(entry) ? onAddWithOptions() : void actions.add())}
-              >
-                {actions.busy === "add" ? "Adding…" : "Add"}
-              </PrimaryAction>
-              {actions.canAdd ? (
+                onAdd={(agents) =>
+                  entryNeedsSetup(entry) ? onAddWithOptions(agents) : void actions.add(agents)
+                }
+                trigger={
+                  <Button size="sm" type="button" variant="ghost-primary" data-primary-action="">
+                    <PlusIcon aria-hidden />
+                    {actions.busy === "add" ? "Adding…" : "Add"}
+                  </Button>
+                }
+              />
+              {actions.canAdd && entry.localBundle === undefined ? (
                 <MoreMenu label={`More for ${name}`}>
-                  <MenuItem disabled={actions.locked} onClick={onAddWithOptions}>
+                  <MenuItem disabled={actions.locked} onClick={() => onAddWithOptions()}>
                     Add with options…
                   </MenuItem>
                 </MoreMenu>
@@ -793,10 +998,33 @@ function ServerDetail({
       feedback={
         <>
           {!actions.canAdd ? (
-            <MutedLine>
-              {entry.unsupportedReason ??
-                "Scient can't add this server: it has no remote endpoint to connect to."}
-            </MutedLine>
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <MutedLine>
+                  {entry.unsupportedReason ??
+                    "Scient can't add this server: it has no remote endpoint to connect to."}
+                </MutedLine>
+              </div>
+              {startChat !== undefined && !catalogOnly ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void startChat(
+                      makeFromEntryPrompt({
+                        title: name,
+                        registryName: entry.name,
+                        repositoryUrl: entry.repositoryUrl,
+                        reason: entry.unsupportedReason,
+                      }),
+                      "make",
+                    )
+                  }
+                >
+                  Make with an agent
+                </Button>
+              ) : null}
+            </div>
           ) : null}
           {entry.accountRequired === false ? <MutedLine>No account needed</MutedLine> : null}
           <ActionFeedback feedback={actions.feedback} />
@@ -850,13 +1078,81 @@ function ServerDetail({
 }
 
 /**
+ * Which agents get a connector: all of them, or the ones chosen here. An agent added later gets
+ * it only while "All agents" is set. The last chosen agent stays on; "Use with agents" turns the
+ * connector off for everyone.
+ */
+function AgentRows({
+  connector,
+  name,
+  locked,
+  setAgents,
+}: {
+  readonly connector: ConnectorSummary;
+  readonly name: string;
+  readonly locked: boolean;
+  readonly setAgents: ConnectorActionsState["setAgents"];
+}) {
+  const agents = useConnectorAgents();
+  if (agents.length <= 1 && connector.agents === undefined) return null;
+  const chosen = connector.agents ?? [];
+  const toggle = (instanceId: ProviderInstanceId, on: boolean) => {
+    const others = chosen.filter((id) => id !== instanceId);
+    void setAgents(on ? [...others, instanceId] : others);
+  };
+  return (
+    <div role="group" aria-label="Agents" className="divide-y divide-border">
+      <CardRow>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Agents</span>
+        <span className="w-44">
+          <NativeSelect
+            size="sm"
+            aria-label={`Which agents get ${name}`}
+            value={connector.agents === undefined ? "all" : "chosen"}
+            disabled={locked}
+            onChange={(event) =>
+              void setAgents(
+                event.target.value === "all" ? null : agents.map((agent) => agent.instanceId),
+              )
+            }
+          >
+            <option value="all">All agents</option>
+            <option value="chosen">Selected agents</option>
+          </NativeSelect>
+        </span>
+      </CardRow>
+      {connector.agents !== undefined
+        ? agents.map((agent) => {
+            const on = chosen.includes(agent.instanceId);
+            return (
+              <NestedRow key={agent.instanceId}>
+                <span className="min-w-0 truncate text-foreground">{agent.label}</span>
+                <Switch
+                  size="sm"
+                  checked={on}
+                  disabled={locked || (on && chosen.length === 1)}
+                  aria-label={`${on ? "Turn off" : "Turn on"} for ${agent.label}`}
+                  onCheckedChange={(checked) => toggle(agent.instanceId, Boolean(checked))}
+                />
+              </NestedRow>
+            );
+          })
+        : null}
+    </div>
+  );
+}
+
+/**
  * Any catalog or registry server by its exact name, looked up on the server
  * so entries no preview lists still open. Once added it is its connector.
  * "Add with options" stays open across that switch, for its sign-in step.
  */
 function ServerDetailContent({ name }: { readonly name: string }) {
   const { environmentId, callbackOrigin, inventory } = useExtensionsEnvironment();
-  const [withOptions, setWithOptions] = useState(false);
+  // The add form, with the agents chosen for it (none chosen: every agent).
+  const [withOptions, setWithOptions] = useState<{
+    readonly agents?: ReadonlyArray<ProviderInstanceId>;
+  } | null>(null);
   const lookup = useEnvironmentQuery(extensionsDiscoverEntry({ environmentId, input: { name } }));
   const entry = lookup.data;
   if (entry === null) {
@@ -884,17 +1180,21 @@ function ServerDetailContent({ name }: { readonly name: string }) {
           back="discover"
         />
       ) : (
-        <ServerDetail entry={entry} onAddWithOptions={() => setWithOptions(true)} />
+        <ServerDetail
+          entry={entry}
+          onAddWithOptions={(agents) => setWithOptions(agents === undefined ? {} : { agents })}
+        />
       )}
       {withOptions ? (
         <AddConnectorDialog
           open
           onOpenChange={(open) => {
-            if (!open) setWithOptions(false);
+            if (!open) setWithOptions(null);
           }}
           environmentId={environmentId}
           entry={entry}
           callbackOrigin={callbackOrigin}
+          agents={withOptions.agents}
         />
       ) : null}
     </>
@@ -909,12 +1209,15 @@ export function ServerDetailPage({ name }: { readonly name: string }) {
   );
 }
 
-type ComponentGroupLabel = "Skills" | "Connected services" | "Tools" | "Other";
+type ComponentGroupLabel = "Connected services" | "Tools" | "Other";
+/** A plugin's parts other than its skills, which have their own section. */
+type PluginPart = ExtensionComponent & {
+  readonly type: Exclude<ExtensionComponent["type"], "skill">;
+};
 
 const COMPONENT_KINDS: Readonly<
-  Record<ExtensionComponent["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
+  Record<PluginPart["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
 > = {
-  skill: { group: "Skills", kind: "Skill" },
   connector: { group: "Connected services", kind: "Connected service" },
   "mcp-tools": { group: "Tools", kind: "Tools" },
   settings: { group: "Other", kind: "Settings" },
@@ -922,15 +1225,12 @@ const COMPONENT_KINDS: Readonly<
 };
 
 const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
-  "Skills",
   "Connected services",
   "Tools",
   "Other",
 ];
 
-function componentGroups(
-  components: ReadonlyArray<ExtensionComponent>,
-): ReadonlyArray<DetailGroup> {
+function componentGroups(components: ReadonlyArray<PluginPart>): ReadonlyArray<DetailGroup> {
   return COMPONENT_GROUP_ORDER.map((label) => ({
     label,
     rows: components
@@ -938,15 +1238,7 @@ function componentGroups(
       .map((component) => ({
         key: `${component.type}:${component.name}`,
         name:
-          component.type === "skill" ? (
-            <Link
-              to="/settings/extensions"
-              search={{ kind: "skills" }}
-              className={cn(GHOST_LINK_CLASS, "text-foreground")}
-            >
-              {component.name}
-            </Link>
-          ) : component.type === "mcp-tools" ? (
+          component.type === "mcp-tools" ? (
             <span className="font-mono text-xs leading-5">{component.name}</span>
           ) : (
             component.name
@@ -1010,15 +1302,18 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
           <GroupsCard
             label="Parts"
             groups={componentGroups(
-              plugin.components.filter((component) => component.type !== "skill"),
+              plugin.components.filter(
+                (component): component is PluginPart => component.type !== "skill",
+              ),
             )}
           />
         </DetailSection>
       ) : null}
       <AboutCard
         rows={[
-          ["Developer", plugin.publisher],
-          ["Version", plugin.version],
+          // A built-in's header and Source already say whose it is.
+          builtIn ? null : ["Developer", plugin.publisher],
+          builtIn ? null : ["Version", plugin.version],
           fact("Installed on", formatDate(plugin.installedAt)),
           fact(
             "Settings",
@@ -1143,7 +1438,7 @@ function ProviderPluginDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.uninstall()}
                 >
-                  Remove
+                  Remove from {group.label}
                 </Button>
               ) : (
                 <MutedLine>
@@ -1171,8 +1466,6 @@ function ProviderPluginDetail({
       />
       <AboutCard
         rows={[
-          ["Managed by", group.label],
-          ["Plugin ID", <Mono key="plugin-id">{plugin.name}</Mono>],
           [
             "Works with",
             <WorksWithValue
@@ -1180,7 +1473,8 @@ function ProviderPluginDetail({
               audience={providerExtensionAudience(group.provider, plugin)}
             />,
           ],
-          fact("Version", plugin.version),
+          // Claude records a commit hash where others give a version; a hash tells a person nothing.
+          fact("Version", /^[0-9a-f]{7,40}$/.test(plugin.version ?? "") ? null : plugin.version),
           fact("Marketplace", plugin.marketplace),
           fact("Source", plugin.sourceLabel),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
@@ -1256,11 +1550,8 @@ function ProviderServerDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.signIn()}
                 >
-                  {server.connectUrl
-                    ? "Connect on claude.ai"
-                    : server.status === "connected"
-                      ? "Sign in again"
-                      : "Sign in"}
+                  {providerServerConnectLabel(server) ??
+                    (server.status === "connected" ? "Sign in again" : "Sign in")}
                 </PrimaryAction>
               ) : null}
               <ManagedBy label={group.label} />
@@ -1279,7 +1570,6 @@ function ProviderServerDetail({
     >
       <AboutCard
         rows={[
-          ["Managed by", group.label],
           [
             "Works with",
             <WorksWithValue
@@ -1288,9 +1578,6 @@ function ProviderServerDetail({
             />,
           ],
           ["Status", status],
-          fact("Tools", server.toolCount === undefined ? null : String(server.toolCount)),
-          fact("Scope", server.scope),
-          fact("From plugin", server.pluginId),
         ]}
       />
     </DetailLayout>

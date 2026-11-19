@@ -26,6 +26,7 @@ import {
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
+import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { McpSessionRegistry, connectorProxyUrl } from "../../mcp/McpSessionRegistry.ts";
 import { claudeMcpQueryOverrides } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
@@ -212,6 +213,7 @@ it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
             Layer.mock(ProjectStoreV2)({}),
             PluginConnectorEligibility.layer,
             Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            LocalDuplexProcess.layer.pipe(Layer.provide(NodeServices.layer)),
           ),
         ),
       );

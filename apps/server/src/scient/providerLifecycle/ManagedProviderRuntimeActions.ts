@@ -36,7 +36,10 @@ import {
   parseGenericCliVersion,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
@@ -65,9 +68,47 @@ export function managedRuntimeInstallationFailureMessage(
   cause: unknown,
 ): string {
   const summary = `Scient could not install the private ${providerName} runtime.`;
-  return cause instanceof ManagedRuntimeFileError || cause instanceof ManagedProviderRuntimeError
-    ? `${summary} ${cause.message}`
-    : summary;
+  if (cause instanceof ManagedRuntimeFileError || cause instanceof ManagedProviderRuntimeError)
+    return `${summary} ${cause.message}`;
+  // Other messages can carry paths or secrets; a system error code carries neither.
+  const code =
+    cause instanceof Error && "code" in cause && typeof cause.code === "string"
+      ? cause.code
+      : undefined;
+  return code && /^E[A-Z]+$/u.test(code) ? `${summary} System error ${code}.` : summary;
+}
+
+/** Progress text while a download waits to try again after a temporary failure. */
+export function managedRuntimeRetryMessage(
+  providerName: string,
+  retry: NonNullable<ManagedProviderRuntimeProgress["retry"]>,
+): string {
+  return `Couldn't download ${providerName} (${retry.reason}). Trying again, ${retry.retry} of ${retry.retries}.`;
+}
+
+/**
+ * Passes a progress report on when it says something new: another stage, a retry, download facts,
+ * or a move of at least 1 MiB either way (a server that ignores a range starts over from zero).
+ */
+export function makeManagedRuntimeProgressFilter(): (
+  progress: ManagedProviderRuntimeProgress,
+) => boolean {
+  let lastStage: ManagedProviderRuntimeProgress["stage"] | undefined;
+  let lastBytes = 0;
+  return (progress) => {
+    const bytes = progress.downloadedBytes ?? 0;
+    const report =
+      progress.stage !== lastStage ||
+      Math.abs(bytes - lastBytes) >= 1024 * 1024 ||
+      (progress.totalBytes !== undefined && bytes === progress.totalBytes) ||
+      progress.retry !== undefined ||
+      progress.download !== undefined;
+    if (report) {
+      lastStage = progress.stage;
+      lastBytes = bytes;
+    }
+    return report;
+  };
 }
 
 /** What `binary --version` prints when it exits 0 within five seconds. */
@@ -638,8 +679,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     if (!actionArtifact) {
       return yield* runtimeError(`No qualified ${providerName} artifact is available.`);
     }
-    let lastStatus: ManagedProviderRuntimeProgress["stage"] | undefined;
-    let lastReportedBytes = 0;
+    const worthReporting = makeManagedRuntimeProgressFilter();
     yield* Effect.tryPromise({
       try: (signal) =>
         runtime.install({
@@ -649,28 +689,26 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
           beforeActivate: (activationSignal) =>
             runPromise(awaitActivationWindow, { signal: activationSignal }),
           onProgress: (progress) => {
-            const stageChanged = progress.stage !== lastStatus;
-            const downloadedBytes = progress.downloadedBytes ?? 0;
-            const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
-            const downloadFinished =
-              progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-            if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
-            lastStatus = progress.stage;
-            lastReportedBytes = downloadedBytes;
+            if (!worthReporting(progress)) return;
+            const retry = progress.retry;
             runFork(
               report({
                 status: progress.stage,
-                message: progressMessage(progress),
+                message: retry
+                  ? managedRuntimeRetryMessage(providerName, retry)
+                  : progressMessage(progress),
+                ...(retry ? { retrying: true } : {}),
                 ...(progress.downloadedBytes === undefined
                   ? {}
                   : { downloadedBytes: progress.downloadedBytes }),
                 ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+                ...(progress.download ? { download: progress.download } : {}),
               } satisfies ProviderManagedRuntimeProgress),
             );
           },
         }),
       catch: (cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
     });

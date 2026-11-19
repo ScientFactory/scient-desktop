@@ -16,9 +16,11 @@ export const importLegacyQueue = Effect.fn("ScientQueue.importLegacy")(function*
 ) {
   if (initial.migrated) return initial;
   const config = yield* ServerConfig;
-  const legacy = yield* Effect.tryPromise(() =>
-    listScientThreadQueue({ stateDir: config.stateDir, threadId }),
-  );
+  const legacy = yield* Effect.tryPromise({
+    try: () => listScientThreadQueue({ stateDir: config.stateDir, threadId }),
+    catch: () =>
+      new QueueError({ message: "The legacy queue could not be read. Its source remains intact." }),
+  });
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {

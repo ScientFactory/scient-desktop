@@ -3,6 +3,10 @@ import {
   ProviderSetupError,
   type ProviderAuthState,
   type ProviderInstanceId,
+  // SCIENT-FORK:START — sign-in failure reasons.
+  markProviderConnectionFailure,
+  providerConnectionFailureReason,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -18,10 +22,23 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { loadCursorSdk } from "./sdk.ts";
+import { isCursorSdkError, loadCursorSdk } from "./sdk.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
 const AUTH_TIMEOUT_MS = 300_000;
+
+// The SDK has no code distinguishing these failures, so classify by its fixed message prefixes.
+const loginFailureDetail = (cause: unknown) => {
+  if (isCursorSdkError(cause, "CursorSdkError")) {
+    if (cause.message.startsWith("Login succeeded, but creating an SDK API key failed")) {
+      return "Cursor signed you in but could not create an API key. Your team's settings may restrict API keys: ask a team admin, or add CURSOR_API_KEY in provider settings.";
+    }
+    if (cause.message.startsWith("Login failed or timed out")) {
+      return "Cursor sign-in failed or timed out. Check that this machine can reach Cursor, then start sign-in again.";
+    }
+  }
+  return "Cursor sign-in failed. Start sign-in again.";
+};
 
 interface AuthFlow {
   readonly id: string;
@@ -142,7 +159,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           Effect.forkIn(child),
         );
         return yield* restore(Fiber.await(fiber)).pipe(
-          Effect.flatMap((result) => result),
+          Effect.flatten,
           Effect.onExit((result) =>
             Exit.isFailure(result) ? Scope.close(child, Exit.void) : Effect.void,
           ),
@@ -201,12 +218,19 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
             },
           }),
         catch: (cause) =>
-          new ProviderSetupError({
-            instanceId: options.instanceId,
-            operation: "start",
-            detail: "Cursor sign-in failed. Start sign-in again.",
-            cause,
-          }),
+          // SCIENT-FORK: a created login whose API key failed was accepted by Cursor.
+          markProviderConnectionFailure(
+            isCursorSdkError(cause, "CursorSdkError") &&
+              cause.message.startsWith("Login succeeded, but creating an SDK API key failed")
+              ? "post_signin_setup"
+              : "provider_failed",
+            new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "start",
+              detail: loginFailureDetail(cause),
+              cause,
+            }),
+          ),
       });
       // Commit and publish together; interrupting a store Promise cannot stop a late write.
       yield* lock.withPermits(1)(
@@ -224,12 +248,16 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               await options.store.save(credentials);
             },
             catch: (cause) =>
-              new ProviderSetupError({
-                instanceId: options.instanceId,
-                operation: "start",
-                detail: "Could not save the Cursor sign-in. Try again.",
-                cause,
-              }),
+              // SCIENT-FORK: saving follows a sign-in Cursor accepted.
+              markProviderConnectionFailure(
+                "post_signin_setup",
+                new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "start",
+                  detail: "Could not save the Cursor sign-in. Try again.",
+                  cause,
+                }),
+              ),
           });
           const verified = yield* options.onChanged(true).pipe(Effect.exit);
           if (Exit.isFailure(verified)) {
@@ -243,6 +271,10 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                   cause,
                 }),
             });
+            // SCIENT-FORK: the saved sign-in did not verify.
+            const rejected = Cause.findErrorOption(verified.cause);
+            if (Option.isSome(rejected))
+              markProviderConnectionFailure("verification", rejected.value);
             return yield* Effect.failCause(verified.cause);
           }
           active = undefined;
@@ -263,13 +295,18 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           duration: AUTH_TIMEOUT_MS,
           orElse: () =>
             Effect.fail(
-              new ProviderSetupError({
-                instanceId: options.instanceId,
-                operation: "start",
-                detail: "Cursor sign-in expired. Start sign-in again.",
-              }),
+              // SCIENT-FORK: this deadline is Scient's own.
+              markProviderConnectionFailure(
+                "timeout",
+                new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "start",
+                  detail: "Cursor sign-in expired. Start sign-in again.",
+                }),
+              ),
             ),
         }),
+        Effect.tapCause((cause) => Effect.logWarning("Cursor sign-in failed", cause)),
         Effect.exit,
         Effect.flatMap((result) =>
           lock.withPermits(1)(
@@ -287,6 +324,15 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                       onNone: () => "Cursor sign-in failed or expired. Start sign-in again.",
                       onSome: (error) => error.detail,
                     }),
+                // SCIENT-FORK: why the attempt failed, from where it failed.
+                ...(Exit.isFailure(result)
+                  ? {
+                      failureReason:
+                        providerConnectionFailureReason(
+                          Option.getOrUndefined(Cause.findErrorOption(result.cause)),
+                        ) ?? "unknown",
+                    }
+                  : {}),
               });
             }),
           ),

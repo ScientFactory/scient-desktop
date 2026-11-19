@@ -15,6 +15,8 @@ export const ScientAnalyticsStatus = Schema.Struct({
   consent: ScientAnalyticsConsent,
   /** Ephemeral consent fence for UI operations; never an analytics property. */
   collectionContext: Schema.optional(CollectionContext),
+  /** The server can fence a complete voice job, including delayed outcomes. */
+  voiceLifecycleVersion: Schema.optional(Schema.Literal(2)),
 });
 export type ScientAnalyticsStatus = typeof ScientAnalyticsStatus.Type;
 

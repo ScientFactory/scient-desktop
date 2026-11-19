@@ -1,18 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as Schema from "effect/Schema";
-import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
+import { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 
 import {
   ensureNativePrivateRetentionDirectory,
   invokeNativeHelper,
-  resolveNativeFilePublicationHelperPath,
+  nativeFilePublicationHelper,
 } from "./NativeFilePublication.ts";
 
-export class WindowsNativeFileError extends Error {
-  readonly reason: ScientOverleafFilesystemRefusalReason;
-  constructor(reason: ScientOverleafFilesystemRefusalReason) {
-    super(reason);
-    this.reason = reason;
+export class WindowsNativeFileError extends Schema.TaggedError<WindowsNativeFileError>()(
+  "WindowsNativeFileError",
+  { reason: ScientOverleafFilesystemRefusalReason },
+) {
+  override get message(): string {
+    return this.reason;
   }
 }
 
@@ -36,9 +37,8 @@ const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(Reply));
 
 async function invokeWindows(args: string[], helper?: string) {
   const executable =
-    helper ??
-    (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
-  if (!executable) throw new WindowsNativeFileError("helper-unavailable");
+    helper ?? (await nativeFilePublicationHelper(process.env.SCIENT_FILE_PUBLICATION_HELPER));
+  if (!executable) throw new WindowsNativeFileError({ reason: "helper-unavailable" });
   return invokeNativeHelper(executable, args);
 }
 const decodeFlags = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
@@ -59,21 +59,22 @@ export async function windowsFileIdentity(path: string, helper?: string) {
     path.startsWith("\\\\") &&
     (!path.startsWith("\\\\?\\") || path.toUpperCase().startsWith("\\\\?\\UNC\\"))
   )
-    throw new WindowsNativeFileError("network-filesystem");
+    throw new WindowsNativeFileError({ reason: "network-filesystem" });
   const info = await windowsNativeFile(path, "info", helper);
   if (info.code === 2 || info.code === 3) return null;
   if (info.code !== 0 || !info.identity)
-    throw new WindowsNativeFileError(
-      info.code === 536870917
-        ? "network-filesystem"
-        : info.code === 536870918
-          ? "unsupported-filesystem"
-          : info.code === 1150
-            ? "unsupported-windows-version"
-            : info.code === 206
-              ? "path-too-long"
-              : "identity-unavailable",
-    );
+    throw new WindowsNativeFileError({
+      reason:
+        info.code === 536870917
+          ? "network-filesystem"
+          : info.code === 536870918
+            ? "unsupported-filesystem"
+            : info.code === 1150
+              ? "unsupported-windows-version"
+              : info.code === 206
+                ? "path-too-long"
+                : "identity-unavailable",
+    });
   return info.identity;
 }
 
@@ -85,7 +86,13 @@ export async function windowsPrivateDirectory(path: string, create: boolean, hel
     return;
   }
   if (info.code || info.syncManaged || info.identity?.type !== "directory") {
-    const error = new Error(info.syncManaged ? "sync-managed-folder" : "unsafe-directory");
+    const error = new Error(
+      info.syncManaged
+        ? "sync-managed-folder"
+        : info.code === 536870918
+          ? "unsupported-filesystem"
+          : "unsafe-directory",
+    );
     if (info.code === 2 || info.code === 3) Object.assign(error, { code: "ENOENT" });
     else if (info.code === 5) Object.assign(error, { code: "EACCES" });
     throw error;

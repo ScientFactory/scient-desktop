@@ -6,6 +6,7 @@ import {
   AnalysisArtifactFileName,
   AnalysisArtifactId,
   AnalysisArtifactRepresentationId,
+  AnalysisOperationError,
   AnalysisRuntimeId,
   AnalysisSourceRevision,
   type AnalysisRuntimeAdapter,
@@ -35,7 +36,8 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientificRuntimePreferences from "../compute/ScientificRuntimePreferences.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "../../telemetry/ScientAnalytics.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -104,6 +106,8 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
   onProcessClose?: Effect.Effect<void>,
   /** Leaves the folder plain and registers it to the host under this name. */
   registeredFolder?: string,
+  /** What each started program prints. */
+  printed?: (executable: string) => string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const projectRoot = yield* fileSystem.makeTempDirectoryScoped({
@@ -125,7 +129,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
       "cancel-capture.m",
       "private-study.m",
       "later-error.m",
-      "consent.m",
+      "unobserved.m",
       "first.m",
       "queued.m",
       "cleanup.m",
@@ -151,8 +155,9 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
         if (onProcessClose !== undefined) yield* Effect.addFinalizer(() => onProcessClose);
         processExits.set(request.runId, exitCode);
         yield* Queue.offer(startedRuns, request.runId);
+        const text = printed?.(request.executable) ?? "";
         return {
-          output: Stream.empty,
+          output: text === "" ? Stream.empty : Stream.make({ stream: "stdout" as const, text }),
           exitCode: Deferred.await(exitCode),
           cancel: Deferred.succeed(exitCode, 130).pipe(Effect.asVoid),
         };
@@ -219,8 +224,7 @@ const serviceTestLayer = makeServiceTestLayer();
 const analyticsFixture = Effect.gen(function* () {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
   const terminalEvents = yield* Queue.unbounded<string>();
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
@@ -228,16 +232,17 @@ const analyticsFixture = Effect.gen(function* () {
         events.push({ name, properties });
         if (name !== "scient.operation.started") yield* Queue.offer(terminalEvents, name);
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
     flush: Effect.void,
   });
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+  const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      status = { available: true, consent };
-      epoch += 1;
+      availability.available = next;
     });
-  return { events, terminalEvents, service, setConsent };
+  const layer = Layer.mergeAll(
+    Layer.succeed(AnalyticsService, service),
+    Layer.succeed(ScientAnalyticsAvailability, availability),
+  );
+  return { events, terminalEvents, service, availability, layer, setAvailable };
 });
 
 type ArtifactFixtureMode =
@@ -335,13 +340,7 @@ describe("analysis artifact analytics", () => {
               .filter((event) => event.properties?.operationKind === "compute-artifact")
               .map((event) => event.name),
           ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -390,13 +389,7 @@ describe("analysis artifact analytics", () => {
             service.startRun({ ...request, runId, executablePath: "/other/matlab" }),
           );
           expect(conflicting.reason).toBe("run-already-active");
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -434,13 +427,7 @@ describe("analysis artifact analytics", () => {
               .map((event) => event.name),
           ).toEqual(["scient.operation.started", "scient.operation.failed"]);
           expect(yield* Ref.get(harness.processStartCount)).toBe(0);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -486,13 +473,7 @@ describe("analysis artifact analytics", () => {
             "scient.operation.completed",
           ]);
           expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -550,12 +531,19 @@ describe("analysis artifact analytics", () => {
             "scient.operation.started",
             `scient.operation.${scenario.outcome}`,
           ]);
-          expect(captureEvents[1]?.properties).toEqual({
+          expect(captureEvents[1]?.properties).toMatchObject({
             operationKind: "compute-artifact",
             trigger: "user",
             durationMs: expect.any(Number),
             failureClass: "unknown",
+            captureSchemaVersion: 2,
+            captureSource: "run-file",
           });
+          if (scenario.outcome === "failed") {
+            expect(captureEvents[1]?.properties).not.toHaveProperty("rejectedOutputCount");
+          } else {
+            expect(captureEvents[1]?.properties).toHaveProperty("rejectedOutputCount", 0);
+          }
           const payload = yield* encodeUnknownJson(analytics.events);
           for (const privateValue of [
             harness.projectRoot,
@@ -569,13 +557,7 @@ describe("analysis artifact analytics", () => {
           ]) {
             expect(payload).not.toContain(privateValue);
           }
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -621,19 +603,120 @@ describe("analysis artifact analytics", () => {
               .filter((event) => event.properties?.operationKind === "compute-artifact")
               .map((event) => event.name),
           ).toEqual(["scient.operation.started", "scient.operation.completed"]);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect.each(
-    (["off", "epoch-change", "broken"] as const).map((mode) => ({
+    (
+      [
+        {
+          title: "a run whose outputs could not all be watched as unobserved",
+          coverage: { coverage: "partial", coverageReason: "watch-unavailable", rejectedCount: 0 },
+          candidates: false,
+          outcome: "skipped",
+          capture: {
+            captureOutcome: "unobserved",
+            captureCoverage: "partial",
+            captureReason: "watch-unavailable",
+            rejectedOutputCount: 0,
+          },
+        },
+        {
+          title: "a rejected figure beside a retained one as partial",
+          coverage: { coverage: "complete", rejectedCount: 1, rejectionReason: "invalid-image" },
+          candidates: true,
+          outcome: "failed",
+          capture: {
+            captureOutcome: "partial",
+            captureCoverage: "complete",
+            captureReason: "invalid-image",
+            rejectedOutputCount: 1,
+          },
+        },
+      ] as const
+    ).map((scenario) => ({ caseTitle: `reports ${scenario.title}`, scenario })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.gen(function* () {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const captured = artifactTestAdapter("captured");
+      const harness = yield* makeServiceTestLayer({
+        ...captured,
+        releaseRun: async () => release(),
+        collectArtifacts: async (context) => {
+          const collection = await captured.collectArtifacts!(context);
+          return {
+            ...collection,
+            candidates: scenario.candidates ? collection.candidates : [],
+            coverage: scenario.coverage,
+          };
+        },
+      });
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "private-study.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe(
+            `scient.operation.${scenario.outcome}`,
+          );
+          yield* Queue.take(analytics.terminalEvents);
+          const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
+          expect(persisted.artifactReceipt).toMatchObject({
+            status: "succeeded",
+            coverage: scenario.coverage,
+          });
+          const capture = analytics.events.filter(
+            (event) => event.properties?.operationKind === "compute-artifact",
+          )[1];
+          expect(capture?.properties).toMatchObject(scenario.capture);
+          yield* Effect.promise(() => released);
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect("releases what a run held when collecting its figures fails", () =>
+    Effect.gen(function* () {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const harness = yield* makeServiceTestLayer({
+        ...artifactTestAdapter("collection-error"),
+        releaseRun: async () => release(),
+      });
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "later-error.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+          yield* Effect.promise(() => released);
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect.each(
+    (["unavailable", "broken"] as const).map((mode) => ({
       caseTitle: `keeps capture functional with ${mode} analytics without replay`,
       mode,
     })),
@@ -641,19 +724,18 @@ describe("analysis artifact analytics", () => {
     Effect.gen(function* () {
       const harness = yield* makeServiceTestLayer(artifactTestAdapter("captured"));
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.setConsent("off");
+      if (mode === "unavailable") yield* analytics.setAvailable(false);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
           yield* service.startRun({
             cwd: harness.projectRoot,
-            relativePath: "consent.m",
+            relativePath: "unobserved.m",
             sourceRevision,
             runtimeId,
           });
           const runId = yield* Queue.take(harness.startedRuns);
-          if (mode === "epoch-change") yield* analytics.setConsent("off");
-          yield* analytics.setConsent("product");
+          yield* analytics.setAvailable(true);
           const updates = yield* service.subscribeRuns({ cwd: harness.projectRoot });
           yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
           yield* updates.pipe(
@@ -683,13 +765,12 @@ describe("analysis artifact analytics", () => {
                     : analytics.service,
                 ),
               ),
+              Layer.provide(Layer.succeed(ScientAnalyticsAvailability, analytics.availability)),
             ),
           ),
         ),
       );
-      expect(analytics.events.map((event) => event.name)).toEqual(
-        mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
-      );
+      expect(analytics.events).toEqual([]);
       expect(yield* Ref.get(harness.processStartCount)).toBe(1);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -697,7 +778,7 @@ describe("analysis artifact analytics", () => {
 
 describe("analysis outcome analytics", () => {
   it.effect.each(
-    (["off", "epoch-change", "broken"] as const).map((mode) => ({
+    (["unavailable", "broken"] as const).map((mode) => ({
       caseTitle: `keeps execution intact with ${mode} analytics and does not replay active work`,
       mode,
     })),
@@ -705,7 +786,7 @@ describe("analysis outcome analytics", () => {
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.setConsent("off");
+      if (mode === "unavailable") yield* analytics.setAvailable(false);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
@@ -722,8 +803,7 @@ describe("analysis outcome analytics", () => {
             sourceRevision,
             runtimeId,
           });
-          if (mode === "epoch-change") yield* analytics.setConsent("off");
-          yield* analytics.setConsent("product");
+          yield* analytics.setAvailable(true);
           const cancelled = yield* service.cancelRun({
             cwd: harness.projectRoot,
             runId: queued.receipt.runId,
@@ -739,18 +819,17 @@ describe("analysis outcome analytics", () => {
                   mode === "broken"
                     ? {
                         ...analytics.service,
-                        status: Effect.die("private observer failure"),
+                        record: () => Effect.die("private observer failure"),
                       }
                     : analytics.service,
                 ),
               ),
+              Layer.provide(Layer.succeed(ScientAnalyticsAvailability, analytics.availability)),
             ),
           ),
         ),
       );
-      expect(analytics.events.map((event) => event.name)).toEqual(
-        mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
-      );
+      expect(analytics.events).toEqual([]);
       expect(yield* Ref.get(harness.processStartCount)).toBe(1);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -791,6 +870,8 @@ describe("analysis outcome analytics", () => {
                 trigger: "user",
                 durationMs: undefined,
                 failureClass: "unknown",
+                language: "matlab",
+                entry: "run-file",
               },
             },
             {
@@ -800,6 +881,12 @@ describe("analysis outcome analytics", () => {
                 trigger: "user",
                 durationMs: expect.any(Number),
                 failureClass: "unknown",
+                language: "matlab",
+                entry: "run-file",
+                // A nonzero exit is the program's own result, not Scient's.
+                ...(outcome === "failed"
+                  ? { failureOwner: "code", failureCategory: "nonzero-exit" }
+                  : {}),
               },
             },
           ]);
@@ -814,13 +901,7 @@ describe("analysis outcome analytics", () => {
           ]) {
             expect(payload).not.toContain(privateValue);
           }
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -986,6 +1067,182 @@ describe("analysis service coordination", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
+  it.effect("says what is missing when an adapter names it, and keeps other failures plain", () =>
+    Effect.gen(function* () {
+      for (const [thrown, shown] of [
+        [
+          new AnalysisOperationError({
+            operation: "start",
+            reason: "runtime-missing",
+            message: "Install Lean with elan, which brings Lake.",
+          }),
+          "Install Lean with elan, which brings Lake.",
+        ],
+        [new Error("private detail"), "MATLAB test runtime could not be started or completed."],
+      ] as const) {
+        const harness = yield* makeServiceTestLayer({
+          ...testAdapter,
+          prepare: () => {
+            throw thrown;
+          },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* AnalysisService;
+            const run = yield* service.startRun({
+              cwd: harness.projectRoot,
+              relativePath: "launch-error.m",
+              sourceRevision,
+              runtimeId,
+            });
+            const failed = yield* service
+              .getRun({ cwd: harness.projectRoot, runId: run.receipt.runId })
+              .pipe(Effect.repeat({ until: (current) => current.receipt.status === "failed" }));
+            expect(failed.receipt.failureMessage).toBe(shown);
+            expect(yield* Ref.get(harness.processStartCount)).toBe(0);
+          }).pipe(Effect.provide(harness.analysisLayer)),
+        );
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect("lets an adapter whose results are files show them and say how the run went", () =>
+    Effect.gen(function* () {
+      const diagnostic = {
+        diagnosticId: "stata-error-1",
+        severity: "error",
+        source: "runtime",
+        code: "r(601)",
+        message: "file nothere.dta not found",
+        relativePath: "analysis.m",
+        line: 2,
+        column: null,
+        frames: [],
+        related: [],
+      } as const;
+      const terminal = new Set(["succeeded", "failed", "cancelled"]);
+      for (const scenario of [
+        { exitCode: 0, failureMessage: "file nothere.dta not found (r(601))", status: "failed" },
+        { exitCode: 1, failureMessage: null, status: "succeeded" },
+        { exitCode: 0, throws: true, status: "failed" },
+        { exitCode: 3, throws: true, status: "failed" },
+        { cancel: true, failureMessage: null, status: "cancelled" },
+      ] as const) {
+        const harness = yield* makeServiceTestLayer({
+          ...testAdapter,
+          concludeRun: async () => {
+            if ("throws" in scenario) throw new Error("private detail");
+            return {
+              output: [{ stream: "stdout", text: "the log\n" }],
+              failureMessage: scenario.failureMessage,
+              diagnostics: scenario.failureMessage === null ? [] : [diagnostic],
+              writtenFiles: ["analysis.log"],
+            };
+          },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* AnalysisService;
+            yield* service.startRun({
+              cwd: harness.projectRoot,
+              relativePath: "analysis.m",
+              sourceRevision,
+              runtimeId,
+            });
+            const runId = yield* Queue.take(harness.startedRuns);
+            if ("cancel" in scenario) yield* service.cancelRun({ cwd: harness.projectRoot, runId });
+            else yield* Deferred.succeed(harness.processExits.get(runId)!, scenario.exitCode);
+            const finished = yield* service
+              .getRun({ cwd: harness.projectRoot, runId })
+              .pipe(Effect.repeat({ until: (current) => terminal.has(current.receipt.status) }));
+            expect(finished.receipt.status).toBe(scenario.status);
+            if ("throws" in scenario) {
+              expect(finished.receipt.output).toEqual([]);
+              // Unreadable results never pass a run whose exit code cannot be trusted.
+              expect(finished.receipt.failureMessage).toBe(
+                scenario.exitCode === 0
+                  ? "Scient could not read the MATLAB test runtime results."
+                  : "MATLAB test runtime exited with code 3, and Scient could not read its results.",
+              );
+              return;
+            }
+            expect(finished.receipt.output.map((chunk) => chunk.text)).toEqual(["the log\n"]);
+            expect(finished.writtenFiles).toEqual(["analysis.log"]);
+            if ("exitCode" in scenario) expect(finished.receipt.exitCode).toBe(scenario.exitCode);
+            if (scenario.status !== "cancelled") {
+              expect(finished.receipt.failureMessage).toBe(scenario.failureMessage);
+              expect(finished.diagnostics).toEqual(
+                scenario.failureMessage === null ? [] : [diagnostic],
+              );
+            }
+          }).pipe(Effect.provide(harness.analysisLayer)),
+        );
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect("shows a build step's output only when the build fails", () =>
+    Effect.gen(function* () {
+      const terminal = new Set(["succeeded", "failed", "cancelled"]);
+      for (const scenario of [
+        { build: 0, output: ["the result\n"], status: "succeeded" },
+        { build: 2, output: ["the build error\n"], status: "failed" },
+        { cancel: true, output: [], status: "cancelled" },
+      ] as const) {
+        const harness = yield* makeServiceTestLayer(
+          {
+            ...testAdapter,
+            prepare: (context) => ({
+              executable: "/test/result",
+              args: [],
+              cwd: context.source.cwd,
+              environment: {},
+              before: [
+                {
+                  executable: "/test/build",
+                  args: [],
+                  cwd: context.source.cwd,
+                  environment: {},
+                  showOutput: "on-failure",
+                },
+              ],
+            }),
+          },
+          undefined,
+          undefined,
+          undefined,
+          (executable) => (executable === "/test/build" ? "the build error\n" : "the result\n"),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* AnalysisService;
+            yield* service.startRun({
+              cwd: harness.projectRoot,
+              relativePath: "analysis.m",
+              sourceRevision,
+              runtimeId,
+            });
+            const runId = yield* Queue.take(harness.startedRuns);
+            if ("cancel" in scenario) {
+              yield* service.cancelRun({ cwd: harness.projectRoot, runId });
+            } else {
+              yield* Deferred.succeed(harness.processExits.get(runId)!, scenario.build);
+              if (scenario.build === 0) {
+                yield* Queue.take(harness.startedRuns);
+                yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+              }
+            }
+            const finished = yield* service
+              .getRun({ cwd: harness.projectRoot, runId })
+              .pipe(Effect.repeat({ until: (current) => terminal.has(current.receipt.status) }));
+            expect(finished.receipt.status).toBe(scenario.status);
+            expect(finished.receipt.output.map((chunk) => chunk.text)).toEqual(scenario.output);
+          }).pipe(Effect.provide(harness.analysisLayer)),
+        );
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
   it.effect("never runs a file that changed while its run was waiting", () =>
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;
@@ -1113,13 +1370,7 @@ describe("analysis service coordination", () => {
             outputContentHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           });
           expect(history.runs[0]?.receipt.finishedAt).not.toBeNull();
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
       expect(analytics.events).toEqual([]);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),

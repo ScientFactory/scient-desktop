@@ -29,14 +29,17 @@ export function browserActionPresentation(input: unknown, output: unknown) {
   };
 }
 
-/** Imported answers name their own message; native answers use the shared fallback identity. */
-export function foldedQuestionAnswerMessageIds(
+/**
+ * Imported answers name their own message; native answers use the shared fallback identity.
+ * Each folded answer maps to the run of the question it answers.
+ */
+export function foldedQuestionAnswerRunIdByMessageId(
   items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-) {
-  return new Set(
+): Map<string, OrchestrationV2ProjectedTurnItem["item"]["runId"]> {
+  return new Map(
     items.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
-        ? [questionAnswerMessageId(item.questionAnswer)]
+        ? [[questionAnswerMessageId(item.questionAnswer), item.runId] as const]
         : [],
     ),
   );

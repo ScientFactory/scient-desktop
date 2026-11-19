@@ -10,28 +10,36 @@ import {
   ProfileColor,
   ACCOUNT_SECRET_FIELDS,
   defaultBrowserProfileRecord,
-  resolveBrowserProfiles,
+  isBuiltInBrowserProfileId,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   type AccountActivityEntry,
   type AccountControls,
   type AccountDetails,
+  type ApiKeyAuth,
   type GrantScope,
   type ProjectId,
   type AccountStoresStatus,
   type AccountsSnapshot,
   type AccountSummary,
+  type ConnectorSummary,
   type AccountUseAction,
   type AccountSaveInput,
+  type AccountPlainKey,
   type DesktopCapturedSignIn,
   type BrowserProfile,
   type BrowserProfileRecord,
   type BrowserImportSource,
+  type BrowserImportSourceId,
+  type BrowserImportSourceProfile,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import { previewBridge } from "~/components/preview/previewBridge";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
+import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
+import { loginValueFits, type LoginBox } from "@t3tools/shared/scientLoginFields";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
-import { anySiteMatches, siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import ACCOUNT_ICONS from "./accountIcons.json";
+import { activeProfiles } from "./activeProfiles";
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
 export function profileAccounts(
@@ -48,40 +56,71 @@ export function profileAccounts(
 }
 
 /**
- * Sites a browser refresh must leave alone in a profile: sign-ins that work, and Google, where a
- * copy stops working and would replace the session and remembered device this profile has.
+ * Sites a browser refresh must leave alone in a profile: sign-ins that work, and Google while it
+ * works here, so a copy never replaces the session and remembered device this profile has. Once
+ * Google has signed this profile out, the browser's sign-in is the way back.
  */
-export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
+export function sitesToKeep(
+  accounts: ReadonlyArray<AccountSummary>,
+  profileId: string,
+  /** What Google says now; without it, what Accounts last saw. */
+  googleWorks = !signedOutOfGoogle(accounts, profileId),
+) {
   return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&
-    (signIn?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
+    // Google's own answer decides Google, even over a row last seen signed in.
+    (details.sites.includes(GOOGLE_SITE) ? googleWorks : signIn?.state === "signed-in")
       ? details.sites
       : [],
   );
 }
 
-export function matchingAccounts(
+/** UI autofill offers every website sign-in for the page, in the one shared order. */
+export const matchingAccounts = (
   accounts: ReadonlyArray<AccountSummary>,
   url: string,
   profileId: string,
+) => matchingSignIns(accounts, url, profileId);
+
+/**
+ * What fills a page's login boxes: the first sign-in whose username fits a box (of those with that
+ * username, the newest password, else one that last worked, never a refused one), and another
+ * sign-in's username for the second box, so a page asking for an ID and an email gets both.
+ */
+export function fillChoice<Account extends Pick<AccountSummary, "details" | "secrets" | "signIn">>(
+  matches: ReadonlyArray<Account>,
+  boxes: ReadonlyArray<LoginBox>,
 ) {
-  const sameProfile = ({ details }: AccountSummary) =>
-    "profileId" in details && details.profileId === profileId ? 1 : 0;
-  const exact = ({ details }: AccountSummary) =>
-    "sites" in details &&
-    details.sites.some((site) => site.startsWith("https://") && siteMatchesUrl(site, url))
-      ? 1
-      : 0;
-  return accounts
-    .filter(({ details }) => details.kind === "website" && anySiteMatches(details.sites, url))
-    .sort(
-      (a, b) =>
-        sameProfile(b) - sameProfile(a) ||
-        exact(b) - exact(a) ||
-        (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
-        a.accountId.localeCompare(b.accountId),
-    );
+  const usable = matches.filter((match) => match.signIn?.state !== "password-rejected");
+  const name = ({ details }: Account) =>
+    details.kind === "website" ? details.username : undefined;
+  const fits = (box: LoginBox | undefined, exact: boolean) => (account: Account) => {
+    const username = name(account);
+    return box !== undefined && username !== undefined && loginValueFits(box, username, exact);
+  };
+  const first =
+    usable.find(fits(boxes[0], false)) ?? usable.find(fits(boxes[1], false)) ?? usable[0];
+  const recency = (account: Account) => [
+    account.secrets["password"]?.changedAt ?? "",
+    account.signIn?.state === "signed-in" ? account.signIn.at : "",
+    account.secrets["password"]?.verifiedAt ?? "",
+  ];
+  const newestFirst = (a: Account, b: Account) => {
+    const [x, y] = [recency(a), recency(b)];
+    const index = x.findIndex((value, at) => value !== y[at]);
+    return index === -1 ? 0 : y[index]!.localeCompare(x[index]!);
+  };
+  const account = usable
+    .filter((match) => first !== undefined && name(match) === name(first))
+    .sort(newestFirst)[0];
+  if (!account || boxes.length < 2) return { account, otherUsername: undefined };
+  // The page puts the username in the box made for it first, as here.
+  const madeFor = boxes.findIndex((box) => fits(box, true)(account));
+  const taken = madeFor === -1 ? boxes.findIndex((box) => fits(box, false)(account)) : madeFor;
+  const other = taken === -1 ? undefined : boxes[1 - taken];
+  const second = usable.filter((match) => name(match) !== name(account)).find(fits(other, true));
+  return { account, otherUsername: second && name(second) };
 }
 
 /** Whether the conversation's agent may use an account now, without asking. */
@@ -103,12 +142,44 @@ export function mergeProfiles(
   records: ReadonlyArray<BrowserProfileRecord>,
 ) {
   const byId = new Map(records.map((record) => [record.profileId, record]));
-  return resolveBrowserProfiles(profiles)
+  return activeProfiles(profiles, records)
     .filter((profile) => profile.kind !== "incognito")
     .map((profile) => ({
       ...profile,
       record: byId.get(profile.id) ?? defaultBrowserProfileRecord(profile.id),
     }));
+}
+
+/**
+ * Profiles that rows name but this client doesn't list, such as another device's: each from the
+ * server's record, so its sign-ins stay reachable.
+ */
+export function unlistedProfiles(
+  snapshot: Pick<AccountsSnapshot, "accounts" | "profiles">,
+  listed: ReadonlyArray<{ readonly id: string }>,
+) {
+  const ids = new Set(
+    snapshot.accounts.flatMap(({ details }) =>
+      details.kind === "website" &&
+      details.profileId !== undefined &&
+      !isBuiltInBrowserProfileId(details.profileId) &&
+      !listed.some((profile) => profile.id === details.profileId) &&
+      !snapshot.profiles.some((record) => record.profileId === details.profileId && record.retired)
+        ? [details.profileId]
+        : [],
+    ),
+  );
+  return [...ids].map((id) => {
+    const record =
+      snapshot.profiles.find((profile) => profile.profileId === id) ??
+      defaultBrowserProfileRecord(id);
+    return {
+      id,
+      name: record.source?.profileName ?? "Profile from another device",
+      kind: "persistent" as const,
+      record,
+    };
+  });
 }
 
 export function mergeSourceProfiles(
@@ -123,10 +194,10 @@ export function mergeSourceProfiles(
         ...(source.unavailable === "browserRunning"
           ? details
               .filter((detail) => detail.sourceId === source.id)
-              .map(
-                (detail) =>
-                  [detail.directory, { directory: detail.directory, name: detail.name }] as const,
-              )
+              .map((detail): [string, BrowserImportSourceProfile] => [
+                detail.directory,
+                { directory: detail.directory, name: detail.name },
+              ])
           : []),
       ]).values(),
     ].map((profile) => ({
@@ -136,6 +207,47 @@ export function mergeSourceProfiles(
       ),
     })),
   }));
+}
+
+const cookieCount = (count: number) =>
+  `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+
+/** How many cookies a browser profile holds, when its browser lets Scient count them. */
+export function cookiesLabel(count: number | undefined) {
+  if (count === undefined) return undefined;
+  return count === 0 ? "no cookies" : cookieCount(count);
+}
+
+/** What importing a browser profile brought: cookies, counted per site. A cookie isn't a sign-in. */
+export function importedLabel(cookies: number, sites: number | undefined) {
+  if (cookies === 0) return "nothing to import";
+  if (!sites) return cookieCount(cookies);
+  return `cookies for ${sites.toLocaleString()} ${sites === 1 ? "site" : "sites"}`;
+}
+
+/** The names the desktop's browser import gives each browser. */
+const BROWSER_NAMES: Readonly<Record<BrowserImportSourceId, string>> = {
+  chrome: "Chrome",
+  edge: "Microsoft Edge",
+  brave: "Brave",
+  vivaldi: "Vivaldi",
+  opera: "Opera",
+  arc: "Arc",
+  helium: "Helium",
+  firefox: "Firefox",
+  zen: "Zen",
+  safari: "Safari",
+};
+
+export const browserName = (id: BrowserImportSourceId) => BROWSER_NAMES[id];
+
+/** "Chrome · Yaacov" beside an imported profile whose name here differs from its source's. */
+export function renamedSourceLabel(
+  name: string,
+  source: Pick<NonNullable<BrowserProfileRecord["source"]>, "browser" | "profileName"> | undefined,
+) {
+  if (!source || name.trim() === source.profileName.trim()) return undefined;
+  return `${browserName(source.browser)} · ${source.profileName}`;
 }
 
 export function importProfileName(sourceName: string, taken: ReadonlyArray<string>) {
@@ -170,6 +282,9 @@ const MANAGE_PAGES: Readonly<Record<string, string>> = {
   "zotero.org": "https://www.zotero.org/settings/keys",
   "ncbi.nlm.nih.gov": "https://www.ncbi.nlm.nih.gov/account/settings/",
   "semanticscholar.org": "https://www.semanticscholar.org/product/api",
+  "openalex.org": "https://openalex.org/settings/api",
+  "www.googleapis.com": "https://console.cloud.google.com/apis/credentials",
+  "unpaywall.org": "https://unpaywall.org/products/api",
   "elsevier.com": "https://dev.elsevier.com/apikey/manage",
   "kaggle.com": "https://www.kaggle.com/settings",
   "wandb.ai": "https://wandb.ai/authorize",
@@ -194,6 +309,7 @@ const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
   moodle: "moodle.org",
   postgres: "postgresql.org",
   gcloud: "cloud.google.com",
+  "google books": "google.com",
 };
 
 /** The entry for the first site whose host is a key or a subdomain of one. */
@@ -237,7 +353,6 @@ export const accountCatalogue = [
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
   { name: "University library", kind: "website", site: "", university: true },
-  { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
   {
@@ -277,6 +392,14 @@ export const accountCatalogue = [
     site: "semanticscholar.org",
     envName: "SEMANTIC_SCHOLAR_API_KEY",
   },
+  { name: "OpenAlex", kind: "api-key", site: "openalex.org", envName: "OPENALEX_API_KEY" },
+  {
+    name: "Google Books",
+    kind: "api-key",
+    site: "www.googleapis.com",
+    envName: "GOOGLE_BOOKS_API_KEY",
+  },
+  { name: "Unpaywall email", kind: "api-key", site: "unpaywall.org", envName: "UNPAYWALL_EMAIL" },
   {
     name: "Elsevier / Scopus",
     kind: "api-key",
@@ -309,14 +432,15 @@ export const accountCatalogueGroups = [
       "Zotero",
       "NCBI / PubMed",
       "Semantic Scholar",
+      "OpenAlex",
+      "Google Books",
+      "Unpaywall email",
       "Elsevier / Scopus",
       "ORCID",
     ],
   },
-  {
-    name: "Universities & libraries",
-    entries: ["University library", "HUJI", "Moodle", "Google"],
-  },
+  { name: "Websites", entries: ["Google"] },
+  { name: "Universities & libraries", entries: ["University library", "Moodle"] },
   {
     name: "Developer tools",
     entries: [
@@ -331,6 +455,16 @@ export const accountCatalogueGroups = [
   { name: "Data & ML", entries: ["Hugging Face", "Kaggle", "Weights & Biases"] },
 ] satisfies ReadonlyArray<{ name: string; entries: ReadonlyArray<CatalogueEntry["name"]> }>;
 
+/** How each service takes its key, where it is not a bearer token. */
+const API_KEY_AUTH: Readonly<Record<string, ApiKeyAuth>> = {
+  Anthropic: { type: "header", name: "x-api-key" },
+  "Semantic Scholar": { type: "header", name: "x-api-key" },
+  "NCBI / PubMed": { type: "query", name: "api_key" },
+  OpenAlex: { type: "query", name: "api_key" },
+  "Google Books": { type: "query", name: "key" },
+  "Unpaywall email": { type: "query", name: "email" },
+};
+
 export function catalogueDetails(entry: CatalogueEntry | null, website = ""): AccountDetails {
   if (!entry) return { kind: "website", sites: website ? [website] : [] };
   switch (entry.kind) {
@@ -340,8 +474,7 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
       return {
         kind: "api-key",
         sites: [entry.site],
-        auth:
-          entry.name === "Anthropic" ? { type: "header", name: "x-api-key" } : { type: "bearer" },
+        auth: API_KEY_AUTH[entry.name] ?? { type: "bearer" },
         envName: entry.envName,
       };
     case "database":
@@ -443,11 +576,6 @@ export function automaticSignIn(form: DesktopLoginForm) {
   );
 }
 
-export function signInLabel(account: AccountSummary) {
-  const username = account.details.kind === "website" ? account.details.username : undefined;
-  return username ? `${account.name} · ${username}` : account.name;
-}
-
 export function writableOnePasswordVaults(status: AccountStoresStatus["onePassword"]) {
   return status.state === "connected"
     ? (status.vaults?.filter((vault) => !vault.readOnly) ?? [])
@@ -455,7 +583,31 @@ export function writableOnePasswordVaults(status: AccountStoresStatus["onePasswo
 }
 
 type MergedSource = ReturnType<typeof mergeSourceProfiles>[number];
+
+/** Other browsers' profiles as Accounts shows them, read without quitting those browsers. */
+export async function loadSourceProfiles() {
+  return previewBridge
+    ? mergeSourceProfiles(
+        await previewBridge.listBrowserImportSources(),
+        (await window.desktopBridge?.accounts?.sourceProfiles().catch(() => [])) ?? [],
+      )
+    : [];
+}
 type MergedSourceProfile = MergedSource["profiles"][number];
+
+const FOLDED_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Accounts' one line, for a week, naming the profiles the fold merged into Main; Undo takes these. */
+export function foldedNotice(snapshot: Pick<AccountsSnapshot, "profiles">, now: number) {
+  const merged = snapshot.profiles.flatMap((record) =>
+    record.retired && now - Date.parse(record.retired.at) <= FOLDED_NOTICE_MS
+      ? [{ profileId: record.profileId, name: record.retired.name }]
+      : [],
+  );
+  return merged.length
+    ? { text: `Merged into Main: ${merged.map(({ name }) => name).join(", ")}.`, merged }
+    : undefined;
+}
 
 /**
  * The source profile an existing Scient profile came from, for profiles imported before Scient
@@ -493,11 +645,36 @@ export function isSavedPassword(account: AccountSummary) {
   );
 }
 
-/** Only a profile's session: no password, and no username but Google's. */
+/** Only a profile's session: no password, and no username unless it was recorded from a session. */
 const hasNothingToType = ({ details, secrets }: AccountSummary) =>
   details.kind === "website" &&
   secrets.password === undefined &&
-  (details.username === undefined || details.sites.includes(GOOGLE_SITE));
+  (details.username === undefined || details.origin === "browser-session");
+
+/** An account saved here, with the snapshot that was shown when it was saved. */
+export interface SavedAccount {
+  readonly before: AccountsSnapshot | null;
+  readonly account: AccountSummary;
+}
+
+/**
+ * A snapshot with the accounts saved since it was read; a newer snapshot replaces them, so a failed
+ * refresh shows them only until the next one arrives.
+ */
+export function withSavedAccounts(
+  snapshot: AccountsSnapshot,
+  saved: ReadonlyArray<SavedAccount>,
+): AccountsSnapshot {
+  const since = saved.filter((entry) => entry.before === snapshot);
+  if (since.length === 0) return snapshot;
+  const accounts = [...snapshot.accounts];
+  for (const { account } of since) {
+    const index = accounts.findIndex((item) => item.accountId === account.accountId);
+    if (index === -1) accounts.push(account);
+    else accounts[index] = account;
+  }
+  return { ...snapshot, accounts };
+}
 
 /** A site signed in from a profile. A university has its own row. */
 export function isBrowserSignIn(account: AccountSummary) {
@@ -512,9 +689,6 @@ export function fillableAccounts(
 ) {
   return matchingAccounts(accounts, url, profileId).filter((account) => !hasNothingToType(account));
 }
-
-/** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
-export const GMAIL_URL = "https://mail.google.com/mail/";
 
 /** The domain of the address a browser profile was imported from, such as mail.huji.ac.il. */
 export function profileAddressDomain(
@@ -544,32 +718,6 @@ export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profi
       details.sites.includes(GOOGLE_SITE),
   );
   return rows.length > 0 && rows.every(({ signIn }) => signIn?.state === "signed-out");
-}
-
-/**
- * The Accounts list in order, with one entry per site for browser sign-ins: the same site signed
- * in from several profiles is one group.
- */
-export function accountListRows(
-  accounts: ReadonlyArray<AccountSummary>,
-): Array<AccountSummary | ReadonlyArray<AccountSummary>> {
-  const groups = new Map<string, Array<AccountSummary>>();
-  const rows: Array<AccountSummary | Array<AccountSummary>> = [];
-  for (const account of accounts) {
-    if (!isBrowserSignIn(account) || !("sites" in account.details)) {
-      rows.push(account);
-      continue;
-    }
-    const site = account.details.sites[0]?.replace(/^https:\/\//, "").toLowerCase() ?? "";
-    const group = groups.get(site);
-    if (group) group.push(account);
-    else {
-      const created = [account];
-      groups.set(site, created);
-      rows.push(created);
-    }
-  }
-  return rows.map((row) => (Array.isArray(row) && row.length === 1 ? row[0]! : row));
 }
 
 /** The source profile a linked profile came from, when its picture, colour or name changed there. */
@@ -633,44 +781,193 @@ export function toggleScope(
 }
 
 type ProviderManagedAccount = {
-  kind: "claude" | "codex";
+  kind: "claude" | "codex" | "droid" | "scient";
   id: string;
   instanceId: ProviderInstanceId;
   name: string;
   href: "/settings/extensions/installed";
 };
 
-export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>) {
-  return providers
-    .filter((provider) => provider.enabled && provider.installed)
-    .flatMap((provider): ReadonlyArray<ProviderManagedAccount> => {
-      if (provider.driver === "claudeAgent") {
-        return (provider.mcpServers ?? [])
-          .filter((server) => server.scope === "claudeai" && server.status === "connected")
-          .map((server) => ({
-            kind: "claude" as const,
-            id: JSON.stringify([provider.instanceId, server.name]),
-            instanceId: provider.instanceId,
-            // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
-            name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
-            href: "/settings/extensions/installed" as const,
-          }));
-      }
-      if (provider.driver !== "codex") return [];
-      const apps = new Map(
-        (provider.plugins ?? [])
-          .flatMap((plugin) => plugin.apps ?? [])
-          .filter((app) => app.connected)
-          .map((app) => [app.id ?? app.name, app]),
-      );
-      return [...apps].map(([id, app]) => ({
-        kind: "codex" as const,
-        id: JSON.stringify([provider.instanceId, id]),
-        instanceId: provider.instanceId,
-        name: app.name,
-        href: "/settings/extensions/installed" as const,
-      }));
-    });
+/** One GitHub login, with each use of it kept apart: one working use never marks another. */
+export interface GitHubIdentity {
+  /** `host:login`, lower case. */
+  readonly id: string;
+  readonly host: string;
+  readonly login: string;
+  /** Source Control holds this login; how, when the server says. */
+  readonly sourceControl?: { readonly via: "gh" | "app" | "token" | undefined };
+  /** The connector borrowing this login from Source Control. */
+  readonly connector?: ConnectorSummary;
+}
+
+/**
+ * GitHub logins Scient has actually seen: Source Control's, and those its connectors were
+ * connected as. A connector with its own token says nothing about whose it is, so it stays apart.
+ */
+export function githubIdentities(
+  managed: AccountsSnapshot["managedElsewhere"],
+  connectors: ReadonlyArray<ConnectorSummary>,
+): ReadonlyArray<GitHubIdentity> {
+  const identities = new Map<string, GitHubIdentity>();
+  const keyOf = (host: string, login: string) => `${host.toLowerCase()}:${login.toLowerCase()}`;
+  for (const row of managed ?? []) {
+    if (row.kind !== "github") continue;
+    const host = row.detail ?? "github.com";
+    const id = keyOf(host, row.name);
+    identities.set(id, { id, host, login: row.name, sourceControl: { via: row.via } });
+  }
+  for (const connector of connectors) {
+    if (connector.auth.type !== "source-control") continue;
+    const { host, account } = connector.auth;
+    const id = keyOf(host, account);
+    identities.set(id, { ...(identities.get(id) ?? { id, host, login: account }), connector });
+  }
+  return [...identities.values()];
+}
+
+type ManagedRowsByInstance = ReadonlyMap<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>;
+
+function claudeRows(
+  provider: ServerProvider,
+  servers: NonNullable<ServerProvider["mcpServers"]>,
+  previous: ReadonlyArray<ProviderManagedAccount>,
+) {
+  return servers
+    .filter(
+      (server) =>
+        server.scope === "claudeai" &&
+        (server.status === "connected" ||
+          // A server still starting keeps the place it had; a refusal removes it.
+          ((server.status === "pending" || server.status === "unknown") &&
+            previous.some((row) => row.id === JSON.stringify([provider.instanceId, server.name])))),
+    )
+    .map((server) => ({
+      kind: "claude" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
+      name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+/** The ChatGPT apps Scient Agent's own ChatGPT sign-in reaches. */
+function scientRows(provider: ServerProvider, servers: NonNullable<ServerProvider["mcpServers"]>) {
+  return servers
+    .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+    .map((server) => ({
+      kind: "scient" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      name: server.name,
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+function codexRows(
+  provider: ServerProvider,
+  plugins: NonNullable<ServerProvider["plugins"]>,
+  servers: ServerProvider["mcpServers"],
+) {
+  // Apps of Codex's ChatGPT account, whether or not a plugin brought them; one row per app.
+  const apps = new Map(
+    [
+      ...plugins.flatMap((plugin) => plugin.apps ?? []).filter((app) => app.connected),
+      ...(servers ?? [])
+        .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+        .map((server) => ({ name: server.name })),
+    ].map((app) => [app.name, app]),
+  );
+  return [...apps].map(([id, app]) => ({
+    kind: "codex" as const,
+    id: JSON.stringify([provider.instanceId, id]),
+    instanceId: provider.instanceId,
+    name: app.name,
+    href: "/settings/extensions/installed" as const,
+  }));
+}
+
+/** Droid's servers holding the user's sign-in; a local server or one never signed in is not one. */
+function droidRows(provider: ServerProvider, servers: NonNullable<ServerProvider["mcpServers"]>) {
+  return servers
+    .filter((server) => server.signedIn === true)
+    .map((server) => ({
+      kind: "droid" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      name: server.name,
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+/**
+ * Claude, Codex and Droid connections, kept steady while their inventory is unknown or refreshing.
+ * Other agents don't report which of their connectors hold a sign-in, so they have no rows.
+ * `providers` is the live list (which instances count), `inventory` the last extensions reply.
+ */
+export function providerManagedAccounts(
+  providers: ReadonlyArray<ServerProvider>,
+  inventory: ReadonlyArray<ServerProvider>,
+  previous: ManagedRowsByInstance,
+): { rows: ReadonlyArray<ProviderManagedAccount>; next: ManagedRowsByInstance } {
+  const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
+  for (const provider of providers) {
+    if (!provider.enabled || !provider.installed) continue;
+    if (!["claudeAgent", "codex", "droid", "scient"].includes(provider.driver)) continue;
+    const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
+    const kept = previous.get(provider.instanceId) ?? [];
+    const rows =
+      provider.driver === "codex"
+        ? known?.plugins
+          ? codexRows(provider, known.plugins, known.mcpServers)
+          : kept
+        : !known?.mcpServers
+          ? kept
+          : provider.driver === "claudeAgent"
+            ? claudeRows(provider, known.mcpServers, kept)
+            : provider.driver === "scient"
+              ? scientRows(provider, known.mcpServers)
+              : droidRows(provider, known.mcpServers);
+    next.set(provider.instanceId, rows);
+  }
+  // Agents signed in to one known account report the same connectors: one connection, one row.
+  // Without an account (Droid reports none), each agent's connector stays its own row.
+  const owner = (instanceId: ProviderInstanceId) =>
+    providers.find((provider) => provider.instanceId === instanceId)?.auth.email ?? instanceId;
+  const seen = new Set<string>();
+  const rows = [...next.values()]
+    .flat()
+    .filter((row) => {
+      const key = JSON.stringify([row.kind, owner(row.instanceId), row.name]);
+      return !seen.has(key) && Boolean(seen.add(key));
+    })
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+  return { rows, next };
+}
+
+export type ProviderRowsCache = Map<string, { connection: object; rows: ManagedRowsByInstance }>;
+
+/** Kept rows belong to the connection that read them; a new, lost or unpermitted one clears them. */
+export function steadyProviderRows(
+  cache: ProviderRowsCache,
+  environmentId: string,
+  live: {
+    connection: object | null;
+    canRead: boolean;
+    permitted: boolean;
+    providers: ReadonlyArray<ServerProvider>;
+    inventory: ReadonlyArray<ServerProvider>;
+  },
+) {
+  const cached = cache.get(environmentId);
+  if (!live.connection || !live.canRead || !live.permitted) {
+    cache.delete(environmentId);
+    return [];
+  }
+  const previous = cached?.connection === live.connection ? cached.rows : new Map();
+  const { rows, next } = providerManagedAccounts(live.providers, live.inventory, previous);
+  cache.set(environmentId, { connection: live.connection, rows: next });
+  return rows;
 }
 
 const KEY_PREFIXES = [
@@ -716,8 +1013,10 @@ export function accountStatusLabel(
   const university = account.details && universityDetails(account.details);
   if (!signIn) return university ? "Not signed in yet" : null;
   switch (signIn.state) {
-    case "signed-in":
-      return `Signed in · ${relativeTime(signIn.at)}`;
+    case "signed-in": {
+      const who = account.details?.kind === "website" ? account.details.username : undefined;
+      return `Signed in${who ? ` as ${who}` : ""} · ${relativeTime(signIn.at)}`;
+    }
     case "signed-out":
       return university ? "Sign in needed" : "Signed out";
     case "needs-you":
@@ -728,9 +1027,18 @@ export function accountStatusLabel(
       return "Code rejected";
     case "limited":
       return "Site is limiting access";
-    case "failed":
     case "unknown":
-      return "Couldn't check";
+      return signIn.from === "import"
+        ? "Imported"
+        : signIn.from === "copy"
+          ? "Copied"
+          : // An action that said nothing yet about the site, such as a changed password.
+            signIn.by === "action" && signIn.detail
+            ? signIn.detail
+            : "Couldn't check";
+    // A failed attempt holds automatic sign-ins until the person signs in.
+    case "failed":
+      return "Sign in needed";
   }
 }
 
@@ -755,27 +1063,67 @@ const SIGN_IN_OUTCOME_LABELS: Readonly<
 /** One line of an account's activity; `where` names the conversation. */
 export function activityLine(entry: AccountActivityEntry, where: string | undefined) {
   const what =
-    entry.decision === "denied"
-      ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-      : entry.signInOutcome
-        ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
-        : entry.outcome === "error"
-          ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-          : ACTIVITY_LABELS[entry.action];
+    entry.keptTyped === "kept"
+      ? "Kept the password you typed"
+      : entry.keptTyped === "linked"
+        ? "The typed password wasn't kept: it lives in its linked password store"
+        : entry.decision === "denied"
+          ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+          : entry.signInOutcome
+            ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
+            : entry.outcome === "error"
+              ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+              : ACTIVITY_LABELS[entry.action];
   return where ? `${what} · ${where}` : what;
 }
 
-export interface KeyInUse {
-  readonly name: string;
-  readonly usedBy: ReadonlyArray<string>;
-  /** Provider variables can follow a saved key; Custom models keys already live in Accounts. */
-  readonly variables: ReadonlyArray<{ readonly instanceId: string; readonly variable: string }>;
-  readonly href: "/settings/providers" | "/settings/custom-models";
+/** Keys Scient kept from removed agents of this kind: the latest for each setting. */
+export function keptAgentKeys(accounts: ReadonlyArray<AccountSummary>, agent: string) {
+  const bySetting = new Map<string, AccountSummary>();
+  for (const account of accounts.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const from = account.details.kind === "api-key" ? account.details.keptFrom : undefined;
+    if (from?.agent === agent) bySetting.set(from.setting, account);
+  }
+  return [...bySetting.values()];
 }
 
-/** The keys Scient itself uses, by name: never their values. Same name, one row. */
-export function keysInUse(
-  instances: Readonly<
+/** A place that uses a key, and the settings page where it does. */
+export interface KeyUse {
+  readonly label: string;
+  readonly href: "/settings/providers" | "/settings/custom-models";
+  /** The agent variable that follows the key. */
+  readonly link?: { readonly instanceId: string; readonly variable: string };
+}
+
+/** One key in the API keys card, wherever it is stored; never its value. */
+export type ApiKeyRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly service: string | undefined;
+  readonly uses: ReadonlyArray<KeyUse>;
+} & (
+  | { readonly stored: "accounts"; readonly account: AccountSummary }
+  /** Custom models' own store, which Accounts seals: kept already. */
+  | { readonly stored: "custom-models" }
+  | { readonly stored: "agent"; readonly instanceId: string; readonly variable: string }
+  /** Each file's copy is its own key until Scient has compared their values. */
+  | { readonly stored: "files"; readonly file: string }
+);
+
+/** Where a key not kept in Accounts lives, or nothing when it is kept. */
+export function onlyIn(row: ApiKeyRow) {
+  if (row.stored === "agent") return `Only in ${row.uses[0]?.label} settings`;
+  return row.stored === "files" ? `Only in ${row.file}` : undefined;
+}
+
+/**
+ * Every key Scient knows, one row each: API-key accounts with the agent variables and Custom
+ * models connection that use them, then agent secret variables and plain-file keys not kept here.
+ */
+export function apiKeyRows(input: {
+  readonly accounts: ReadonlyArray<AccountSummary>;
+  readonly keyLinks: AccountsSnapshot["keyLinks"];
+  readonly instances: Readonly<
     Record<
       string,
       {
@@ -786,29 +1134,86 @@ export function keysInUse(
           | undefined;
       }
     >
-  >,
-  customModelKeys: ReadonlyArray<{ readonly name: string }>,
-  driverName: (driver: string) => string,
-): ReadonlyArray<KeyInUse> {
-  const byName = new Map<string, KeyInUse>();
-  for (const [instanceId, instance] of Object.entries(instances))
+  >;
+  readonly customModelKeys: AccountsSnapshot["customModelKeys"];
+  readonly plainKeys: ReadonlyArray<AccountPlainKey>;
+  readonly driverName: (driver: string) => string;
+}): ReadonlyArray<ApiKeyRow> {
+  const uses = new Map<string, KeyUse[]>();
+  const keys = input.accounts.filter((account) => account.details.kind === "api-key");
+  const used = (accountId: string, use: KeyUse) =>
+    uses.set(accountId, [...(uses.get(accountId) ?? []), use]);
+  const others: ApiKeyRow[] = [];
+  for (const [instanceId, instance] of Object.entries(input.instances))
     for (const variable of instance.environment ?? []) {
       if (!variable.sensitive) continue;
-      const existing = byName.get(variable.name);
-      byName.set(variable.name, {
-        name: variable.name,
-        usedBy: [...(existing?.usedBy ?? []), instance.displayName ?? driverName(instance.driver)],
-        variables: [...(existing?.variables ?? []), { instanceId, variable: variable.name }],
-        href: "/settings/providers",
-      });
+      const label = instance.displayName ?? input.driverName(instance.driver);
+      const accountId = input.keyLinks?.find(
+        (link) => link.instanceId === instanceId && link.variable === variable.name,
+      )?.accountId;
+      const link = { instanceId, variable: variable.name };
+      // A link to a removed account leaves its last key in the variable only.
+      if (accountId && keys.some((account) => account.accountId === accountId))
+        used(accountId, { label, href: "/settings/providers", link });
+      else
+        others.push({
+          id: `agent:${instanceId}:${variable.name}`,
+          name: variable.name,
+          service: undefined,
+          uses: [{ label, href: "/settings/providers" }],
+          stored: "agent",
+          ...link,
+        });
     }
+  for (const connection of input.customModelKeys) {
+    const use = { label: "Custom models", href: "/settings/custom-models" } as const;
+    const account = keys.find(({ secrets }) => {
+      const source = secrets.token?.source;
+      return source?.type === "custom-model" && source.connectionId === connection.connectionId;
+    });
+    if (account) used(account.accountId, use);
+    else
+      others.push({
+        id: `custom-model:${connection.connectionId}`,
+        name: connection.name,
+        service: connection.origin,
+        uses: [use],
+        stored: "custom-models",
+      });
+  }
+  const byName = (a: ApiKeyRow, b: ApiKeyRow) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true });
   return [
-    ...byName.values(),
-    ...customModelKeys.map((key) => ({
-      name: key.name,
-      usedBy: ["Custom models"],
-      variables: [],
-      href: "/settings/custom-models" as const,
-    })),
+    ...[
+      ...keys.map((account): ApiKeyRow => ({
+        id: `account:${account.accountId}`,
+        name: account.name,
+        service:
+          account.details.kind === "api-key"
+            ? account.details.sites.join(", ") || account.details.envName
+            : undefined,
+        uses: uses.get(account.accountId) ?? [],
+        stored: "accounts",
+        account,
+      })),
+      ...others.filter((row) => row.stored === "custom-models"),
+    ].toSorted(byName),
+    ...[
+      ...others.filter((row) => row.stored === "agent"),
+      ...input.plainKeys.flatMap((key): ApiKeyRow[] =>
+        key.kept
+          ? []
+          : [
+              {
+                id: `files:${key.file}:${key.name}`,
+                name: key.name,
+                service: undefined,
+                uses: [],
+                stored: "files",
+                file: key.file,
+              },
+            ],
+      ),
+    ].toSorted(byName),
   ];
 }

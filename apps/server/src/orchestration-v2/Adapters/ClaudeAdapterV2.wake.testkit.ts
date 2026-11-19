@@ -276,6 +276,7 @@ const makeWakeHarnessWithOptions = (options?: {
               const processMessages = yield* Queue.unbounded<SDKMessage>();
               processQueues.push(processMessages);
               return {
+                renameSession: () => Effect.void,
                 messages: observeStreamExit(Stream.fromQueue(processMessages)),
                 offer: (message: SDKUserMessage) =>
                   Effect.sync(() => {
@@ -296,6 +297,7 @@ const makeWakeHarnessWithOptions = (options?: {
             }
             processQueues.push(sdkMessages);
             return {
+              renameSession: () => Effect.void,
               messages: Stream.fromQueue(sdkMessages).pipe(
                 Stream.flatMap((message) =>
                   Stream.make(message).pipe(
@@ -341,6 +343,7 @@ const makeWakeHarnessWithOptions = (options?: {
           }),
         forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
         subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
         assertComplete: Effect.void,
       },
     });

@@ -9,7 +9,6 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -25,6 +24,21 @@ import { presentInheritedItem } from "./ForkHistory.ts";
 import { decodeTurnItemRow } from "./projectionRowJson.ts";
 import { handoffMetadataSql } from "./ContextHistorySql.ts";
 import { readJsonStringFieldPage } from "./JsonStringFieldPage.ts";
+import {
+  HANDOFF_ITEM_SUMMARY_BODY_FIELD,
+  SHARED_SUMMARY_FIELD,
+  convertLegacySourceToShared,
+  listLargeHandoffItemSummaries,
+  readSharedSource,
+  shareHandoffItemSummary,
+} from "./SharedHistoryBodies.ts";
+import {
+  expandRangesShowing,
+  handoffHistoryRowsSql,
+  hasHandoffHistory,
+  writeHandoffHistory,
+  type HandoffHistoryRow,
+} from "./ForkHandoffRanges.ts";
 
 const decodeHandoff = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
@@ -78,6 +92,12 @@ const legacySourceShape = Effect.fn("ContextHistory.legacyShape")(function* (
   sql: SqlClient.SqlClient,
   sourceId: ContextHandoffId,
 ) {
+  // A converted source keeps the shape verified before its bodies moved to shared storage.
+  const shared = yield* readSharedSource(sql, sourceId);
+  if (shared !== undefined) {
+    const decoded = decodeLegacySourceShape(shared.shape_json);
+    return decoded._tag === "Some" ? decoded.value : undefined;
+  }
   const bytes = sql`CASE WHEN source.payload_json IS NOT NULL THEN octet_length(source.payload_json)
     ELSE octet_length(event.payload_json) END`;
   const cached = yield* sql<{ readonly shape: string | null; readonly bytes: number | null }>`
@@ -123,6 +143,14 @@ export const isLegacyContextHistoryReadable = Effect.fn("ContextHistory.validate
   )
     return false;
   if (summaryOnly) return true;
+  if ((yield* readSharedSource(sql, sourceId)) !== undefined) {
+    // Bodies were decoded and verified before conversion; a missing body still fails here.
+    const complete = yield* sql<{ readonly count: number }>`SELECT COUNT(*) AS count
+      FROM scient_handoff_shared_messages AS message
+      JOIN scient_history_bodies AS body ON body.hash = message.body_hash
+      WHERE message.source_id = ${sourceId}`;
+    return complete[0]!.count === itemCount;
+  }
   yield* indexLegacyContextHistory(sql, sourceId).pipe(sql.withTransaction);
   const count = yield* sql<{ readonly count: number }>`SELECT COUNT(*) AS count
     FROM scient_handoff_legacy_messages WHERE source_id = ${sourceId}`;
@@ -153,30 +181,115 @@ export const isLegacyContextHistoryReadable = Effect.fn("ContextHistory.validate
   }
 });
 
-/** Initial membership is committed with the handoff event; status updates carry only its ID. */
+/** Moves one legacy source to shared bodies once its shape and messages verify. */
+const shareLegacyContextHistory = Effect.fn("ContextHistory.shareLegacy")(function* (
+  sql: SqlClient.SqlClient,
+  sourceId: ContextHandoffId,
+  between: Effect.Effect<void>,
+) {
+  const shape = yield* legacySourceShape(sql, sourceId);
+  if (shape === undefined) return "skipped" as const;
+  if (
+    shape.historyNull !== 1 &&
+    !(yield* isLegacyContextHistoryReadable(sql, sourceId, shape.count, false))
+  )
+    return "skipped" as const;
+  const recorded = yield* sql<{ readonly shape_json: string | null }>`
+    SELECT shape_json FROM scient_handoff_legacy_sources WHERE source_id = ${sourceId}`;
+  return yield* convertLegacySourceToShared(
+    sql,
+    sourceId,
+    shape,
+    recorded[0]?.shape_json ?? encodeJson(shape),
+    between,
+  );
+});
+
+/** Background pass over every unconverted legacy source; `between` paces the work.
+ * A source that fails or does not verify stays inline and is retried on a later pass. */
+export const shareLegacyContextHistories = Effect.fn("ContextHistory.shareLegacyAll")(function* (
+  sql: SqlClient.SqlClient,
+  between: Effect.Effect<void>,
+) {
+  const counts = { converted: 0, skipped: 0, failed: 0, items: 0 };
+  let after = "";
+  while (true) {
+    const rows = yield* sql<{ readonly source_id: string }>`
+      SELECT source.source_id FROM scient_handoff_legacy_sources AS source
+      WHERE source.source_id > ${after} AND NOT EXISTS (
+        SELECT 1 FROM scient_handoff_shared_sources AS shared WHERE shared.source_id = source.source_id)
+      ORDER BY source.source_id LIMIT 16`;
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      const result = yield* shareLegacyContextHistory(
+        sql,
+        ContextHandoffId.make(row.source_id),
+        between,
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not share archived context history", {
+            sourceId: row.source_id,
+            cause,
+          }).pipe(Effect.as("failed" as const)),
+        ),
+      );
+      if (result === "converted") counts.converted++;
+      else if (result === "failed") counts.failed++;
+      else if (result === "skipped") counts.skipped++;
+      yield* between;
+    }
+    after = rows.at(-1)!.source_id;
+  }
+  // Timeline items whose large summary equals their own converted source's summary.
+  let afterItem = "";
+  while (true) {
+    const rows = yield* listLargeHandoffItemSummaries(sql, afterItem);
+    if (rows.length === 0) return counts;
+    for (const row of rows) {
+      const result = yield* shareHandoffItemSummary(sql, row.turn_item_id).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not share a handoff item summary", {
+            itemId: row.turn_item_id,
+            cause,
+          }).pipe(Effect.as("failed" as const)),
+        ),
+      );
+      if (result === "converted") counts.items++;
+      else if (result === "failed") counts.failed++;
+      yield* between;
+    }
+    afterItem = rows.at(-1)!.turn_item_id;
+  }
+});
+
+/** Initial membership is committed with the handoff event; status updates carry only its ID.
+ * Membership is written once: a replayed or repeated capture of the same source keeps it. */
 const captureContextHistory = Effect.fn("ContextHistory.capture")(function* (
   sql: SqlClient.SqlClient,
   handoff: OrchestrationV2ContextHandoff,
 ) {
   const source = handoff.historySource;
   if (source?.entries === undefined) return;
-  yield* sql`
-    INSERT OR IGNORE INTO scient_handoff_history
-      (source_id, position, view_thread_id, source_thread_id, source_item_id, fork_position,
-        run_status, body_id)
-    SELECT ${source.id}, CAST(entry.key AS INTEGER), json_extract(entry.value, '$.threadId'),
-      COALESCE(history.source_thread_id, json_extract(entry.value, '$.threadId')),
-      json_extract(entry.value, '$.itemId'), history.position,
-      json_extract(entry.value, '$.runStatus'), NULL
-    FROM json_each(${encodeJson(source.entries)}) AS entry
-    LEFT JOIN scient_fork_history AS history
-      ON history.thread_id = json_extract(entry.value, '$.threadId')
-      AND history.source_item_id = json_extract(entry.value, '$.itemId')
-      AND history.position = COALESCE(json_extract(entry.value, '$.forkPosition'), (
-        SELECT MIN(position) FROM scient_fork_history
-        WHERE thread_id = json_extract(entry.value, '$.threadId')
-          AND source_item_id = json_extract(entry.value, '$.itemId')))
-  `;
+  yield* Effect.gen(function* () {
+    if (yield* hasHandoffHistory(sql, source.id)) return;
+    const rows = yield* sql<HandoffHistoryRow>`
+      SELECT ${source.id} AS source_id, CAST(entry.key AS INTEGER) AS position,
+        json_extract(entry.value, '$.threadId') AS view_thread_id,
+        COALESCE(history.source_thread_id, json_extract(entry.value, '$.threadId')) AS source_thread_id,
+        json_extract(entry.value, '$.itemId') AS source_item_id, history.position AS fork_position,
+        json_extract(entry.value, '$.runStatus') AS run_status, NULL AS body_id
+      FROM json_each(${encodeJson(source.entries)}) AS entry
+      LEFT JOIN scient_fork_history AS history
+        ON history.thread_id = json_extract(entry.value, '$.threadId')
+        AND history.source_item_id = json_extract(entry.value, '$.itemId')
+        AND history.position = COALESCE(json_extract(entry.value, '$.forkPosition'), (
+          SELECT MIN(position) FROM scient_fork_history
+          WHERE thread_id = json_extract(entry.value, '$.threadId')
+            AND source_item_id = json_extract(entry.value, '$.itemId')))
+      ORDER BY CAST(entry.key AS INTEGER)
+    `;
+    yield* writeHandoffHistory(sql, rows);
+  }).pipe(sql.withTransaction);
 });
 
 export const recordContextHistory = Effect.fn("ContextHistory.record")(function* (
@@ -219,6 +332,7 @@ export const freezeContextHistory = Effect.fn("ContextHistory.freeze")(function*
   event: OrchestrationV2DomainEvent,
 ) {
   if (event.type !== "turn-item.updated") return;
+  yield* expandRangesShowing(sql, event.threadId, event.payload.id);
   const bodyId = `before:${event.id}`;
   yield* sql`
     INSERT OR IGNORE INTO scient_handoff_frozen_items (body_id, item_json)
@@ -286,16 +400,23 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
         sourceId: source.id,
         detail: "Legacy context history is malformed.",
       });
+    const shared = (yield* readSharedSource(sql, source.id)) !== undefined;
     const index = yield* sql<{
       readonly position: number;
       readonly bytes: number;
       readonly raw_bytes: number;
       readonly item_id: string;
       readonly role: string;
-    }>`
-      SELECT position, text_bytes AS bytes, octet_length(payload_json) AS raw_bytes, item_id, role
-      FROM scient_handoff_legacy_messages WHERE source_id = ${source.id} ORDER BY position
-    `;
+    }>`${
+      shared
+        ? sql`SELECT message.position, message.text_bytes AS bytes, body.bytes AS raw_bytes,
+            message.item_id, message.role
+          FROM scient_handoff_shared_messages AS message
+          JOIN scient_history_bodies AS body ON body.hash = message.body_hash
+          WHERE message.source_id = ${source.id} ORDER BY message.position`
+        : sql`SELECT position, text_bytes AS bytes, octet_length(payload_json) AS raw_bytes, item_id, role
+          FROM scient_handoff_legacy_messages WHERE source_id = ${source.id} ORDER BY position`
+    }`;
     if (index.length !== source.itemCount)
       return yield* new ContextHistoryReadError({
         sourceId: source.id,
@@ -307,10 +428,14 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
       bytes: row.bytes,
       read: Effect.fn("ContextHistorySource.read")(function* () {
         if (row.raw_bytes > readLimit) return null;
-        const body = yield* sql<{ readonly payload_json: string }>`
-          SELECT payload_json FROM scient_handoff_legacy_messages
-          WHERE source_id = ${source.id} AND position = ${row.position}
-        `;
+        const body = yield* sql<{ readonly payload_json: string }>`${
+          shared
+            ? sql`SELECT body.body AS payload_json FROM scient_handoff_shared_messages AS message
+                JOIN scient_history_bodies AS body ON body.hash = message.body_hash
+                WHERE message.source_id = ${source.id} AND message.position = ${row.position}`
+            : sql`SELECT payload_json FROM scient_handoff_legacy_messages
+                WHERE source_id = ${source.id} AND position = ${row.position}`
+        }`;
         return yield* decodeMessage(body[0]!.payload_json);
       }),
     }));
@@ -330,13 +455,13 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
         WHEN 'user_message' THEN 'user' WHEN 'user_input_request' THEN 'user'
         ELSE 'assistant' END AS role,
       octet_length(${contextItemSql(sql, sql`COALESCE(frozen.item_json, body.item_json, item.payload_json)`)}) AS bytes
-    FROM scient_handoff_history AS history
+    FROM (${handoffHistoryRowsSql(sql, sql`${source.id}`)}) AS history
     LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
     LEFT JOIN scient_fork_frozen_items AS frozen
       ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
     LEFT JOIN orchestration_v2_projection_turn_items AS item
       ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
-    WHERE history.source_id = ${source.id} ORDER BY history.position
+    ORDER BY history.position
   `;
   if (index.length !== source.itemCount || index.some((row) => row.bytes === null))
     return yield* new ContextHistoryReadError({
@@ -353,13 +478,12 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
       if (row.bytes! > readLimit) return null;
       const body = yield* sql<{ readonly payload_json: string }>`
         SELECT ${contextItemSql(sql, sql`COALESCE(frozen.item_json, body.item_json, item.payload_json)`)} AS payload_json
-        FROM scient_handoff_history AS history
+        FROM (${handoffHistoryRowsSql(sql, sql`${source.id}`, [row.position, row.position])}) AS history
         LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
-    LEFT JOIN scient_fork_frozen_items AS frozen
-      ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
-    LEFT JOIN orchestration_v2_projection_turn_items AS item
+        LEFT JOIN scient_fork_frozen_items AS frozen
+          ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
+        LEFT JOIN orchestration_v2_projection_turn_items AS item
           ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
-        WHERE history.source_id = ${source.id} AND history.position = ${row.position}
       `;
       const original = yield* decodeTurnItemRow(body[0]!.payload_json);
       const item =
@@ -381,6 +505,25 @@ const readContextSummaryPage = Effect.fn("ContextHistory.readSummaryPage")(funct
   maxChars: number,
   onPage?: (text: string) => Effect.Effect<void, E>,
 ) {
+  const shared = yield* readSharedSource(sql, sourceId);
+  if (shared !== undefined)
+    return yield* readJsonStringFieldPage<E | ContextHistoryReadError | SqlError>({
+      field: SHARED_SUMMARY_FIELD,
+      offset,
+      maxChars,
+      ...(onPage === undefined ? {} : { onPage }),
+      read: Effect.fn("ContextHistorySource.readShared")(function* (byteOffset, length) {
+        const rows = yield* sql<{ readonly chunk: Uint8Array }>`
+          SELECT substr(CAST(body AS BLOB), ${byteOffset + 1}, ${length}) AS chunk
+          FROM scient_history_bodies WHERE hash = ${shared.summary_hash}`;
+        if (rows[0] === undefined)
+          return yield* new ContextHistoryReadError({
+            sourceId,
+            detail: "The shared summary body is missing.",
+          });
+        return rows[0].chunk;
+      }),
+    });
   return yield* readJsonStringFieldPage<E | ContextHistoryReadError | SqlError>({
     field: "summaryText",
     offset,
@@ -449,11 +592,30 @@ const selectCapturedContextHistory = Effect.fn("ContextHistory.selectCaptured")(
     (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
     0,
   );
+  // Name the omitted items (newest last, at most 20) so a read targets them.
+  const priorOmittedIds = input.handoffs.flatMap(
+    (handoff) => handoff.history?.omittedItemIds ?? [],
+  );
+  const maxOmitted = omittedBefore + candidates.length;
+  const omittedList = (ids: ReadonlyArray<string>, total: number) =>
+    ids.length === 0
+      ? ""
+      : ` Omitted item IDs, newest last: ${ids.join(", ")}.${total > ids.length ? ` ${total - ids.length} older omitted items are not listed.` : ""}`;
+  // Reserve room for the widest IDs so the final list cannot exceed it; cap it at an eighth of the budget.
+  const widestIds = [...priorOmittedIds, ...candidates.map((candidate) => candidate.itemId)]
+    .toSorted((a, b) => b.length - a.length)
+    .slice(0, 20);
+  while (
+    widestIds.length > 0 &&
+    Buffer.byteLength(encodeJson(omittedList(widestIds, maxOmitted))) > input.budget / 8
+  )
+    widestIds.pop();
   let remaining =
     input.budget -
     historyCost(
       [],
-      historySelectionContext(coverage, candidates.length, omittedBefore + candidates.length),
+      historySelectionContext(coverage, candidates.length, maxOmitted) +
+        omittedList(widestIds, maxOmitted),
     );
   const selected = new Map<number, OrchestrationV2HistoricalMessage>();
   for (const at of historySelectionOrder(candidates)) {
@@ -471,24 +633,30 @@ const selectCapturedContextHistory = Effect.fn("ContextHistory.selectCaptured")(
   const omittedItemIds = candidates
     .filter((_, at) => !selected.has(at))
     .map((candidate) => candidate.itemId);
+  const omittedItems = maxOmitted - messages.length;
+  const listedIds = [...priorOmittedIds, ...omittedItemIds];
   return {
     messages,
     itemIdsByHandoff,
     omittedItemIds,
-    omittedItems: omittedBefore + candidates.length - messages.length,
-    context: historySelectionContext(
-      coverage,
-      messages.length,
-      omittedBefore + candidates.length - messages.length,
-    ),
+    omittedItems,
+    context:
+      historySelectionContext(coverage, messages.length, omittedItems) +
+      omittedList(widestIds.length === 0 ? [] : listedIds.slice(-widestIds.length), omittedItems),
   };
 });
 
-class UncommittedContextHistorySelection extends Data.TaggedError(
+type CapturedContextHistorySelection = Effect.Success<
+  ReturnType<typeof selectCapturedContextHistory>
+>;
+
+// Rollback signal only: the selection never leaves this module or gets encoded.
+class UncommittedContextHistorySelection extends Schema.TaggedError<UncommittedContextHistorySelection>()(
   "UncommittedContextHistorySelection",
-)<{
-  readonly selected: Effect.Success<ReturnType<typeof selectCapturedContextHistory>>;
-}> {}
+  {
+    selected: Schema.declare((_: unknown): _ is CapturedContextHistorySelection => true),
+  },
+) {}
 
 /** A plan whose handoff event is not committed yet (a fit check before a start)
  * reads its membership from a capture that is rolled back after selection. */
@@ -500,9 +668,7 @@ export const selectContextHistory = Effect.fn("ContextHistory.select")(function*
   for (const handoff of input.handoffs) {
     const source = handoff.historySource;
     if (source?.entries === undefined || source.entries.length === 0) continue;
-    const captured = yield* sql`
-      SELECT 1 FROM scient_handoff_history WHERE source_id = ${source.id} LIMIT 1`;
-    if (captured.length === 0) uncommitted.push(handoff);
+    if (!(yield* hasHandoffHistory(sql, source.id))) uncommitted.push(handoff);
   }
   if (uncommitted.length === 0) return yield* selectCapturedContextHistory(sql, input);
   return yield* Effect.gen(function* () {
@@ -548,8 +714,17 @@ AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.contextHandof
       detail: "Streaming pages must have positive length.",
     });
   if (handoff.threadId !== threadId) {
-    const inherited = yield* sql<{ readonly position: number; readonly bytes: number }>`
-    SELECT history.position, octet_length(json_extract(COALESCE(frozen.item_json, item.payload_json), '$.summary')) AS bytes
+    const inherited = yield* sql<{
+      readonly position: number;
+      readonly bytes: number;
+      readonly body_hash: string | null;
+    }>`
+    SELECT history.position,
+      json_extract(COALESCE(frozen.item_json, item.payload_json), ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}) AS body_hash,
+      COALESCE((SELECT octet_length(json_extract(body.body, ${`$.${SHARED_SUMMARY_FIELD}`}))
+        FROM scient_history_bodies AS body WHERE body.hash = unhex(json_extract(
+          COALESCE(frozen.item_json, item.payload_json), ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}))),
+        octet_length(json_extract(COALESCE(frozen.item_json, item.payload_json), '$.summary'))) AS bytes
     FROM scient_fork_history AS history
     LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.thread_id AND frozen.position = history.position
     LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id
@@ -560,6 +735,31 @@ AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.contextHandof
   `;
     if (inherited[0] !== undefined) {
       const saved = inherited[0];
+      // A shared summary is read whole from its body; the inline field keeps only a prefix.
+      if (saved.body_hash !== null)
+        return {
+          handoff,
+          textBytes: saved.bytes,
+          ...(yield* readJsonStringFieldPage<E | ContextHistoryReadError | SqlError>({
+            field: SHARED_SUMMARY_FIELD,
+            offset,
+            maxChars,
+            ...(consume === undefined ? {} : { onPage: consume }),
+            read: Effect.fn("ContextHistorySource.readSharedItemSummary")(
+              function* (byteOffset, length) {
+                const rows = yield* sql<{ readonly chunk: Uint8Array }>`
+                  SELECT substr(CAST(body AS BLOB), ${byteOffset + 1}, ${length}) AS chunk
+                  FROM scient_history_bodies WHERE hash = unhex(${saved.body_hash})`;
+                if (rows[0] === undefined)
+                  return yield* new ContextHistoryReadError({
+                    sourceId: handoffId,
+                    detail: "The shared handoff summary body is missing.",
+                  });
+                return rows[0].chunk;
+              },
+            ),
+          })),
+        };
       return {
         handoff,
         textBytes: saved.bytes,
@@ -588,6 +788,13 @@ AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.contextHandof
       : yield* sql`
           SELECT 1 FROM scient_handoff_legacy_sources WHERE source_id = ${source.id}
         `;
+  const shared = source === undefined ? undefined : yield* readSharedSource(sql, source.id);
+  if (source !== undefined && shared !== undefined)
+    return {
+      handoff,
+      textBytes: shared.summary_bytes,
+      ...(yield* readContextSummaryPage(sql, source.id, offset, maxChars, consume)),
+    };
   if (source !== undefined && legacy.length > 0)
     return {
       handoff,

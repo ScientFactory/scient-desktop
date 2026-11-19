@@ -2,9 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   MUSE_DOWNLOAD_URL,
   MUSE_STABLE_CHANNEL_URL,
-  MUSE_TARGETS,
   resolveMuseArtifactPolicy,
 } from "@scientfactory/provider-runtime";
+import { MUSE_SUPPORTED_TARGETS as MUSE_TARGETS } from "@scientfactory/provider-runtime/testing";
 import {
   refreshManagedRuntimeProvider,
   validateManagedRuntimeCandidate,

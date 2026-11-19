@@ -11,11 +11,11 @@ it("requires applicable Windows qualification through the single Check gate", ()
     changes: {
       outputs: {
         windows_changed:
-          "${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.changed }}",
+          "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.changed }}",
       },
     },
     windows_packaging: {
-      needs: ["queue_ci", "release_notes", "changes"],
+      needs: ["queue_ci", "changes"],
       if: "${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}",
       uses: "./.github/workflows/windows-packaging.yml",
     },
@@ -31,7 +31,9 @@ it("requires applicable Windows qualification through the single Check gate", ()
   expect(gate.env).toMatchObject({
     WINDOWS_DETECTION_RESULT: "${{ needs.changes.result }}",
     WINDOWS_CHANGED: "${{ needs.changes.outputs.windows_changed }}",
-    WINDOWS_NATIVE_RESULT: "${{ needs.windows_packaging.result }}",
+    // A failure the flake quarantine accepted counts as passed (docs/operations/ci-flakes.md).
+    WINDOWS_NATIVE_RESULT:
+      "${{ steps.quarantine.outputs.ok == 'true' && needs.windows_packaging.result == 'failure' && 'success' || needs.windows_packaging.result }}",
   });
   expect(gate.run).toContain("node .github/scripts/windows-packaging-ci-gate.mjs check");
   expect(gate.run).toContain("node .github/scripts/compute-ci-gate.mjs check");

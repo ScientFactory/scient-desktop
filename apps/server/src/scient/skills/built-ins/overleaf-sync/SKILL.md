@@ -39,7 +39,7 @@ If the thread works in a separate worktree, the tools act on the copy the link b
 
 ## Conflicts
 
-Only a conflict stops a sync. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
+A conflict stops a sync until you settle it; other problems stop it with a message to report. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
 
 - `mine` keeps this folder's version; `theirs` takes Overleaf's.
 - `markers` writes both versions into the file between conflict marks (`<<<<<<<`, `=======`, `>>>>>>>`).
@@ -54,4 +54,8 @@ Undo puts back what Overleaf had before one send: for example after an older bra
 
 ## When Something Stops
 
-Errors name what happened and what to do next: Overleaf unreachable, a missing or refused token, an editor that could not save, a link to relink (`scient_overleaf_manage` with action `relink`), or an interrupted sync to recover (action `recover`). Action `cancel` asks a running sync to stop before its next step. Do what the message says, or tell the user when only they can fix it.
+Errors name what happened and what to do next: Overleaf unreachable or limiting requests (wait a minute), a missing or refused token, an editor that could not save, a link to relink (`scient_overleaf_manage` with action `relink`), or an interrupted sync to recover (action `recover`). Action `cancel` asks a running sync to stop before its next step. Do what the message says, or tell the user when only they can fix it.
+
+- Two names that differ only by letter case or accents are refused with both names; rename one and sync again.
+- A link record Scient can't read (damaged, or made by a newer Scient) can't be settled with the tools. Tell the user to check Settings ▸ Synced folders ▸ Overleaf. While it is listed, Scient won't link folders, and may refuse branch switches, checkpoint restores and worktree removal in that project.
+- A sync result that says nothing came in, or that Overleaf's changes were applied only as far as the folder allowed, sent nothing. Check `scient_overleaf_status`, then sync again.

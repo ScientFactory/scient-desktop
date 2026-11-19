@@ -1,0 +1,13 @@
+// Scient's hosted web app (app.scientfactory.com): the built apps/web client served as static
+// assets. Client routes such as /connect fall back to index.html. Build and deploy with build.sh.
+{
+  "name": "scient-hosted-web",
+  "compatibility_date": "2026-05-22",
+  "assets": {
+    "directory": "../../apps/web/dist",
+    "not_found_handling": "single-page-application",
+  },
+  "routes": [{ "pattern": "app.scientfactory.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+}

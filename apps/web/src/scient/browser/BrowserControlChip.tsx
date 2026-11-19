@@ -1,7 +1,11 @@
 import type { PreviewStreamControl } from "@t3tools/client-runtime/preview/server-browser-stream";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { useQuietThreadShell } from "~/state/entities";
 
 export type BrowserControlChipState = {
   readonly label: string;
@@ -13,7 +17,7 @@ export type BrowserControlChipState = {
  * operate it, and while you drive with an agent around or another window watching. */
 export function browserControlChipState(
   control: PreviewStreamControl | null,
-  agentSeen: boolean,
+  agentAround: boolean,
 ): BrowserControlChipState {
   if (!control) return null;
   if (!control.canOperate) return { label: "View only", action: null };
@@ -25,7 +29,7 @@ export function browserControlChipState(
     case "another-viewer":
       return { label: "In use in another window", action: null };
     case "you":
-      if (agentSeen) {
+      if (agentAround) {
         return { label: "You're in control", action: { label: "Hand back", kind: "release" } };
       }
       return (control.otherViewers ?? 0) > 0
@@ -37,6 +41,8 @@ export function browserControlChipState(
 /** Who is driving a shared browser page, shown only when it matters. */
 export function BrowserControlChip(props: {
   readonly control: PreviewStreamControl | null;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: string;
   readonly position: "top" | "bottom";
   readonly onTake: () => void;
   readonly onRelease: () => void;
@@ -46,8 +52,13 @@ export function BrowserControlChip(props: {
   // it has appeared: handing back must stay possible after taking over.
   const [agentSeen, setAgentSeen] = useState(false);
   if (control?.controller === "agent" && !agentSeen) setAgentSeen(true);
+  // A tab you opened is yours from the start, so a working agent is blocked until you hand it back.
+  const shell = useQuietThreadShell(
+    scopeThreadRef(props.environmentId, ThreadId.make(props.threadId)),
+  );
+  const agentWorking = shell !== null && isThreadWorking(shell);
 
-  const state = browserControlChipState(control, agentSeen);
+  const state = browserControlChipState(control, agentSeen || agentWorking);
   if (!state) return null;
   const action = state.action;
 

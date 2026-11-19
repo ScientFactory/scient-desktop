@@ -14,14 +14,18 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as GuestRouteImport } from './routes/guest'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as ApproveAgentRouteImport } from './routes/approve-agent'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SharedShareIdRouteImport } from './routes/shared.$shareId'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
+import { Route as ChatCloudIndexRouteImport } from './routes/_chat.cloud.index'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
@@ -64,11 +68,13 @@ import { Route as ChatSettingsSkillsExternalRouteImport } from './routes/_chat.s
 import { Route as ChatSettingsScientificComputingLanguageIdRouteImport } from './routes/_chat.settings.scientific-computing_.$languageId'
 import { Route as ChatSettingsExtensionsInstalledRouteImport } from './routes/_chat.settings.extensions_.installed'
 import { Route as ChatSettingsExtensionsAllRouteImport } from './routes/_chat.settings.extensions_.all'
+import { Route as ChatCloudComputerIdConversationIdRouteImport } from './routes/_chat.cloud.$computerId.$conversationId'
 import { Route as ChatSettingsExtensionsStoreInstanceIdRouteImport } from './routes/_chat.settings.extensions_.store.$instanceId'
 import { Route as ChatSettingsExtensionsCategoryCategoryRouteImport } from './routes/_chat.settings.extensions_.category.$category'
 import { Route as ChatSettingsExtensionsItemServerSplatRouteImport } from './routes/_chat.settings.extensions_.item.server.$'
 import { Route as ChatSettingsExtensionsItemPluginPluginIdRouteImport } from './routes/_chat.settings.extensions_.item.plugin.$pluginId'
 import { Route as ChatSettingsExtensionsItemConnectorConnectorIdRouteImport } from './routes/_chat.settings.extensions_.item.connector.$connectorId'
+import { Route as ChatSettingsExtensionsItemAccountServiceIdRouteImport } from './routes/_chat.settings.extensions_.item.account.$serviceId'
 import { Route as ChatSettingsExtensionsItemStoreInstanceIdEntryIdRouteImport } from './routes/_chat.settings.extensions_.item.store.$instanceId.$entryId'
 import { Route as ChatSettingsExtensionsItemProviderInstanceIdServerServerNameRouteImport } from './routes/_chat.settings.extensions_.item.provider.$instanceId.server.$serverName'
 import { Route as ChatSettingsExtensionsItemProviderInstanceIdPluginPluginIdRouteImport } from './routes/_chat.settings.extensions_.item.provider.$instanceId.plugin.$pluginId'
@@ -98,6 +104,11 @@ const ConnectRoute = ConnectRouteImport.update({
   path: '/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApproveAgentRoute = ApproveAgentRouteImport.update({
+  id: '/approve-agent',
+  path: '/approve-agent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
@@ -106,6 +117,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SharedShareIdRoute = SharedShareIdRouteImport.update({
+  id: '/shared/$shareId',
+  path: '/shared/$shareId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
@@ -132,9 +148,19 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatIssuesRoute = ChatIssuesRouteImport.update({
+  id: '/issues',
+  path: '/issues',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
   id: '/getting-started',
   path: '/getting-started',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatCloudIndexRoute = ChatCloudIndexRouteImport.update({
+  id: '/cloud/',
+  path: '/cloud/',
   getParentRoute: () => ChatRoute,
 } as any)
 const ThreadsEnvironmentIdThreadIdRoute =
@@ -361,6 +387,12 @@ const ChatSettingsExtensionsAllRoute =
     path: '/extensions/all',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatCloudComputerIdConversationIdRoute =
+  ChatCloudComputerIdConversationIdRouteImport.update({
+    id: '/cloud/$computerId/$conversationId',
+    path: '/cloud/$computerId/$conversationId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 const ChatSettingsExtensionsStoreInstanceIdRoute =
   ChatSettingsExtensionsStoreInstanceIdRouteImport.update({
     id: '/extensions_/store/$instanceId',
@@ -391,6 +423,12 @@ const ChatSettingsExtensionsItemConnectorConnectorIdRoute =
     path: '/extensions/item/connector/$connectorId',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsExtensionsItemAccountServiceIdRoute =
+  ChatSettingsExtensionsItemAccountServiceIdRouteImport.update({
+    id: '/extensions_/item/account/$serviceId',
+    path: '/extensions/item/account/$serviceId',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsExtensionsItemStoreInstanceIdEntryIdRoute =
   ChatSettingsExtensionsItemStoreInstanceIdEntryIdRouteImport.update({
     id: '/extensions_/item/store/$instanceId/$entryId',
@@ -414,17 +452,20 @@ const ChatSettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
+  '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/getting-started': typeof ChatGettingStartedRoute
+  '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/shared/$shareId': typeof SharedShareIdRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
@@ -462,6 +503,8 @@ export interface FileRoutesByFullPath {
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/cloud/': typeof ChatCloudIndexRoute
+  '/cloud/$computerId/$conversationId': typeof ChatCloudComputerIdConversationIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -469,6 +512,7 @@ export interface FileRoutesByFullPath {
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   '/settings/extensions/item/connector/$connectorId': typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   '/settings/extensions/item/plugin/$pluginId': typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   '/settings/extensions/item/server/$': typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -477,17 +521,20 @@ export interface FileRoutesByFullPath {
   '/settings/extensions/item/provider/$instanceId/server/$serverName': typeof ChatSettingsExtensionsItemProviderInstanceIdServerServerNameRoute
 }
 export interface FileRoutesByTo {
+  '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/getting-started': typeof ChatGettingStartedRoute
+  '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/shared/$shareId': typeof SharedShareIdRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -526,6 +573,8 @@ export interface FileRoutesByTo {
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/cloud': typeof ChatCloudIndexRoute
+  '/cloud/$computerId/$conversationId': typeof ChatCloudComputerIdConversationIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -533,6 +582,7 @@ export interface FileRoutesByTo {
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   '/settings/extensions/item/connector/$connectorId': typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   '/settings/extensions/item/plugin/$pluginId': typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   '/settings/extensions/item/server/$': typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -543,17 +593,20 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
+  '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/getting-started': typeof ChatGettingStartedRoute
+  '/_chat/issues': typeof ChatIssuesRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/shared/$shareId': typeof SharedShareIdRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -592,6 +645,8 @@ export interface FileRoutesById {
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/_chat/cloud/': typeof ChatCloudIndexRoute
+  '/_chat/cloud/$computerId/$conversationId': typeof ChatCloudComputerIdConversationIdRoute
   '/_chat/settings/extensions_/all': typeof ChatSettingsExtensionsAllRoute
   '/_chat/settings/extensions_/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -599,6 +654,7 @@ export interface FileRoutesById {
   '/_chat/settings/skills_/project': typeof ChatSettingsSkillsProjectRoute
   '/_chat/settings/extensions_/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/_chat/settings/extensions_/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  '/_chat/settings/extensions_/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   '/_chat/settings/extensions_/item/connector/$connectorId': typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   '/_chat/settings/extensions_/item/plugin/$pluginId': typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   '/_chat/settings/extensions_/item/server/$': typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -610,17 +666,20 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/approve-agent'
     | '/connect'
     | '/connect-agent'
     | '/guest'
     | '/pair'
     | '/welcome'
     | '/getting-started'
+    | '/issues'
     | '/new'
     | '/pull-requests'
     | '/settings'
     | '/usage'
     | '/projects/$projectKey'
+    | '/shared/$shareId'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/about'
@@ -658,6 +717,8 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/cloud/'
+    | '/cloud/$computerId/$conversationId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -665,6 +726,7 @@ export interface FileRouteTypes {
     | '/settings/skills/project'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
+    | '/settings/extensions/item/account/$serviceId'
     | '/settings/extensions/item/connector/$connectorId'
     | '/settings/extensions/item/plugin/$pluginId'
     | '/settings/extensions/item/server/$'
@@ -673,17 +735,20 @@ export interface FileRouteTypes {
     | '/settings/extensions/item/provider/$instanceId/server/$serverName'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/approve-agent'
     | '/connect'
     | '/connect-agent'
     | '/guest'
     | '/pair'
     | '/welcome'
     | '/getting-started'
+    | '/issues'
     | '/new'
     | '/pull-requests'
     | '/settings'
     | '/usage'
     | '/projects/$projectKey'
+    | '/shared/$shareId'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -722,6 +787,8 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/cloud'
+    | '/cloud/$computerId/$conversationId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -729,6 +796,7 @@ export interface FileRouteTypes {
     | '/settings/skills/project'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
+    | '/settings/extensions/item/account/$serviceId'
     | '/settings/extensions/item/connector/$connectorId'
     | '/settings/extensions/item/plugin/$pluginId'
     | '/settings/extensions/item/server/$'
@@ -738,17 +806,20 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_chat'
+    | '/approve-agent'
     | '/connect'
     | '/connect-agent'
     | '/guest'
     | '/pair'
     | '/welcome'
     | '/_chat/getting-started'
+    | '/_chat/issues'
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/_chat/settings'
     | '/_chat/usage'
     | '/projects/$projectKey'
+    | '/shared/$shareId'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -787,6 +858,8 @@ export interface FileRouteTypes {
     | '/_chat/settings/voice'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/_chat/cloud/'
+    | '/_chat/cloud/$computerId/$conversationId'
     | '/_chat/settings/extensions_/all'
     | '/_chat/settings/extensions_/installed'
     | '/_chat/settings/scientific-computing_/$languageId'
@@ -794,6 +867,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/skills_/project'
     | '/_chat/settings/extensions_/category/$category'
     | '/_chat/settings/extensions_/store/$instanceId'
+    | '/_chat/settings/extensions_/item/account/$serviceId'
     | '/_chat/settings/extensions_/item/connector/$connectorId'
     | '/_chat/settings/extensions_/item/plugin/$pluginId'
     | '/_chat/settings/extensions_/item/server/$'
@@ -804,12 +878,14 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
+  ApproveAgentRoute: typeof ApproveAgentRoute
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
   GuestRoute: typeof GuestRoute
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  SharedShareIdRoute: typeof SharedShareIdRoute
   ThreadsEnvironmentIdThreadIdRoute: typeof ThreadsEnvironmentIdThreadIdRoute
 }
 
@@ -850,6 +926,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/approve-agent': {
+      id: '/approve-agent'
+      path: '/approve-agent'
+      fullPath: '/approve-agent'
+      preLoaderRoute: typeof ApproveAgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat': {
       id: '/_chat'
       path: ''
@@ -863,6 +946,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/shared/$shareId': {
+      id: '/shared/$shareId'
+      path: '/shared/$shareId'
+      fullPath: '/shared/$shareId'
+      preLoaderRoute: typeof SharedShareIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/projects/$projectKey': {
       id: '/projects/$projectKey'
@@ -899,11 +989,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/issues': {
+      id: '/_chat/issues'
+      path: '/issues'
+      fullPath: '/issues'
+      preLoaderRoute: typeof ChatIssuesRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/getting-started': {
       id: '/_chat/getting-started'
       path: '/getting-started'
       fullPath: '/getting-started'
       preLoaderRoute: typeof ChatGettingStartedRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/cloud/': {
+      id: '/_chat/cloud/'
+      path: '/cloud'
+      fullPath: '/cloud/'
+      preLoaderRoute: typeof ChatCloudIndexRouteImport
       parentRoute: typeof ChatRoute
     }
     '/threads/$environmentId/$threadId': {
@@ -1200,6 +1304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsExtensionsAllRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/cloud/$computerId/$conversationId': {
+      id: '/_chat/cloud/$computerId/$conversationId'
+      path: '/cloud/$computerId/$conversationId'
+      fullPath: '/cloud/$computerId/$conversationId'
+      preLoaderRoute: typeof ChatCloudComputerIdConversationIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings/extensions_/store/$instanceId': {
       id: '/_chat/settings/extensions_/store/$instanceId'
       path: '/extensions/store/$instanceId'
@@ -1233,6 +1344,13 @@ declare module '@tanstack/react-router' {
       path: '/extensions/item/connector/$connectorId'
       fullPath: '/settings/extensions/item/connector/$connectorId'
       preLoaderRoute: typeof ChatSettingsExtensionsItemConnectorConnectorIdRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/extensions_/item/account/$serviceId': {
+      id: '/_chat/settings/extensions_/item/account/$serviceId'
+      path: '/extensions/item/account/$serviceId'
+      fullPath: '/settings/extensions/item/account/$serviceId'
+      preLoaderRoute: typeof ChatSettingsExtensionsItemAccountServiceIdRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/extensions_/item/store/$instanceId/$entryId': {
@@ -1301,6 +1419,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSkillsProjectRoute: typeof ChatSettingsSkillsProjectRoute
   ChatSettingsExtensionsCategoryCategoryRoute: typeof ChatSettingsExtensionsCategoryCategoryRoute
   ChatSettingsExtensionsStoreInstanceIdRoute: typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  ChatSettingsExtensionsItemAccountServiceIdRoute: typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   ChatSettingsExtensionsItemConnectorConnectorIdRoute: typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   ChatSettingsExtensionsItemPluginPluginIdRoute: typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   ChatSettingsExtensionsItemServerSplatRoute: typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -1354,6 +1473,8 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
     ChatSettingsExtensionsCategoryCategoryRoute,
   ChatSettingsExtensionsStoreInstanceIdRoute:
     ChatSettingsExtensionsStoreInstanceIdRoute,
+  ChatSettingsExtensionsItemAccountServiceIdRoute:
+    ChatSettingsExtensionsItemAccountServiceIdRoute,
   ChatSettingsExtensionsItemConnectorConnectorIdRoute:
     ChatSettingsExtensionsItemConnectorConnectorIdRoute,
   ChatSettingsExtensionsItemPluginPluginIdRoute:
@@ -1374,6 +1495,7 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 
 interface ChatRouteChildren {
   ChatGettingStartedRoute: typeof ChatGettingStartedRoute
+  ChatIssuesRoute: typeof ChatIssuesRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
@@ -1381,10 +1503,13 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatCloudIndexRoute: typeof ChatCloudIndexRoute
+  ChatCloudComputerIdConversationIdRoute: typeof ChatCloudComputerIdConversationIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatGettingStartedRoute: ChatGettingStartedRoute,
+  ChatIssuesRoute: ChatIssuesRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
@@ -1392,18 +1517,23 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatCloudIndexRoute: ChatCloudIndexRoute,
+  ChatCloudComputerIdConversationIdRoute:
+    ChatCloudComputerIdConversationIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
+  ApproveAgentRoute: ApproveAgentRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
   GuestRoute: GuestRoute,
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  SharedShareIdRoute: SharedShareIdRoute,
   ThreadsEnvironmentIdThreadIdRoute: ThreadsEnvironmentIdThreadIdRoute,
 }
 export const routeTree = rootRouteImport

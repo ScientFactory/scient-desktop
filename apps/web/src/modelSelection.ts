@@ -1,5 +1,4 @@
 import {
-  ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -28,9 +27,14 @@ import * as Result from "effect/Result";
 import {
   getDefaultServerModel,
   getProviderModels,
+  hasRuntimeModelCatalog,
+  isRuntimeModelDefaultAlias,
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
+// SCIENT-FORK:START — a saved Antigravity 1.3 model ID shows as its 1.4 model and level.
+import { resolveAntigravityDraftSelection } from "./scient/providerConnection/antigravityDraftSelection";
+// SCIENT-FORK:END
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
@@ -85,10 +89,10 @@ function appendUnavailableDynamicModelSelection(
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity") return options;
+  if (!hasRuntimeModelCatalog(provider)) return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
-  if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
+  if (isRuntimeModelDefaultAlias(provider, slug)) return options;
   if (rawModels.some((model) => model.slug === slug && model.unavailableReason)) return options;
 
   if (resolveSelectableModel(provider, slug, rawModels) !== null) return options;
@@ -310,10 +314,7 @@ export function resolveAppModelSelectionForInstance(
   if (resolvedSelection) {
     return resolvedSelection;
   }
-  if (
-    resolutionOptions?.preserveUnavailableSelection &&
-    (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
-  ) {
+  if (resolutionOptions?.preserveUnavailableSelection && hasRuntimeModelCatalog(entry.driverKind)) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const hiddenModels = readInstanceModelPreferences(
       settings,
@@ -325,7 +326,9 @@ export function resolveAppModelSelectionForInstance(
       unavailableSelection &&
       !hiddenModels.includes(unavailableSelection) &&
       resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
-      (entry.driverKind !== "antigravity" || unavailableSelection !== ANTIGRAVITY_DEFAULT_MODEL)
+      !isRuntimeModelDefaultAlias(entry.driverKind, unavailableSelection) &&
+      // SCIENT-FORK: a model the provider reports unavailable is not a catalog gap.
+      !entry.models.some((model) => model.slug === unavailableSelection && model.unavailableReason)
     ) {
       return unavailableSelection;
     }
@@ -333,11 +336,17 @@ export function resolveAppModelSelectionForInstance(
   return options.length > 0 ? (resolveAutomaticModel(entry.driverKind, options) ?? null) : null;
 }
 
-function resolveEffectiveDefaultModelSelection(
+// New drafts carry the stored selection; capabilities resolve its raw options later.
+export function resolveEffectiveDefaultModelSelection(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection,
 ): ModelSelection {
+  // SCIENT-FORK:START — a saved Antigravity 1.3 model ID shows as its 1.4 model and level.
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  const antigravity = provider && resolveAntigravityDraftSelection(selection, provider);
+  if (antigravity) return antigravity;
+  // SCIENT-FORK:END
   const model = resolveAppModelSelectionForInstance(
     selection.instanceId,
     settings,
@@ -400,6 +409,42 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+function getTextGenerationModelOptionsForInstance(
+  settings: UnifiedSettings,
+  entry: ProviderInstanceEntry,
+  selectedModel?: string | null,
+): AppModelOption[] {
+  const unsupported = new Set(
+    entry.models
+      .filter((model) => model.supportsTextGeneration === false)
+      .map((model) => model.slug),
+  );
+  // Filter after custom entries are rebuilt so a display-name override cannot restore a model.
+  return getAppModelOptionsForInstance(settings, entry, selectedModel).filter(
+    (option) => !unsupported.has(option.slug),
+  );
+}
+
+export function getTextGenerationModelOptionsByInstance(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  selectedInstanceId?: ProviderInstanceId | null,
+  selectedModel?: string | null,
+): ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>> {
+  return new Map(
+    deriveProviderInstanceEntries(
+      providers.filter((provider) => provider.supportsTextGeneration !== false),
+    ).map((entry) => [
+      entry.instanceId,
+      getTextGenerationModelOptionsForInstance(
+        settings,
+        entry,
+        entry.instanceId === selectedInstanceId ? selectedModel : null,
+      ),
+    ]),
+  );
+}
+
 export function selectsPlanAgent(options: ModelSelection["options"]): boolean {
   return options?.some((option) => option.id === "agent" && option.value === "plan") ?? false;
 }
@@ -424,7 +469,7 @@ export function resolveAppModelSelectionState(
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
     // Use the cheap generation default; the catalog default is the expensive chat flagship.
-    const options = getAppModelOptionsForInstance(settings, entry);
+    const options = getTextGenerationModelOptionsForInstance(settings, entry);
     const model =
       resolveSelectableModel(entry.driverKind, selectedModel, options) ??
       resolveSelectableModel(
@@ -432,22 +477,28 @@ export function resolveAppModelSelectionState(
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
         options,
       ) ??
-      resolveAppModelSelectionForInstance(
-        entry.instanceId,
-        settings,
-        supportedProviders,
-        selectedModel,
-      ) ??
-      getAppModelOptionsForInstance(settings, entry).find((model) => !model.unavailableReason)
-        ?.slug ??
-      // Native agent automatic markers are resolved from a discovered catalog. Do
-      // not render one as a selectable native model before discovery succeeds.
+      // SCIENT-FORK:START — Scient's automatic pick ranks the generation options first.
+      (options.length > 0 ? resolveAutomaticModel(entry.driverKind, options) : undefined) ??
+      // SCIENT-FORK:END
+      options.find((option) => option.isDefault)?.slug ??
+      options[0]?.slug ??
+      // SCIENT-FORK:START — an unavailable model is never picked, and a native agent picks only
+      // from the models it shows, so one its curated defaults hide is never chosen.
+      (entry.driverKind === "pi" || entry.driverKind === "omp" || entry.driverKind === "scient"
+        ? undefined
+        : entry.models.find(
+            (model) => model.supportsTextGeneration !== false && !model.unavailableReason,
+          )?.slug) ??
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Native agent automatic markers are resolved from a discovered
+      // catalog. Do not render one as a selectable native model before discovery succeeds.
       (entry.driverKind === "pi" ||
       entry.driverKind === "omp" ||
       entry.driverKind === "scient" ||
       (entry.models.length > 0 && entry.models.every((model) => model.unavailableReason))
         ? undefined
         : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);
+    // SCIENT-FORK:END
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }
@@ -457,7 +508,7 @@ export function resolveAppModelSelectionState(
       model,
       models: entry.models,
       modelOptions: selectedEntry ? selection.options : undefined,
-      planModeEnabled: settings.planModeEnabled || selectsPlanAgent(selection.options),
+      includePlanAgent: selectsPlanAgent(selection.options),
     });
 
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);

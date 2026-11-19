@@ -81,6 +81,9 @@ import {
   layer as accountsSecretStoreLayer,
 } from "./scient/accounts/AccountsSecretStore.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+import { type RemovedAgentKeeper, removedAgentIds } from "./scient/accounts/removedAgentKeys.ts";
+// SCIENT-FORK:END
 import { withCustomModelKeyHints } from "./customModels.ts";
 // SCIENT-FORK:START — custom-model methods and text-generation fallback
 import {
@@ -98,6 +101,8 @@ import {
 import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
+  withoutRemovedSecretProviderReferences,
+  withoutRedirectedSimlockTokens,
   SECRET_REDACTED,
   type SettingsSecret,
 } from "./settingsSecrets.ts";
@@ -269,7 +274,7 @@ function ensureProviderInstanceMutationAllowed(
 ): Effect.Effect<void, ServerSettingsError> {
   if (
     mutation.operation === "create" &&
-    settings.providerInstances[mutation.instanceId] !== undefined
+    Object.hasOwn(settings.providerInstances, mutation.instanceId)
   ) {
     return Effect.fail(
       new ServerSettingsError({
@@ -320,6 +325,10 @@ export class ServerSettingsService extends Context.Service<
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
       options?: { readonly allowUnresolvedSecrets?: boolean },
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
+    // SCIENT-FORK:END
+
+    // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+    readonly setRemovedAgentKeeper?: (keeper: RemovedAgentKeeper) => Effect.Effect<void>;
     // SCIENT-FORK:END
 
     // SCIENT-FORK:START — authoritative project deletion. Server-only: no RPC exposes it.
@@ -777,6 +786,60 @@ interface LegacyProjectSettingsRow {
   readonly scripts: string;
 }
 
+// SCIENT-FORK:START — Scient shipped "Continue threads after restarts" off, so most people never
+// chose it. The first load after the default became on turns it on everywhere, including where it
+// was switched off, and records that it did so; a later choice is kept.
+function turnOnThreadContinuation(
+  settings: ServerSettings,
+  defaults: ServerSettings,
+): { readonly settings: ServerSettings; readonly changed: boolean } {
+  if (settings.continueThreadsAfterServerUpdateTurnedOn) return { settings, changed: false };
+  let changed =
+    settings.continueThreadsAfterServerUpdate !== defaults.continueThreadsAfterServerUpdate;
+  const projectSettingsOverrides = Object.fromEntries(
+    Object.entries(settings.projectSettingsOverrides).flatMap(([projectId, entry]) => {
+      if (entry.continueThreadsAfterServerUpdate !== false) return [[projectId, entry]];
+      changed = true;
+      const { continueThreadsAfterServerUpdate: _off, ...rest } = entry;
+      return Object.keys(rest).length === 0 ? [] : [[projectId, rest]];
+    }),
+  );
+  return {
+    settings: {
+      ...settings,
+      // A managed policy's own default still decides.
+      continueThreadsAfterServerUpdate: defaults.continueThreadsAfterServerUpdate,
+      projectSettingsOverrides: changed
+        ? projectSettingsOverrides
+        : settings.projectSettingsOverrides,
+      continueThreadsAfterServerUpdateTurnedOn: true,
+    },
+    changed,
+  };
+}
+
+// The record only guards a stored "off", so a file without one carries no record either.
+function keepThreadContinuationRecordWithChoice(stripped: unknown): unknown {
+  if (typeof stripped !== "object" || stripped === null) return stripped;
+  const record = stripped as Record<string, unknown>;
+  if (record.continueThreadsAfterServerUpdateTurnedOn === undefined) return stripped;
+  const projects = record.projectSettingsOverrides;
+  const storesOff =
+    record.continueThreadsAfterServerUpdate === false ||
+    (typeof projects === "object" &&
+      projects !== null &&
+      Object.values(projects).some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          (entry as Record<string, unknown>).continueThreadsAfterServerUpdate === false,
+      ));
+  if (storesOff) return stripped;
+  const { continueThreadsAfterServerUpdateTurnedOn: _record, ...rest } = record;
+  return rest;
+}
+// SCIENT-FORK:END
+
 // projectSettingsFolded prevents restarts from undoing later UI resets.
 function foldLegacyProjectSettings(
   settings: ServerSettings,
@@ -908,11 +971,12 @@ const make = Effect.gen(function* () {
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
-      const stripped =
+      const stripped = keepThreadContinuationRecordWithChoice(
         stripDefaultServerSettings(
           settings,
           withIdleCompaction(managed.defaults, globalIdleCompaction(managed.defaults)),
-        ) ?? {};
+        ) ?? {},
+      );
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
@@ -995,7 +1059,11 @@ const make = Effect.gen(function* () {
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
         // The file may hold an opt-out we can no longer read; never resume threads on a guess.
-        settings = { ...managed.defaults, continueThreadsAfterServerUpdate: false };
+        settings = {
+          ...managed.defaults,
+          continueThreadsAfterServerUpdate: false,
+          usageHistoryRetentionDays: "unlimited",
+        };
         if (failure._tag === "Failure") {
           parseFailure = Option.some(Cause.squash(failure.cause));
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
@@ -1088,9 +1156,16 @@ const make = Effect.gen(function* () {
     // Preserve the prior runtime behavior where historical use opts a
     // default-off provider instance back in after settings have moved to the
     // provider-instance schema. Explicit disables still take precedence.
-    const loaded = foldProviderInstanceEnabledFlags(
+    const providerFolded = foldProviderInstanceEnabledFlags(
       migrateLegacyProviderSettings(settings, legacyProviders ?? {}, providerHistory),
     );
+    // SCIENT-FORK:START — the one-time switch-on runs only on a readable settings file, and
+    // rewrites it only when it removed a stored "off".
+    const continuation = settingsFileTrusted
+      ? turnOnThreadContinuation(providerFolded, managed.defaults)
+      : { settings: providerFolded, changed: false };
+    const loaded = continuation.settings;
+    // SCIENT-FORK:END
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
@@ -1135,6 +1210,7 @@ const make = Effect.gen(function* () {
       : folded;
     if (
       migrated !== loaded ||
+      continuation.changed || // SCIENT-FORK
       (settingsFileTrusted && legacyProviders !== undefined) ||
       hasLegacySourceControl
     ) {
@@ -1215,6 +1291,34 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+  let removedAgentKeeper: RemovedAgentKeeper | undefined;
+  const keepRemovedAgentKeys = Effect.fn("serverSettings.keepRemovedAgentKeys")(function* (
+    current: ServerSettings,
+    next: ServerSettings,
+  ) {
+    const removed = removedAgentIds(current, next);
+    if (removed.length === 0 || removedAgentKeeper === undefined) return;
+    const materialized = yield* materializeSettingsSecrets(current);
+    yield* removedAgentKeeper(
+      removed.flatMap((instanceId) => {
+        const instance = materialized.providerInstances[instanceId as ProviderInstanceId];
+        return instance ? [{ instanceId, instance }] : [];
+      }),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "keep-removed-agent-keys",
+            providerInstanceId: removed[0],
+            cause,
+          }),
+      ),
+    );
+  });
+  // SCIENT-FORK:END
+
   // Background sweeps read settings every few seconds; reading secret files each time is wasted.
   // Every secret write rewrites the settings file, so a new cached object implies fresh secrets.
   // A read that overlaps a secret write may see files a rollback then restores, so it is not kept.
@@ -1268,13 +1372,22 @@ const make = Effect.gen(function* () {
 
   const persistSettingsSecrets = (current: ServerSettings, next: ServerSettings) =>
     Effect.sync(() => {
+      // Only sensitive rows own a stored secret; a plain duplicate must not hide one from cleanup.
       const previous = new Map<string, SettingsSecret>();
+      const inlineValues = new Map<string, string>();
       mapSettingsSecrets(current, (secret) => {
+        if (!secret.sensitive) return secret;
         previous.set(secret.secretName, secret);
+        if (!secret.redacted && secret.value.length > 0) {
+          inlineValues.set(secret.secretName, secret.value);
+        }
         return secret;
       });
       const changes: SecretChange[] = [];
       const nextSecretNames = new Set<string>();
+      const keptSecretNames = new Set<string>();
+      const writtenSecretNames = new Set<string>();
+      const inlineWrites = new Map<string, SecretChange>();
       const settings = mapSettingsSecrets(withEchoedSecretReferences(current, next), (secret) => {
         const metadata = {
           secretName: secret.secretName,
@@ -1289,24 +1402,34 @@ const make = Effect.gen(function* () {
           changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
           return { value: secret.value, redacted: false };
         }
-        const old = previous.get(secret.secretName);
-        const inlineValue =
-          old?.sensitive && !old.redacted && old.value.length > 0 ? old.value : undefined;
-        const value = secret.redacted ? inlineValue : secret.value;
-        if (value === undefined) {
+        if (secret.redacted) {
+          keptSecretNames.add(secret.secretName);
           nextSecretNames.add(secret.secretName);
+          const inlineValue = inlineValues.get(secret.secretName);
+          if (inlineValue !== undefined) {
+            inlineWrites.set(secret.secretName, {
+              ...metadata,
+              kind: "write",
+              value: textEncoder.encode(inlineValue),
+            });
+          }
           return { value: "", redacted: true };
         }
-        if (value.length === 0) {
+        if (secret.value.length === 0) {
           changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
           return { value: "", redacted: false };
         }
         nextSecretNames.add(secret.secretName);
-        changes.push({ ...metadata, kind: "write", value: textEncoder.encode(value) });
+        writtenSecretNames.add(secret.secretName);
+        changes.push({ ...metadata, kind: "write", value: textEncoder.encode(secret.value) });
         return { value: "", redacted: true };
       });
+      // A legacy inline value only moves to the store when no row in this save replaces it.
+      for (const [secretName, change] of inlineWrites) {
+        if (!writtenSecretNames.has(secretName)) changes.push(change);
+      }
       for (const secret of previous.values()) {
-        if (!secret.sensitive || nextSecretNames.has(secret.secretName)) continue;
+        if (nextSecretNames.has(secret.secretName)) continue;
         if (changes.some((change) => change.secretName === secret.secretName)) continue;
         changes.push({
           kind: "remove",
@@ -1320,7 +1443,13 @@ const make = Effect.gen(function* () {
             : {}),
         });
       }
-      return { settings, changes };
+      return {
+        settings,
+        // A redacted row still claims its stored secret, so a duplicate row must not remove it.
+        changes: changes.filter(
+          (change) => change.kind === "write" || !keptSecretNames.has(change.secretName),
+        ),
+      };
     });
 
   const rollbackSettingsSecretWrites = (
@@ -1413,7 +1542,12 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = yield* update(current);
+        // An older client echoes a reference as the redacted marker; restore it before vetting so
+        // a removed provider's reference is cleared below rather than restored by persistence.
+        const updated = withoutRedirectedSimlockTokens(
+          current,
+          withEchoedSecretReferences(current, yield* update(current)),
+        );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1453,7 +1587,14 @@ const make = Effect.gen(function* () {
             providerInstanceId: deferredInstance,
             cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
           });
-        const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
+        // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+        yield* keepRemovedAgentKeys(current, vettedProviders.settings);
+        // SCIENT-FORK:END
+        // After vetting, which can keep stored variables a policy hides from clients.
+        const persisted = yield* persistSettingsSecrets(
+          current,
+          withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
+        );
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
@@ -1713,6 +1854,12 @@ const make = Effect.gen(function* () {
     ),
     // SCIENT-FORK:END
     withSettingsSnapshot,
+    // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+    setRemovedAgentKeeper: (keeper) =>
+      Effect.sync(() => {
+        removedAgentKeeper = keeper;
+      }),
+    // SCIENT-FORK:END
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

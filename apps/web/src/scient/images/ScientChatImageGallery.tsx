@@ -14,7 +14,9 @@ export interface ScientChatImageItem {
 function ScientChatImageTile(props: {
   readonly image: ScientChatImageItem;
   readonly onExpand: (imageId: string) => void;
+  readonly onCopySnapshot?: ((imageId: string) => Promise<void>) | undefined;
 }) {
+  const onCopySnapshot = props.onCopySnapshot;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const previewAvailable =
     props.image.previewUrl !== undefined && failedUrl !== props.image.previewUrl;
@@ -48,7 +50,10 @@ function ScientChatImageTile(props: {
         </div>
       )}
       {previewAvailable && props.image.source?.kind === "snap-shot" ? (
-        <SnapShotAttachmentDetails source={props.image.source} />
+        <SnapShotAttachmentDetails
+          source={props.image.source}
+          onCopySnapshot={onCopySnapshot ? () => onCopySnapshot(props.image.id) : undefined}
+        />
       ) : null}
     </div>
   );
@@ -58,6 +63,7 @@ export function ScientChatImageGallery(props: {
   readonly className?: string | undefined;
   readonly images: ReadonlyArray<ScientChatImageItem>;
   readonly onExpand: (imageId: string) => void;
+  readonly onCopySnapshot?: ((imageId: string) => Promise<void>) | undefined;
 }) {
   if (props.images.length === 0) return null;
   return (
@@ -71,7 +77,12 @@ export function ScientChatImageGallery(props: {
       role="group"
     >
       {props.images.map((image) => (
-        <ScientChatImageTile image={image} key={image.id} onExpand={props.onExpand} />
+        <ScientChatImageTile
+          image={image}
+          key={image.id}
+          onExpand={props.onExpand}
+          onCopySnapshot={props.onCopySnapshot}
+        />
       ))}
     </div>
   );

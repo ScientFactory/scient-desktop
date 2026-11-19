@@ -2,7 +2,11 @@
  * The agent owns sign-in credentials and storage. Forward pasted answers directly to the isolated
  * attempt process and never retain them in Scient state; its scope owns process lifetime.
  */
-import type { ProviderConnectionAccount, ProviderConnectionMethod } from "@t3tools/contracts";
+import type {
+  ProviderConnectionAccount,
+  ProviderConnectionFailureReason,
+  ProviderConnectionMethod,
+} from "@t3tools/contracts";
 import type { OmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type * as Duration from "effect/Duration";
@@ -45,8 +49,16 @@ export interface ScientAgentSignInClient {
 
 const isCommandError = Schema.is(OmpRpcCommandError);
 
-const connectionError = (message: string, cause?: unknown) =>
-  new ProviderConnectionActionError({ message, ...(cause === undefined ? {} : { cause }) });
+const connectionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+) =>
+  new ProviderConnectionActionError({
+    message,
+    ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
+  });
 
 const SignInList = Schema.Struct({
   providers: Schema.Array(
@@ -59,6 +71,9 @@ const SignInList = Schema.Struct({
       stored: Schema.optional(Schema.Boolean),
       // The id the sign-in is stored under; absent from older agent builds.
       store: Schema.optional(Schema.String),
+      // The signed-in account's email; absent from older agent builds.
+      email: Schema.optional(Schema.String),
+      emails: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
 });
@@ -82,12 +97,24 @@ export const readScientAgentAccounts = (
         if (entry.kind === undefined || entry.stored === undefined) return undefined;
         const name = entry.name.trim().slice(0, 128);
         if (!isAccountId(entry.id) || name.length === 0) continue;
+        const email = entry.email?.trim();
+        const emails = [
+          ...new Set(
+            (entry.emails ?? [])
+              .map((value) => value.trim())
+              .filter(
+                (value) => value.length > 0 && value.length <= 254 && !hasControlCharacter(value),
+              ),
+          ),
+        ].slice(0, 32);
         accounts.push({
           id: entry.id,
           name,
           kind: entry.kind,
           connected: entry.authenticated,
           canDisconnect: entry.stored,
+          ...(email && email.length <= 254 && !hasControlCharacter(email) ? { email } : {}),
+          ...(emails.length > 0 ? { emails } : {}),
         });
       }
       // Two entries stored under one id sign in to one account. The entry
@@ -164,7 +191,11 @@ export function makeScientAgentConnectionActions(input: {
     account?: string,
   ): Effect.fn.Return<ProviderConnectionAttempt, ProviderConnectionActionFailure, Scope.Scope> {
     if (method !== SCIENT_AGENT_ACCOUNT_METHOD || account === undefined) {
-      return yield* connectionError("Choose an account from Scient Agent's sign-in list.");
+      return yield* connectionError(
+        "Choose an account from Scient Agent's sign-in list.",
+        undefined,
+        "start_failed",
+      );
     }
     const scope = yield* Scope.Scope;
     const client = yield* input.open;
@@ -215,6 +246,8 @@ export function makeScientAgentConnectionActions(input: {
               connectionError(
                 instructionsText(client.redact(message)) ??
                   "Scient Agent could not complete the sign in.",
+                undefined,
+                "provider_failed",
               ),
             ),
           ),
@@ -231,7 +264,13 @@ export function makeScientAgentConnectionActions(input: {
       Effect.timeoutOrElse({
         duration: input.firstPromptTimeout ?? FIRST_PROMPT_TIMEOUT,
         orElse: () =>
-          Effect.fail(connectionError("Scient Agent did not begin the sign in. Try again.")),
+          Effect.fail(
+            connectionError(
+              "Scient Agent did not begin the sign in. Try again.",
+              undefined,
+              "no_signin_page",
+            ),
+          ),
       }),
     );
     const cancel = Fiber.interrupt(login).pipe(Effect.asVoid);

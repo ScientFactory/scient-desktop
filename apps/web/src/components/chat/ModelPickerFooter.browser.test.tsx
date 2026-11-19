@@ -88,7 +88,7 @@ it("keeps the new-chat footer at the bottom of the picker", async () => {
   await expect.poll(() => _fixture.host?.querySelector("[data-model-picker-content]")).toBeTruthy();
   const picker = _fixture.host.querySelector<HTMLElement>("[data-model-picker-content]")!;
   const footer = picker.querySelector<HTMLButtonElement>(
-    'button[aria-label="Continue in a new chat"]',
+    'button[aria-label="Fork to continue in a new chat"]',
   )!.parentElement!;
   const footerHeight = footer.getBoundingClientRect().height;
   const expectAnchored = async () => {

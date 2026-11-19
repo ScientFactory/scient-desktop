@@ -41,6 +41,8 @@ import { describeProviderRuntimeCatalog } from "./providerRuntimeCatalogFreshnes
 import {
   cancelRuntimeActionLabel,
   isActiveProviderRuntimeOperation,
+  isUserFacingRuntimeFailure,
+  runtimeDownloadPercent,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
@@ -73,6 +75,11 @@ type LocalRuntimeFailure =
       readonly kind: "operation";
       readonly operationId: ProviderRuntimeOperation["operationId"];
       readonly message: string;
+    }
+  | {
+      readonly kind: "recovery";
+      readonly requestId: string;
+      readonly message: string;
     };
 
 function runtimeFromResult(
@@ -99,6 +106,9 @@ function localRuntimeFailureMessage(
       ? failure.message
       : null;
   }
+  if (failure.kind === "recovery") {
+    return runtime.pendingRecovery?.requestId === failure.requestId ? failure.message : null;
+  }
   const operation = runtime.operation;
   return operation?.operationId === failure.operationId &&
     isActiveProviderRuntimeOperation(operation)
@@ -112,6 +122,12 @@ export function resolveProviderRuntimeForPresentation(
 ): ProviderRuntimeSummary | null | undefined {
   if (!serverRuntime) return localRuntime;
   if (!localRuntime) return serverRuntime;
+  if (
+    serverRuntime.pendingRecovery &&
+    localRuntime.pendingRecovery === null &&
+    !isActiveProviderRuntimeOperation(localRuntime.operation)
+  )
+    return localRuntime;
   if (serverRuntime.operation?.operationId === localRuntime.operation?.operationId) {
     return serverRuntime;
   }
@@ -256,18 +272,13 @@ export function ProviderRuntimeSection(props: {
   const operation = runtime?.operation ?? null;
   const runtimeActions = runtime?.actions;
   const activeOperation = isActiveProviderRuntimeOperation(operation) ? operation : null;
+  const pendingRecovery = runtime?.pendingRecovery;
   const plan =
     !activeOperation && preparedPlan?.action === "remove" && runtimeActions?.includes("remove")
       ? preparedPlan
       : null;
   const localError = runtime ? localRuntimeFailureMessage(localFailure, runtime) : null;
-  const progress =
-    activeOperation?.downloadedBytes !== undefined && activeOperation.totalBytes !== undefined
-      ? Math.min(
-          100,
-          Math.round((activeOperation.downloadedBytes / activeOperation.totalBytes) * 100),
-        )
-      : null;
+  const progress = runtimeDownloadPercent(activeOperation);
   const isWorking = pendingAction !== null || props.disabled === true;
   const row = !props.compact && props.presentation === "row";
   /** Padding of a settings row; a card frames itself instead. */
@@ -448,27 +459,30 @@ export function ProviderRuntimeSection(props: {
   };
 
   const cancel = async () => {
-    if (!activeOperation) return;
+    if (!activeOperation && !pendingRecovery) return;
     setLocalFailure(null);
     setPendingAction("cancel");
     const result = await cancelRuntime({
       environmentId,
       input: {
         instanceId: provider.instanceId,
-        operationId: activeOperation.operationId,
+        ...(activeOperation
+          ? { operationId: activeOperation.operationId }
+          : { requestId: pendingRecovery!.requestId }),
       },
     });
     setPendingAction(null);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setLocalFailure({
-          kind: "operation",
-          operationId: activeOperation.operationId,
-          message: providerLifecycleFailureMessage(
-            squashAtomCommandFailure(result),
-            `Scient could not cancel the ${runtimeDisplayName} runtime operation.`,
-          ),
-        });
+        const message = providerLifecycleFailureMessage(
+          squashAtomCommandFailure(result),
+          `Scient could not cancel the ${runtimeDisplayName} runtime operation.`,
+        );
+        setLocalFailure(
+          activeOperation
+            ? { kind: "operation", operationId: activeOperation.operationId, message }
+            : { kind: "recovery", requestId: pendingRecovery!.requestId, message },
+        );
       }
       return;
     }
@@ -488,7 +502,11 @@ export function ProviderRuntimeSection(props: {
         <div className="flex items-start gap-3">
           <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-foreground">{activeOperation.message}</p>
+            <p className="text-sm font-medium text-foreground">
+              {activeOperation.background
+                ? `Downloading in the background${progress === null ? "" : ` · ${progress}%`}`
+                : activeOperation.message}
+            </p>
             {!props.compact ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 You can keep using Scient. The previous working runtime remains available until the
@@ -628,7 +646,7 @@ export function ProviderRuntimeSection(props: {
       : null);
   const statusIcon =
     runtime.source === "missing" ||
-    terminalOperation?.status === "failed" ||
+    isUserFacingRuntimeFailure(terminalOperation) ||
     providerRuntimeError ? (
       <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
     ) : (
@@ -650,6 +668,28 @@ export function ProviderRuntimeSection(props: {
             : "space-y-3 rounded-lg border p-3"
       }
     >
+      {pendingRecovery ? (
+        <div className="flex items-start justify-between gap-3" role="status">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Scient will retry this requested {pendingRecovery.action} after{" "}
+            <time dateTime={pendingRecovery.nextRetryAt}>
+              {new Date(pendingRecovery.nextRetryAt).toLocaleString()}
+            </time>
+            .
+          </p>
+          <Button
+            aria-label={`Cancel ${runtimeDisplayName} ${pendingRecovery.action} retry`}
+            type="button"
+            size="sm"
+            variant="ghost-destructive-action"
+            disabled={isWorking}
+            onClick={() => void cancel()}
+          >
+            <XIcon />
+            Cancel retry
+          </Button>
+        </div>
+      ) : null}
       <div
         className={
           props.compact

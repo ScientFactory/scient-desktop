@@ -6,13 +6,24 @@ import * as NodePath from "node:path";
 
 import {
   managedRuntimeArtifactReceipt,
+  managedRuntimeMirrorUrl,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactReceipt,
 } from "./managedRuntimeArtifact.ts";
 import {
+  canUnpackManagedRuntimeZstd,
   downloadManagedRuntime,
+  type ManagedRuntimeDownloadResult,
+  type ManagedRuntimeDownloadRetry,
+  type ManagedRuntimeFailureClass,
+  managedRuntimeFailureClass,
+  managedRuntimeFailureRetryable,
+  managedRuntimeRetryAfterMs,
+  ManagedRuntimeFileError,
+  markManagedRuntimeCheck,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
+  unpackManagedRuntimeZstd,
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
@@ -38,6 +49,28 @@ export interface ManagedProviderRuntimeProgress {
   readonly stage: ManagedProviderRuntimeStage;
   readonly downloadedBytes?: number | undefined;
   readonly totalBytes?: number | undefined;
+  /** Set while the download waits to try again after a temporary failure. */
+  readonly retry?: ManagedRuntimeDownloadRetry | undefined;
+  /** How the download went: after each failed try, and once complete on the `verifying` stage. */
+  readonly download?: ManagedRuntimeDownloadFacts | undefined;
+}
+
+/** Who served a download: Scient's own copy, GitHub, or the provider's own host. */
+export type ManagedRuntimeSourceKind = "scient_mirror" | "github" | "vendor";
+
+/** How a download went, for analytics. */
+export interface ManagedRuntimeDownloadFacts extends ManagedRuntimeDownloadResult {
+  /** The zstd copy, not the raw binary, was downloaded. */
+  readonly compressed: boolean;
+  /** Who served the latest try. */
+  readonly sourceKind: ManagedRuntimeSourceKind;
+  /** Why the zstd copy failed, when the raw binary was downloaded after it. */
+  readonly compressedFailure?: ManagedRuntimeFailureClass | undefined;
+}
+
+function hostSourceKind(url: string): ManagedRuntimeSourceKind {
+  const host = new URL(url).hostname.toLowerCase();
+  return host === "github.com" || host.endsWith(".githubusercontent.com") ? "github" : "vendor";
 }
 
 export interface ManagedProviderRuntimeStateV1 {
@@ -99,6 +132,8 @@ export interface ManagedProviderRuntimeInstallInput {
   readonly qualify?: (input: ManagedProviderRuntimeQualificationInput) => Promise<void>;
   /** Runs after staging and smoke testing, immediately before the live runtime changes. */
   readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
+  /** Told why the compressed copy failed, before the raw binary is downloaded; a throw stops the install. */
+  readonly onCompressedFallback?: (cause: unknown) => void;
 }
 
 interface ManagedProviderRuntimeActivation {
@@ -108,6 +143,7 @@ interface ManagedProviderRuntimeActivation {
   readonly replacedRelativePath: string | null;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedProviderRuntimeError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -273,9 +309,13 @@ export async function smokeManagedRuntimeExecutable(
 
 export interface ManagedProviderRuntimeDependencies {
   readonly filesystem: typeof runtimeFilesystem;
-  readonly download: typeof downloadManagedRuntime;
+  readonly download: (
+    input: Parameters<typeof downloadManagedRuntime>[0],
+  ) => Promise<ManagedRuntimeDownloadResult | void>;
   readonly verify: typeof verifyManagedRuntimeChecksum;
   readonly materialize: typeof materializeManagedRuntimeArtifact;
+  /** Absent where this Node cannot unpack zstd; the raw binary is downloaded then. */
+  readonly unpackZstd: typeof unpackManagedRuntimeZstd | undefined;
   readonly smoke: (
     executable: string,
     args: ReadonlyArray<string>,
@@ -324,6 +364,7 @@ const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
   download: downloadManagedRuntime,
   verify: verifyManagedRuntimeChecksum,
   materialize: materializeManagedRuntimeArtifact,
+  unpackZstd: canUnpackManagedRuntimeZstd() ? unpackManagedRuntimeZstd : undefined,
   smoke: smokeManagedRuntimeExecutable,
   commitState: commitManagedRuntimeState,
   now: Date.now,
@@ -483,6 +524,7 @@ export class ManagedProviderRuntime {
   readonly #mutationLockPath: string;
   readonly #versionsDir: string;
   readonly #stagingDir: string;
+  readonly #downloadsDir: string;
   readonly #leasesDir: string;
   readonly #pruneLockPath: string;
   readonly #dependencies: ManagedProviderRuntimeDependencies;
@@ -499,6 +541,8 @@ export class ManagedProviderRuntime {
     this.#mutationLockPath = NodePath.join(this.#root, "mutation.lock");
     this.#versionsDir = NodePath.join(this.#root, "versions");
     this.#stagingDir = NodePath.join(this.#root, "staging");
+    // Outside staging, which each install empties, so a failed download continues next time.
+    this.#downloadsDir = NodePath.join(this.#root, "downloads");
     // Outside the runtime folder, so inspecting never recreates one that Remove has moved away.
     this.#leasesDir = NodePath.join(
       baseDir,
@@ -644,15 +688,145 @@ export class ManagedProviderRuntime {
     }
   }
 
+  /**
+   * Downloads the release binary to `archivePath` and checks its digest. A zstd copy, when the
+   * catalog names one and this process can unpack it, is tried first; any failure of that copy
+   * other than cancellation falls back to the raw binary.
+   */
+  async #downloadVerified(input: {
+    readonly artifact: ManagedRuntimeArtifact;
+    readonly archivePath: string;
+    readonly signal: AbortSignal;
+    readonly onProgress: ManagedProviderRuntimeInstallInput["onProgress"];
+    readonly onCompressedFallback: ManagedProviderRuntimeInstallInput["onCompressedFallback"];
+  }): Promise<void> {
+    const { artifact, archivePath, signal, onProgress } = input;
+    const compressed = artifact.compressed;
+    const unpack = this.#dependencies.unpackZstd;
+    let compressedFailure: ManagedRuntimeFailureClass | undefined;
+    let compressedCause: unknown;
+    const sourceCooldowns = new Map<string, number>();
+    const fetchVerified = async (copy: {
+      readonly url: string;
+      readonly mirrorUrl?: string | undefined;
+      readonly checksum: ManagedRuntimeArtifact["checksum"];
+      readonly size: number;
+      readonly destination: string;
+      readonly compressed: boolean;
+    }) => {
+      const describe = (download: ManagedRuntimeDownloadResult): ManagedRuntimeDownloadFacts => ({
+        ...download,
+        compressed: copy.compressed,
+        sourceKind:
+          download.source === "fallback" || !copy.mirrorUrl
+            ? hostSourceKind(copy.url)
+            : "scient_mirror",
+        ...(compressedFailure ? { compressedFailure } : {}),
+      });
+      let downloadedBytes = 0;
+      // The downloader reports the bytes an earlier try kept as soon as it has checked them.
+      onProgress?.({ stage: "downloading", totalBytes: copy.size });
+      const result = await this.#dependencies.download({
+        ...(copy.mirrorUrl
+          ? {
+              url: copy.mirrorUrl,
+              fallbackUrl: copy.url,
+              allowedHosts: [...artifact.allowedHosts, new URL(copy.mirrorUrl).hostname],
+            }
+          : { url: copy.url, allowedHosts: artifact.allowedHosts }),
+        sourceCooldowns,
+        checksum: copy.checksum,
+        destination: copy.destination,
+        partialPath: this.#partialDownloadPath(copy.checksum),
+        expectedSize: copy.size,
+        signal,
+        onProgress: (bytes, totalBytes) => {
+          downloadedBytes = bytes;
+          onProgress?.({ stage: "downloading", downloadedBytes: bytes, totalBytes });
+        },
+        onRetry: (retry) =>
+          onProgress?.({ stage: "downloading", downloadedBytes, totalBytes: copy.size, retry }),
+        onFailedTry: (download) =>
+          onProgress?.({
+            stage: "downloading",
+            downloadedBytes,
+            totalBytes: copy.size,
+            download: describe(download),
+          }),
+      });
+      onProgress?.({ stage: "verifying", ...(result ? { download: describe(result) } : {}) });
+    };
+    if (compressed && unpack) {
+      const compressedPath = `${archivePath}.zst`;
+      try {
+        await fetchVerified({ ...compressed, destination: compressedPath, compressed: true });
+        await this.#dependencies.verify(compressedPath, compressed.checksum);
+        await unpack({
+          source: compressedPath,
+          destination: archivePath,
+          expectedSize: artifact.size,
+          signal,
+        });
+        await this.#dependencies.verify(archivePath, artifact.checksum);
+        return;
+      } catch (cause) {
+        if (signal.aborted) throw cause;
+        await NodeFSP.rm(archivePath, { force: true });
+        compressedCause = cause;
+        compressedFailure = managedRuntimeFailureClass(cause);
+        input.onCompressedFallback?.(cause);
+      } finally {
+        await NodeFSP.rm(compressedPath, { force: true });
+      }
+    }
+    try {
+      await fetchVerified({
+        url: artifact.url,
+        mirrorUrl: managedRuntimeMirrorUrl(artifact),
+        checksum: artifact.checksum,
+        size: artifact.size,
+        destination: archivePath,
+        compressed: false,
+      });
+      await this.#dependencies.verify(archivePath, artifact.checksum);
+    } catch (cause) {
+      if (signal.aborted || compressedCause === undefined) throw cause;
+      const failureClass = managedRuntimeFailureClass(cause);
+      const sourceFailure =
+        failureClass === "http_4xx" ||
+        failureClass === "http_5xx" ||
+        failureClass === "network" ||
+        failureClass === "timeout" ||
+        failureClass === "checksum" ||
+        failureClass === "size_mismatch" ||
+        failureClass === "certificate";
+      throw new ManagedRuntimeFileError(
+        cause instanceof Error ? cause.message : "Managed runtime download failed.",
+        {
+          cause,
+          failureClass,
+          retryable:
+            managedRuntimeFailureRetryable(cause) ||
+            (sourceFailure && managedRuntimeFailureRetryable(compressedCause)),
+          retryAfterMs: Math.max(
+            managedRuntimeRetryAfterMs(cause) ?? 0,
+            managedRuntimeRetryAfterMs(compressedCause) ?? 0,
+          ),
+        },
+      );
+    }
+  }
+
   async #installOwned(
     input: ManagedProviderRuntimeInstallInput,
   ): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress, qualify, beforeActivate } = input;
+    const { artifact, signal, onProgress, qualify, beforeActivate, onCompressedFallback } = input;
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
     // This process launches what it installs. Pruning needs the mutation lock held here.
     await this.#lease(artifact.version);
     await this.#reconcileOwned(signal, artifact);
     await this.#cleanStaging();
+    await this.#pruneDownloads(artifact);
     onProgress?.({ stage: "preparing" });
     const stage = await NodeFSP.mkdtemp(NodePath.join(this.#stagingDir, "install-"));
     const archivePath = NodePath.join(stage, artifact.artifactName);
@@ -665,22 +839,13 @@ export class ManagedProviderRuntime {
     const previousState = await this.readState();
 
     try {
-      onProgress?.({
-        stage: "downloading",
-        downloadedBytes: 0,
-        totalBytes: artifact.size,
-      });
-      await this.#dependencies.download({
-        url: artifact.url,
-        destination: archivePath,
-        allowedHosts: artifact.allowedHosts,
-        expectedSize: artifact.size,
+      await this.#downloadVerified({
+        artifact,
+        archivePath,
         signal,
-        onProgress: (downloadedBytes, totalBytes) =>
-          onProgress?.({ stage: "downloading", downloadedBytes, totalBytes }),
+        onProgress,
+        onCompressedFallback,
       });
-      onProgress?.({ stage: "verifying" });
-      await this.#dependencies.verify(archivePath, artifact.checksum);
       onProgress?.({ stage: "installing" });
       const stagedExecutable = await this.#dependencies.materialize({
         archivePath,
@@ -698,8 +863,11 @@ export class ManagedProviderRuntime {
         : stagedExecutable;
       const smokeExecutableStat = await NodeFSP.lstat(smokeExecutablePath).catch(() => undefined);
       if (!smokeExecutableStat?.isFile() || smokeExecutableStat.isSymbolicLink()) {
-        throw new ManagedProviderRuntimeError(
-          `Managed ${this.#displayName} payload did not contain the reviewed smoke-test executable.`,
+        throw markManagedRuntimeCheck(
+          "smoke",
+          new ManagedProviderRuntimeError(
+            `Managed ${this.#displayName} payload did not contain the reviewed smoke-test executable.`,
+          ),
         );
       }
       const smokeWorkingDirectory = artifact.smokeWorkingDirectory
@@ -708,24 +876,31 @@ export class ManagedProviderRuntime {
       if (smokeWorkingDirectory) {
         const smokeCwdStat = await NodeFSP.lstat(smokeWorkingDirectory).catch(() => undefined);
         if (!smokeCwdStat?.isDirectory() || smokeCwdStat.isSymbolicLink()) {
-          throw new ManagedProviderRuntimeError(
-            `Managed ${this.#displayName} payload did not contain the reviewed smoke-test directory.`,
+          throw markManagedRuntimeCheck(
+            "smoke",
+            new ManagedProviderRuntimeError(
+              `Managed ${this.#displayName} payload did not contain the reviewed smoke-test directory.`,
+            ),
           );
         }
       }
-      await this.#dependencies.smoke(
-        smokeExecutablePath,
-        artifact.smokeArgs,
-        this.#displayName,
-        artifact.smokeEnvironment,
-        {
-          ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}),
-          signal,
-          ...(artifact.smokeVersionFormat
-            ? { expectedVersion: artifact.version, versionFormat: artifact.smokeVersionFormat }
-            : {}),
-        },
-      );
+      await this.#dependencies
+        .smoke(
+          smokeExecutablePath,
+          artifact.smokeArgs,
+          this.#displayName,
+          artifact.smokeEnvironment,
+          {
+            ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}),
+            signal,
+            ...(artifact.smokeVersionFormat
+              ? { expectedVersion: artifact.version, versionFormat: artifact.smokeVersionFormat }
+              : {}),
+          },
+        )
+        .catch((cause: unknown) => {
+          throw markManagedRuntimeCheck("smoke", cause);
+        });
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       await beforeActivate?.(signal);
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
@@ -758,6 +933,8 @@ export class ManagedProviderRuntime {
             executablePath: this.launchPath(artifact),
             payloadPath: destination,
             signal,
+          }).catch((cause: unknown) => {
+            throw markManagedRuntimeCheck("qualification", cause);
           });
         }
         if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
@@ -792,12 +969,16 @@ export class ManagedProviderRuntime {
           if (existingMoved) await this.#dependencies.filesystem.rename(replaced, destination);
           await NodeFSP.rm(this.#activationPath, { force: true });
         } catch (rollbackCause) {
-          throw new ManagedProviderRuntimeError(
-            `Managed ${this.#displayName} activation failed and the previous runtime could not be restored.`,
-            { cause: new AggregateError([cause, rollbackCause]) },
+          throw markManagedRuntimeCheck(
+            "rollback",
+            new ManagedProviderRuntimeError(
+              `Managed ${this.#displayName} activation failed and the previous runtime could not be restored.`,
+              { cause: new AggregateError([cause, rollbackCause]) },
+            ),
           );
         }
-        throw cause;
+        // Unless qualification failed, this step moved or recorded files.
+        throw markManagedRuntimeCheck("activation", cause);
       }
       await NodeFSP.rm(this.#activationPath, { force: true }).catch(() => undefined);
       if (hadExisting) {
@@ -1014,6 +1195,27 @@ export class ManagedProviderRuntime {
         force: true,
       }).catch(() => {});
     }
+  }
+
+  #partialDownloadPath(checksum: ManagedRuntimeArtifact["checksum"]): string {
+    return NodePath.join(this.#downloadsDir, `${checksum.digest.trim().toLowerCase()}.part`);
+  }
+
+  /** Keeps only the partial downloads of the release being installed. */
+  async #pruneDownloads(artifact: ManagedRuntimeArtifact): Promise<void> {
+    const kept = [artifact.checksum, artifact.compressed?.checksum].flatMap((checksum) =>
+      checksum ? [NodePath.basename(this.#partialDownloadPath(checksum))] : [],
+    );
+    const entries = await NodeFSP.readdir(this.#downloadsDir).catch(() => []);
+    await Promise.all(
+      entries
+        .filter((entry) => !kept.some((name) => entry === name || entry === `${name}.json`))
+        .map((entry) =>
+          NodeFSP.rm(NodePath.join(this.#downloadsDir, entry), { force: true }).catch(
+            () => undefined,
+          ),
+        ),
+    );
   }
 
   async #cleanStaging(): Promise<void> {

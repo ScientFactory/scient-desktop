@@ -470,7 +470,7 @@ export const readForkFamily = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{ readonly thread_id: string; readonly deleted: number; readonly fork: number }>`
     SELECT member.thread_id,
       member.deleted_at IS NOT NULL AS deleted,
-      json_extract(member.payload_json, '$.conversationFork') IS NOT NULL AS fork
+      EXISTS (SELECT 1 FROM scient_conversation_forks WHERE thread_id = member.thread_id) AS fork
     FROM orchestration_v2_projection_threads AS member
     WHERE json_extract(member.payload_json, '$.lineage.rootThreadId') = (
       SELECT json_extract(payload_json, '$.lineage.rootThreadId')
@@ -489,15 +489,14 @@ export const readForkFamily = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
 
 /**
  * The files a fork shares from its history, recorded when it was accepted.
- * Only a thread with a history list shares them: a subagent conversation
- * carries its parent's fork metadata but shows none of that history.
+ * Only a thread with a history list shares them.
  */
 export const readForkSharedFileIds = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   sql<{ readonly id: string | null }>`
     SELECT json_extract(copy.value, '$.source.id') AS id
-    FROM orchestration_v2_projection_threads AS thread,
-      json_each(thread.payload_json, '$.conversationFork.attachmentCopies') AS copy
-    WHERE thread.thread_id = ${threadId}
+    FROM scient_conversation_forks AS fork,
+      json_each(fork.fork_json, '$.attachmentCopies') AS copy
+    WHERE fork.thread_id = ${threadId}
       AND EXISTS (SELECT 1 FROM scient_fork_history WHERE thread_id = ${threadId})
   `.pipe(Effect.map((rows) => rows.flatMap((row) => (row.id === null ? [] : [row.id]))));
 
@@ -540,8 +539,9 @@ export const readLiveForkSharedFileReferences = (
     ? Effect.succeed(new Set<string>())
     : sql<{ readonly id: string }>`
         SELECT DISTINCT lower(json_extract(copy.value, '$.source.id')) AS id
-        FROM orchestration_v2_projection_threads AS thread,
-          json_each(thread.payload_json, '$.conversationFork.attachmentCopies') AS copy
+        FROM orchestration_v2_projection_threads AS thread
+        JOIN scient_conversation_forks AS fork ON fork.thread_id = thread.thread_id,
+          json_each(fork.fork_json, '$.attachmentCopies') AS copy
         WHERE thread.deleted_at IS NULL
           AND EXISTS (SELECT 1 FROM scient_fork_history WHERE thread_id = thread.thread_id)
           AND lower(json_extract(copy.value, '$.source.id')) IN (
@@ -592,7 +592,10 @@ export const readLiveToolPageReferences = (sql: SqlClient.SqlClient, ids: Readon
         UNION
         SELECT wanted.id FROM scient_fork_frozen_items AS frozen CROSS JOIN wanted
         WHERE frozen.thread_id IN (SELECT thread_id FROM live)
-          AND instr(lower(frozen.item_json), wanted.id) > 0
+          AND (instr(lower(frozen.item_json), wanted.id) > 0
+            -- A kept handoff whose summary moved to a shared body keeps its full text there.
+            OR instr(lower((SELECT body.body FROM scient_history_bodies AS body WHERE body.hash =
+              unhex(json_extract(frozen.item_json, '$.scientSummaryBody')))), wanted.id) > 0)
       `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));
 
 /** Files attached to the thread's own submitted question answers. */
@@ -644,7 +647,11 @@ export const readLiveForkSharedAttachmentIds = (
       WHERE history.source_thread_id = ${sourceThreadId}
         AND history.thread_id <> ${sourceThreadId}
         AND fork.deleted_at IS NULL
-        AND instr(lower(COALESCE(frozen.item_json, item.payload_json)), ${id.toLowerCase()}) > 0
+        AND (instr(lower(COALESCE(frozen.item_json, item.payload_json)), ${id.toLowerCase()}) > 0
+          -- A shared handoff summary keeps its full text in its body.
+          OR instr(lower((SELECT body.body FROM scient_history_bodies AS body WHERE body.hash = unhex(
+            json_extract(COALESCE(frozen.item_json, item.payload_json), '$.scientSummaryBody')))),
+            ${id.toLowerCase()}) > 0)
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0)),
   );

@@ -8,11 +8,13 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { deriveProviderInstanceConfigMap } from "../../provider/ProviderInstanceRegistryHydration.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../TextGeneration.ts";
+import * as TextGenerators from "../TextGenerators.ts";
 
 /** Run caller-level metadata tests through the real instance/model resolver. */
 export const makeNativeTextGeneration = (
@@ -35,6 +37,11 @@ export const makeNativeTextGeneration = (
     }),
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function () {
       return Effect.die("Unexpected review guide generation");
+    }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function () {
+      return Effect.die("Unexpected transcript cleanup");
     }),
     ...overrides,
   });
@@ -88,6 +95,8 @@ export const makeNativeTextGeneration = (
           listInstances: Effect.succeed([instance]),
         }),
         ServerSettings.layerTest(),
+        ProviderInstallationGate.layer,
+        Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
         Layer.mock(SourceControlProviderRegistry)({
           resolveLink: () => Effect.die("No source-control link expected"),
         }),

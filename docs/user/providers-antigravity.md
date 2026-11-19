@@ -115,13 +115,22 @@ Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
 
-Before a conversation starts, desktop/web can update an older saved Gemini family
-selection to its matching available reasoning variant. Existing conversations are
-not switched automatically. If the matching variant is unavailable, select an
+Before a conversation starts, desktop/web can update an older saved Gemini
+selection, including a default model, to the model and thinking level the agent
+lists now: a saved `gemini-3.8-flash-high` shows as Gemini 3.8 Flash with High
+thinking. Existing conversations are not switched automatically. If the matching variant is unavailable, select an
 available model rather than reinstalling the provider.
+Use Antigravity's native `/plan` command for planning. Tool approvals follow [Permission modes](./permission-modes.md).
+Questions with fixed choices still need one of the offered answers, even in
+**Full access**.
 
 The model picker also refreshes when a running session reports new model choices.
 Models available in other Antigravity apps may not be available through the ACP agent.
+
+On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
+Antigravity. Antigravity cannot rewind its own conversation, so the next turn
+starts a fresh Antigravity session and Scient sends it the kept conversation,
+without the turns you removed.
 
 For supported Gemini variants, choose the model once and use **Reasoning** to
 select an available level. On mobile, open **Model and reasoning settings**.
@@ -162,7 +171,7 @@ and resubmitting an earlier turn is therefore unavailable; send a follow-up or
 start a new thread instead.
 
 Manual context compaction is unavailable through Antigravity's ACP runtime, even
-though its CLI has `/compact`. Start a new thread when you need a fresh context.
+though its CLI has `/compact`. Send `/clear` when you need a fresh context.
 
 ## Skills and subagents
 
@@ -176,6 +185,17 @@ stays active while its parent turn runs, then becomes idle; launch errors remain
 visible. Google does not expose individual child status, names, models, usage,
 or reply ownership through ACP. A batch is not a separate controllable thread,
 and its launch description is not a child result.
+
+## Run a native goal
+
+When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
+objective. Antigravity keeps working until it completes the goal or you cancel it.
+If your runtime does not offer `/goal`, update Antigravity in provider settings
+when an update is offered, then refresh provider status.
+
+Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
+before starting more work. Ordinary follow-ups wait until the running turn ends.
+Scient does not support Antigravity goal status, pause, resume, or clear commands.
 
 ## Accounts, disabling, and removal
 

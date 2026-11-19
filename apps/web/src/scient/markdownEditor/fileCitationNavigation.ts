@@ -1,5 +1,6 @@
 import {
   isComputeCitation,
+  isOfficeCitation,
   isPdfCitation,
   type FileCitation,
   type ScopedThreadRef,
@@ -17,6 +18,7 @@ import {
   computeCitationFromLocation,
   openComputeCitation,
 } from "~/scient/compute/computeCitationNavigation";
+import { officeCitationFromLocation, openOfficeCitation } from "~/scient/office/officeQuote";
 import {
   openPdfCitation,
   pdfCitationActivation,
@@ -115,7 +117,8 @@ export function useFileCitationTarget(
   const citation =
     fileCitationFromLocation(location.href) ??
     pdfCitationFromLocation(location.href) ??
-    computeCitationFromLocation(location.href);
+    computeCitationFromLocation(location.href) ??
+    officeCitationFromLocation(location.href);
   const handled = useRef<string | null>(null);
   // Leaving the thread abandons the PDF quote this view started, if it is
   // still the latest. The cleanup waits a task: React's development replay
@@ -170,6 +173,8 @@ export function useFileCitationTarget(
       supersedePdfCitationNavigation();
       if (isComputeCitation(citation)) {
         openComputeCitation(citation, currentCwd, runAfterPendingSave);
+      } else if (isOfficeCitation(citation)) {
+        openOfficeCitation(citation, currentCwd, runAfterPendingSave);
       } else {
         openFileCitation(citation, currentCwd, runAfterPendingSave);
       }

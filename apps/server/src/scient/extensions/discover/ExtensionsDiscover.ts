@@ -11,6 +11,8 @@ import {
   type DiscoverPage,
   type DiscoverRemote,
   type ExtensionCategory,
+  LocalBundleDownload,
+  LocalPackage,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -33,7 +35,7 @@ import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CATALOG_SECTIONS,
-  FEATURED_SERVER_IDS,
+  MOST_USED_SERVER_IDS,
   CURATED_NAME_PREFIX,
   CURATED_SERVERS,
   curatedDiscoverEntry,
@@ -42,18 +44,19 @@ import {
 } from "./curatedCatalog.ts";
 
 const CATEGORY_KEYWORDS: Readonly<Record<ExtensionCategory, readonly string[]>> = {
-  featured: [],
-  papers: ["scholarly", "literature", "citation", "crossref"],
+  "most-used": [],
+  papers: ["scholarly", "literature", "citation", "crossref", "zotero", "bibliography"],
   biology: ["genomics", "protein", "clinical", "bioinformatics"],
   chemistry: ["chemistry", "compound", "pubchem", "materials"],
   earth: ["climate", "earthdata", "geospatial", "biodiversity", "weather"],
   "physics-math": ["astronomy", "physics", "arxiv", "symbolic", "mathematics"],
   "social-science": ["economics", "census", "survey", "worldbank", "fred"],
   data: ["statistics", "dataset", "notebook", "SQL"],
-  writing: ["citation", "zotero", "bibliography"],
+  files: ["drive", "files", "documents", "storage"],
+  communication: ["email", "calendar", "chat", "meeting"],
+  projects: ["project", "tasks", "issues"],
   figures: ["diagram", "figure", "presentation"],
   code: ["repository", "documentation"],
-  teamwork: ["meeting", "project"],
 };
 const CategoryCursor = Schema.fromJsonString(
   Schema.Struct({
@@ -77,7 +80,6 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const MAX_QUERY_LENGTH = 200;
 
-export const UNSUPPORTED_LOCAL_ONLY = "Runs locally. Local servers are not supported yet";
 export const UNSUPPORTED_REQUIRES_CONFIGURATION =
   "Requires configuration (headers or URL settings) before it can be connected";
 export const UNSUPPORTED_NOT_HTTPS = "Its remote endpoint is not served over https";
@@ -193,13 +195,151 @@ function resolveRemote(remote: RegistryRemote): DiscoverRemote | undefined {
   };
 }
 
+const RegistryArgument = Schema.Struct({
+  type: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  value: Schema.optional(Schema.String),
+  default: Schema.optional(Schema.String),
+  isRequired: Schema.optional(Schema.Boolean),
+});
+
+const RegistryPackage = Schema.Struct({
+  registryType: Schema.String,
+  identifier: Schema.String,
+  version: Schema.optional(Schema.String),
+  fileSha256: Schema.optional(Schema.String),
+  transport: Schema.optional(Schema.Struct({ type: Schema.String })),
+  // Read one by one: an option Scient can't read is a reason to give, not a package to skip.
+  runtimeArguments: Schema.optional(Schema.Array(Schema.Unknown)),
+  packageArguments: Schema.optional(Schema.Array(RegistryArgument)),
+  environmentVariables: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        description: Schema.optional(Schema.String),
+        isRequired: Schema.optional(Schema.Boolean),
+        isSecret: Schema.optional(Schema.Boolean),
+        default: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+type RegistryPackage = typeof RegistryPackage.Type;
+const decodeRegistryPackage = Schema.decodeUnknownExit(RegistryPackage);
+const decodeRegistryArgument = Schema.decodeUnknownOption(RegistryArgument);
+const isLocalPackage = Schema.is(LocalPackage);
+const isLocalBundle = Schema.is(LocalBundleDownload);
+
+/** Runner options Scient passes itself: `npx -y` installs without asking. */
+const APPLIED_RUNNER_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  npx: new Set(["-y", "--yes"]),
+  uvx: new Set(),
+};
+const OTHER_REGISTRIES: Readonly<Record<string, string>> = {
+  nuget: ".NET (NuGet)",
+  cargo: "Rust (Cargo)",
+};
+
+type LocalChoice =
+  | { readonly localPackage: LocalPackage }
+  | { readonly localBundle: LocalBundleDownload }
+  | { readonly reason: string };
+
+/** How Scient can run one registry package on this computer, or why it can't. */
+function localChoiceOf(pkg: RegistryPackage): LocalChoice {
+  const transport = pkg.transport?.type ?? "stdio";
+  if (pkg.registryType === "oci") return { reason: "Runs in Docker, which Scient doesn't start" };
+  if (pkg.registryType === "mcpb") {
+    const bundle = { url: pkg.identifier.trim(), sha256: pkg.fileSha256?.trim().toLowerCase() };
+    return isLocalBundle(bundle) && transport === "stdio"
+      ? { localBundle: bundle }
+      : { reason: "Its bundle has no https address and checksum Scient can check" };
+  }
+  const runner =
+    pkg.registryType === "npm" ? "npx" : pkg.registryType === "pypi" ? "uvx" : undefined;
+  if (runner === undefined)
+    return {
+      reason: `Runs from ${OTHER_REGISTRIES[pkg.registryType] ?? pkg.registryType} packages, which Scient doesn't run`,
+    };
+  if (transport !== "stdio")
+    return { reason: `Runs here as a ${transport} server, which Scient doesn't start` };
+  const unknown = (pkg.runtimeArguments ?? [])
+    .map((raw) => {
+      const argument = Option.getOrUndefined(decodeRegistryArgument(raw));
+      return nonBlank(argument?.name) ?? nonBlank(argument?.value) ?? "an option it can't read";
+    })
+    .filter((flag) => !APPLIED_RUNNER_FLAGS[runner]!.has(flag));
+  if (unknown.length > 0)
+    return { reason: `Needs runner options Scient doesn't pass (${unknown.join(" ")})` };
+  const args: string[] = [];
+  for (const argument of pkg.packageArguments ?? []) {
+    const value = nonBlank(argument.value) ?? nonBlank(argument.default);
+    if (value === undefined) {
+      if (argument.isRequired === true)
+        return {
+          reason: `Needs a value for ${nonBlank(argument.name) ?? "an argument"} that Scient can't ask for yet`,
+        };
+      continue;
+    }
+    if (argument.type === "named" && argument.name !== undefined) args.push(argument.name);
+    args.push(value);
+  }
+  const candidate = {
+    runner,
+    identifier: pkg.identifier.trim(),
+    version: pkg.version?.trim() ?? "",
+    args,
+    environment: (pkg.environmentVariables ?? []).map((variable) => {
+      const description = nonBlank(variable.description);
+      const fallback = nonBlank(variable.default);
+      return {
+        name: variable.name.trim(),
+        ...(description === undefined ? {} : { description }),
+        required: variable.isRequired === true,
+        secret: variable.isSecret === true,
+        ...(fallback === undefined ? {} : { default: fallback }),
+      };
+    }),
+  };
+  return isLocalPackage(candidate)
+    ? { localPackage: candidate }
+    : { reason: "Its package has a name or version Scient can't run" };
+}
+
+/**
+ * The first package Scient can run here (npm and PyPI through `npx` and `uvx`, or an MCP Bundle),
+ * else why the first one can't run. Arguments need fixed values or defaults: the add form asks only
+ * for environment variables.
+ */
+function localChoiceFor(packages: ReadonlyArray<unknown>): LocalChoice | undefined {
+  let first: LocalChoice | undefined;
+  for (const raw of packages) {
+    const decoded = decodeRegistryPackage(raw);
+    if (Exit.isFailure(decoded)) continue;
+    const choice = localChoiceOf(decoded.value);
+    if (!("reason" in choice)) return choice;
+    first ??= choice;
+  }
+  return (
+    first ??
+    (packages.length > 0
+      ? { reason: "Its packages are listed in a form Scient can't read" }
+      : undefined)
+  );
+}
+
 /** Normalize one active registry server into a Discover entry. */
 function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "installedConnectorId"> {
   const { server } = entry;
   const remotes = server.remotes ?? [];
   const streamable = remotes.filter((remote) => remote.type === "streamable-http");
   const usable = streamable.flatMap((remote) => resolveRemote(remote) ?? []);
-  const installable = usable.some((remote) => !remote.requiresInput);
+  const remoteInstallable = usable.some((remote) => !remote.requiresInput);
+  const local = remoteInstallable ? undefined : localChoiceFor(server.packages ?? []);
+  const localPackage =
+    local !== undefined && "localPackage" in local ? local.localPackage : undefined;
+  const localBundle = local !== undefined && "localBundle" in local ? local.localBundle : undefined;
+  const installable = remoteInstallable || localPackage !== undefined || localBundle !== undefined;
   const unsupportedReason = installable
     ? undefined
     : usable.length > 0
@@ -208,8 +348,8 @@ function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "insta
         ? UNSUPPORTED_NOT_HTTPS
         : remotes.length > 0
           ? UNSUPPORTED_TRANSPORT
-          : (server.packages ?? []).length > 0
-            ? UNSUPPORTED_LOCAL_ONLY
+          : local !== undefined && "reason" in local
+            ? local.reason
             : UNSUPPORTED_NO_ENDPOINT;
   const title = nonBlank(server.title);
   const description = nonBlank(server.description);
@@ -224,6 +364,8 @@ function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "insta
     ...(websiteUrl === undefined ? {} : { websiteUrl }),
     ...(repositoryUrl === undefined ? {} : { repositoryUrl }),
     remotes: usable,
+    ...(localPackage === undefined ? {} : { localPackage }),
+    ...(localBundle === undefined ? {} : { localBundle }),
     categories: [],
     installable,
     ...(unsupportedReason === undefined ? {} : { unsupportedReason }),
@@ -268,27 +410,80 @@ export interface DiscoverOptions {
 /** How a curated entry is matched against connectors and registry results. */
 const curatedKeys = (server: CuratedServer) => ({
   name: server.registry?.name,
-  url: canonicalConnectorUrl(server.url),
+  url: server.url === undefined ? undefined : canonicalConnectorUrl(server.url),
 });
 
+/** Words of a query or a text: hyphens, underscores, dots and slashes separate words too. */
+const searchWords = (text: string) => text.toLowerCase().replace(/[-_./:]+/gu, " ");
+const searchTerms = (query: string): ReadonlyArray<string> =>
+  searchWords(query)
+    .split(/\s+/u)
+    .filter((term) => term !== "");
+
 const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): boolean => {
-  const haystack = `${server.displayName}\n${server.tagline}\n${server.description}`.toLowerCase();
+  const haystack = searchWords(`${server.displayName}\n${server.tagline}\n${server.description}`);
   return terms.every((term) => haystack.includes(term));
 };
 
-/** Entries whose primary category is `category` first, then the rest, each in catalog order. */
+/** Every term appears in the entry's name, title or description. */
+const entryMatches = (entry: DiscoverEntry, terms: ReadonlyArray<string>) => {
+  const haystack = searchWords(`${entry.title ?? ""} ${entry.name} ${entry.description ?? ""}`);
+  return terms.every((term) => haystack.includes(term));
+};
+
+/** Terms found in the name or title count twice those found only in the description. */
+const relevance = (entry: DiscoverEntry, terms: ReadonlyArray<string>) => {
+  const named = searchWords(`${entry.title ?? ""} ${entry.name}`);
+  const described = searchWords(entry.description ?? "");
+  return terms.reduce(
+    (score, term) => score + (named.includes(term) ? 2 : described.includes(term) ? 1 : 0),
+    0,
+  );
+};
+
+/** Most relevant first; equal entries keep the source's order. */
+const byRelevance = (entries: ReadonlyArray<DiscoverEntry>, terms: ReadonlyArray<string>) =>
+  entries
+    .map((entry, index) => ({ entry, index, score: relevance(entry, terms) }))
+    .toSorted((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ entry }) => entry);
+
+/**
+ * The registry matches its search text as one phrase, so a query of several words is also tried
+ * hyphen-joined and as its longest word; results that lack any word are dropped afterwards.
+ */
+const registryQueries = (query: string, terms: ReadonlyArray<string>) =>
+  terms.length < 2
+    ? [query]
+    : [
+        ...new Set([
+          query,
+          terms.join("-"),
+          terms.reduce((longest, term) => (term.length > longest.length ? term : longest), ""),
+        ]),
+      ];
+
+/** Entries whose primary category is `category` first (most used leading), then the rest. */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
   const members = servers.filter((server) => server.categories.includes(category));
-  if (category === "featured") {
+  if (category === "most-used") {
     const rank = (id: string) => {
-      const index = FEATURED_SERVER_IDS.findIndex((candidate) => candidate === id);
-      return index < 0 ? FEATURED_SERVER_IDS.length : index;
+      const index = MOST_USED_SERVER_IDS.findIndex((candidate) => candidate === id);
+      return index < 0 ? MOST_USED_SERVER_IDS.length : index;
     };
     return members.toSorted((a, b) => rank(a.id) - rank(b.id));
   }
   const primary = (server: CuratedServer) =>
-    server.categories.find((candidate) => candidate !== "featured") === category;
-  return [...members.filter(primary), ...members.filter((server) => !primary(server))];
+    server.categories.find((candidate) => candidate !== "most-used") === category;
+  // Within a field, the most used lead: GitHub before the rest of Code, Slack in chat.
+  const mostUsedFirst = (list: ReadonlyArray<CuratedServer>) => [
+    ...list.filter((server) => server.categories.includes("most-used")),
+    ...list.filter((server) => !server.categories.includes("most-used")),
+  ];
+  return [
+    ...mostUsedFirst(members.filter(primary)),
+    ...members.filter((server) => !primary(server)),
+  ];
 };
 
 export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
@@ -366,8 +561,14 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
     if (Option.isNone(connectorRuntime)) return { byName, byUrl };
     const inventory = yield* connectorRuntime.value.list();
     for (const connector of inventory.connectors) {
-      if (connector.source.type === "registry" && !byName.has(connector.source.name)) {
-        byName.set(connector.source.name, connector.connectorId);
+      const registryName =
+        connector.source.type === "registry"
+          ? connector.source.name
+          : connector.source.type === "local"
+            ? connector.source.registry?.name
+            : undefined;
+      if (registryName !== undefined && !byName.has(registryName)) {
+        byName.set(registryName, connector.connectorId);
       }
       const url = canonicalConnectorUrl(connector.url);
       if (!byUrl.has(url)) byUrl.set(url, connector.connectorId);
@@ -391,7 +592,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const curatedEntry = (server: CuratedServer, installed: Installed): DiscoverEntry => {
     const entry = curatedDiscoverEntry(server);
     const installedConnectorId =
-      installedFor(installed, entry.name, [server.url]) ??
+      installedFor(installed, entry.name, server.url === undefined ? [] : [server.url]) ??
       (server.address
         ? [...installed.byUrl].find(
             ([url]) => curatedServerForUrl(url, [server]) !== undefined,
@@ -411,7 +612,15 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         const members = serversIn(servers, category);
         return members.length === 0
           ? []
-          : [{ category, members, preview: members.slice(0, CATALOG_PREVIEW_ENTRIES) }];
+          : [
+              {
+                category,
+                members,
+                // Most used is the short list everyone needs, so the home page shows all of it.
+                preview:
+                  category === "most-used" ? members : members.slice(0, CATALOG_PREVIEW_ENTRIES),
+              },
+            ];
       });
       const sections = previews.map(({ category, members, preview }): DiscoverCatalogSection => ({
         category,
@@ -518,10 +727,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const search: ExtensionsDiscoverShape["search"] = Effect.fn("ExtensionsDiscover.search")(
     function* (input) {
       const query = (input.query ?? "").trim().slice(0, MAX_QUERY_LENGTH);
-      const terms = query
-        .toLowerCase()
-        .split(/\s+/u)
-        .filter((term) => term !== "");
+      const terms = searchTerms(query);
       if (input.scope === "curated") {
         // Small and complete: filtered in memory, never paged.
         const curatedMatches = (
@@ -584,14 +790,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
             if (keys.some((key) => seen.has(key))) continue;
             for (const key of keys) seen.add(key);
             if (curatedFor(raw)) continue;
-            if (
-              !terms.every((term) =>
-                `${entry.title ?? ""} ${entry.description ?? ""} ${entry.name}`
-                  .toLowerCase()
-                  .includes(term),
-              )
-            )
-              continue;
+            if (!entryMatches(entry, terms)) continue;
             entries.push(entry);
           }
         }
@@ -610,6 +809,54 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
           ? Math.trunc(input.limit)
           : DEFAULT_LIMIT;
       const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit));
+      const queries = registryQueries(query, terms);
+      if ((cursor === undefined || cursor === "") && queries.length > 1) {
+        // Several searches merged: ranked and deduplicated, with no single cursor to continue.
+        const pages = yield* Effect.forEach(
+          queries,
+          (search) => {
+            const url = new URL(MCP_REGISTRY_SERVERS_URL);
+            url.searchParams.set("search", search);
+            url.searchParams.set("limit", String(limit));
+            url.searchParams.set("version", "latest");
+            return readRegistry(url.href, parseRegistryPage, false).pipe(
+              Effect.timeoutOrElse({
+                duration: "6 seconds",
+                orElse: () =>
+                  Effect.fail(
+                    new ExtensionsError({
+                      reason: "unreachable",
+                      message: "The MCP Registry did not answer in time.",
+                    }),
+                  ),
+              }),
+              Effect.result,
+            );
+          },
+          { concurrency: 3 },
+        );
+        const read = pages.flatMap((page) => (page._tag === "Success" ? [page.success] : []));
+        const failure = pages.find((page) => page._tag === "Failure");
+        if (read.length === 0 && failure?._tag === "Failure") return yield* failure.failure;
+        const installed = yield* installedConnectors;
+        const matched = byRelevance(
+          registryEntries(
+            read.flatMap((page) => page.entries),
+            installed,
+          ).filter((entry) => entryMatches(entry, terms)),
+          terms,
+        );
+        const more = read.some((page) => page.nextCursor !== undefined);
+        return {
+          entries: matched.slice(0, limit),
+          ...(matched.length > limit || more
+            ? {
+                message: `Showing ${Math.min(limit, matched.length)} of ${matched.length}${more ? " or more" : ""}. Narrow the search for the rest.`,
+              }
+            : {}),
+          fetchedAt: read[0]!.fetchedAt,
+        } satisfies DiscoverPage;
+      }
       const url = new URL(MCP_REGISTRY_SERVERS_URL);
       if (query !== "") url.searchParams.set("search", query);
       url.searchParams.set("limit", String(limit));
@@ -619,7 +866,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       // Installation state is live, never cached with the registry page.
       const installed = yield* installedConnectors;
       return {
-        entries: registryEntries(page.entries, installed),
+        entries: byRelevance(registryEntries(page.entries, installed), terms),
         ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         fetchedAt: page.fetchedAt,
       } satisfies DiscoverPage;

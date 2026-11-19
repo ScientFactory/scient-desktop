@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ThreadWorktreeRestore } from "../../workspace/restoreMissingWorktree.ts";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -82,7 +83,10 @@ it.effect.each(
       ),
     ),
   );
-  const layer = ThreadManagement.layerWithLegacyImporter.pipe(Layer.provideMerge(services));
+  const layer = ThreadManagement.layerWithLegacyImporter.pipe(
+    Layer.provideMerge(services),
+    Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+  );
   return Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -161,7 +165,12 @@ it.effect.each(
     const failure = yield* compatibility.execute(request).pipe(Effect.flip);
     assert.deepInclude(failure, {
       _tag: "OrchestratorCommandRejectedError",
-      commandType: action === "steer" ? "queued-message.promote-to-steer" : "queue.resume",
+      commandType:
+        action === "steer"
+          ? "queued-message.promote-to-steer"
+          : action === "send"
+            ? "queued-run.start"
+            : "queue.resume",
     });
     assert.deepInclude("cause" in failure ? failure.cause : null, {
       message: "The repository is still being cloned.",

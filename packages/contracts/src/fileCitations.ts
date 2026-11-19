@@ -112,7 +112,33 @@ export const ComputeCitation = Schema.Struct({
 }).check(Schema.makeFilter((value) => value.end > value.start && value.text.trim().length > 0));
 export type ComputeCitation = typeof ComputeCitation.Type;
 
-export type ComposerCitation = AssistantCitation | FileCitation | PdfCitation | ComputeCitation;
+/**
+ * A quote from a Word page or a PowerPoint slide, as the Office reader shows it: the file, the page
+ * or slide it was on, and the text with what surrounds it there. Its positions are the reader's,
+ * not the file's: an Office file's text lives in compressed XML.
+ */
+export const OfficeCitation = Schema.Struct({
+  kind: Schema.Literal("office"),
+  version: Schema.Literal(1),
+  environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
+  threadId: ThreadId.check(Schema.isMaxLength(512)),
+  cwd: WorkspaceRoot,
+  path: Path,
+  unit: Schema.Literals(["page", "slide"]),
+  page: Offset.check(Schema.isGreaterThan(0)),
+  text: AssistantCitation.fields.text,
+  comment: AssistantCitation.fields.comment,
+  prefix: AssistantCitation.fields.prefix,
+  suffix: AssistantCitation.fields.suffix,
+}).check(Schema.makeFilter((value) => value.text.trim().length > 0));
+export type OfficeCitation = typeof OfficeCitation.Type;
+
+export type ComposerCitation =
+  | AssistantCitation
+  | FileCitation
+  | PdfCitation
+  | ComputeCitation
+  | OfficeCitation;
 
 export function isFileCitation(citation: ComposerCitation): citation is FileCitation {
   return "kind" in citation && citation.kind === "file";
@@ -124,6 +150,10 @@ export function isPdfCitation(citation: ComposerCitation): citation is PdfCitati
 
 export function isComputeCitation(citation: ComposerCitation): citation is ComputeCitation {
   return "kind" in citation && citation.kind === "compute";
+}
+
+export function isOfficeCitation(citation: ComposerCitation): citation is OfficeCitation {
+  return "kind" in citation && citation.kind === "office";
 }
 
 /** The quoted text of a PDF citation, across its pages. */

@@ -145,7 +145,7 @@ const withInitiatedWork = <A, E, R>(
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-              getInstance: () => Effect.succeed(undefined),
+              getInstance: () => Effect.undefined,
             }),
           ),
         ),
@@ -417,7 +417,7 @@ const withInitiatedWork = <A, E, R>(
                           if (
                             !held &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) =>
                               arg.endsWith(`/ordinal/${options.holdCaptureOrdinal}`),
                             )

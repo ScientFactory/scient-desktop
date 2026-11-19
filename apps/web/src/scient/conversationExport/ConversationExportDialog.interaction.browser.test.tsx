@@ -37,7 +37,7 @@ vi.mock("../wordExport/client", async (original) => ({
 const { ConversationExportDialogHost, requestConversationExport } =
   await import("./ConversationExportDialog");
 const { handleConversationExportMenuAction } = await import("./menu");
-const { INCLUDE_CAUTION } = await import("./exportDialog.logic");
+const { INCLUDE_CAUTION, RUNNING_TURN_WARNING } = await import("./exportDialog.logic");
 const { buildThreadActionMenuItems } = await import("../../components/threadActionMenu.logic");
 const { toastManager } = await import("../../components/ui/toast");
 
@@ -201,12 +201,21 @@ describe("ConversationExportDialog", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    prepareConversationExport.mockResolvedValue({ ...preparation, attachmentCount: 1 });
+    prepareConversationExport.mockResolvedValue({
+      ...preparation,
+      attachmentCount: 1,
+      runningTurnOmitted: true,
+    });
     await renderHost(_fixture);
     await open("markdown");
 
     expect(button("Save .md")).toBeDefined();
     expect(button("Copy")).toBeUndefined();
+    // A running turn is reported at once; the include caution waits for a switch.
+    expect(dialog()?.querySelector('[aria-label="Export warnings"]')?.textContent).toBe(
+      RUNNING_TURN_WARNING,
+    );
+    expect(document.body.textContent).not.toContain(INCLUDE_CAUTION);
     const zip = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) =>
       radio.closest("label")?.textContent?.includes("With attachments (.zip)"),
     )!;
@@ -224,6 +233,11 @@ describe("ConversationExportDialog", () => {
     await renderHost(_fixture);
     await open();
     expect(document.body.textContent).not.toContain(INCLUDE_CAUTION);
+    // Without attachments or a running turn there is no ZIP choice, range choice or warning.
+    expect(dialog()?.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(dialog()?.textContent).not.toContain("With attachments (.zip)");
+    expect(dialog()?.textContent).not.toContain("Whole conversation");
+    expect(dialog()?.querySelector('[aria-label="Export warnings"]')).toBeNull();
 
     const [workLog, reasoning] = switches();
     expect(workLog?.getAttribute("aria-checked")).toBe("false");

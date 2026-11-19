@@ -77,8 +77,15 @@ export function installMathCommandCompletion(
       document.defaultView?.removeEventListener("resize", position);
     }
   };
+  let nativeHidden = false;
+  // MathLive's popover is a body child, so the flag sits on body rather than in a :has().
+  const hideNative = (hidden: boolean) => {
+    if (hidden === nativeHidden) return;
+    nativeHidden = hidden;
+    document.body.toggleAttribute("data-math-completion-hides-native", hidden);
+  };
   const hide = (keepNativeHidden = false) => {
-    if (!keepNativeHidden) math.removeAttribute("data-environment-completion");
+    if (!keepNativeHidden) hideNative(false);
     if (menu.hidden) return;
     menu.hidden = true;
     watchPosition(false);
@@ -170,7 +177,7 @@ export function installMathCommandCompletion(
     if (!menu.isConnected) document.body.append(menu);
     menu.hidden = false;
     watchPosition(true);
-    math.setAttribute("data-environment-completion", "");
+    hideNative(true);
     math.setAttribute("aria-controls", menu.id);
     math.setAttribute("aria-activedescendant", `${menu.id}-${active}`);
     position();

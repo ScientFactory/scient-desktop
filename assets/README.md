@@ -28,7 +28,7 @@ is the kit's pixel-fitted 16 px colour drawing for 12-16 px uses. Keep both
 aligned with the kit; they are separate SVG files so the app does not depend on
 an icon-project implementation detail at runtime.
 
-Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
+Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon, web app manifest icons, and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
 Exporting requires Icon Composer on macOS. The script selects the newest exporter from Xcode or a standalone Icon Composer installation. Icon Composer 2 and newer are pinned to design generation 26; older exporters read the generation embedded in the source project. Set `ICON_COMPOSER_TOOL` to the full path of `Icon Composer.app/Contents/Executables/ictool` to override automatic discovery.
 

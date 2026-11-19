@@ -13,6 +13,8 @@ import {
 } from "../workspace/PlatformFileIdentity.ts";
 import { WindowsNativeFileError } from "../workspace/WindowsNativeFile.ts";
 
+const isWindowsNativeFileError = Schema.is(WindowsNativeFileError);
+
 export class OverleafFilesystemError extends Schema.TaggedError<OverleafFilesystemError>()(
   "OverleafFilesystemError",
   { reason: ScientOverleafFilesystemRefusalReason, path: Schema.String },
@@ -33,7 +35,7 @@ export function overleafDirectoryIdentity(
     catch: (error) =>
       new OverleafFilesystemError({
         path,
-        reason: error instanceof WindowsNativeFileError ? error.reason : "identity-unavailable",
+        reason: isWindowsNativeFileError(error) ? error.reason : "identity-unavailable",
       }),
   });
 }

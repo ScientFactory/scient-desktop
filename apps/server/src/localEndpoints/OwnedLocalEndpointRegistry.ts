@@ -2,20 +2,23 @@
 import * as NodeNet from "node:net";
 
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const PROBE_PERMITS = 1_024;
 
-export class OwnedLocalEndpointError extends Data.TaggedError("OwnedLocalEndpointError")<{
-  readonly operation: "reserve" | "handoff";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class OwnedLocalEndpointError extends Schema.TaggedError<OwnedLocalEndpointError>()(
+  "OwnedLocalEndpointError",
+  {
+    operation: Schema.Literals(["reserve", "handoff"]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export interface OwnedLocalEndpointSnapshot {
   /** Changes whenever the protected endpoint set changes. */

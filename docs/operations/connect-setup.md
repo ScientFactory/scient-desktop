@@ -1,10 +1,11 @@
 # T3 Connect setup
 
-Status: inherited upstream deployment reference, not Scient activation instructions.
-Scient's cloud/relay and mobile publication holds remain in force. Do not copy upstream production
-configuration, register callbacks, provision credentials, or deploy from this guide without the
-separate Scient operations approval. Scient identity and signing are owned by the
-[release runbook](./release.md) and [local dev app runbook](./local-dev-app.md).
+Status: inherited upstream deployment reference. Scient Connect's own values, accounts and
+deploys are in [Scient Connect operations](./scient-connect.md); where they differ (template
+`scient-relay`, audience `scient-connect-relay`, desktop redirects `scient://app/` and
+`scient-next-dev://app/`), that page wins. Mobile publication stays on hold. Scient identity and
+signing are owned by the [release runbook](./release.md) and
+[local dev app runbook](./local-dev-app.md).
 
 Deployment and client configuration for T3 Connect. The [architecture note](../internals/t3-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay

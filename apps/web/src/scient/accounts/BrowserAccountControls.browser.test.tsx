@@ -89,7 +89,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
     />,
   );
   await expect
-    .element(page.getByRole("button", { name: "Fill sign-in", exact: true }))
+    .element(page.getByRole("button", { name: "Saved sign-ins for example.com" }))
     .not.toBeInTheDocument();
   Object.defineProperty(window, "desktopBridge", {
     configurable: true,
@@ -105,7 +105,8 @@ it("withholds autofill from an older bridge and drops values after the tab navig
       url="https://example.com/login"
     />,
   );
-  await page.getByRole("button", { name: "Fill sign-in", exact: true }).click();
+  await page.getByRole("button", { name: "Saved sign-ins for example.com" }).click();
+  await page.getByRole("button", { name: "Fill No username" }).click();
   await entered.promise;
   await screen.rerender(
     <BrowserAccountControls
@@ -121,4 +122,94 @@ it("withholds autofill from an older bridge and drops values after the tab navig
     await response.promise;
   });
   expect(filled).toBe(false);
+});
+
+it("offers to save a typed sign-in, except on Scient's own sign-in tab or with no username", async () => {
+  setup();
+  state.request = async () => ({ ok: true, value: { result: "new" } }) as never;
+  const listeners = new Set<
+    (capture: Parameters<Parameters<DesktopAccountsBridge["onSignInCaptured"]>[0]>[0]) => void
+  >();
+  const bridge: DesktopAccountsBridge = {
+    sourceProfiles: async () => [],
+    signedInSites: async () => [],
+    fill: async () => false,
+    onSignInCaptured: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const previous = Object.getOwnPropertyDescriptor(window, "desktopBridge");
+  using _bridge = {
+    [Symbol.dispose]() {
+      if (previous) Object.defineProperty(window, "desktopBridge", previous);
+      else Reflect.deleteProperty(window, "desktopBridge");
+    },
+  };
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: { accounts: bridge },
+  });
+  const snapshot = (attempts: AccountsSnapshot["attempts"]): AccountsSnapshot => ({
+    agentAccess: true,
+    accounts: [],
+    profiles: [],
+    stores: {
+      scient: { protection: "keychain" },
+      keychain: { available: false, platform: "linux" },
+      onePassword: { state: "not-connected" },
+    },
+    approvals: [],
+    recentActivity: [],
+    customModelKeys: [],
+    accountsProtocol: 1,
+    attempts,
+  });
+  const environmentId = EnvironmentId.make("synthetic");
+  const controls = (key: string) => (
+    <BrowserAccountControls
+      key={key}
+      environmentId={environmentId}
+      threadRef={{ environmentId, threadId: ThreadId.make("synthetic-thread") }}
+      tabId="synthetic-tab"
+      previewTabId="preview-tab"
+      profileId="default"
+      url="https://example.com/login"
+    />
+  );
+  const capture = (username = "synthetic") =>
+    act(async () => {
+      for (const listener of listeners)
+        listener({
+          tabId: "synthetic-tab",
+          profileId: "default",
+          url: "https://example.com",
+          path: "/login",
+          step: "password",
+          username,
+          password: "synthetic-password",
+          usernameFrom: "form",
+        });
+    });
+  state.snapshot = snapshot([
+    {
+      attemptId: "attempt-1",
+      threadId: ThreadId.make("synthetic-thread"),
+      tabId: "preview-tab",
+      accountId: AccountId.make("acc_synthetic01"),
+      state: "person",
+    },
+  ]);
+  await using screen = await render(controls("attempt"));
+  await capture();
+  await expect.element(page.getByText("Save sign-in?").first()).not.toBeInTheDocument();
+  state.snapshot = snapshot([]);
+  await screen.rerender(controls("no-attempt"));
+  // A code typed on its own step has no username: not a sign-in to save.
+  await capture("");
+  await expect.element(page.getByText("Save sign-in?").first()).not.toBeInTheDocument();
+  await capture();
+  await expect.element(page.getByText("Save sign-in?").first()).toBeInTheDocument();
+  await expect.element(page.getByText("example.com · synthetic")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Don't ask for this site" })).toBeVisible();
 });

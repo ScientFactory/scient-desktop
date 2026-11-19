@@ -497,7 +497,8 @@ export function makeMatlabRuntimeAdapter(
           probe.installationRoot,
         ],
         cwd: validateProjectRoot(request.cwd),
-        environment: sanitizeComputeEnvironment(request.environment).environment,
+        environment: sanitizeComputeEnvironment(request.environment, { keepRunKeys: true })
+          .environment,
       };
     }),
     normalizeDiagnostic: (report, context) => [

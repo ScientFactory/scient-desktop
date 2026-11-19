@@ -194,7 +194,7 @@ it.effect("keeps a page autofill filled from agents that may not use its sign-in
   }),
 );
 
-it.effect("picks a profile only by sign-ins the agent may use", () =>
+it.effect("keeps a pairing only by a row the agent may use", () =>
   Effect.gen(function* () {
     const signedIn: AccountSummary = {
       accountId: AccountId.make("acc_website02"),
@@ -217,6 +217,7 @@ it.effect("picks a profile only by sign-ins the agent may use", () =>
           fakeAccounts({
             accounts: [account],
             profiles: [defaultBrowserProfileRecord(defaultId), defaultBrowserProfileRecord(workId)],
+            profileChoices: { projects: { [scope.projectId]: workId }, threads: {} },
           }).service,
         ),
         Effect.map((picked) => picked.profileId),

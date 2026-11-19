@@ -10,6 +10,9 @@ import {
   redactEventStream,
   redactJsonStream,
   redactJsonText,
+  programCredentials,
+  redactString,
+  redactText,
   requestIdToken,
   SSE_KEEPALIVE,
   SSE_KEEPALIVE_INTERVAL_MS,
@@ -320,5 +323,56 @@ describe("SSE re-rendering", () => {
 
   it("ends the stream with a Scient error for non-JSON data", async () => {
     expect(await sse([`data: plain ${TOKEN}\n\n`, 'data: {"later":true}\n\n'])).toBe(REFUSAL_EVENT);
+  });
+});
+
+describe("session cookie values", () => {
+  it("are hidden as whole tokens from 6 characters, never inside other words", () => {
+    const credentials = credentialSet([], ["s6k9xq", "ab12"]);
+    expect(redactString("session s6k9xq", credentials)).toBe(REDACTED);
+    expect(redactString("sid=s6k9xq;", credentials)).toBe(REDACTED);
+    expect(redactString("s6k9xq%20", credentials)).toBe(REDACTED);
+    // Ordinary short output stays: inside a word, or a value below the cookie minimum.
+    expect(redactString("xs6k9xqy and lab12x and ab12", credentials)).toBe(
+      "xs6k9xqy and lab12x and ab12",
+    );
+  });
+
+  it("are hidden in base64 of any length and alignment, as whole tokens after decoding", () => {
+    const short = credentialSet([], ["s6k9xq"]);
+    const long = credentialSet([], ["long-session-cookie-value-0123456789"]);
+    for (const prefix of ["", ";", "; "])
+      for (const encoding of ["base64", "base64url"] as const) {
+        const encode = (text: string) => Buffer.from(text).toString(encoding);
+        expect(redactString(encode(`${prefix}s6k9xq;`), short)).toBe(REDACTED);
+        const longText = encode(`${prefix}sid=long-session-cookie-value-0123456789 end`);
+        expect(redactString(longText, long)).toBe(REDACTED);
+      }
+    // Decoded bytes that only contain the cookie inside a word stay.
+    const inWord = Buffer.from("xs6k9xqy").toString("base64");
+    expect(redactString(inWord, short)).toBe(inWord);
+  });
+});
+
+describe("free text a program writes", () => {
+  it("hides each word carrying a key or cookie, keeps the rest, and checks past a cut", () => {
+    const credentials = programCredentials(["short-key-1", TOKEN], ["s6k9xq"]);
+    const encoded = Buffer.from(`sid=s6k9xq`).toString("base64");
+    expect(redactText(`ok ${encoded} and short-key-1, then ${TOKEN}`, credentials)).toBe(
+      `ok ${REDACTED} and ${REDACTED} then ${REDACTED}`,
+    );
+    // A credential spanning words hides the whole text.
+    expect(
+      redactText("x spaced key value 123 y", programCredentials(["spaced key value 123"])),
+    ).toBe(REDACTED);
+    // regression: keys under the cookie minimum were dropped, so a 4-character key showed.
+    expect(redactText("used k4y9 here", programCredentials(["k4y9"]))).toBe(
+      `used ${REDACTED} here`,
+    );
+    // A cut never shows a piece of a credential: the word it splits is left out.
+    expect(redactText(`see short-key-1`, credentials, 6)).toBe("see ");
+    const long = "Q".repeat(5_000) + "k".repeat(5_000);
+    // regression: the text was cut 4 KB past the limit first, so a longer key's start showed.
+    expect(redactText(`${long} tail`, programCredentials([long]), 4_000)).toBe("");
   });
 });

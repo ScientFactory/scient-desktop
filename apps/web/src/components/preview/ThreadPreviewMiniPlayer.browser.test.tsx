@@ -182,6 +182,50 @@ it("closes the shared floating surface with Escape without leaving a portal behi
   expect(player()).toBeNull();
 });
 
+it("ends a resize whose release never reached its handle", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  usePreviewMiniPlayerStore.getState().openArtifact(threadRef, artifact);
+  await render(_fixture);
+  const handle = document.querySelector<HTMLElement>('[data-preview-mini-player-resize="east"]')!;
+  const point = (type: string, x: number, buttons: number) =>
+    act(() =>
+      handle.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          button: type === "pointermove" ? -1 : 0,
+          buttons,
+          clientX: x,
+          clientY: 300,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+  const width = () => parseFloat(player()!.style.width);
+  const start = width();
+
+  await point("pointerdown", 500, 1);
+  await point("pointermove", 540, 1);
+  await render(_fixture);
+  expect(width()).toBe(start + 40);
+  // A buttonless move is all that is left of a release over a native view or another window.
+  await point("pointermove", 560, 0);
+  await point("pointermove", 620, 1);
+  await render(_fixture);
+  expect(width()).toBe(start + 40);
+
+  await point("pointerdown", 540, 1);
+  await act(() => window.dispatchEvent(new Event("blur")));
+  await point("pointermove", 640, 1);
+  await render(_fixture);
+  expect(width()).toBe(start + 40);
+});
+
 function _createFixture() {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();

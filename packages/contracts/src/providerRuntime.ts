@@ -60,7 +60,9 @@ const TurnTokenUsageCommonFields = {
   cacheCreationTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
   hasSubagents: Schema.Boolean,
-  // Native model ids the provider reported for the main agent's work. Absent means unknown.
+  // Native model ids the provider reported for the main agent's work, the main model first: the
+  // one with the most tokens when the provider counts per model, otherwise the first seen.
+  // Absent means unknown.
   models: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
   // The provider ran a local command; its counters describe that result, not model work.
   localCommand: Schema.optional(Schema.Boolean),

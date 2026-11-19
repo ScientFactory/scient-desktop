@@ -6,6 +6,7 @@ import {
   mergeWindowEntries,
   mergeWindowValue,
   onStorageKey,
+  sameJson,
 } from "./crossWindowMerge";
 
 const UI_STATE_FIELDS = [
@@ -86,6 +87,9 @@ export function createUiStateWindowSync(options: {
   readonly localOnlyProjectExpansionKeys: ReadonlyArray<string>;
 }) {
   const localOnlyKeys = new Set(options.localOnlyProjectExpansionKeys);
+  // Each window keeps its own project scope. Storage holds the latest one chosen in any
+  // window, which new windows and the next launch start from.
+  let ownScope: string[] | null = null;
   const readRaw = (): string | null => {
     try {
       return typeof window === "undefined" ? null : window.localStorage.getItem(options.key);
@@ -93,16 +97,30 @@ export function createUiStateWindowSync(options: {
       return null;
     }
   };
+  const readStored = (): UiState | null => {
+    try {
+      const raw = readRaw();
+      return raw ? options.parse(JSON.parse(raw) as PersistedUiState) : null;
+    } catch {
+      return null;
+    }
+  };
   const sync = createCrossWindowStateSync<UiState>({
-    read: () => {
-      try {
-        const raw = readRaw();
-        return raw ? options.parse(JSON.parse(raw) as PersistedUiState) : null;
-      } catch {
-        return null;
-      }
-    },
-    merge: (local, synced, stored) => mergeUiState(local, synced, stored, localOnlyKeys),
+    read: readStored,
+    merge: (local, synced, stored) =>
+      mergeUiState(
+        local,
+        { ...synced, sidebarProjectScopeKeys: ownScope ?? synced.sidebarProjectScopeKeys },
+        stored,
+        localOnlyKeys,
+      ),
+    adopt: (local, synced, stored) =>
+      mergeUiState(
+        local,
+        synced,
+        { ...stored, sidebarProjectScopeKeys: local.sidebarProjectScopeKeys },
+        localOnlyKeys,
+      ),
   });
 
   return {
@@ -112,9 +130,14 @@ export function createUiStateWindowSync(options: {
       options.persist(sync.mergeForWrite(local));
       // `persist` swallows write errors (a full quota); a failed write leaves storage as it was.
       if (readRaw() !== before) sync.didWrite(local);
+      // Storage can already hold this window's choice, so the bytes need not change.
+      if (sameJson(readStored()?.sidebarProjectScopeKeys, local.sidebarProjectScopeKeys)) {
+        ownScope = local.sidebarProjectScopeKeys;
+      }
     },
     attach: <S extends UiState>(store: StoreApi<S>): void => {
       sync.setBaseline(pickUiState(store.getState()));
+      ownScope = store.getState().sidebarProjectScopeKeys;
       onStorageKey(options.key, () => {
         const local = pickUiState(store.getState());
         const merged = sync.adoptStored(local);

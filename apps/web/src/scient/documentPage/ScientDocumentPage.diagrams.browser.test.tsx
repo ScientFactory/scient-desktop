@@ -62,7 +62,9 @@ describe("PDF diagram renderer boundary", () => {
     async (code) => {
       setup();
       renderer.render.mockRejectedValue(
-        new MermaidRenderError(Object.assign(new Error(`Pele rejected ${code}`), { code })),
+        new MermaidRenderError({
+          cause: Object.assign(new Error(`Pele rejected ${code}`), { code }),
+        }),
       );
       const tracker = new DocumentPageTracker();
       const source = `bad-${code}`;
@@ -81,7 +83,7 @@ describe("PDF diagram renderer boundary", () => {
     "withholds printing after an execution failure: %s",
     async (message) => {
       setup();
-      renderer.render.mockRejectedValue(new MermaidRenderError(new Error(message)));
+      renderer.render.mockRejectedValue(new MermaidRenderError({ cause: new Error(message) }));
       const tracker = new DocumentPageTracker();
       await using screen = await render(diagramPage("flowchart LR\nA", tracker), { router: false });
       await expect
@@ -162,7 +164,9 @@ describe("PDF diagram renderer boundary", () => {
       .poll(() => screen.container.querySelector("svg")?.textContent)
       .toBe("Current diagram");
     expect(await oldTracker.settle()).toBe(true);
-    await act(() => pending.reject(new MermaidRenderError(new Error("Late load failure"))));
+    await act(() =>
+      pending.reject(new MermaidRenderError({ cause: new Error("Late load failure") })),
+    );
     expect(oldTracker.diagnostics).toEqual([]);
     expect(tracker.diagnostics).toEqual([]);
     expect(await tracker.settle()).toBe(true);

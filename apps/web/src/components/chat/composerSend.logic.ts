@@ -1,6 +1,31 @@
 import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import type { ApprovalSendGuardResult } from "./approvalSendGuard";
+import type { ComposerThreadDraftState } from "../../composerDraftStore";
+
+/** Compare immutable user content without copying image bytes or upload metadata. */
+export function composerDraftContentChanged(
+  before: ComposerThreadDraftState | null,
+  after: ComposerThreadDraftState | null,
+): boolean {
+  if (before === after) return false;
+  if (!before || !after) return true;
+  const sameIds = (left: ReadonlyArray<{ id: string }>, right: ReadonlyArray<{ id: string }>) =>
+    left.length === right.length && left.every((item, index) => item.id === right[index]?.id);
+  return (
+    before.prompt !== after.prompt ||
+    !sameIds(before.images, after.images) ||
+    !sameIds(before.files, after.files) ||
+    before.terminalContexts !== after.terminalContexts ||
+    before.previewAnnotations !== after.previewAnnotations ||
+    before.reviewComments !== after.reviewComments ||
+    before.threadContexts !== after.threadContexts ||
+    before.environmentContexts !== after.environmentContexts ||
+    before.replyTo !== after.replyTo
+  );
+}
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
 export function referencedThreadContexts(draft: {
@@ -13,27 +38,40 @@ export function referencedThreadContexts(draft: {
 }
 
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */
-export function loadBalancingSendWarning(input: {
-  readonly pending: boolean;
-  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
-  readonly candidateEnvironments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
-}) {
+export function loadBalancingSendWarning(
+  input: {
+    readonly pending: boolean;
+    readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+    readonly candidateEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  },
+  resolve: MessageResolver = m,
+) {
   if (input.pending) {
     return {
-      title: "Checking machine resources",
-      description: "Resource checks are still running. You can choose a machine in the composer.",
+      title: resolve(msg("Checking machine resources")),
+      description: resolve(
+        msg("Resource checks are still running. You can choose a machine in the composer."),
+      ),
     };
   }
   const noMachineReadsEveryThread =
     input.threadContexts.length > 0 &&
-    !input.candidateEnvironments.some((candidate) =>
-      input.threadContexts.every((record) => record.environmentId === candidate.environmentId),
+    !input.candidateEnvironmentIds.some((environmentId) =>
+      input.threadContexts.every((record) => record.environmentId === environmentId),
     );
   return {
-    title: "Choose a machine to continue",
+    title: resolve(msg("Choose a machine to continue")),
     description: noMachineReadsEveryThread
-      ? "No machine can read every attached thread. Choose a machine in the composer or remove the threads."
-      : "No eligible machine has available resources. Choose a machine in the composer to override.",
+      ? resolve(
+          msg(
+            "No machine can read every attached thread. Choose a machine in the composer or remove the threads.",
+          ),
+        )
+      : resolve(
+          msg(
+            "No eligible machine has available resources. Choose a machine in the composer to override.",
+          ),
+        ),
   };
 }
 
@@ -63,15 +101,18 @@ export function multipleModelSendBlock(input: {
 }
 
 /** Why a message sent over pending approvals did not go out, or null to stop quietly. */
-export function approvalRedirectNotice(result: ApprovalSendGuardResult): string | null {
+export function approvalRedirectNotice(
+  result: ApprovalSendGuardResult,
+  resolve: MessageResolver = m,
+): string | null {
   if (result === "changed") {
-    return "Your message changed or you left this thread, so it wasn't sent.";
+    return resolve(msg("Your message changed or you left this thread, so it wasn't sent."));
   }
   if (result === "responding") {
-    return "An approval is already being answered, so your message wasn't sent.";
+    return resolve(msg("An approval is already being answered, so your message wasn't sent."));
   }
   if (result === "new-approval") {
-    return "Another approval arrived, so your message wasn't sent.";
+    return resolve(msg("Another approval arrived, so your message wasn't sent."));
   }
   return null;
 }

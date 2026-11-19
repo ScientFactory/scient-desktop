@@ -126,6 +126,9 @@ function listenToDesktopPreview(stack: DisposableStack) {
   const preview: Partial<DesktopPreviewBridge> = {
     setAnnotationTheme: () => Promise.resolve(),
     onPointerEvent: () => () => undefined,
+    onSignInBlocked: () => () => undefined,
+    onStateChange: () => () => undefined,
+    onTunnelAccessRequest: () => () => undefined,
     onOpenLink: (listener) => {
       openLink = listener;
       return () => {

@@ -4,7 +4,7 @@ import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, fakeTimers, render as renderUi } from "../../../test/render";
+import { act, render as renderUi } from "../../../test/render";
 import type { RemoteOpenState } from "../../remoteOpen";
 
 const state = vi.hoisted(() => ({
@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   openUrl: vi.fn(),
   setPreferred: vi.fn(),
   markHintSeen: vi.fn(),
+  announce: vi.fn(),
   listeners: new Set<() => void>(),
 }));
 
@@ -57,6 +58,12 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
     },
   };
 });
+// The real announcer keeps a module-wide queue on a real timer, so one test's announcement could
+// be spoken during the next. Its own tests cover the live regions; these check what is announced.
+vi.mock(import("../../lib/announce"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  announce: state.announce,
+}));
 vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   ...(await importOriginal()),
   useRemoteOpenState: () => state.remote,
@@ -83,6 +90,7 @@ async function setup() {
   state.openUrl.mockReset().mockResolvedValue(true);
   state.setPreferred.mockReset();
   state.markHintSeen.mockReset();
+  state.announce.mockReset();
   state.listeners.clear();
   window.localStorage.clear();
 
@@ -200,6 +208,25 @@ describe("remote editor links", () => {
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
     expect(state.run).not.toHaveBeenCalled();
   });
+
+  it("explains why a phone or tablet browser has no editor to open", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, primaryButton, menuItems, click, pressOpenFavorite } = fixture;
+    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
+    state.clientEditors = [];
+    await renderPicker();
+
+    expect(primaryButton().disabled).toBe(true);
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+    await click(byLabel("Choose editor"));
+    await vi.waitFor(() =>
+      expect(menuItems().map((item) => item.textContent)).toEqual([
+        "Open from a computer to edit on Test host",
+      ]),
+    );
+    expect(menuItems()[0]!.getAttribute("aria-disabled")).toBe("true");
+    expect(state.openUrl).not.toHaveBeenCalled();
+  });
 });
 
 describe("open in editor announcement", () => {
@@ -208,29 +235,27 @@ describe("open in editor announcement", () => {
     const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.allowed.add(selected);
     await renderPicker();
-    using _timers = fakeTimers();
-    const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
     const spoken = async () => {
-      await act(async () => vi.runAllTimers());
-      return regions()
-        .map((region) => region.textContent)
-        .join("");
+      // Let the open settle before reading what it announced.
+      await act(async () => {});
+      const messages = state.announce.mock.calls.map(([message]) => message);
+      state.announce.mockClear();
+      return messages;
     };
     const refuse = () =>
       state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No editor"))));
 
     refuse();
     await pressOpenFavorite();
-    expect(await spoken()).toBe("");
+    expect(await spoken()).toEqual([]);
     await pressOpenFavorite();
-    expect(await spoken()).toBe("Opened in VS Code");
+    expect(await spoken()).toEqual(["Opened in VS Code"]);
 
-    for (const region of regions()) region.textContent = "";
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
     refuse();
     await pressOpenFavorite();
-    expect(await spoken()).toBe("");
+    expect(await spoken()).toEqual([]);
     await pressOpenFavorite();
-    expect(await spoken()).toBe("Opened in VS Code");
+    expect(await spoken()).toEqual(["Opened in VS Code"]);
   });
 });

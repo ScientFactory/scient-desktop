@@ -6,9 +6,11 @@ function normal(eventName = "pull_request", qualifyingPr = true) {
   const needs = Object.fromEntries(
     [...JOBS, "qualification"].map((job) => [job, { result: "success", outputs: {} }]),
   );
-  if (eventName !== "merge_group") needs.queue_ci.result = "skipped";
-  if (eventName === "push" || !qualifyingPr) needs.qualification.result = "skipped";
-  for (const job of ["test_web_reused", "test_server_reused"]) needs[job].result = "skipped";
+  if (eventName !== "merge_group" && eventName !== "push") needs.queue_ci.result = "skipped";
+  if (eventName === "push" || eventName === "schedule" || !qualifyingPr)
+    needs.qualification.result = "skipped";
+  for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+    needs[job].result = "skipped";
   return { needs, options: { eventName, qualifyingPr } };
 }
 const failures = (f) => jobFailures(f.needs, f.options);
@@ -62,7 +64,8 @@ test("only exact queue reuse can suppress unconditional suites and requires repo
   ])
     f.needs[job].result = "skipped";
   f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "true" };
-  for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+  for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+    f.needs[job].result = "success";
   assert.deepEqual(failures(f), []);
   f.needs.test_web_reused.result = "skipped";
   assert.ok(failures(f).some((error) => error.includes("test_web_reused")));
@@ -71,11 +74,10 @@ test("only exact queue reuse can suppress unconditional suites and requires repo
   assert.ok(failures(f).some((error) => error.includes("lint: skipped")));
 });
 
-test("false change outputs and focused release notes cannot excuse missing test/build lanes", () => {
+test("false change outputs cannot excuse missing test/build lanes", () => {
   for (const event of ["pull_request", "merge_group", "push"]) {
     for (const job of ["build", "test", "test_web", "test_server"]) {
       const f = normal(event);
-      f.needs.release_notes.outputs.qualified = "true";
       for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
         f.needs.changes.outputs[key] = "false";
       f.needs[job].result = "skipped";
@@ -84,10 +86,32 @@ test("false change outputs and focused release notes cannot excuse missing test/
   }
 });
 
-test("main cannot use focused/reused shortcuts; unknown and missing jobs fail closed", () => {
+test("main reuses only confirmed exact queue qualification; unknown and missing jobs fail closed", () => {
+  const reusedPush = normal("push");
+  for (const job of [
+    "changes",
+    "lint",
+    "build",
+    "test",
+    "test_web",
+    "test_server",
+    "overleaf_windows",
+    ...Object.keys(GATED),
+  ])
+    reusedPush.needs[job].result = "skipped";
+  for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+    reusedPush.needs[job].result = "success";
+  reusedPush.needs.queue_ci.outputs = {
+    reused: "true",
+    web_reports: "true",
+    server_reports: "true",
+    overleaf_windows: "true",
+  };
+  assert.deepEqual(failures(reusedPush), []);
+  reusedPush.needs.queue_ci.result = "failure";
+  assert.ok(failures(reusedPush).some((error) => error.includes("lint: skipped")));
   const f = normal("push");
-  f.needs.release_notes.outputs.qualified = "true";
-  f.needs.queue_ci.outputs.reused = "true";
+  f.needs.queue_ci.outputs.reused = "false";
   f.needs.lint.result = "skipped";
   assert.ok(failures(f).some((error) => error.includes("lint")));
   f.needs.test_server.result = "skipped";
@@ -150,12 +174,13 @@ test("CI refuses missing native analyzers instead of accepting SwiftLint's optio
   }
 });
 
-test("Windows Overleaf cannot be skipped or omitted, including exact queue reuse", () => {
+test("Windows Overleaf runs unless exact reuse carries its verified pass", () => {
   for (const event of ["pull_request", "merge_group"]) {
     const f = normal(event);
     if (event === "merge_group") {
       f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "true" };
-      for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+      for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+        f.needs[job].result = "success";
     }
     for (const result of ["skipped", "failure", "cancelled"]) {
       f.needs.overleaf_windows.result = result;
@@ -164,4 +189,69 @@ test("Windows Overleaf cannot be skipped or omitted, including exact queue reuse
     delete f.needs.overleaf_windows;
     assert.ok(failures(f).includes("overleaf_windows: missing"));
   }
+  const f = normal("merge_group");
+  for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+    f.needs[job].result = "success";
+  f.needs.overleaf_windows.result = "skipped";
+  for (const job of [
+    "changes",
+    "lint",
+    "build",
+    "test",
+    "test_web",
+    "test_server",
+    ...Object.keys(GATED),
+  ])
+    f.needs[job].result = "skipped";
+  f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "true" };
+  assert.ok(failures(f).includes("overleaf_windows: skipped without a reason"));
+  f.needs.queue_ci.outputs.overleaf_windows = "false";
+  assert.ok(failures(f).includes("overleaf_windows: skipped without a reason"));
+  f.needs.queue_ci.outputs.overleaf_windows = "true";
+  assert.deepEqual(failures(f), []);
+  // A reuse claim that did not succeed never excuses the skip.
+  f.needs.queue_ci.result = "failure";
+  assert.ok(failures(f).some((error) => error.startsWith("overleaf_windows: skipped")));
+});
+
+test("the nightly run qualifies every lane fresh and cannot claim reuse", () => {
+  const f = normal("schedule");
+  assert.deepEqual(failures(f), []);
+  for (const job of Object.keys(GATED)) {
+    const g = normal("schedule");
+    g.needs[job].result = "skipped";
+    for (const key of GATED[job]) g.needs.changes.outputs[key] = "false";
+    assert.ok(failures(g).includes(`${job}: skipped without a reason`), job);
+  }
+  f.needs.queue_ci = {
+    result: "success",
+    outputs: { reused: "true", web_reports: "true", server_reports: "true" },
+  };
+  f.needs.lint.result = "skipped";
+  assert.ok(failures(f).includes("lint: skipped without a reason"));
+});
+
+test("only plain test-lane failures are quarantine candidates", () => {
+  const { quarantineCandidate } = require("./ci-check.cjs");
+  const f = normal("merge_group");
+  f.needs.queue_ci.outputs = { reused: "false" };
+  assert.equal(quarantineCandidate(f.needs, failures(f)), false);
+  f.needs.test_web.result = "failure";
+  f.needs.qualification.result = "failure";
+  assert.equal(quarantineCandidate(f.needs, failures(f)), true);
+  for (const [job, result] of [
+    ["build", "failure"],
+    ["lint", "failure"],
+    ["changes", "failure"],
+    ["mobile_native_static_analysis", "failure"],
+    ["test_server", "cancelled"],
+  ]) {
+    const g = structuredClone(f);
+    g.needs[job].result = result;
+    assert.equal(quarantineCandidate(g.needs, failures(g)), false, `${job}: ${result}`);
+  }
+  const receiptOnly = normal("merge_group");
+  receiptOnly.needs.queue_ci.outputs = { reused: "false" };
+  receiptOnly.needs.qualification.result = "failure";
+  assert.equal(quarantineCandidate(receiptOnly.needs, failures(receiptOnly)), false);
 });

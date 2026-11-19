@@ -9,6 +9,7 @@ const page = (fields: Partial<PaperPage>): PaperPage => ({
   pdfUrl: null,
   login: false,
   challenge: false,
+  terms: false,
   institutionUrl: null,
   buy: false,
   ...fields,
@@ -25,6 +26,12 @@ it("reads a bot check as a bot check, never as a paywall", () => {
   expect(pageState(page({ title: "Just a moment...", challenge: true, status: 403 }))).toEqual({
     state: "bot-check",
   });
+});
+
+it("stops at legal consent before a PDF link or sign-in can proceed", () => {
+  expect(
+    pageState(page({ terms: true, login: true, pdfUrl: "https://ai.nejm.org/paper.pdf" })),
+  ).toEqual({ state: "terms" });
 });
 
 it("knows a university sign-in by its address when no password field shows yet", () => {

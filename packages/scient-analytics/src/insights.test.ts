@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { normalizeInheritedEvent, consentAllows, modelKey } from "./contract.ts";
+import { normalizeInheritedEvent, modelKey } from "./contract.ts";
 import { eventContractViolation } from "./wireContract.ts";
 
 const context = { appVersion: "0.6.10", buildChannel: "stable" } as const;
@@ -30,10 +30,7 @@ describe("product insight contract", () => {
       );
       expect(JSON.stringify(event)).not.toContain("PRIVATE");
       expect(eventContractViolation({ ...event, consentLevel: event.privacyLevel })).toBeNull();
-      expect(consentAllows("off", event.privacyLevel)).toBe(false);
-      expect(consentAllows("essential", event.privacyLevel)).toBe(
-        name === "scient.operation.failed",
-      );
+      expect(event.privacyLevel === "essential").toBe(name === "scient.operation.failed");
     }
   });
   it("folds public namespaces and Antigravity variants into one model key", () => {
@@ -79,15 +76,15 @@ describe("product insight contract", () => {
         consentLevel: "product",
       }),
     ).toBeNull();
-    expect(consentAllows("essential", event.privacyLevel)).toBe(false);
+    expect(event.privacyLevel).not.toBe("essential");
     expect(JSON.stringify(event)).not.toContain("PRIVATE");
   });
-  it("does not fabricate zero usage or attribute mixed/private model totals", () => {
+  it("rejects invalid usage and private model labels while naming the mixed-turn primary model", () => {
     for (const value of [-1, 0.5, Infinity, NaN, 1_000_000_001, "500"]) {
       const event = normalizeInheritedEvent(
         "provider.turn.usage",
         {
-          model: "not a model id",
+          model: "/private/hidden-model",
           usageStatus: "complete",
           inputTokens: value,
           outputTokens: 20,
@@ -104,10 +101,10 @@ describe("product insight contract", () => {
     expect(
       normalizeInheritedEvent(
         "provider.turn.usage",
-        { model: "gpt-5.6-sol", mixedModels: true },
+        { model: "gpt-5.6-sol", mainModel: "gpt-5.6-sol", modelCount: 2, mixedModels: true },
         context,
-      )?.properties.modelKey,
-    ).toBe("other");
+      )?.properties,
+    ).toMatchObject({ modelKey: "gpt-5.6-sol", modelCount: 2 });
   });
   it("keeps UI categories but strips paths and free text", () => {
     for (const [name, key] of [
@@ -139,5 +136,19 @@ describe("product insight contract", () => {
         ).toBeNull();
       }
     }
+  });
+  it("keeps a file tab's type only when it is a known file type", () => {
+    const fileType = (value?: unknown) =>
+      normalizeInheritedEvent(
+        "panel.viewed",
+        { category: "file-preview", ...(value === undefined ? {} : { fileType: value }) },
+        context,
+      )?.properties.fileType;
+    expect(fileType("CSV")).toBe("csv");
+    expect(fileType("h5")).toBe("h5");
+    expect(fileType("none")).toBe("none");
+    for (const value of ["yaacovproject", "/Users/PRIVATE", "PRIVATE@example.com", 7])
+      expect(fileType(value)).toBe("other");
+    expect(fileType()).toBeUndefined();
   });
 });

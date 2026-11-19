@@ -46,7 +46,6 @@ import {
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { conversationForkBoundaryItem } from "./ConversationForkBoundaryItem.ts";
 import { presentInheritedItem } from "./ForkHistory.ts";
 
@@ -150,6 +149,7 @@ const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string
 });
 
 import { planConversationFork } from "./ConversationForkPlan.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 it.live.each(
   [false, true].map((nested) => ({
@@ -192,7 +192,7 @@ it.live.each(
             type: "expect_outbound",
             label: "thread/unsubscribe/source",
             frame: {
-              id: 4,
+              id: 5,
               method: "thread/unsubscribe",
               params: { threadId: "native-source-thread" },
             },
@@ -200,7 +200,11 @@ it.live.each(
           {
             type: "emit_inbound",
             label: "thread/unsubscribe/source",
-            frame: { id: 4, result: { status: "unsubscribed" } },
+            frame: { id: 5, result: { status: "unsubscribed" } },
+          },
+          {
+            type: "emit_inbound",
+            frame: { method: "thread/closed", params: { threadId: "native-source-thread" } },
           },
         );
       }
@@ -214,7 +218,6 @@ it.live.each(
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const source = yield* createSource(cwd);
-        const forks = yield* ConversationForkService;
         let boundary = source;
         let parentId = sourceId;
         let sourceFilePath: string | undefined;
@@ -224,7 +227,7 @@ it.live.each(
             (item) => item.type === "assistant_message" && item.status === "completed",
           );
           assert.ok(answer?.type === "assistant_message");
-          yield* forks.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("native-run-fork-scient-parent"),
             originThreadId: sourceId,
@@ -407,33 +410,38 @@ it.live.each(
           assert.ok(sourceStart?.type === "emit_inbound");
           const freshResult: unknown = decodeFrame(
             encodeFrame(sourceStart.frame)
-              .replace('"id":2', '"id":7')
+              .replace('"id":2', '"id":9')
               .replaceAll("native-source-thread", "native-grandchild-thread"),
           );
           const targetStart = full.entries.findIndex(
             (entry) => entry.type === "expect_outbound" && entry.label === "turn/start/fork",
           );
+          // The target turn's config/read precedes its turn/start.
           const suffix = full.entries
-            .slice(targetStart)
+            .slice(targetStart - 2)
             .filter((entry) => entry.type !== "runtime_exit")
             .map((entry) => {
               if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
               const frame: unknown = decodeFrame(
                 encodeFrame(entry.frame)
-                  .replace('"id":5', '"id":9')
                   .replaceAll("native-fork-thread", "native-grandchild-thread")
                   .replaceAll("native-fork-turn", "native-grandchild-turn")
                   .replaceAll("native-fork-user-item", "native-grandchild-user-item")
                   .replaceAll("native-fork-agent-item", "native-grandchild-agent-item"),
               );
-              return { ...entry, frame };
+              return typeof frame === "object" &&
+                frame !== null &&
+                "id" in frame &&
+                typeof frame.id === "number"
+                ? { ...entry, frame: { ...frame, id: frame.id + 5 } }
+                : { ...entry, frame };
             });
           entries.push(
             {
               type: "expect_outbound",
               label: "thread/unsubscribe/parent",
               frame: {
-                id: 6,
+                id: 8,
                 method: "thread/unsubscribe",
                 params: { threadId: "native-fork-thread" },
               },
@@ -441,13 +449,17 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/unsubscribe/parent",
-              frame: { id: 6, result: { status: "unsubscribed" } },
+              frame: { id: 8, result: { status: "unsubscribed" } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { method: "thread/closed", params: { threadId: "native-fork-thread" } },
             },
             {
               type: "expect_outbound",
               label: "thread/start/grandchild",
               frame: {
-                id: 7,
+                id: 9,
                 method: "thread/start",
                 params: { config: CODEX_THREAD_CONFIG },
               },
@@ -457,7 +469,7 @@ it.live.each(
               type: "expect_outbound",
               label: "thread/inject_items/grandchild",
               frame: {
-                id: 8,
+                id: 10,
                 method: "thread/inject_items",
                 params: {
                   threadId: "native-grandchild-thread",
@@ -468,7 +480,7 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/inject_items/grandchild",
-              frame: { id: 8, result: {} },
+              frame: { id: 10, result: {} },
             },
             ...suffix,
           );
@@ -497,7 +509,11 @@ it.live.each(
             Stream.mapEffect(() => orchestrator.getThreadProjection(childId)),
           ),
         ).pipe(
-          Stream.filter((projection) => projection.thread.conversationFork?.status === "ready"),
+          Stream.filterEffect((projection) =>
+            conversationForkOf(projection.thread.id).pipe(
+              Effect.map((fork) => fork?.status === "ready"),
+            ),
+          ),
           Stream.runHead,
           Effect.timeout("10 seconds"),
         );
@@ -531,7 +547,7 @@ it.live.each(
         });
         assert.deepEqual(storedBoundary.items, [boundaryRow]);
         if (nested) {
-          const copy = ready.value.thread.conversationFork?.attachmentCopies[0];
+          const copy = (yield* conversationForkOf(ready.value.thread.id))?.attachmentCopies[0];
           assert.ok(copy);
           const config = yield* ServerConfig;
           const path = resolveAttachmentPath({
@@ -572,7 +588,8 @@ it.live.each(
         });
         if (nested) {
           // Deleting the parent keeps the files its live fork still shows.
-          const sharedId = ready.value.thread.conversationFork?.attachmentCopies[0]?.target.id;
+          const sharedId = (yield* conversationForkOf(ready.value.thread.id))?.attachmentCopies[0]
+            ?.target.id;
           assert.ok(sharedId);
           assert.notInclude(yield* projectionStore.getReleasableFiles(parentId), sharedId);
         }
@@ -604,7 +621,7 @@ it.live.each(
           ),
         );
         assert.isNull((yield* Ref.get(driver.state)).failure);
-        assert.equal(delivered.thread.conversationFork?.sourceThreadId, parentId);
+        assert.equal((yield* conversationForkOf(delivered.thread.id))?.sourceThreadId, parentId);
         assert.lengthOf(
           delivered.visibleTurnItems.filter(
             (row) =>
@@ -671,7 +688,7 @@ it.live.each(
           assert.include(answerContext, "dataset.txt");
           assert.include(
             answerContext,
-            delivered.thread.conversationFork?.attachmentCopies[0]?.target.id ??
+            (yield* conversationForkOf(delivered.thread.id))?.attachmentCopies[0]?.target.id ??
               "MISSING_TARGET_ATTACHMENT",
           );
         }

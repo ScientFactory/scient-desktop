@@ -78,7 +78,6 @@ export function signedInSite(input: {
   previousUrl: string;
   url: string;
   incognito: boolean;
-  hasAccount: boolean;
   before: ReadonlyArray<CookieMetadata>;
   after: ReadonlyArray<CookieMetadata>;
   now?: number;
@@ -86,7 +85,6 @@ export function signedInSite(input: {
   const provider = siteHost(input.previousUrl);
   if (
     input.incognito ||
-    input.hasAccount ||
     provider === null ||
     !isIdentityProvider(input.previousUrl) ||
     isIdentityProvider(input.url) ||

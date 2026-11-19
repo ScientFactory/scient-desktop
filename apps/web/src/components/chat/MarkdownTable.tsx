@@ -1,4 +1,5 @@
-import { Check, Copy } from "lucide";
+import { T, useGT } from "gt-react";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, type ComponentProps } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -6,7 +7,6 @@ import {
   serializeTableElementToCsv,
   serializeTableElementToMarkdown,
 } from "../../markdown-clipboard";
-import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
@@ -14,6 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
 
 export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table">) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   // SCIENT-FORK:START — one direction for the table and its scroll viewport.
   const tableDirection = dir === "rtl" ? "rtl" : "ltr";
@@ -23,7 +24,7 @@ export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
-  const copyLabel = copied ? "Copied" : "Copy table";
+  const copyLabel = copied ? gt("Copied") : gt("Copy table");
 
   const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
@@ -75,13 +76,17 @@ export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table
                 />
               }
             >
-              <MorphIcon className="size-3" icon={copied ? Check : Copy} />
+              {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
             </TooltipTrigger>
             <TooltipPopup side="top">{copyLabel}</TooltipPopup>
           </Tooltip>
           <MenuPopup align="end">
-            <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
-            <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
+            <MenuItem onClick={() => handleCopy("markdown")}>
+              <T>Copy as Markdown</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("csv")}>
+              <T>Copy as CSV</T>
+            </MenuItem>
           </MenuPopup>
         </Menu>
       </div>

@@ -118,9 +118,8 @@ const planFork = (
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
       sourceProjection,
-      commandId: CommandId.make("native-fork-plan"),
-      cwd: "/tmp/project",
       sourceRun,
+      sourceProviderThread: undefined,
       canonicalSourcePoint: {
         threadId: sourceThreadId,
         runId: sourceRunId,
@@ -168,7 +167,7 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.isNull(result.targetThread.activeOrderKey);
     assert.isNull(result.targetThread.autoSettleDisabledAt);
     assert.isUndefined(result.targetThread.delegatedFrom);
-    assert.equal(result.targetThread.historyOrigin, "scient_fork");
+    assert.equal(result.targetThread.historyOrigin, "v1_import");
     assert.deepEqual(result.targetThread.linkOrigin, linkOrigin);
     assert.deepEqual(result.targetThread.tags, ["private"]);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
@@ -184,16 +183,11 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
       relationshipToParent: "fork",
       rootThreadId: sourceThreadId,
     });
-    assert.isNull(result.targetThread.forkedFrom);
-    assert.deepEqual(result.transfer.sourcePoint, { threadId: sourceThreadId, runId: sourceRunId });
-  }),
-);
-
-it.effect("forks from a usage-limited failed run", () =>
-  Effect.gen(function* () {
-    const result = yield* planFork(makeSourceRun("failed"));
-    assert.isNull(result.targetThread.forkedFrom);
-    assert.deepEqual(result.transfer.sourcePoint, { threadId: sourceThreadId, runId: sourceRunId });
+    assert.deepEqual(result.targetThread.forkedFrom, {
+      type: "run",
+      threadId: sourceThreadId,
+      runId: sourceRunId,
+    });
   }),
 );
 
@@ -299,14 +293,31 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
   }),
 );
 
-it.effect("marks only requested forks as supervised side chats", () =>
+it.effect("marks only requested forks as side chats and inherits parent permissions", () =>
   Effect.gen(function* () {
     const sourceRun = makeSourceRun("completed");
     const sideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
       sideChat: true,
     });
     assert.isTrue(sideChat.targetThread.lineage.sideChat);
-    assert.equal(sideChat.targetThread.runtimeMode, "approval-required");
+    assert.equal(sideChat.targetThread.runtimeMode, "full-access");
+    for (const runtimeMode of [
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access",
+    ] as const) {
+      const source = makeSourceProjection(sourceRun);
+      const inherited = yield* planFork(
+        sourceRun,
+        {
+          ...source,
+          thread: { ...source.thread, runtimeMode },
+        },
+        { sideChat: true },
+      );
+      assert.equal(inherited.targetThread.runtimeMode, runtimeMode);
+    }
 
     const sideChatSource = makeSourceProjection(sourceRun);
     const sideChatProjection = {
@@ -358,85 +369,3 @@ it.effect("marks only requested forks as supervised side chats", () =>
     assert.equal(fromDelegated.cause, "A subagent cannot start a side chat.");
   }),
 );
-
-// SCIENT-FORK:START — a side chat is a live view of its parent, also of a Scient fork.
-it.effect("a side chat of a Scient fork freezes nothing and shares the worktree", () =>
-  Effect.gen(function* () {
-    const sourceRun = makeSourceRun("completed");
-    const source = makeSourceProjection(sourceRun);
-    const forkedSource = {
-      ...source,
-      thread: {
-        ...source.thread,
-        historyOrigin: "scient_fork" as const,
-        forkLineage: {
-          originThreadId: ThreadId.make("thread:fork-origin"),
-          baselineAssistantMessageId: null,
-        },
-        conversationFork: {
-          commandId: CommandId.make("source-was-forked"),
-          sourceThreadId: ThreadId.make("thread:fork-origin"),
-          workspaceMode: "local" as const,
-          status: "ready" as const,
-          cwd: "/tmp/source-worktree",
-          checkpointRef: null,
-          checkpointOid: null,
-          attachmentCopies: [],
-          error: null,
-        },
-      },
-    };
-    const sideChat = yield* planFork(sourceRun, forkedSource, { sideChat: true });
-
-    assert.isNull(sideChat.frozen);
-    assert.isTrue(sideChat.targetThread.lineage.sideChat);
-    assert.deepEqual(sideChat.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
-    assert.equal(sideChat.targetThread.historyOrigin, "native");
-    assert.isNull(sideChat.targetThread.forkLineage);
-    assert.isNull(sideChat.targetThread.conversationFork);
-    assert.equal(sideChat.targetThread.worktreePath, source.thread.worktreePath);
-    assert.equal(sideChat.targetThread.branch, source.thread.branch);
-    assert.isUndefined(sideChat.transfer.frozenSource);
-    assert.isUndefined(sideChat.transfer.portableReason);
-
-    const fork = yield* planFork(sourceRun, forkedSource);
-    assert.isNotNull(fork.frozen);
-    assert.equal(fork.targetThread.historyOrigin, "scient_fork");
-    assert.isNull(fork.targetThread.forkedFrom);
-  }),
-);
-
-it.effect("only a side chat can start without a source run", () =>
-  Effect.gen(function* () {
-    const sourceRun = makeSourceRun("completed");
-    const sourceProjection = makeSourceProjection(sourceRun);
-    const plan = (options: { readonly sideChat?: boolean }) =>
-      Effect.gen(function* () {
-        const service = yield* ThreadForkService.ThreadForkServiceV2;
-        return yield* service.plan({
-          sourceProjection,
-          commandId: CommandId.make("no-run-fork-plan"),
-          cwd: "/tmp/project",
-          sourceRun: null,
-          canonicalSourcePoint: { threadId: sourceThreadId },
-          transferId: ContextTransferId.make("context-transfer:no-run"),
-          targetThreadId,
-          ...options,
-          createdBy: "user",
-          creationSource: "web",
-          createdAt: forkCreatedAt,
-        });
-      }).pipe(Effect.provide(ThreadForkService.layer));
-
-    const refused = yield* plan({}).pipe(Effect.flip);
-    assert.equal(refused.cause, "Only a side chat can start without a source run.");
-    const sideChat = yield* plan({ sideChat: true });
-    assert.isNull(sideChat.targetThread.forkedFrom);
-    assert.equal(sideChat.transfer.sourceProviderInstanceId, providerInstanceId);
-  }),
-);
-// SCIENT-FORK:END

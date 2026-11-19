@@ -28,11 +28,9 @@ describe("versionSkew", () => {
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
     expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
       command,
-      // SCIENT-FORK:END
     );
     expect(
       manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
-      // SCIENT-FORK:START
     ).toBe(command);
     expect(command).not.toContain("npm install");
   });
@@ -44,8 +42,26 @@ describe("versionSkew", () => {
     expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(command);
     expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(command);
   });
-
   // SCIENT-FORK:END
+
+  it("updates only the proven install and safely quotes its paths", () => {
+    // SCIENT-FORK: npm-global installs take the Scient release command, covered above.
+    expect(
+      manualServerUpdateCommand("0.0.45", {
+        kind: "t3-launcher",
+        launcher: "t3",
+        baseDir: "/home/u/.t3",
+      }),
+    ).toBe("'t3' update --base-dir '/home/u/.t3' 0.0.45");
+    expect(
+      manualServerUpdateCommand("0.0.45", {
+        kind: "t3-launcher",
+        launcher: "/opt/maria's bin/t3",
+        baseDir: "/data/t3 home",
+      }),
+    ).toBe("'/opt/maria'\\''s bin/t3' update --base-dir '/data/t3 home' 0.0.45");
+  });
+
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

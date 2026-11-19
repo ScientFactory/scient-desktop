@@ -1,4 +1,4 @@
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import "../../index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
@@ -11,6 +11,7 @@ const client = vi.hoisted(() => ({
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   removeOverleafToken: vi.fn(),
+  setAsideUnreadableOverleafRecord: vi.fn(),
   connectOverleaf: vi.fn(),
   syncOverleaf: vi.fn(),
   previewOverleaf: vi.fn(),
@@ -45,7 +46,7 @@ vi.mock("~/state/entities", () => ({
   useQuietThreadShells: () => [],
 }));
 
-const { OverleafProjectSettingsSection, OverleafSyncedFolderRow } =
+const { OverleafLinkedFolders, OverleafProjectSettingsSection, OverleafSyncedFolderRow } =
   await import("./OverleafSettings");
 const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
   await import("./overleafStore");
@@ -118,6 +119,55 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     expect(client.removeOverleafToken).toHaveBeenCalledOnce();
   });
 
+  it("keeps a token save or removal over a status read that answers after it", async () => {
+    reset(false);
+    client.listOverleafConnections.mockResolvedValue({ connections: [] });
+    client.saveOverleafToken.mockResolvedValue({ saved: true });
+    client.removeOverleafToken.mockResolvedValue({ saved: false });
+    const reads: Array<PromiseWithResolvers<{ saved: boolean }>> = [];
+    client.readOverleafToken.mockImplementation(() => {
+      const read = Promise.withResolvers<{ saved: boolean }>();
+      reads.push(read);
+      return read.promise;
+    });
+    // Answers every read still out, then lets the row show what it decided.
+    const answerReads = (answer: { saved: boolean } | Error) =>
+      act(async () => {
+        const pending = reads.splice(0);
+        expect(pending.length).toBeGreaterThan(0);
+        for (const read of pending) {
+          if (answer instanceof Error) read.reject(answer);
+          else read.resolve(answer);
+        }
+        await Promise.allSettled(pending.map((read) => read.promise));
+      });
+    const status = page.getByRole("status");
+    await using screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
+    // A read that fails says nothing about the token.
+    await answerReads(new Error("offline"));
+    await expect.element(status).toHaveTextContent("Checking…");
+
+    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
+    await page.getByLabelText("Git token").fill("olp_secret");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.element(status).toHaveTextContent("Token saved");
+    // Asked before the save; its "no token" answer is dropped.
+    await answerReads({ saved: false });
+    await expect.element(status).toHaveTextContent("Token saved");
+
+    // Shown again, the row asks again; the removal decides over that answer too.
+    await screen.rerender(<OverleafSyncedFolderRow key="again" environmentId={environmentId} />);
+    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
+    await page.getByRole("button", { name: "Remove" }).click();
+    await expect.element(status).toHaveTextContent("No token saved");
+    await answerReads({ saved: true });
+    await expect.element(status).toHaveTextContent("No token saved");
+    // A later read that fails leaves the last known answer.
+    await screen.rerender(<OverleafSyncedFolderRow key="third" environmentId={environmentId} />);
+    await answerReads(new Error("offline"));
+    await expect.element(status).toHaveTextContent("No token saved");
+  });
+
   it("says no folder is linked once every project has been read", async () => {
     reset(true);
     projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
@@ -125,6 +175,70 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     await using _screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
     await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
     await expect.element(page.getByText("No folder is linked.")).toBeVisible();
+  });
+
+  it("says the links couldn't be read, never that none is linked, when a list fails", async () => {
+    reset(true);
+    projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
+    client.listOverleafConnections.mockRejectedValue(new Error("offline"));
+    await using _screen = await render(<OverleafLinkedFolders environmentId={environmentId} />);
+    await expect
+      .element(
+        page.getByText(
+          "Couldn't read the linked folders. The Overleaf request didn't go through. Try again.",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(page.getByText("No folder is linked.")).not.toBeInTheDocument();
+  });
+
+  it("sets a damaged record aside knowingly, and keeps a newer release's held one", async () => {
+    reset(true);
+    projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
+    const newer = {
+      recordId: "r-newer",
+      kind: "newer" as const,
+      folder: "/work/thesis/paper",
+      unfinished: null,
+      holds: "checkout" as const,
+      setAside: "held" as const,
+    };
+    const damaged = {
+      recordId: "r-damaged",
+      kind: "damaged" as const,
+      folder: "/work/grant/paper",
+      unfinished: true,
+      holds: "checkout" as const,
+      setAside: "confirm" as const,
+    };
+    let unreadable: unknown[] = [newer, damaged];
+    client.listOverleafConnections.mockImplementation(async () => ({
+      connections: [],
+      unreadableRecords: unreadable,
+    }));
+    client.setAsideUnreadableOverleafRecord.mockImplementation(async () => {
+      unreadable = [newer];
+      return { outcome: "set-aside" };
+    });
+    // The list on its own: the Settings row's opening animation is not under test.
+    await using _screen = await render(<OverleafLinkedFolders environmentId={environmentId} />);
+    await expect
+      .element(page.getByText("Scient can't read 2 of its Overleaf link records."))
+      .toBeVisible();
+    await expect.element(page.getByText("/work/thesis/paper")).toBeVisible();
+    await page.getByRole("button", { name: "Set aside anyway" }).click();
+    await expect
+      .poll(() => client.setAsideUnreadableOverleafRecord.mock.calls)
+      .toEqual([
+        [
+          environmentId,
+          { workspaceRoot: "/work/thesis", recordId: "r-damaged", acceptUnfinished: true },
+        ],
+      ]);
+    // After a reload the held record is still shown, with no button.
+    await expect.element(page.getByText("/work/grant/paper")).not.toBeInTheDocument();
+    await expect.element(page.getByText("/work/thesis/paper")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: /Set aside/ })).not.toBeInTheDocument();
   });
 });
 

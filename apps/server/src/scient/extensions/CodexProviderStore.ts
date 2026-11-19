@@ -2,6 +2,7 @@ import type {
   ExtensionPluginContents,
   ProviderStoreEntry,
   ProviderStoreApp,
+  ServerProviderMcpServer,
   ServerProviderPlugin,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -27,6 +28,7 @@ import {
   readContainedPluginIcon,
 } from "./LocalPluginContents.ts";
 import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
+import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { makeCodexStoreIcons } from "./CodexStoreIcons.ts";
 
@@ -405,7 +407,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       : undefined;
     const localIcon =
       !bundledIcon && root && (info?.logo || info?.composerIcon) && includeIcon
-        ? yield* Effect.tryPromise(() =>
+        ? yield* tryLocalPluginRead(() =>
             readContainedPluginIcon(root, (info?.logo || info?.composerIcon)!),
           ).pipe(Effect.orElseSucceed(() => undefined))
         : undefined;
@@ -615,7 +617,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       source && (source.type === "local" || source.type === "git")
         ? (source.path ?? undefined)
         : undefined;
-    return Effect.tryPromise(() => codexSkillRoot(root, pluginCacheRoot, file)).pipe(
+    return tryLocalPluginRead(() => codexSkillRoot(root, pluginCacheRoot, file)).pipe(
       Effect.orElseSucceed(() => undefined),
     );
   };
@@ -640,7 +642,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const root = yield* localKeyRoot(detail, item, installed);
         const requiredKeys =
           installed && root
-            ? yield* Effect.tryPromise(() => readLocalPluginRequiredKeys(root)).pipe(
+            ? yield* tryLocalPluginRead(() => readLocalPluginRequiredKeys(root)).pipe(
                 Effect.orElseSucceed(() => undefined),
               )
             : undefined;
@@ -688,7 +690,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const remotePluginId = item.plugin.remotePluginId;
         const text =
           root && skill.path
-            ? yield* Effect.tryPromise(() => readContainedPluginText(root, skill.path!)).pipe(
+            ? yield* tryLocalPluginRead(() => readContainedPluginText(root, skill.path!)).pipe(
                 Effect.mapError(() => ({
                   message: "This skill must stay within its plugin and be at most 256 KB.",
                 })),
@@ -736,12 +738,37 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             .map((app): ProviderStoreApp => {
               const url = codexAppInstallUrl(app.installUrl);
               return {
+                id: app.id,
                 name: app.name,
                 connected: app.isAccessible === true,
                 enabled: app.isEnabled !== false,
                 ...(url ? { installUrl: url } : {}),
               };
             }),
+        }));
+      }),
+    );
+  /**
+   * The ChatGPT apps Codex's own ChatGPT account has connected, whatever plugin brought them:
+   * Codex reaches every one of them, not only its plugins' apps. ChatGPT's own
+   * `connector_openai_*` features are left out, as Scient Agent leaves them out.
+   */
+  const accountApps = (refresh = false) =>
+    withClient(
+      Effect.fn("CodexProviderStore.accountApps")(function* (client: Client) {
+        const installed = yield* client.request("app/installed", { forceRefresh: refresh });
+        const references = installed.apps
+          .filter((app) => !app.id.startsWith("connector_openai_"))
+          .map((app) => ({ id: app.id }) as CodexSchema.V2PluginReadResponse__AppSummary);
+        const apps = yield* readApps(client, references, refresh);
+        return apps.map((app): ServerProviderMcpServer => ({
+          name: app.name,
+          scope: "chatgpt",
+          status: app.isEnabled === false ? "disabled" : "connected",
+          signedIn: true,
+          ...(codexAppInstallUrl(app.installUrl)
+            ? { connectUrl: codexAppInstallUrl(app.installUrl) }
+            : {}),
         }));
       }),
     );
@@ -753,5 +780,6 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     install,
     changes: Stream.fromPubSub(changes),
     enrichInstalled,
+    accountApps,
   };
 });

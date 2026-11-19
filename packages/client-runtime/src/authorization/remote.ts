@@ -11,6 +11,7 @@ import {
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -23,6 +24,7 @@ export { RemoteEnvironmentAuthUndeclaredStatusError } from "../rpc/http.ts";
 export type RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
+const isUndeclaredStatusError = Schema.is(RemoteEnvironmentAuthUndeclaredStatusError);
 
 const clientMetadataTokenExchangeFields = (
   clientMetadata: AuthClientPresentationMetadata | undefined,
@@ -88,6 +90,8 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly credential: string;
+  /** An access token renews its own session on hosts that advertise `accessTokenRenewal`. */
+  readonly credentialType?: typeof AuthEnvironmentBootstrapTokenType | typeof AuthAccessTokenType;
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly dpopProof: string;
@@ -102,7 +106,7 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
       payload: {
         grant_type: AuthTokenExchangeGrantType,
         subject_token: input.credential,
-        subject_token_type: AuthEnvironmentBootstrapTokenType,
+        subject_token_type: input.credentialType ?? AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
         ...(input.scopes ? { scope: encodeOAuthScope(input.scopes) } : {}),
         ...clientMetadataTokenExchangeFields(input.clientMetadata),
@@ -177,8 +181,7 @@ const issueWebSocketTicketWithFallback = <E, R>(
     ? issue(use)
     : issue(use).pipe(
         Effect.catchIf(
-          (error) =>
-            error instanceof RemoteEnvironmentAuthUndeclaredStatusError && error.status === 404,
+          (error) => isUndeclaredStatusError(error) && error.status === 404,
           () => issue(undefined),
         ),
       );

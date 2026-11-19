@@ -1,4 +1,3 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
@@ -9,22 +8,21 @@ import {
 } from "@t3tools/contracts";
 import { universitiesOf } from "@t3tools/shared/scientPaperLinks";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronDownIcon, GraduationCapIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, GraduationCapIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
-import { useClientSettings } from "~/hooks/useSettings";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { libraryLinkTemplate, signedIntoUniversity } from "./accountsView";
 import { accountsState } from "./accountsState";
 import { SiteFavicon } from "./AccountLogo";
 import { useAccountCommand, useAccounts } from "./useAccounts";
-import { useScratchThread } from "./useScratchThread";
+import { useSignIn } from "./useSignIn";
+import { parseUrl } from "@t3tools/shared/url";
 
 const SEARCH_DELAY_MS = 300;
-const HIDDEN_KEY = "scient:university-row-hidden";
 
 /** The domain of a university address among saved sign-ins. Only a domain is ever searched. */
 function universityDomain(accounts: ReadonlyArray<AccountSummary>) {
@@ -46,19 +44,6 @@ export function UniversityIcon({ site, className }: { site: string; className?: 
   );
 }
 
-/** Signing in to a university from anywhere: beside the conversation, or in a new one. */
-export function useUniversitySignIn(environmentId: EnvironmentId) {
-  const signIn = useAccountCommand(accountsState.universitySignIn, environmentId);
-  const scratchThread = useScratchThread(environmentId);
-  return async (accountId: AccountId, threadId?: ThreadId) => {
-    const thread = threadId ? scopeThreadRef(environmentId, threadId) : await scratchThread();
-    if (!thread) return;
-    if (!threadId) useRightPanelStore.getState().requestMaximize(thread);
-    const started = await signIn({ accountId, threadId: thread.threadId });
-    if (started.ok) useRightPanelStore.getState().openBrowser(thread, started.value.tabId);
-  };
-}
-
 /**
  * Finds the user's university and goes straight to its sign-in. A university that isn't listed, or
  * only gives its people a library link, connects by that link.
@@ -78,9 +63,9 @@ export function UniversityPicker({
   const { data, canWrite } = useAccounts(environmentId);
   const search = useAccountCommand(accountsState.searchUniversities, environmentId);
   const save = useAccountCommand(accountsState.save, environmentId);
-  const startSignIn = useUniversitySignIn(environmentId);
-  const profileId =
-    useClientSettings((settings) => settings.browserDefaultProfileId) ?? DEFAULT_BROWSER_PROFILE_ID;
+  const startSignIn = useSignIn(environmentId);
+  // A university sign-in lives in Main, so every conversation and profile choice reaches it.
+  const profileId = DEFAULT_BROWSER_PROFILE_ID;
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<ReadonlyArray<Institution>>([]);
   const [showLink, setShowLink] = useState(false);
@@ -120,7 +105,7 @@ export function UniversityPicker({
     const accountId = known?.accountId ?? (saved?.ok ? saved.value.accountId : undefined);
     if (!accountId) return;
     onChosen?.();
-    await startSignIn(accountId, threadId);
+    await startSignIn(accountId, threadId ? { threadId } : {});
   };
 
   const addLink = async () => {
@@ -128,8 +113,9 @@ export function UniversityPicker({
     const proxyUrl = pasted.includes("{url}")
       ? pasted
       : `${pasted}${pasted.includes("?") ? "&" : "?"}url={url}`;
-    if (!URL.canParse(pasted)) return;
-    const { hostname } = new URL(pasted);
+    const pastedUrl = parseUrl(pasted);
+    if (pastedUrl === null) return;
+    const { hostname } = pastedUrl;
     const saved = await save({
       name: hostname,
       details: { kind: "website", sites: [hostname], profileId, proxyUrl },
@@ -137,7 +123,7 @@ export function UniversityPicker({
     });
     if (!saved.ok) return;
     onChosen?.();
-    await startSignIn(saved.value.accountId, threadId);
+    await startSignIn(saved.value.accountId, threadId ? { threadId } : {});
   };
 
   return (
@@ -201,71 +187,13 @@ export function UniversityPicker({
   );
 }
 
-/** The first row of Sources until a university is connected; it opens where it stands. */
-export function UniversityRow({
-  environmentId,
-  threadId,
-}: {
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-}) {
-  const { data } = useAccounts(environmentId);
-  const [open, setOpen] = useState(false);
-  const [hidden, setHidden] = useState(() => localStorage.getItem(HIDDEN_KEY) === "true");
-  if (!data || hidden || universitiesOf(data.accounts).length > 0) return null;
-  return (
-    <div className="px-2 py-1.5">
-      <div className="flex items-start gap-2">
-        <button
-          type="button"
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          onClick={() => setOpen((current) => !current)}
-        >
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-            <GraduationCapIcon className="size-4 text-muted-foreground" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm font-medium">Connect your university</span>
-            <span className="block text-xs text-muted-foreground">
-              Sign in once to your library account
-            </span>
-          </span>
-        </button>
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label="Hide"
-          onClick={() => {
-            localStorage.setItem(HIDDEN_KEY, "true");
-            setHidden(true);
-          }}
-        >
-          <XIcon />
-        </Button>
-      </div>
-      {open ? (
-        <div className="mt-1 px-1 pb-1">
-          <UniversityPicker
-            environmentId={environmentId}
-            threadId={threadId}
-            autoFocus
-            onChosen={() => setOpen(false)}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** The university's crest beside the Sources title, with a dot when it needs a sign-in. */
 /** Long enough that opening the card again soon doesn't ask again. */
 const RECHECK_AFTER_MS = 2 * 60 * 1000;
 
 /**
- * The university beside the Sources title, answering one question: can Scient get papers through
- * it right now. Opening it asks again, so its status needs no button; Sign in shows only when it
- * is needed.
+ * The university slot beside the Sources title. Connected: the crest, answering whether Scient
+ * can get papers through it now (opening it asks again), with Sign in when one is needed. None
+ * connected: a quiet Connect your university that opens the picker where it stands.
  */
 export function UniversityCrest({
   environmentId,
@@ -275,7 +203,7 @@ export function UniversityCrest({
   threadId: ThreadId;
 }) {
   const { data, canWrite } = useAccounts(environmentId);
-  const startSignIn = useStableCallback(useUniversitySignIn(environmentId));
+  const startSignIn = useStableCallback(useSignIn(environmentId));
   const check = useAccountCommand(accountsState.check, environmentId);
   const navigate = useNavigate();
   const [checking, setChecking] = useState<ReadonlySet<AccountId>>(new Set());
@@ -296,8 +224,30 @@ export function UniversityCrest({
       );
     }
   });
+  const [connecting, setConnecting] = useState(false);
   const first = universities[0];
-  if (!first) return null;
+  if (!data) return null;
+  if (!first) {
+    if (!canWrite) return null;
+    return (
+      <Popover open={connecting} onOpenChange={setConnecting}>
+        <PopoverTrigger
+          render={<Button size="xs" variant="ghost-muted" aria-label="Connect your university" />}
+        >
+          <GraduationCapIcon />
+          <span className="@max-[30rem]:hidden">Connect your university</span>
+        </PopoverTrigger>
+        <PopoverPopup align="end" width="md">
+          <UniversityPicker
+            environmentId={environmentId}
+            threadId={threadId}
+            autoFocus
+            onChosen={() => setConnecting(false)}
+          />
+        </PopoverPopup>
+      </Popover>
+    );
+  }
   const domainOf = (account: AccountSummary) =>
     account.details.kind === "website"
       ? (account.details.institution?.domain ?? account.details.sites[0] ?? "")
@@ -305,7 +255,7 @@ export function UniversityCrest({
   const waiting = universities.some((account) => !signedIntoUniversity(account));
   const signIn = (accountId: AccountId) => {
     setSigningIn((current) => new Set(current).add(accountId));
-    void startSignIn(accountId, threadId);
+    void startSignIn(accountId, { threadId });
   };
   return (
     <Menu onOpenChange={askAgain}>
@@ -314,15 +264,22 @@ export function UniversityCrest({
           <Button
             size="xs"
             variant="ghost"
-            aria-label={`University: ${first.name}`}
-            className="relative"
+            aria-label={
+              waiting ? `University: ${first.name}, sign in needed` : `University: ${first.name}`
+            }
           />
         }
       >
-        <UniversityIcon site={domainOf(first)} className="size-5" />
-        {waiting ? (
-          <span aria-hidden className="absolute top-1 right-5 size-1.5 rounded-full bg-amber-500" />
-        ) : null}
+        <span className="relative">
+          <UniversityIcon site={domainOf(first)} className="size-5" />
+          {waiting ? (
+            <span
+              aria-hidden
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500"
+            />
+          ) : null}
+        </span>
+        {waiting && canWrite ? <span className="@max-[22rem]:hidden">Sign in</span> : null}
         <ChevronDownIcon className="size-3 text-muted-foreground" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="max-w-72 min-w-56">

@@ -15,7 +15,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -131,7 +130,7 @@ describe("managed endpoint provisioning errors", () => {
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
           Layer.mock(Devices.Devices, {}),
           Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
-          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, { defaultMaxTunnels: 3 }),
         ),
       ),
       Layer.provideMerge(
@@ -243,7 +242,7 @@ describe("device listing compatibility", () => {
             },
           }),
           Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
-          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, { defaultMaxTunnels: 3 }),
         ),
       ),
       Layer.provideMerge(
@@ -325,7 +324,7 @@ describe("Cloudflare rate-limit retry hint", () => {
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
           Layer.mock(Devices.Devices, {}),
           Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
-          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, { defaultMaxTunnels: 3 }),
         ),
       ),
       Layer.provideMerge(
@@ -1471,7 +1470,7 @@ describe("relay routing fallback", () => {
 describe("relay CORS", () => {
   const origin = "https://app.t3.codes";
 
-  class HandlerFailed extends Data.TaggedError("HandlerFailed") {}
+  class HandlerFailed extends Schema.TaggedError<HandlerFailed>()("HandlerFailed", {}) {}
 
   it.effect("adds CORS headers to handler failures and defects", () =>
     Effect.gen(function* () {

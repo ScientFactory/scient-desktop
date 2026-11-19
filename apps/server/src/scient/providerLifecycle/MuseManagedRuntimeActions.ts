@@ -8,6 +8,7 @@ import {
 import type { MuseSettings } from "@t3tools/provider-muse/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeManagedProviderRuntimeResolution } from "./ManagedProviderRuntimeActions.ts";
@@ -24,8 +25,8 @@ export const makeMuseManagedRuntimeResolution = Effect.fn("MuseManagedRuntime.ma
   }) {
     const platform = yield* HostProcess.Platform;
     const arch = yield* HostProcess.Architecture;
-    const target = yield* Effect.try(() => detectManagedRuntimeTarget({ platform, arch })).pipe(
-      Effect.orElseSucceed(() => undefined),
+    const target = Option.getOrUndefined(
+      Option.liftThrowable(detectManagedRuntimeTarget)({ platform, arch }),
     );
     return yield* makeManagedProviderRuntimeResolution({
       configuredBinaryPath: input.settings.binaryPath,

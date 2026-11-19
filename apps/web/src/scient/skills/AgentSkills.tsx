@@ -234,7 +234,7 @@ export function AgentSkills({
           {query ? "No agent skills match." : "No agent reports its own skills yet."}
         </p>
       ) : (
-        <div>
+        <div className="min-w-0">
           <SettingsSourceGroup
             activePanelId={
               expandedGroup ? `external-skills-${expandedGroup.provider.instanceId}` : null

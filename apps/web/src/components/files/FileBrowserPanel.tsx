@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 // SCIENT-FORK:START — refresh moved into the Files menu; its icon import went with it
 // SCIENT-FORK:END
 import type {
@@ -10,6 +12,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
+import { useGT, useMessages } from "gt-react";
 // SCIENT-FORK:START — expand and collapse all moved into the Files menu
 // SCIENT-FORK:END
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -66,10 +69,18 @@ import { pierreTreeStyle } from "~/pierre-tree-theme";
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  areAllDirectoriesExpanded,
+  coalesceReentrantCalls,
+  readExpandedDirectories,
+  setAllDirectoriesExpanded,
+  writeExpandedDirectories,
+} from "./fileTreeExpansion";
 // SCIENT-FORK:START — new documents are listed through useCreateNewDocument
 import { refreshProjectEntriesQuery, subscribeProjectFilesRefresh } from "./projectFilesQueryState";
 // SCIENT-FORK:END
+import { isMacPlatform } from "~/lib/utils";
+import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -89,6 +100,7 @@ interface FileBrowserPanelProps {
   scientToolbarLeading?: ScientToolbarSlot;
   // SCIENT-FORK:END
   workspaceMutationId: string | null;
+  answersPanelFind?: boolean;
 }
 
 // SCIENT-FORK:START — refresh moved into the Files menu (WorkspaceFilesMenu)
@@ -112,9 +124,12 @@ export default function FileBrowserPanel({
   // SCIENT-FORK:START
   scientToolbarLeading,
   // SCIENT-FORK:END
+  answersPanelFind = false,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
+  const gt = useGT();
+  const messages = useMessages();
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   // SCIENT-FORK:START — file visibility view and the lazily loaded tree
@@ -135,6 +150,8 @@ export default function FileBrowserPanel({
   const pathSearch = useProjectPathSearch(
     { environmentId, cwd: hostFolder ? null : cwd, query: searchQuery },
     FILE_SEARCH_LIMIT,
+    undefined,
+    messages,
   );
   const hasCurrentSearch = pathSearch.searchedQuery === normalizedSearchValue;
   const fileContextMenu = useFileContextMenu(environmentId);
@@ -201,11 +218,13 @@ export default function FileBrowserPanel({
             // SCIENT-FORK:START — files that open rendered by default can open as source;
             // then Add to chat, new items (start a document in, or connect, this folder), and edit
             ...(shouldOpenInBrowserByDefault(relativePath)
-              ? ([{ id: "open-source", label: "Open source" }] as const)
+              ? ([{ id: "open-source", label: gt("Open source") }] as const)
               : []),
-            { id: "add-to-chat", label: "Add to chat", separatorBefore: true },
+            { id: "add-to-chat", label: gt("Add to chat"), separatorBefore: true },
             // Copy mention sits under Copy when Files manages entries.
-            ...(manageItems.copiesMention ? [] : [{ id: "copy-mention", label: "Copy mention" }]),
+            ...(manageItems.copiesMention
+              ? []
+              : [{ id: "copy-mention", label: gt("Copy mention") }]),
             ...manageItems.create,
             ...folderActions.menuItems(item.path),
             ...manageItems.edit,
@@ -237,16 +256,11 @@ export default function FileBrowserPanel({
         if (clicked === "copy-mention") {
           try {
             await writeTextToClipboard(mention);
-            toastManager.add({
-              type: "success",
-              title: "Mention copied",
-              description: relativePath,
-            });
           } catch (error) {
             toastManager.add({
               type: "error",
-              title: "Failed to copy mention",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: gt("Failed to copy mention"),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             });
           }
           return;
@@ -256,8 +270,8 @@ export default function FileBrowserPanel({
           if (!composer) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "Open a chat for this project and try again.",
+              title: gt("Unable to add to chat"),
+              description: gt("Open a chat for this project and try again."),
             });
             return;
           }
@@ -265,8 +279,8 @@ export default function FileBrowserPanel({
           if (!inserted) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "The chat isn't ready to accept input right now.",
+              title: gt("Unable to add to chat"),
+              description: gt("The chat isn't ready to accept input right now."),
             });
           }
         }
@@ -372,6 +386,47 @@ export default function FileBrowserPanel({
     tree: { treeControllerRef, treeEntriesRef, ...lazyTree },
   });
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — upstream's remembered folders on Scient's lazy tree, whose
+  // controller loads each folder once it is expanded.
+  const expandedPathsRef = useRef(new Set<string>());
+  const expansionRoot = `${environmentId}:${cwd}`;
+  // Folders expanded when the panel last unmounted; each reopens once lazy loading lists it.
+  const [pendingExpandedPaths] = useState(() => new Set(readExpandedDirectories(expansionRoot)));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to reopen and remember expanded folders
+  useEffect(() => {
+    const currentPaths = new Set(loadedDirectoryPaths);
+    for (const path of expandedPathsRef.current) {
+      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    }
+    // Restoring calls item.expand(), which notifies subscribers synchronously.
+    const rememberExpanded = coalesceReentrantCalls(() => {
+      if (model.isSearchOpen()) return;
+      let changed = false;
+      for (const path of loadedDirectoryPaths) {
+        const item = model.getItem(path);
+        if (item?.isDirectory() && pendingExpandedPaths.delete(path) && "expand" in item) {
+          item.expand();
+        }
+        if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
+          if (!expandedPathsRef.current.has(path)) {
+            expandedPathsRef.current.add(path);
+            changed = true;
+          }
+        } else if (expandedPathsRef.current.delete(path)) {
+          changed = true;
+        }
+      }
+      if (changed) {
+        writeExpandedDirectories(expansionRoot, [
+          ...expandedPathsRef.current,
+          ...pendingExpandedPaths,
+        ]);
+      }
+    });
+    rememberExpanded();
+    return model.subscribe(rememberExpanded);
+  }, [expansionRoot, loadedDirectoryPaths, model, pendingExpandedPaths]);
+  // SCIENT-FORK:END
 
   const handleSearchValueChange = (value: string) => {
     if (!isSearching && value.trim().length > 0) {
@@ -394,6 +449,20 @@ export default function FileBrowserPanel({
     model.closeSearch();
     setSearchValue("");
   };
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusSearch = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+  const onPanelAction = useEffectEvent((action: PreviewAction) => {
+    // Hidden panel tabs stay mounted; only the visible Files tab answers.
+    if (action === "find" && searchInputRef.current?.getClientRects().length) focusSearch();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
+  useEffect(() => {
+    if (!answersPanelFind) return;
+    return subscribePreviewAction(onPanelAction);
+  }, [answersPanelFind]);
   const refreshEntries = () => {
     void treeControllerRef.current?.refresh();
     refreshProjectEntriesQuery(environmentId, cwd);
@@ -518,8 +587,17 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
-      // SCIENT-FORK:START — file shortcuts in the tree, ⌥ while dragging to copy, and drops from outside
-      onKeyDown={fileActions.onKeyDown}
+      onKeyDown={(event) => {
+        const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+        if (isModPressed && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          focusSearch();
+          return;
+        }
+        // SCIENT-FORK: file shortcuts in the tree.
+        fileActions.onKeyDown(event);
+      }}
+      // SCIENT-FORK:START — ⌥ while dragging to copy, and drops from outside
       onKeyDownCapture={fileActions.onKeyDownCapture}
       onBlur={fileActions.onBlur}
       onDragOverCapture={fileActions.onDragOver}
@@ -536,8 +614,9 @@ export default function FileBrowserPanel({
             refresh and expand-all live in the Files menu. */}
         {scientToolbarLeading}
         <FileSearchField
+          ref={searchInputRef}
           name="project-files-search"
-          ariaLabel={`Search ${projectName} files`}
+          ariaLabel={gt("Search {projectName} files", { projectName })}
           value={searchValue}
           onValueChange={handleSearchValueChange}
           onClose={handleSearchClose}
@@ -576,7 +655,7 @@ export default function FileBrowserPanel({
         {/* SCIENT-FORK:END */}
         <FileTree
           model={model}
-          aria-label={`${projectName} files`}
+          aria-label={gt("{projectName} files", { projectName })}
           className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
           style={pierreTreeStyle(resolvedTheme)}
         />

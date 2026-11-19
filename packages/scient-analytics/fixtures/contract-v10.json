@@ -1295,6 +1295,56 @@
       }
     },
     {
+      "case": "voice.recording.failed:fallbacks",
+      "name": "voice.recording.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "engineClass": "other",
+        "failureClass": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.recording.failed:representative",
+      "name": "voice.recording.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "engineClass": "local-whisper",
+        "failureClass": "permission",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.recording.cancelled:fallbacks",
+      "name": "voice.recording.cancelled",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "stage": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.recording.cancelled:representative",
+      "name": "voice.recording.cancelled",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "stage": "downloading",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
       "case": "surface.opened:fallbacks",
       "name": "surface.opened",
       "privacyLevel": "product",
@@ -1686,6 +1736,270 @@
         "durationBucket": "5-15s",
         "failureClass": "permission",
         "reviewRequired": true,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.started:capture-v2-interactive-started",
+      "name": "scient.operation.started",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.started:capture-v2-run-file-started",
+      "name": "scient.operation.started",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "run-file",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.failed:capture-v2-run-file-unenumerated",
+      "name": "scient.operation.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "run-file",
+        "captureOutcome": "partial",
+        "captureCoverage": "unavailable",
+        "captureReason": "artifact-collection-failed",
+        "retainedOutputCountBucket": "1",
+        "rejectedOutputCountBucket": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.completed:capture-v2-retained",
+      "name": "scient.operation.completed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "captureOutcome": "retained",
+        "captureCoverage": "complete",
+        "captureReason": "none",
+        "retainedOutputCountBucket": "1",
+        "rejectedOutputCountBucket": "0",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.failed:capture-v2-partial",
+      "name": "scient.operation.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "captureOutcome": "partial",
+        "captureCoverage": "complete",
+        "captureReason": "output-limit",
+        "retainedOutputCountBucket": "1",
+        "rejectedOutputCountBucket": "1",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.skipped:capture-v2-none",
+      "name": "scient.operation.skipped",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "captureOutcome": "none",
+        "captureCoverage": "complete",
+        "captureReason": "none",
+        "retainedOutputCountBucket": "0",
+        "rejectedOutputCountBucket": "0",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.failed:capture-v2-failed",
+      "name": "scient.operation.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "captureOutcome": "failed",
+        "captureCoverage": "complete",
+        "captureReason": "output-limit",
+        "retainedOutputCountBucket": "0",
+        "rejectedOutputCountBucket": "1",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.skipped:capture-v2-unobserved",
+      "name": "scient.operation.skipped",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "captureOutcome": "unobserved",
+        "captureCoverage": "partial",
+        "captureReason": "scan-entry-limit",
+        "retainedOutputCountBucket": "0",
+        "rejectedOutputCountBucket": "0",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.transcription.completed:voice-v2-disabled",
+      "name": "voice.transcription.completed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "engineClass": "local-whisper",
+        "durationBucket": "under-1s",
+        "audioDurationBucket": "1-5s",
+        "voiceSchemaVersion": 2,
+        "transcriptionDurationBucket": "under-1s",
+        "correctionOutcome": "disabled",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.transcription.completed:voice-v2-corrected",
+      "name": "voice.transcription.completed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "engineClass": "local-whisper",
+        "durationBucket": "under-1s",
+        "audioDurationBucket": "1-5s",
+        "voiceSchemaVersion": 2,
+        "transcriptionDurationBucket": "under-1s",
+        "correctionDurationBucket": "under-1s",
+        "correctionOutcome": "corrected",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.transcription.completed:voice-v2-fallback",
+      "name": "voice.transcription.completed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "engineClass": "local-whisper",
+        "durationBucket": "under-1s",
+        "audioDurationBucket": "1-5s",
+        "voiceSchemaVersion": 2,
+        "transcriptionDurationBucket": "under-1s",
+        "correctionDurationBucket": "under-1s",
+        "correctionOutcome": "fallback",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.transcription.completed:voice-v2-bypassed",
+      "name": "voice.transcription.completed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "engineClass": "local-whisper",
+        "durationBucket": "under-1s",
+        "audioDurationBucket": "1-5s",
+        "voiceSchemaVersion": 2,
+        "transcriptionDurationBucket": "under-1s",
+        "correctionDurationBucket": "under-1s",
+        "correctionOutcome": "bypassed",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "voice.transcription.cancelled:voice-v2-cancelled",
+      "name": "voice.transcription.cancelled",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "stage": "correcting",
+        "durationBucket": "under-1s",
+        "voiceSchemaVersion": 2,
+        "transcriptionDurationBucket": "under-1s",
+        "correctionDurationBucket": "under-1s",
+        "correctionOutcome": "cancelled",
+        "engineClass": "local-whisper",
+        "audioDurationMs": 3000,
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "10"

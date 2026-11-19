@@ -95,6 +95,9 @@ export const ComputeStartSessionInput = Schema.Struct({
       executionId: ComputeExecutionId,
       code: StreamText,
       source: ComputeExecutionSource,
+      actor: Schema.optional(ComputeExecutionActor),
+      /** Set by the gateway when the code is the whole saved file: the run may publish results. */
+      publishResults: Schema.optional(Schema.Boolean),
     }),
   ),
 });

@@ -10,17 +10,21 @@ import {
   type SlidePrimitive,
 } from "@betteroffice/pptx";
 import { slideFonts } from "./slide-fonts";
-import {
-  maxImageSide,
-  type SlideMethods,
-  type SlidePainted,
-  type SlideSummary,
-  type VectorBitmap,
-  type VectorRequest,
-} from "./slide-protocol";
+import type { SlideMethods, SlidePainted, SlideSummary } from "./slide-protocol";
+import { maxImageSide, type VectorBitmap, type VectorRequest } from "./vector-pictures";
 import { deckText } from "./slide-text";
 import { officeImageBitmap } from "./image-bitmap";
 import { serveWorker, Transfer } from "./worker-rpc";
+// SCIENT-FORK:START
+import {
+  layerMeasure,
+  slideFindHits,
+  slidePlainText,
+  slideTextSpans,
+} from "~/scient/office/slideText";
+import type { WordSpan } from "./word-protocol";
+// SCIENT-FORK:END
+import { PreviewError } from "../previewFailure";
 
 // One worker holds one open PowerPoint deck: its engine, fonts, laid-out slides, decoded pictures and painting. The
 // window terminates the worker when the deck closes, which is the only way the engine's memory is given back.
@@ -65,9 +69,9 @@ type Picture =
 type Deck = ReturnType<typeof createDeck>;
 
 /** The deck this worker opened, once it has. */
-type WorkerState = { deck: Deck | undefined };
+type WorkerState = { deck: Deck | undefined; slides: number }; // SCIENT-FORK: slides
 
-const state: WorkerState = { deck: undefined };
+const state: WorkerState = { deck: undefined, slides: 0 };
 
 serveWorker<SlideMethods>({
   open: async (input) => {
@@ -84,6 +88,7 @@ serveWorker<SlideMethods>({
     await fonts.load(text);
 
     state.deck = createDeck(handle, fonts.layout);
+    state.slides = snapshot.slides.length; // SCIENT-FORK
 
     const size = {
       width: snapshot.widthEmu / emuPerPixel,
@@ -103,6 +108,14 @@ serveWorker<SlideMethods>({
     return painted.kind === "painted" ? new Transfer(painted, [painted.bitmap]) : painted;
   },
   vectors: (input) => required().vectors(input),
+  // SCIENT-FORK:START
+  text: (input) => required().text(input.index),
+  find: async (input) => {
+    const deck = required();
+    const slides = Array.from({ length: state.slides }, (_, index) => deck.text(index));
+    return slideFindHits((await Promise.all(slides)).map(slidePlainText), input.query);
+  },
+  // SCIENT-FORK:END
 });
 
 function required() {
@@ -113,7 +126,7 @@ function required() {
 
 /** The worker's own font set, which its canvases draw text with. */
 function workerFonts() {
-  if (!("fonts" in self)) throw new Error("This browser has no fonts in workers");
+  if (!("fonts" in self)) throw new PreviewError({ code: "presentation-no-worker-fonts" });
 
   // SAFETY: a worker's global scope is a FontFaceSource, whose `fonts` is a FontFaceSet (CSS Font Loading, exposed to
   // workers). The window's types declare it on documents only, and workers expose no FontFaceSet to check against.
@@ -130,6 +143,10 @@ function createDeck(
   // The decoded bitmaps, least recently drawn first, which `trim` keeps within `pictureBudget`.
   const drawn = new Map<string, ImageBitmap>();
   const surface = new OffscreenCanvas(1, 1);
+  // SCIENT-FORK:START — each slide's text layer, made once from its frame.
+  const measure = layerMeasure();
+  const texts = new Map<number, Promise<readonly WordSpan[]>>();
+  // SCIENT-FORK:END
 
   const frame = (index: number) => {
     const cached = frames.get(index);
@@ -188,6 +205,17 @@ function createDeck(
   };
 
   return {
+    // SCIENT-FORK:START
+    text: (index: number) => {
+      const cached = texts.get(index);
+      if (cached) return cached;
+      const made = frame(index).then((laid) =>
+        laid && measure ? slideTextSpans(laid, measure) : [],
+      );
+      texts.set(index, made);
+      return made;
+    },
+    // SCIENT-FORK:END
     paint: async (index: number, density: number, signal: AbortSignal): Promise<SlidePainted> => {
       const laid = await frame(index);
 

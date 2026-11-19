@@ -43,8 +43,8 @@ Approvals appear inline in the conversation. Approve or reject one and the agent
 there. Subagent approval requests appear in the parent conversation with the subagent's name, so
 you can respond without switching threads.
 
-Scient offers no **Auto-accept edits** or **Full access** for fx. An fx thread already set to either
-runs in **Supervised**.
+Scient offers no **Auto-accept edits** for fx, and **Full access** only with fx 0.0.14 or later. An fx
+thread set to a mode its fx lacks runs in **Supervised**.
 
 Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Its
 file-change approvals offer **Allow all edits this session**, while its command approvals have no

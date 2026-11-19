@@ -243,6 +243,8 @@ function managerFolders(context: DiscoveryContext): ReadonlyArray<string> {
     `${tree("ASDF_DATA_DIR", "~/.asdf")}/installs/*/*/bin`,
     `${tree("RUSTUP_HOME", "~/.rustup")}/toolchains/*/bin`,
     `${tree("CARGO_HOME", "~/.cargo")}/bin`,
+    // Elan's launchers come first: each runs the toolchain a Lean project pins.
+    `${tree("ELAN_HOME", "~/.elan")}/bin`,
     `${tree("ELAN_HOME", "~/.elan")}/toolchains/*/bin`,
     `${tree("OPAMROOT", "~/.opam")}/*/bin`,
     `${tree("SDKMAN_DIR", "~/.sdkman")}/candidates/*/*/bin`,

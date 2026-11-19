@@ -78,7 +78,7 @@ describe("Mermaid error recovery", () => {
     vi.mocked(toastManager.add).mockReset();
     vi.mocked(renderMermaidDiagram)
       .mockReset()
-      .mockRejectedValue(new MermaidRenderError(new Error(diagnostic)));
+      .mockRejectedValue(new MermaidRenderError({ cause: new Error(diagnostic) }));
     _fixture.container = document.createElement("div");
     document.body.append(_fixture.container);
     _fixture.root0 = _fixture.stack.use(
@@ -232,6 +232,13 @@ describe("Mermaid error recovery", () => {
     expect(toastManager.add).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Unable to copy the error and source." }),
     );
+    // The broken diagram's source block says so too, not only the console.
+    await act(() => button(_fixture, "Copy code").click());
+    await vi.waitFor(() =>
+      expect(toastManager.add).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Unable to copy the diagram source." }),
+      ),
+    );
     expect(_fixture.container.textContent).not.toContain("Unable to copy");
     expect(draft).toBe("An existing draft");
     expect(_fixture.container.textContent).toContain(source);
@@ -265,7 +272,9 @@ describe("Mermaid error recovery", () => {
     await renderEditor(`${source}correcting`);
     expect(cleanup).not.toHaveBeenCalled();
     expect(editor.mount).toHaveBeenCalledTimes(1);
-    await act(() => pending.reject(new MermaidRenderError(new Error("Still incomplete"))));
+    await act(() =>
+      pending.reject(new MermaidRenderError({ cause: new Error("Still incomplete") })),
+    );
     expect(cleanup).not.toHaveBeenCalled();
     await act(() => button(_fixture, "Retry diagram").click());
     expect(editor.mount).toHaveBeenCalledTimes(1);
@@ -312,7 +321,7 @@ describe("Mermaid error recovery", () => {
       expect(_fixture.container.textContent).not.toContain("Parse error on line 2");
       await act(() => button(_fixture, "Ask agent to fix").click());
       expect(draft).toBe("An existing draft");
-      await act(() => pending.reject(new MermaidRenderError(new Error("New error"))));
+      await act(() => pending.reject(new MermaidRenderError({ cause: new Error("New error") })));
       expect(button(_fixture, "Ask agent to fix").disabled).toBe(false);
       await act(() => button(_fixture, "Ask agent to fix").click());
       expect(collectAssistantCitations(draft)[0]!.citation.comment).toContain("New error");
@@ -338,9 +347,9 @@ describe("Mermaid error recovery", () => {
     expect(toolbar.contains(button(_fixture, "Retry diagram"))).toBe(true);
     expect(_fixture.container.querySelector('[aria-label="More diagram actions"]')).toBeNull();
     expect(_fixture.container.querySelector('[aria-label="Diagram actions"]')).toBeNull();
-    expect(errorRow.nextElementSibling).toBe(codeBlock);
-    expect(codeBlock.classList.contains("my-0")).toBe(true);
-    expect(codeBlock.className).not.toContain("my-[0.65rem]");
+    expect(errorRow.nextElementSibling?.firstElementChild).toBe(codeBlock);
+    expect(getComputedStyle(codeBlock).marginTop).toBe("0px");
+    expect(getComputedStyle(codeBlock).marginBottom).toBe("0px");
     expect(_fixture.container.querySelector(".scient-mermaid-source")).toBeNull();
     expect(copy.textContent).toBe("");
     expect(copy.tagName).toBe("BUTTON");
@@ -372,7 +381,7 @@ describe("Mermaid error recovery", () => {
     expect(summary.textContent).toBe("Rendering diagram…");
     expect(summary.getAttribute("title")).toBeNull();
     expect(summary.className).toContain("truncate");
-    await act(() => pending.reject(new MermaidRenderError(new Error(diagnostic))));
+    await act(() => pending.reject(new MermaidRenderError({ cause: new Error(diagnostic) })));
     expect([...errorRow.children]).toEqual(children);
     expect(summary.textContent).toBe("Parse error on line 2:");
   });
@@ -396,7 +405,7 @@ describe("Mermaid error recovery", () => {
     const pending = pendingRender();
     vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
     await act(() => button(_fixture, "Retry diagram").click());
-    await act(() => pending.reject(new MermaidRenderError(new Error(diagnostic))));
+    await act(() => pending.reject(new MermaidRenderError({ cause: new Error(diagnostic) })));
     expect(_fixture.container.querySelector(".chat-markdown-codeblock")).toBe(codeBlock);
     expect(codeBlock.getAttribute("data-wrap")).toBe(String(!wrapped));
   });
@@ -417,7 +426,8 @@ describe("Mermaid error recovery", () => {
     ).toBeTruthy();
     expect(codeBlock.querySelector(".chat-markdown-shiki .diffs code")?.textContent).toBe(original);
     await act(() => button(_fixture, "Copy code").click());
-    expect(writeText).toHaveBeenCalledWith(original);
+    // Copy leaves out the fence's closing newline.
+    expect(writeText).toHaveBeenCalledWith(original.slice(0, -1));
   });
 
   it("preserves the successful diagram toolbar and source controls", async () => {
@@ -681,7 +691,7 @@ describe("Mermaid error recovery", () => {
     await act(() => button(_fixture, "More diagram actions").click());
     expect(document.body.textContent).not.toContain("Copy recovered source");
     await act(() => button(_fixture, "More diagram actions").click());
-    await act(() => current.reject(new MermaidRenderError(new Error(diagnostic))));
+    await act(() => current.reject(new MermaidRenderError({ cause: new Error(diagnostic) })));
     await act(() => button(_fixture, "Copy error and source").click());
     expect(writeText).toHaveBeenLastCalledWith(
       buildMermaidRepairRequest("flowchart LR\nC --> D", diagnostic),

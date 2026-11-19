@@ -32,6 +32,8 @@ export const ensureQueuedMessageBudget = Effect.fn("ensureQueuedMessageBudget")(
     "thread" | "runs" | "messages" | "providerTurns"
   >;
   readonly message: OrchestrationV2ConversationMessage;
+  /** SCIENT-FORK: the history files a fork shares, which it may send again. */
+  readonly sharedFileIds?: ReadonlyArray<string>;
 }) {
   // Promotion retains its queue slot until native delivery or retirement makes
   // held restoration impossible, including the terminal reconciliation window.
@@ -73,9 +75,7 @@ export const ensureQueuedMessageBudget = Effect.fn("ensureQueuedMessageBudget")(
     ...input.projection.messages.flatMap((message) =>
       message.id === input.message.id ? [] : message.attachments.map((attachment) => attachment.id),
     ),
-    ...(input.projection.thread.conversationFork?.attachmentCopies ?? []).map(
-      (copy) => copy.target.id,
-    ),
+    ...(input.sharedFileIds ?? []),
   ]);
   let total = 0;
   for (const message of messages) {

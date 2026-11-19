@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  AuthFilesystemWriteScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   sessionGrantsScope,
@@ -36,6 +38,46 @@ describe("Accounts client authorization", () => {
     ]) {
       const scopes = clientRpcRequiredScopes(method, {});
       expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
+      expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
+    }
+  });
+});
+
+describe("Linked results client authorization", () => {
+  it("lets a reader see results but not copy figures into the project or re-run scripts", () => {
+    const reader: AuthSessionState = {
+      authenticated: true,
+      scopes: [AuthOrchestrationReadScope],
+      permissions: [AuthOrchestrationReadScope],
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "synthetic",
+      },
+    };
+    const operator = {
+      ...reader,
+      scopes: [AuthOrchestrationOperateScope],
+      permissions: [AuthOrchestrationOperateScope],
+    };
+    const writer = {
+      ...reader,
+      scopes: [AuthFilesystemWriteScope],
+      permissions: [AuthFilesystemWriteScope],
+    };
+    const rerun = clientRpcRequiredScopes(WS_METHODS.computeResultsRerun, {});
+    expect(rerun.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
+    expect(rerun.every((scope) => sessionGrantsScope(operator, scope))).toBe(true);
+    // Placing, updating and undoing write project files, so they take the file-write grant.
+    for (const method of [
+      WS_METHODS.computeResultsPlaceFigure,
+      WS_METHODS.computeResultsPlaceLatex,
+      WS_METHODS.computeResultsUpdateFiles,
+      WS_METHODS.computeResultsUndoUpdate,
+    ]) {
+      const scopes = clientRpcRequiredScopes(method, {});
+      expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(false);
       expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
     }
   });

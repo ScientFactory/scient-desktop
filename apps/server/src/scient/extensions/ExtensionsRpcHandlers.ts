@@ -4,6 +4,8 @@
  */
 import {
   ExtensionsError,
+  type ConnectorAgents,
+  type ProviderInstanceId,
   type ExtensionsChangedEvent,
   type PluginKeyTarget,
   type ExtensionsInventory,
@@ -136,6 +138,36 @@ export const changeFeedLayer = Layer.effect(
     });
   }),
 );
+
+export const validateConnectorAgents = Effect.fn("ExtensionsRpc.validateConnectorAgents")(
+  function* <A extends { readonly agents?: ConnectorAgents | null | undefined }>(
+    input: A,
+    providers: Effect.Effect<ServerProviders>,
+  ) {
+    if (input.agents == null) return input;
+    const configured = new Set((yield* providers).map((provider) => provider.instanceId));
+    const agents = [...new Set(input.agents)].filter((id: ProviderInstanceId) =>
+      configured.has(id),
+    );
+    if (input.agents.length > 0 && agents.length === 0)
+      return yield* new ExtensionsError({
+        reason: "invalid-input",
+        message: "None of the chosen agents is configured. Choose an available agent.",
+      });
+    return { ...input, agents };
+  },
+);
+
+export const providerStoreEntryError = (cause: { readonly message: string }) =>
+  new ExtensionsError({
+    // Provider stores currently identify a missing entry only by these messages.
+    reason:
+      cause.message === "This plugin is no longer in the store." ||
+      cause.message === "This Codex plugin is no longer available."
+        ? "not-found"
+        : "state-unavailable",
+    message: cause.message,
+  });
 
 export const makeExtensionsRpcHandlers = ({
   observeRpcEffect,
@@ -293,7 +325,9 @@ export const makeExtensionsRpcHandlers = ({
     [WS_METHODS.extensionsConnectorAdd]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorAdd,
-        connectorRuntime.add(input),
+        validateConnectorAgents(input, providerRegistry.getProviders).pipe(
+          Effect.flatMap((validated) => connectorRuntime.add(validated)),
+        ),
         traceAttributes,
       ),
     [WS_METHODS.extensionsConnectorStartSignIn]: (input) =>
@@ -305,7 +339,10 @@ export const makeExtensionsRpcHandlers = ({
     [WS_METHODS.extensionsConnectorUpdate]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorUpdate,
-        connectorRuntime.update(input).pipe(Effect.andThen(inventory())),
+        validateConnectorAgents(input, providerRegistry.getProviders).pipe(
+          Effect.flatMap((validated) => connectorRuntime.update(validated)),
+          Effect.andThen(inventory()),
+        ),
         traceAttributes,
       ),
     [WS_METHODS.extensionsConnectorRemove]: (input) =>
@@ -314,10 +351,34 @@ export const makeExtensionsRpcHandlers = ({
         connectorRuntime.remove(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
+    [WS_METHODS.extensionsConnectorUndo]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorUndo,
+        connectorRuntime.undo(input).pipe(Effect.andThen(inventory())),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsConnectorExport]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorExport,
+        connectorRuntime.exportLocal(input),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsConnectorTest]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorTest,
         connectorRuntime.test(input),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsConnectorInspectLocal]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorInspectLocal,
+        connectorRuntime.inspectLocal(input),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsConnectorImportable]: () =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorImportable,
+        connectorRuntime.importables(),
         traceAttributes,
       ),
     [WS_METHODS.extensionsDiscoverSearch]: (input) =>
@@ -364,15 +425,9 @@ export const makeExtensionsRpcHandlers = ({
               reason: "unsupported",
               message: "This agent has no available plugin store.",
             });
-          return yield* actions.store.entry(input.entryId).pipe(
-            Effect.mapError(
-              () =>
-                new ExtensionsError({
-                  reason: "not-found",
-                  message: "This plugin is no longer available.",
-                }),
-            ),
-          );
+          return yield* actions.store
+            .entry(input.entryId)
+            .pipe(Effect.mapError(providerStoreEntryError));
         }),
         traceAttributes,
       ),

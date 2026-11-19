@@ -13,20 +13,34 @@ export const makeProviderRegistryMock = (
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),
   refreshInstanceStrict: () => Effect.succeed(providers),
+  readFreshInstance: (instanceId) => {
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    return provider
+      ? Effect.succeed(provider)
+      : Effect.fail(
+          new ProviderRegistry.ProviderRegistryRefreshError({
+            operation: "refresh",
+            instanceId,
+            message: "No live source is available.",
+          }),
+        );
+  },
   refreshInstanceAfterAccountChange: () => Effect.succeed(providers),
   reloadInstance: () => Effect.succeed(providers),
   reloadInstanceStrict: () => Effect.succeed(providers),
   reloadSecretsAndRefresh: () => Effect.succeed(providers),
+  applySecretAndRefresh: () => Effect.succeed(providers),
   refreshAfterUpdate: () => Effect.succeed(providers),
   refreshWorkspaceSnapshot: () => Effect.succeed(providers),
   invalidateModelCaches: () => Effect.void,
+  refreshModelCatalog: Effect.void,
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
-  getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-  getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
-  getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+  getProviderConnectionActionsForInstance: () => Effect.undefined,
+  getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
+  getProviderSkillActionsForInstance: () => Effect.undefined,
   // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
-  getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+  getProviderPluginActionsForInstance: () => Effect.undefined,
   recordProviderNativeInventory: () => Effect.succeed(providers),
   // SCIENT-FORK:END
   getVoiceTranscriptCorrectionForInstance: () =>

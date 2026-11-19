@@ -1,12 +1,15 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
   CommandId,
   CheckpointId,
   CheckpointScopeId,
+  checkpointSupportsRewind,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
-  type ThreadForkCommand,
+  type ScientThreadForkOptions,
   WS_METHODS,
   type ChatAttachment,
   MessageId,
@@ -28,21 +31,31 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  // SCIENT-FORK: thread rooms.
+  type ThreadRoomOwnerAction,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
   type EnvironmentRpcFailure,
   type EnvironmentRpcSuccess,
-  type EnvironmentRpcUnavailableError,
+  EnvironmentRpcUnavailableError,
   getInitialServerConfig,
+  isRpcClientError,
   request,
 } from "../rpc/client.ts";
-import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
+
 interface CommandMetadata {
   readonly commandId?: CommandId;
   readonly createdAt?: string;
@@ -102,6 +115,7 @@ export type SettleThreadInput = ThreadCommandInput;
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
+  readonly restoreUnsettledAt?: string | null;
 }
 
 export interface PinThreadInput extends ThreadCommandInput {
@@ -195,6 +209,10 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly bootstrap?: StartThreadBootstrap;
   readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: PlanId };
   readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start";
+  /** Start a new provider session; needs the server's `freshContext` capability. */
+  readonly freshContext?: boolean;
+  /** Defaults to true. Callers with their own retry queue opt out so a dead socket fails fast. */
+  readonly resendAfterSocketLoss?: boolean;
 }
 
 export interface InterruptThreadTurnInput extends ThreadCommandInput {
@@ -240,8 +258,13 @@ export type SetThreadSectionInput = Omit<
   "type" | "commandId"
 > &
   CommandMetadata;
-// SCIENT-FORK:START
-export type ForkThreadInput = Omit<ThreadForkCommand, "type" | "commandId"> & CommandMetadata;
+// SCIENT-FORK:START — Scient's fork boundary and workspace choice on T3's thread.fork.
+export interface ForkConversationInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly scient: ScientThreadForkOptions;
+  readonly title?: string;
+}
 // SCIENT-FORK:END
 
 export interface ForkSideChatInput extends CommandMetadata {
@@ -302,16 +325,73 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
-// SCIENT-FORK:START — dedicated conversation-boundary fork transport.
+// The socket can close after the server accepted the frame but before it answered.
+// The server replays an accepted commandId from its receipt, so the same command
+// waits out reconnect backoff until the supervisor stops trying. The resend cap
+// stops a frame that kills the socket from looping.
+const MAX_LOST_TRANSPORT_RESENDS = 2;
+
+// A live socket can still carry a command the host never answers; the heartbeat
+// alone would leave the send pending forever.
+const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
+
+const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
+  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+  resendAfterSocketLoss: boolean,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
+          }),
+        ),
+    }),
+  );
+  if (!resendAfterSocketLoss) return yield* attempt;
+  for (let resends = 0; ; resends += 1) {
+    const attemptSession = yield* SubscriptionRef.get(supervisor.session);
+    const exit = yield* Effect.exit(attempt);
+    if (Exit.isSuccess(exit)) return exit.value;
+    // Closing the session interrupts the request, which can beat the protocol error.
+    const lostTransport =
+      Cause.hasInterruptsOnly(exit.cause) ||
+      exit.cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
+    if (!lostTransport || resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* exit;
+    const replacement = yield* Effect.raceFirst(
+      SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.filter(
+          (session) =>
+            Option.isSome(session) &&
+            !(Option.isSome(attemptSession) && session.value === attemptSession.value),
+        ),
+        Stream.runHead,
+      ),
+      SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
+        Stream.runHead,
+        Effect.as(Option.none()),
+      ),
+    );
+    if (Option.isNone(replacement)) return yield* exit;
+  }
+});
+
+// SCIENT-FORK:START
 type DispatchTag = typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
-  SecureRandom.SecureRandom | EnvironmentSupervisor
+  SecureRandom.SecureRandom | EnvironmentSupervisor.EnvironmentSupervisor
 >;
-
-const dispatchConversationFork = (command: ThreadForkCommand) =>
-  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 // SCIENT-FORK:END
 
 const getProjection = (threadId: ThreadId) =>
@@ -514,6 +594,45 @@ export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMe
   });
 });
 
+// SCIENT-FORK:START — thread rooms (contracts scient/threadRoom.ts).
+export interface ThreadRoomActionInput extends ThreadCommandInput {
+  readonly action: ThreadRoomOwnerAction;
+}
+export const runThreadRoomAction = Effect.fn("EnvironmentCommands.runThreadRoomAction")(function* (
+  input: ThreadRoomActionInput,
+) {
+  return yield* dispatch({
+    type: "thread.room",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    action: input.action,
+  });
+});
+
+export interface SendRoomMessageInput extends ThreadCommandInput {
+  readonly itemId: TurnItemId;
+  readonly creationSource?: "web" | "mobile";
+}
+/** Runs a room message as a normal turn; the server supplies its words and files. */
+export const sendRoomMessageToAgent = Effect.fn("EnvironmentCommands.sendRoomMessageToAgent")(
+  function* (input: SendRoomMessageInput) {
+    const commandId = yield* allocateCommandId(input);
+    return yield* dispatch({
+      type: "message.dispatch",
+      commandId,
+      threadId: input.threadId,
+      messageId: MessageId.make(commandId),
+      roomItemId: input.itemId,
+      text: "",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+    });
+  },
+);
+// SCIENT-FORK:END
+
 export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
   input: ArchiveThreadInput,
 ) {
@@ -595,6 +714,9 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     reason: input.reason,
+    ...(input.restoreUnsettledAt === undefined
+      ? {}
+      : { restoreUnsettledAt: input.restoreUnsettledAt }),
   });
 });
 
@@ -788,8 +910,49 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   }
 
   const requestedMode = input.dispatchMode ?? "auto";
+  const resendAfterSocketLoss = input.resendAfterSocketLoss ?? true;
   if (requestedMode === "start") {
-    return yield* dispatch({
+    return yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        createdBy: "user",
+        creationSource: input.creationSource ?? "web",
+        threadId: input.threadId,
+        messageId: input.message.messageId,
+        ...(input.manualContinuationOfRunId === undefined
+          ? {}
+          : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+        text: input.message.text,
+        ...(context ? { context } : {}),
+        ...(input.message.idleCompaction === undefined
+          ? {}
+          : { idleCompaction: input.message.idleCompaction }),
+        attachments,
+        // SCIENT-FORK:START — forward the composer's explicit skill selection.
+        ...(input.selectedScientSkillNames === undefined
+          ? {}
+          : { selectedScientSkillNames: input.selectedScientSkillNames }),
+        // SCIENT-FORK:END
+        ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        ...(input.sourceProposedPlan === undefined
+          ? {}
+          : { sourcePlanRef: input.sourceProposedPlan }),
+        ...(input.freshContext ? { freshContext: true } : {}),
+        dispatchMode: { type: "start_immediately" },
+      },
+      resendAfterSocketLoss,
+    );
+  }
+
+  const dispatchMode =
+    requestedMode === "queue"
+      ? ({ type: "queue_after_active" } as const)
+      : ({ type: "start_immediately" } as const);
+  return yield* dispatchMessage(
+    {
       type: "message.dispatch",
       commandId,
       runtimeMode: input.runtimeMode,
@@ -798,9 +961,6 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
       messageId: input.message.messageId,
-      ...(input.manualContinuationOfRunId === undefined
-        ? {}
-        : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
       text: input.message.text,
       ...(context ? { context } : {}),
       ...(input.message.idleCompaction === undefined
@@ -812,44 +972,17 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ? {}
         : { selectedScientSkillNames: input.selectedScientSkillNames }),
       // SCIENT-FORK:END
+      ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.sourceProposedPlan === undefined
         ? {}
         : { sourcePlanRef: input.sourceProposedPlan }),
-      dispatchMode: { type: "start_immediately" },
-    });
-  }
-
-  const dispatchMode =
-    requestedMode === "queue"
-      ? ({ type: "queue_after_active" } as const)
-      : ({ type: "start_immediately" } as const);
-  return yield* dispatch({
-    type: "message.dispatch",
-    commandId,
-    runtimeMode: input.runtimeMode,
-    interactionMode: input.interactionMode,
-    createdBy: "user",
-    creationSource: input.creationSource ?? "web",
-    threadId: input.threadId,
-    messageId: input.message.messageId,
-    text: input.message.text,
-    ...(context ? { context } : {}),
-    ...(input.message.idleCompaction === undefined
-      ? {}
-      : { idleCompaction: input.message.idleCompaction }),
-    attachments,
-    // SCIENT-FORK:START — forward the composer's explicit skill selection.
-    ...(input.selectedScientSkillNames === undefined
-      ? {}
-      : { selectedScientSkillNames: input.selectedScientSkillNames }),
-    // SCIENT-FORK:END
-    ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
-    ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-    ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
-    ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
-    dispatchMode,
-  });
+      ...(input.freshContext ? { freshContext: true } : {}),
+      ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
+      dispatchMode,
+    },
+    resendAfterSocketLoss,
+  );
 });
 
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
@@ -1008,7 +1141,11 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
           ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
           : candidate.appRunOrdinal === input.turnCount,
       );
-    if (checkpoint === undefined || checkpoint.status !== "ready") {
+    if (
+      checkpoint === undefined ||
+      // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
+      !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false)
+    ) {
       const target =
         input.checkpointId === undefined
           ? `run ordinal ${input.turnCount ?? "unknown"}`
@@ -1096,22 +1233,13 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
-  // SCIENT-FORK:START — equal protocol versions do not imply support for a new command tag.
-  let startSelectedRun = false;
-  if (input.runId !== undefined) {
-    const { capabilities } = (yield* getInitialServerConfig()).environment;
-    // Only legacy Scient advertises the queue.resume(runId) form; upstream v2 uses the new tag.
-    startSelectedRun = capabilities.queuedRunStart ?? capabilities.threadQueueExplicitSend !== true;
-  }
   return yield* dispatch({
-    ...(input.runId !== undefined && startSelectedRun
-      ? { type: "queued-run.start" as const, runId: input.runId }
-      : { type: "queue.resume" as const }),
+    ...(input.runId === undefined
+      ? { type: "queue.resume" as const }
+      : { type: "queued-run.start" as const, runId: input.runId }),
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-    ...(input.runId === undefined ? {} : { runId: input.runId }),
   });
-  // SCIENT-FORK:END
 });
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
@@ -1126,15 +1254,21 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
   });
 });
 
-// SCIENT-FORK:START — the server stamps fork events and resolves retained turn boundaries.
-// Destination-derived command IDs keep transport retries of the same fork idempotent.
-export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.forkThread",
+// SCIENT-FORK:START — the server resolves the boundary and allocates the title. A
+// destination-derived command ID keeps transport retries of the same fork idempotent.
+export const forkConversation: (input: ForkConversationInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.forkConversation",
 )(function* (input) {
-  return yield* dispatchConversationFork({
-    ...input,
+  return yield* dispatch({
     type: "thread.fork",
-    commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.newThreadId}`),
+    commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.targetThreadId}`),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "latest_stable" },
+    scient: input.scient,
+    ...(input.title === undefined ? {} : { title: input.title }),
   });
 });
 // SCIENT-FORK:END
@@ -1213,6 +1347,34 @@ export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPu
     });
   },
 );
+export type LinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadIssue = Effect.fn("EnvironmentCommands.linkThreadIssue")(function* (
+  input: LinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.link",
+    commandId: yield* allocateCommandId(input),
+  });
+});
+export const unlinkThreadIssue = Effect.fn("EnvironmentCommands.unlinkThreadIssue")(function* (
+  input: UnlinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.unlink",
+    commandId: yield* allocateCommandId(input),
+  });
+});
 export type WatchThreadPullRequestInput = Omit<
   Extract<OrchestrationV2Command, { type: "thread.pull-request.watch" }>,
   "type" | "commandId"

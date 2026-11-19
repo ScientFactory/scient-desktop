@@ -1,4 +1,5 @@
 /** Actual Droid ACP writes through V2 command, restart and queue ownership. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -145,7 +146,7 @@ export const withDroid = <A, E, R>(
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const receiptDirectory = process.env.DROID_SCHED_RECEIPTS;
+      const receiptDirectory = (yield* HostProcess.Environment).DROID_SCHED_RECEIPTS;
       const record = (phase: string, value: unknown) =>
         receiptDirectory === undefined || options.receiptName === undefined
           ? Effect.void
@@ -204,7 +205,7 @@ export const withDroid = <A, E, R>(
           enabled: true,
           binaryPath: peer.binaryPath,
         }),
-        environment: { PATH: process.env.PATH },
+        environment: { PATH: (yield* HostProcess.Environment).PATH },
         sensitiveEnvironmentValues: [],
         makeRuntime: (input) =>
           makeDroidAcpRuntime({

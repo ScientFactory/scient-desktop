@@ -1,3 +1,4 @@
+import { SCIENT_CHART_SERIES_COLORS } from "../visualizations/chartPalette";
 import type { MermaidTheme } from "./mermaidRuntime";
 
 const palette = {
@@ -34,5 +35,8 @@ export function applyMermaidPalette(svg: string, theme: MermaidTheme): string {
   for (const [name, value] of Object.entries(palette[theme])) {
     element.style.setProperty(`--pele-${name}`, value);
   }
+  SCIENT_CHART_SERIES_COLORS.slice(0, 8).forEach((color, index) => {
+    element.style.setProperty(`--pele-series-${index + 1}`, color);
+  });
   return element.outerHTML;
 }

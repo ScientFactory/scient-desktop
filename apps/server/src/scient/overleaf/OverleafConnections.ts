@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import type { ScientOverleafUnreadableRecord } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,16 +20,17 @@ import {
   type OverleafConnectionDocument,
 } from "./OverleafConnectionState.ts";
 import {
+  archiveFinishesByLinking,
   OverleafConnectionNotReadyError,
   type OverleafReservations,
   reserveOverleafConnection,
 } from "./OverleafCoordinator.ts";
 import { newOverleafId, type OverleafGitError, waitOutRateLimit } from "./OverleafGitExecutor.ts";
 import { captureOverleafInventory } from "./OverleafInventory.ts";
-import { classifyProbeGitFailure } from "./OverleafProtocolProbe.ts";
-import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
+import { classifyProbeGitFailure, gitRefusal } from "./OverleafProtocolProbe.ts";
+import { OverleafRepository } from "./OverleafRepository.ts";
 import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
-import { OverleafStateStore } from "./OverleafStateStore.ts";
+import { OverleafStateStore, unreadableHolds, unreadableSetAside } from "./OverleafStateStore.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 /** The workspace authority a connection is recorded under (contract rule 2). */
@@ -196,32 +198,6 @@ const summarize = (document: OverleafConnectionDocument): OverleafConnectionSumm
   createdAt: document.createdAt,
   updatedAt: document.updatedAt,
 });
-
-/** A Git failure as a fixed category; Git's own text never leaves (contract section 11). */
-export const gitRefusal = (
-  error: OverleafGitError | OverleafRepositoryError,
-): OverleafConnectionRefusal => {
-  if (error._tag === "OverleafRepositoryError") return "git-failed";
-  if (error.reason === "git-not-found" || error.reason === "git-too-old") return "git-unavailable";
-  switch (classifyProbeGitFailure(error).category) {
-    case "authentication-or-access-denied":
-    case "credential-prompt":
-    case "server-refused":
-      return "access-denied";
-    case "project-not-found":
-      return "project-not-found";
-    case "rate-limited":
-      return "rate-limited";
-    case "timeout":
-    case "dns":
-    case "tls":
-    case "connection":
-    case "redirect":
-      return "unreachable";
-    default:
-      return "git-failed";
-  }
-};
 
 /** Overleaf's own words, without URLs, stay in the log for diagnosis, never in a result. */
 export const logGitFailure = (error: OverleafGitError) =>
@@ -905,13 +881,25 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       revision: document.revision,
       restored: false,
     };
-    if (document.state === "archived")
+    if (document.state === "archived") {
+      // What linking the folder again finishes; until then it holds off bulk changes.
+      const finishable = yield* archiveFinishesByLinking({
+        store,
+        archived: document,
+        found: identityOf(folderOf(document)),
+      }).pipe(Effect.orElseSucceed(() => true));
       return {
         ...base,
         availability: "disconnected",
-        reasons: [],
+        reasons: finishable
+          ? [
+              ...(document.activeApply === null ? [] : ["apply-pending" as const]),
+              ...(document.stagingPaths.length === 0 ? [] : ["staging" as const]),
+            ]
+          : [],
         local: null,
       } satisfies OverleafConnectionStatus;
+    }
 
     const reasons: OverleafStatusReason[] = [];
     const checkout = yield* identityOf(document.checkout.canonicalRoot);
@@ -977,7 +965,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     );
   });
 
-  /** Records a restored folder as the link's own. Run while holding the connection. */
+  /**
+   * Records a restored folder as the link's own, and gives a Linux record from before
+   * generations were read its folder's generation. Run while holding the connection.
+   */
   const followRestored = Effect.fn("OverleafConnections.followRestored")(function* (
     connectionId: string,
   ) {
@@ -990,9 +981,13 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     if (
       platformFileIdentity.equal(checkout, document.checkout.identity) &&
       platformFileIdentity.equal(folder, document.folder.identity)
-    )
-      return;
-    if (!(yield* isRestored(document))) return;
+    ) {
+      if (
+        !platformFileIdentity.lacksGeneration(document.checkout.identity) &&
+        !platformFileIdentity.lacksGeneration(document.folder.identity)
+      )
+        return;
+    } else if (!(yield* isRestored(document))) return;
     yield* store.replaceConnection({
       expectedRevision: document.revision,
       next: {
@@ -1075,7 +1070,57 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
   /** Readable connection records with their recorded bindings, for ownership checks. */
   const documents = connections;
 
-  return { connect, disconnect, relink, status, list, documents, followRestored };
+  /** Records no release here can read, damaged or written by a newer Scient, with what they show. */
+  const unreadableRecords = Effect.gen(function* () {
+    const records: ScientOverleafUnreadableRecord[] = [];
+    for (const recordId of yield* store.listConnections) {
+      const read = yield* store.readConnection(recordId);
+      if (read._tag === "ready" || read._tag === "missing") continue;
+      records.push({
+        recordId,
+        kind: read._tag === "unsupported" ? "newer" : "damaged",
+        folder: read.shows.folder,
+        unfinished: read.shows.unfinished,
+        holds: unreadableHolds(read),
+        setAside: unreadableSetAside(read),
+      });
+    }
+    return records;
+  });
+
+  /**
+   * An unreadable record blocks linking, and bulk changes to its checkout (or every
+   * checkout, when it doesn't say which) while it may hold an unfinished sync. Moving
+   * it aside, bytes intact, is the user's call; the store refuses what it must keep.
+   */
+  const setAsideUnreadable = Effect.fn("OverleafConnections.setAsideUnreadable")(function* (input: {
+    readonly recordId: string;
+    readonly acceptUnfinished: boolean;
+  }) {
+    return yield* store
+      .quarantineConnection(input.recordId, { acceptUnfinished: input.acceptUnfinished })
+      .pipe(
+        Effect.as("set-aside" as const),
+        Effect.catchTags({
+          OverleafConnectionUnavailableError: (error) =>
+            Effect.succeed(
+              error.condition === "unfinished" ? ("held" as const) : ("gone" as const),
+            ),
+        }),
+      );
+  });
+
+  return {
+    connect,
+    disconnect,
+    relink,
+    status,
+    list,
+    documents,
+    followRestored,
+    unreadableRecords,
+    setAsideUnreadable,
+  };
 });
 
 export type OverleafConnections = Effect.Success<ReturnType<typeof makeOverleafConnections>>;

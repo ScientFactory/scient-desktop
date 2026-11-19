@@ -75,6 +75,23 @@ jobs:
           test -x "$SCIENT_TEST_MATLAB"
           node --input-type=module -e 'import {readFile, realpath} from "node:fs/promises"; import {matlabInstallationRoot} from "./src/scient/compute/MatlabRuntimeAdapter.ts"; import assert from "node:assert/strict"; const xml = await readFile(`${matlabInstallationRoot(await realpath(process.env.SCIENT_TEST_MATLAB))}/VersionInfo.xml`, "utf8"); assert.equal(/<release>(R\d{4}[ab])<\/release>/.exec(xml)?.[1].toUpperCase(), process.env.SCIENT_TEST_MATLAB_EXPECTED_RELEASE); assert.equal(`${process.platform}-${process.arch}`, "darwin-arm64");'
           vp test run src/scient/compute/MatlabComputeProduct.integration.test.ts --maxWorkers=1
+      # The batch route (prepare, launch, collect) that a run of a .m file takes; the product
+      # test above goes through the persistent Compute bridge instead. One release is enough.
+      - name: Qualify the batch MATLAB adapter
+        if: ${{ matrix.release == 'R2026A' }}
+        working-directory: apps/server
+        env:
+          SCIENT_REAL_MATLAB: "1"
+          SCIENT_REAL_MATLAB_EXECUTABLE: ${{ vars.SCIENT_TEST_MATLAB_R2026A }}
+        run: |
+          set -euo pipefail
+          test -x "$SCIENT_REAL_MATLAB_EXECUTABLE"
+          report="$RUNNER_TEMP/matlab-adapter.json"
+          vp test run src/scient/analysis/MatlabAdapter.test.ts \
+            -t 'captures the fast static preview and native continuation formats by default' \
+            --reporter=default --reporter=json --outputFile.json="$report"
+          # The case skips without SCIENT_REAL_MATLAB; a skip must not pass as a run.
+          node -e 'const r = require(process.argv[1]); if (r.numPassedTests !== 1 || r.numFailedTests !== 0) { console.error("Expected exactly one MATLAB adapter case to run", r.numPassedTests); process.exit(1); }' "$report"
 
   publish:
     needs: [python, matlab]

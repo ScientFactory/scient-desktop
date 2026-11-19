@@ -7,9 +7,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
-  downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
+  markManagedRuntimeCheck,
   resolveScientAgentArtifactPolicy,
   smokeManagedRuntimeExecutable,
 } from "@scientfactory/provider-runtime";
@@ -38,7 +38,10 @@ import {
   type ConfiguredRuntimeProbe,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   QualifiedRpcManagedRuntime,
   type ManagedRpcQualification,
@@ -128,35 +131,52 @@ export const qualifyManagedScientAgentRuntime = Effect.fn("ScientAgentManagedRun
           executableActivation: input.activations.find(
             (activation) => activation.identity === identity,
           ),
-        }).pipe(Effect.timeout(SCIENT_QUALIFICATION_TIMEOUT));
+        }).pipe(
+          Effect.timeout(SCIENT_QUALIFICATION_TIMEOUT),
+          Effect.mapError((cause) => markManagedRuntimeCheck("rpc_start", cause)),
+        );
         const cleanup = client.shutdown.pipe(
           Effect.ignore,
           Effect.andThen(client.close()),
           Effect.uninterruptible,
         );
+        // The deadline below covers both steps; its timeout names the one it cut short.
+        let step: "rpc_start" | "get_state" = "rpc_start";
         yield* Effect.gen(function* () {
-          const ready = yield* client.ready;
+          const ready = yield* client.ready.pipe(
+            Effect.mapError((cause) => markManagedRuntimeCheck("rpc_start", cause)),
+          );
           // OMP advertises v2 in supportedProtocolVersions while its ready
           // envelope remains on the v1 wire shape.
           if (!ready.supportedProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)) {
-            return yield* new ProviderConnectionActionError({
-              message: "The staged Scient Agent runtime did not offer Scient RPC protocol v2.",
-            });
+            return yield* markManagedRuntimeCheck(
+              "protocol",
+              new ProviderConnectionActionError({
+                message: "The staged Scient Agent runtime did not offer Scient RPC protocol v2.",
+              }),
+            );
           }
           if (client.version !== input.expectedVersion) {
-            return yield* new ProviderConnectionActionError({
-              message: `The staged Scient Agent runtime reported ${client.version} instead of ${input.expectedVersion}.`,
-            });
+            return yield* markManagedRuntimeCheck(
+              "version",
+              new ProviderConnectionActionError({
+                message: `The staged Scient Agent runtime reported ${client.version} instead of ${input.expectedVersion}.`,
+              }),
+            );
           }
-          yield* client.getState();
+          step = "get_state";
+          yield* client
+            .getState()
+            .pipe(Effect.mapError((cause) => markManagedRuntimeCheck("get_state", cause)));
         }).pipe(
           Effect.onExit(() => cleanup),
           Effect.timeout(SCIENT_QUALIFICATION_TIMEOUT),
+          Effect.mapError((cause) => markManagedRuntimeCheck(step, cause)),
         );
       }),
     ).pipe(
       Effect.mapError((cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : new ProviderConnectionActionError({
               message: "The staged Scient Agent runtime failed its RPC qualification check.",
@@ -217,7 +237,6 @@ export const makeQualifiedManagedScientAgentRuntime = Effect.fn(
     qualification,
     dependencies: {
       ...input.dependencies,
-      download: input.dependencies?.download ?? downloadManagedScientAgentRuntime,
       smoke,
     },
   });

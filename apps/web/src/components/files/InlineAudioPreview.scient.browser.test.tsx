@@ -6,6 +6,11 @@ import { InlineAudioPreview } from "./InlineAudioPreview";
 vi.mock(import("~/assets/assetUrls"), () => ({
   useAssetUrlState: () => ({ _tag: "Loading", refresh: () => undefined }),
 }));
+// The gate is under test, not playback: the real player shows its failed state as soon as
+// the unreachable host errors, which can beat the assertion that reads its source.
+vi.mock(import("./AudioPreview"), () => ({
+  AudioPreview: (props: { readonly src: string }) => <audio src={props.src || undefined} />,
+}));
 
 // The real observer waits for a rendered frame, which CI can hold back past any wait.
 class InViewIntersectionObserver {

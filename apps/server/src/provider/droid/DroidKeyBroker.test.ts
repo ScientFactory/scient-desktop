@@ -224,6 +224,17 @@ const withBroker = <A>(
     );
   });
 
+// Node takes every TLS connection's default from the real process environment, so this
+// changes it there rather than through HostProcess.Environment. Returns the restore.
+const disableServerTlsVerification = () => {
+  const serverFlag = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  return () => {
+    if (serverFlag === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = serverFlag;
+  };
+};
+
 describe("Droid key broker", () => {
   it.effect("puts the real key in each protocol's header and forwards the API path", () =>
     Effect.gen(function* () {
@@ -1530,13 +1541,8 @@ describe("Droid key broker and the endpoint's transport", () => {
       });
       // Verification is never switched off: not by the instance's environment, and not by
       // the server's own, from which Node takes the default of every TLS connection.
-      const serverFlag = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-      const restoreServerFlag = Effect.sync(() => {
-        if (serverFlag === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        else process.env.NODE_TLS_REJECT_UNAUTHORIZED = serverFlag;
-      });
+      const restoreServerFlag = Effect.sync(disableServerTlsVerification());
       yield* Effect.addFinalizer(() => restoreServerFlag);
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
       yield* withBroker(
         { connections: [gateway], environment: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } },
         async (broker) => {

@@ -154,15 +154,13 @@
 }
 
 /* The window's panel buttons (maximize, terminal drawer, side panel) sit over
-   the tab strip while it is open, so there they hover and press like the
+   the tab strip while the panel is open, so there they hover and press like the
    strip's own buttons. Their icons use the strip's quieter style everywhere. */
-body:has([data-scient-tabstrip])
-  [data-workspace-titlebar-controls]
-  :is(button, [role="button"]):hover {
+[data-workspace-titlebar-controls][data-right-panel-open] :is(button, [role="button"]):hover {
   background-color: color-mix(in srgb, var(--background) 65%, transparent);
 }
 
-body:has([data-scient-tabstrip]) [data-workspace-titlebar-controls] [data-pressed] {
+[data-workspace-titlebar-controls][data-right-panel-open] [data-pressed] {
   background-color: color-mix(in srgb, var(--background) 85%, transparent);
 }
 

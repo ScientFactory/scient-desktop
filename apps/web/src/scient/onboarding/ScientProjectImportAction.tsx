@@ -6,8 +6,8 @@ import {
 import { ArrowRightIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
-import { usePrimarySessionState } from "../../environments/primary";
 import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironmentSessionState } from "../../state/session";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogPanel, DialogPopup, DialogTitle } from "../../components/ui/dialog";
@@ -22,14 +22,14 @@ const ProjectImportStep = lazy(() =>
 
 export function ScientProjectImportAction({ onImported }: { readonly onImported?: () => void }) {
   const environment = usePrimaryEnvironment();
-  const session = usePrimarySessionState();
+  const session = useEnvironmentSessionState(environment?.environmentId ?? null);
   const openNewThread = useNewThreadHandler();
   const [open, setOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const canImport =
     environment !== null &&
     session.data !== null &&
-    session.error === null &&
+    !session.hasError &&
     sessionGrantsScope(session.data, AuthOrchestrationOperateScope);
 
   const busy = canImport && importing;

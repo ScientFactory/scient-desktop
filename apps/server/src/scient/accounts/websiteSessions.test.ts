@@ -99,3 +99,22 @@ it("treats a site's protected cookie as its session once seen, ignoring leftover
   expect(status([{ domain: ".login.example.com", httpOnly: false }])).toBe(true);
   expect(status([])).toBe(true);
 });
+
+it("leaves imported and copied rows alone: they never said the session was there", () => {
+  const observed = new Set<string>();
+  const rows = (["import", "copy"] as const).map((from, index) => ({
+    ...account,
+    accountId: AccountId.make(`acc_synthetic0${index + 2}`),
+    signIn: { state: "unknown" as const, at: "1970-01-01T00:00:00.000Z", from },
+  }));
+  const ended = (cookies: Parameters<typeof endedWebsiteSessions>[1][number]["cookies"]) =>
+    endedWebsiteSessions(
+      rows,
+      [{ profileId: "work", cookies }],
+      observed,
+      now,
+      "synthetic-desktop",
+    );
+  expect(ended([{ domain: "login.example.com", httpOnly: true }])).toEqual([]);
+  expect(ended([])).toEqual([]);
+});

@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
@@ -39,7 +40,7 @@ export function useAssetUrlState(
 ): AssetUrlState {
   // SCIENT-FORK:START — Scient gates `environment-file` too and returns `refresh` in every state;
   // `reason` mirrors client-runtime's `blockedAssetUrlState`.
-  const fileAccess = useFilesystemReadAccess(environmentId);
+  const fileAccess = useFilesystemReadAccess(environmentId, useMessages());
   const canReadResource = fileAccess.canReadFiles || resource === null || !isFileResource(resource);
   const preparedConnection = usePreparedConnection(environmentId);
   const assetAtom =
@@ -137,6 +138,7 @@ function isFileResource(resource: AssetResource): boolean {
     // SCIENT-FORK:END
     resource._tag === "workspace-file" ||
     resource._tag === "media-file" ||
-    resource._tag === "draft-workspace-file"
+    resource._tag === "draft-workspace-file" ||
+    (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
   );
 }

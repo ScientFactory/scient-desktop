@@ -1,4 +1,6 @@
-import type { ExecutionStatus } from "./contract.ts";
+import * as Schema from "effect/Schema";
+
+import { ExecutionStatus } from "./contract.ts";
 
 const ALLOWED_TRANSITIONS: Readonly<Record<ExecutionStatus, ReadonlySet<ExecutionStatus>>> = {
   queued: new Set(["starting", "cancelled", "lost"]),
@@ -10,15 +12,12 @@ const ALLOWED_TRANSITIONS: Readonly<Record<ExecutionStatus, ReadonlySet<Executio
   lost: new Set(),
 };
 
-export class InvalidExecutionTransitionError extends Error {
-  readonly current: ExecutionStatus;
-  readonly next: ExecutionStatus;
-
-  constructor(current: ExecutionStatus, next: ExecutionStatus) {
-    super(`Execution status cannot transition from '${current}' to '${next}'.`);
-    this.name = "InvalidExecutionTransitionError";
-    this.current = current;
-    this.next = next;
+export class InvalidExecutionTransitionError extends Schema.TaggedError<InvalidExecutionTransitionError>()(
+  "InvalidExecutionTransitionError",
+  { current: ExecutionStatus, next: ExecutionStatus },
+) {
+  override get message(): string {
+    return `Execution status cannot transition from '${this.current}' to '${this.next}'.`;
   }
 }
 
@@ -28,7 +27,7 @@ export function transitionExecutionStatus(
 ): ExecutionStatus {
   if (current === next) return current;
   if (!ALLOWED_TRANSITIONS[current].has(next)) {
-    throw new InvalidExecutionTransitionError(current, next);
+    throw new InvalidExecutionTransitionError({ current, next });
   }
   return next;
 }

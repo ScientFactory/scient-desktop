@@ -3,6 +3,10 @@ import * as Schema from "effect/Schema";
 import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { AuthProvidersManageScope, AuthSettingsWriteScope } from "./auth.ts";
+import {
+  applyClientSettingsResets,
+  CLIENT_SETTINGS_RESET_REVISION,
+} from "./scientClientSettingsResets.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   AntigravitySettings,
@@ -55,22 +59,27 @@ describe("ServerSettings thread sections", () => {
   });
 });
 
-describe("ServerSettings Cursor account usage", () => {
-  // Reading another app's Keychain login makes macOS ask for a password, so it
-  // stays off until the user turns it on; never at launch by default.
-  it("keeps Keychain usage off until enabled, preserving an explicit opt-in", () => {
-    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(false);
-    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(false);
-    expect(
-      decodeServerSettings({ cursorKeychainUsageEnabled: true }).cursorKeychainUsageEnabled,
-    ).toBe(true);
-    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: true })).toEqual({
-      cursorKeychainUsageEnabled: true,
+describe("ClientSettings typography defaults", () => {
+  it("uses the Scient reading sizes", () => {
+    expect(DEFAULT_CLIENT_SETTINGS).toMatchObject({
+      fontSizeInterface: 15,
+      fontSizePrompt: 16,
+      fontSizeCode: 14,
+      fontSizeTerminal: 14,
     });
   });
-});
 
-describe("ClientSettings typography defaults", () => {
+  it("returns every saved font size to the defaults once", () => {
+    const saved = { ...DEFAULT_CLIENT_SETTINGS, fontSizeInterface: 18, fontSizeCode: 16 };
+    expect(applyClientSettingsResets(saved, 2)).toMatchObject({
+      fontSizeInterface: 15,
+      fontSizePrompt: 16,
+      fontSizeCode: 14,
+      fontSizeTerminal: 14,
+    });
+    expect(applyClientSettingsResets(saved, CLIENT_SETTINGS_RESET_REVISION)).toBe(saved);
+  });
+
   it("defaults old settings to regular weight without adding a patch value", () => {
     expect(decodeClientSettings({}).fontWeightInterface).toBe(400);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("fontWeightInterface");

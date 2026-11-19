@@ -1,5 +1,7 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
+import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
+import { latexQuote } from "../annotations/quoteFormat";
 import { latexSelectionClipboard } from "./latexClipboard";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
@@ -15,6 +17,7 @@ import {
   type ResolveLatexSourceOwner,
   type LatexSourceOwner,
 } from "./latexVisualSelection";
+import type { CitationItem } from "@scientfactory/scient-sources";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { latexVisualNodeSignature } from "./latexVisualDocument";
@@ -78,6 +81,7 @@ import {
 import { LatexReadingAnchor } from "./latexReadingAnchor";
 import { LatexColumnBreaks } from "./latexColumnBreaks";
 import { LatexPagedPresentation, latexPagedKey, visualPageAt } from "./latexPagedPresentation";
+import { latexBlockNeighbours } from "./latexBlockNeighbours";
 import { LatexFootnotes } from "./latexFootnotes";
 import { latexLayoutLength } from "./latexPageLayouts";
 import { observeResize } from "~/lib/observeResize";
@@ -182,6 +186,9 @@ import {
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
+import { useLatexCitationSuggestions } from "./useLatexCitationSuggestions";
+import { useLatexCitationOpener, type LatexCitationOpener } from "./useLatexCitationOpener";
+import { isCitationOpenClick, latexCitationOpenItems, latexQuoteBefore } from "./latexCitationOpen";
 import { bibliographyChangePublished, mergeBibliographySourceEdit } from "./latexBibliographyModel";
 import {
   LatexReferencesPanel,
@@ -190,6 +197,7 @@ import {
   type ReferenceFileCallbacks,
 } from "./LatexReferencesPanel";
 import { LatexFigureInsertDialog } from "./LatexFigureInsertDialog";
+import { LatexResultPicker } from "../results/LatexResultPicker";
 import { LatexFigureArtwork } from "./LatexFigureArtwork";
 import { LatexTikzArtwork } from "./LatexTikzView";
 import { LatexColorBoxView } from "./LatexColorBoxView";
@@ -330,7 +338,7 @@ import {
 import { insertLatexBlock } from "./latexInsertion";
 import { LatexBibliographyDialog } from "./LatexBibliographyDialog";
 import { LatexLinkDialog } from "./LatexLinkDialog";
-import { withoutComments } from "./latexAuthoringModel";
+import { bibliographyPaths, withoutComments } from "./latexAuthoringModel";
 import {
   LATEX_PROJECTION_METADATA_REPAIR,
   LatexVisualSearch,
@@ -1669,6 +1677,8 @@ function LatexInlineCommandView({
   const argument = String(node.attrs.argument ?? "");
   const citation = latexCitationParts(String(node.attrs.raw ?? ""));
   const referenceManager = useContext(LatexReferencesContext);
+  const citationOpener = citation ? (referenceManager?.citationOpener ?? null) : null;
+  const pendingCitation = useRef<ReadonlyArray<CitationItem> | null>(null);
   const citationTargets = useLatexReferenceState(
     name === "cite" ? referenceEditor : null,
     (current) => {
@@ -1892,6 +1902,66 @@ function LatexInlineCommandView({
       data-anchor={name === "hypertarget" || undefined}
       data-citation={!!citationTargets || undefined}
       contentEditable={false}
+      onMouseDownCapture={(event: MouseEvent<HTMLElement>) => {
+        pendingCitation.current = null;
+        if (!citation || !citationOpener) return;
+        const key =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-citation-key]")
+            : null;
+        // Read-only, a plain click opens the source unless it already goes to a reference.
+        const reading =
+          !editable &&
+          event.button === 0 &&
+          !(event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) &&
+          key?.dataset.citationTarget === undefined;
+        if (!isCitationOpenClick(event) && !reading) return;
+        const items = latexCitationOpenItems(
+          argument,
+          citation.notes,
+          key?.dataset.citationKey ?? null,
+        );
+        if (!citationOpener.opens(items)) return;
+        pendingCitation.current = items;
+        // The press would select the citation and open its options.
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClickCapture={(event: MouseEvent<HTMLElement>) => {
+        let items = pendingCitation.current;
+        pendingCitation.current = null;
+        const key =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-citation-key]")
+            : null;
+        // Enter or Space on a citation while reading: a click with no press before it.
+        if (!items && event.detail === 0 && !editable && citation && citationOpener) {
+          const keyed = latexCitationOpenItems(
+            argument,
+            citation.notes,
+            key?.dataset.citationKey ?? null,
+          );
+          if (key?.dataset.citationTarget === undefined && citationOpener.opens(keyed)) {
+            items = keyed;
+          }
+        }
+        if (!items || !citationOpener) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const position = getPos();
+        const before = typeof position === "number" ? editor.state.doc.resolve(position) : null;
+        const box = (key ?? event.currentTarget).getBoundingClientRect();
+        citationOpener.open(
+          items,
+          before &&
+            latexQuoteBefore(
+              before.parent.textBetween(0, before.parentOffset, undefined, "\ufffc"),
+            ),
+          event.detail === 0
+            ? { x: box.left, y: box.bottom }
+            : { x: event.clientX, y: event.clientY },
+        );
+      }}
     >
       {name === "hfill" ? null : textEditing && (hasLinkText || name === "footnote") ? (
         <>
@@ -1996,7 +2066,9 @@ function LatexInlineCommandView({
                 >
                   <button
                     type="button"
-                    disabled={!editable && !target}
+                    disabled={!editable && !target && !citationOpener}
+                    data-citation-key={key}
+                    data-citation-target={target ? "" : undefined}
                     aria-label={
                       target
                         ? `Go to reference ${target.number ?? key}`
@@ -2025,7 +2097,7 @@ function LatexInlineCommandView({
       ) : (
         <button
           type="button"
-          disabled={!editable && !equationReference && name !== "footnote"}
+          disabled={!editable && !equationReference && name !== "footnote" && !citationOpener}
           aria-label={
             name === "footnote"
               ? `Go to footnote ${footnoteNumber ?? ""}`
@@ -2424,6 +2496,8 @@ const LatexWorkspaceContext = createContext<LatexVisualWorkspace | null>(null);
 const LatexReferencesContext = createContext<{
   open: (key?: string) => void;
   entries: readonly BibliographyDetails[];
+  /** Opens a citation's Library source; null while it cannot. */
+  citationOpener: LatexCitationOpener | null;
 } | null>(null);
 
 function normalizeFigurePath(sourceRelativePath: string, figurePath: string): string | null {
@@ -5788,6 +5862,11 @@ export interface LatexVisualEditorProps {
   readonly rootRelativePath?: string | null;
   readonly disabled: boolean;
   readonly onEdit: (request: LatexVisualEditRequest) => LatexVisualEditOutcome;
+  /**
+   * Reads project files an insertion is about to include, so the edit that includes them shows
+   * their text at once. False when they could not be read in time.
+   */
+  readonly prepareIncludedFiles?: (paths: ReadonlyArray<string>) => Promise<boolean>;
   readonly canEditRoot?: boolean;
   /** False when the document is assembled from several files; recovery is then offered to read and copy only. */
   readonly singleFileDocument?: boolean;
@@ -6052,11 +6131,32 @@ function LatexVisualEditorReady(
   const currentSetupSource = useRef(props.sourceSnapshot.setupSource);
   // Plugins and fields live as long as the editor and read the newest setup through this.
   const readSetupSource = useStableCallback(() => currentSetupSource.current);
+  const citationOpener = useLatexCitationOpener({
+    environmentId: props.environmentId ?? null,
+    root: props.citationSource?.cwd ?? null,
+    threadRef: props.citationSource && {
+      environmentId: props.citationSource.environmentId,
+      threadId: props.citationSource.threadId,
+    },
+    documentPath: props.relativePath ?? null,
+  });
+  const citationSuggestions = useLatexCitationSuggestions({
+    environmentId: props.environmentId ?? null,
+    root: props.cwd ?? null,
+    bibliography: () => ({
+      paths: bibliographyPaths(
+        readSetupSource(),
+        props.rootRelativePath ?? props.relativePath ?? "",
+      ),
+      wholeDocument: true,
+    }),
+  });
   const commandContext = {
     source: mathSetupSource,
     referenceSource: readSetupSource,
     macros: documentMathSetup.macros,
     colors: latexDocumentColors(mathSetupSource),
+    citations: citationSuggestions,
   };
   const completionContext = useRef(commandContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for editor plugins to read
@@ -6428,6 +6528,7 @@ function LatexVisualEditorReady(
   const pendingLink = useRef<{ text: string; url: string } | null>(null);
   const insertionTarget = useRef<{ doc: ProseMirrorNode; selection: Selection } | null>(null);
   const [figureOpen, setFigureOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const selectionActionOwnerId = useId();
@@ -7183,6 +7284,10 @@ function LatexVisualEditorReady(
     LatexInputPriority,
     LatexPageMarkers,
     LatexPagedPresentation.configure({ source: readSetupSource }),
+    Extension.create({
+      name: "latexBlockNeighbours",
+      addProseMirrorPlugins: () => [latexBlockNeighbours()],
+    }),
     LatexReadingAnchor.configure({ syncLayout: syncZoomLayout }),
     richPreviewExtension,
     Extension.create({
@@ -8079,12 +8184,20 @@ function LatexVisualEditorReady(
   };
 
   const insertVisualSource = (source: string, wrap = false) => {
-    if (!editor || textReadOnly) return;
+    if (!editor || textReadOnly) return false;
     const nodes = projectLatexVisualDocument(source).content.content ?? [];
-    if (nodes.length && !insertLatexBlock(editor, nodes, wrap))
+    // The source guard can still refuse after the commands report success.
+    const refused = refusedChanges.current;
+    if (
+      nodes.length &&
+      (!insertLatexBlock(editor, nodes, wrap) || refusedChanges.current !== refused)
+    ) {
       setNotice(
         "This insertion cannot preserve the selected content here. Place the cursor in ordinary text or edit Source.",
       );
+      return false;
+    }
+    return nodes.length > 0;
   };
   const captureInsertion = () => {
     if (!editor || textReadOnly || !flushTypingRef.current()) return false;
@@ -8297,6 +8410,35 @@ function LatexVisualEditorReady(
     };
     requestAnimationFrame(focusFirstCell);
   };
+  useDocumentQuoteTarget(
+    props.environmentId && props.cwd && props.relativePath && editor
+      ? {
+          environmentId: props.environmentId,
+          root: props.cwd,
+          label: props.relativePath.split("/").at(-1) ?? props.relativePath,
+          element: () => editor.view.dom,
+          insert: (quote) => {
+            if (readOnly || !editor.state.selection.$from.parent.isTextblock) return false;
+            const { text, cite } = latexQuote(quote);
+            return editor
+              .chain()
+              .focus()
+              .insertContent([
+                { type: "text", text },
+                ...(cite
+                  ? [
+                      {
+                        type: "latexInlineCommand",
+                        attrs: { name: "cite", argument: cite.key, raw: cite.raw },
+                      },
+                    ]
+                  : []),
+              ])
+              .run();
+          },
+        }
+      : null,
+  );
   const insertReference = (command: string, key: string) => {
     if (readOnly || !key || /[{}\\%]/u.test(key) || !restoreInsertion()) return;
     if (editor) editor.commands.setTextSelection(editor.state.selection.to);
@@ -8401,6 +8543,21 @@ function LatexVisualEditorReady(
           ? captureInsertion() && setFigureOpen(true)
           : setNotice("Choose a root document before inserting a figure."),
     },
+    // Results live in a project's Compute record, so a document outside one has none to insert.
+    ...(props.environmentId && props.cwd
+      ? [
+          {
+            id: "result",
+            label: "Result",
+            description: "A value, table or figure from a script run",
+            group: "Objects",
+            run: () =>
+              props.rootRelativePath
+                ? captureInsertion() && setResultOpen(true)
+                : setNotice("Choose a root document before inserting a result."),
+          },
+        ]
+      : []),
     ...[
       "theorem",
       "definition",
@@ -8818,6 +8975,7 @@ function LatexVisualEditorReady(
   const referencesContext = {
     open: (key?: string) => openReferenceManagerRef.current(key),
     entries: referenceCatalog,
+    citationOpener,
   };
   const selectedCitation = useEditorState({
     editor,
@@ -8832,6 +8990,60 @@ function LatexVisualEditorReady(
       );
     },
   });
+  /** The picker kept the cursor; put it back before the first change a result makes. */
+  const resultSelectionReady = () => insertionTarget.current === null || restoreInsertion();
+  /**
+   * Adds a line just before `\begin{document}` in the root, unless the setup already has what it
+   * brings: a package, or a macro an included file defines.
+   */
+  const ensureResultPreambleLine = (line: string, present: RegExp) => {
+    if (!editor || readOnly || !resultSelectionReady()) return false;
+    if (!flushTypingRef.current() || !flushSourceEditRef.current()) return false;
+    if (present.test(currentSetupSource.current ?? "")) return true;
+    const expected = currentSource.current;
+    const root = currentSnapshot.current.rootSource;
+    const ownRoot = root == null || root === expected;
+    const rootSource = ownRoot ? expected : root;
+    if (!rootSource || (!ownRoot && !props.canEditRoot)) return false;
+    const end = latexPreambleEnd(rootSource);
+    if (rootSource.slice(0, end).includes(line)) return true;
+    const lead = end === 0 || rootSource[end - 1] === "\n" ? "" : "\n";
+    const patch = latexOwnedSourcePatch(rootSource, end, end, `${lead}${line}\n`);
+    if (!patch) return false;
+    const edit = { source: rootSource, patches: [patch] };
+    return commitDocumentSource(ownRoot ? edit : { source: expected, patches: [], root: edit });
+  };
+  const insertResultMacro = (macro: { name: string; definition: string; source: string }) => {
+    if (!editor || readOnly || !resultSelectionReady()) return false;
+    if (
+      !editor.state.selection.$from.parent.isTextblock ||
+      editor.state.selection instanceof NodeSelection
+    )
+      return false;
+    return editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        closeHistory(tr);
+        return true;
+      })
+      .insertContent([
+        // Re-projecting after the preamble change drops a paragraph's trailing space.
+        ...(/[^\s([{~/-]$/u.test(editor.state.selection.$from.nodeBefore?.text ?? "")
+          ? [{ type: "text", text: " " }]
+          : []),
+        {
+          type: "latexInlineCommand",
+          attrs: {
+            name: "proseMacro",
+            argument: macro.name,
+            raw: macro.source,
+            linkText: macro.definition,
+          },
+        },
+      ])
+      .run();
+  };
   const documentSettings = (
     <LatexDocumentSettings
       onOpenChange={setSettingsOpen}
@@ -10292,6 +10504,30 @@ function LatexVisualEditorReady(
                               }}
                               onInsert={(source) => {
                                 if (restoreInsertion()) insertVisualSource(source);
+                              }}
+                            />
+                          ) : null}
+                          {resultOpen &&
+                          !readOnly &&
+                          props.environmentId &&
+                          props.cwd &&
+                          props.rootRelativePath ? (
+                            <LatexResultPicker
+                              environmentId={props.environmentId}
+                              cwd={props.cwd}
+                              rootPath={props.rootRelativePath}
+                              setup={() => currentSetupSource.current ?? ""}
+                              prepareFiles={
+                                props.prepareIncludedFiles ?? (() => Promise.resolve(true))
+                              }
+                              ensurePreambleLine={ensureResultPreambleLine}
+                              insertMacro={insertResultMacro}
+                              insertBlock={(source) =>
+                                resultSelectionReady() && insertVisualSource(source)
+                              }
+                              onClose={() => {
+                                setResultOpen(false);
+                                if (insertionTarget.current !== null) restoreInsertion();
                               }}
                             />
                           ) : null}

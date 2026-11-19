@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { toastManager } from "../../components/ui/toast";
-import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
 import { exportConversation, exportFileUrl } from "./client";
 import { copyMarkdownRequest } from "./exportDialog.logic";
@@ -48,7 +48,10 @@ export async function copyConversationMarkdown(threadRef: ScopedThreadRef): Prom
       threadRef.environmentId,
       copyMarkdownRequest(threadRef.threadId, localTimeZone()),
     );
-    const copied = await writeTextToClipboard(result.text ?? "", "conversation Markdown");
+    const copied = await writeTextToClipboard(
+      result.text ?? "",
+      namedClipboardTarget("conversation Markdown"),
+    );
     if (!copied) throw new Error("The conversation has nothing to copy yet.");
     toastManager.add(
       result.warnings.length > 0

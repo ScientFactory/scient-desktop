@@ -6,12 +6,15 @@ import type {
   ProviderRuntimeSummary,
 } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import { useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 
 import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { ComposerProviderUpdateFooter } from "./ComposerProviderUpdateFooter";
 import { ProviderLifecycleSetupSurface } from "./ProviderOnboardingPicker";
+import { scientAgentSignedOutAccount } from "./scientAgentAccountList";
 import {
   activeProviderRuntimeUpdateOperation,
   providerConnectionPresentation,
@@ -31,13 +34,16 @@ type ModelDisabledReason = (instanceId: ProviderInstanceId, model: string) => st
  * before it can run a turn.
  */
 export function useComposerProviderRuntimeUpdate(input: {
+  readonly environmentId: EnvironmentId;
   readonly selectedProviderEntry: ProviderInstanceEntry | undefined;
   readonly selectedInstanceId: ProviderInstanceId;
+  readonly selectedModel: string;
   readonly lockedProvider: ProviderDriverKind | null;
   readonly getModelDisabledReason: ModelDisabledReason;
 }) {
   const { selectedProviderEntry, selectedInstanceId, lockedProvider, getModelDisabledReason } =
     input;
+  useObserveProviderPick(input.environmentId, selectedProviderEntry);
   const [localRuntimeUpdate, setLocalRuntimeUpdate] =
     useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
   const [preparingRuntimeUpdateInstanceId, setPreparingRuntimeUpdateInstanceId] =
@@ -62,20 +68,28 @@ export function useComposerProviderRuntimeUpdate(input: {
     instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
       ? providerRuntimeUpdateSendDisabledReason
       : getModelDisabledReason(instanceId, model);
+  // One Scient Agent holds many model accounts; the selected model's own may have signed out.
+  const reconnectAccount = scientAgentSignedOutAccount(
+    selectedProviderEntry?.snapshot,
+    input.selectedModel,
+  );
   const selectedProviderNeedsConnection =
     selectedProviderEntry !== undefined &&
-    shouldShowProviderLifecycleSetupInComposer(
-      selectedProviderEntry.snapshot,
-      selectedProviderRuntime,
-    );
+    (reconnectAccount !== undefined ||
+      shouldShowProviderLifecycleSetupInComposer(
+        selectedProviderEntry.snapshot,
+        selectedProviderRuntime,
+      ));
   const selectedProviderConnectionKind = providerConnectionPresentation(
     selectedProviderEntry?.snapshot,
   ).kind;
+  // A signed-out model account is named in a new chat too, before its first send fails.
   const reconnectProviderEntry =
-    lockedProvider !== null &&
     selectedProviderEntry !== undefined &&
-    (selectedProviderConnectionKind === "not-connected" ||
-      selectedProviderConnectionKind === "connecting")
+    (reconnectAccount !== undefined ||
+      (lockedProvider !== null &&
+        (selectedProviderConnectionKind === "not-connected" ||
+          selectedProviderConnectionKind === "connecting")))
       ? selectedProviderEntry
       : undefined;
   return {
@@ -86,6 +100,7 @@ export function useComposerProviderRuntimeUpdate(input: {
     getComposerModelDisabledReason,
     selectedProviderNeedsConnection,
     reconnectProviderEntry,
+    reconnectAccount,
     /** Model picker trigger props while the selected provider updates. */
     modelPickerUpdateStatusProps: selectedProviderIsUpdating
       ? {
@@ -94,6 +109,22 @@ export function useComposerProviderRuntimeUpdate(input: {
         }
       : {},
   };
+}
+
+/** Tells the server Scient Agent was picked; it records how ready it was, once per installation. */
+function useObserveProviderPick(
+  environmentId: EnvironmentId,
+  entry: ProviderInstanceEntry | undefined,
+) {
+  const observePick = useAtomCommand(serverEnvironment.observeProviderRuntimePick, {
+    reportFailure: false,
+  });
+  const pickedInstanceId = entry?.snapshot.driver === "scient" ? entry.instanceId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports a selection to the server's analytics
+  useEffect(() => {
+    if (pickedInstanceId === null) return;
+    void observePick({ environmentId, input: { instanceId: pickedInstanceId } });
+  }, [environmentId, observePick, pickedInstanceId]);
 }
 
 /**

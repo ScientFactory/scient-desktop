@@ -19,6 +19,13 @@ import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 // Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a reservation older than this was abandoned.
 const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 
+// SCIENT-FORK:START — the default cap is relay configuration (RELAY_DEFAULT_TUNNEL_LIMIT).
+export const ManagedTunnelDefaultLimit = Context.Reference<number>(
+  "t3code-relay/environments/ManagedTunnelDefaultLimit",
+  { defaultValue: () => DEFAULT_MANAGED_TUNNEL_LIMIT },
+);
+// SCIENT-FORK:END
+
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
   "ManagedTunnelLimitPersistenceError",
   {
@@ -110,12 +117,18 @@ export class ManagedTunnelLimits extends Context.Service<
     readonly getOverride: (input: {
       readonly userId: string;
     }) => Effect.Effect<number | null, ManagedTunnelLimitPersistenceError>;
+    // SCIENT-FORK:START — the configured default cap, reported to clients.
+    readonly defaultMaxTunnels: number;
+    // SCIENT-FORK:END
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
+  // SCIENT-FORK:START — read once per layer build; worker.ts provides the configured value.
+  const defaultMaxTunnels = yield* ManagedTunnelDefaultLimit;
+  // SCIENT-FORK:END
 
   // Asked only at the cap, so most links never call T3 Chat. Any failure keeps the lower cap.
   const t3ChatTunnelLimit = (userId: string) =>
@@ -145,6 +158,9 @@ const make = Effect.gen(function* () {
       );
 
   return ManagedTunnelLimits.of({
+    // SCIENT-FORK:START — reported to clients by the API.
+    defaultMaxTunnels,
+    // SCIENT-FORK:END
     getOverride: Effect.fn("relay.managed_tunnel_limits.get_override")(function* (input) {
       return yield* loadOverride(input.userId);
     }),
@@ -170,7 +186,9 @@ const make = Effect.gen(function* () {
           );
 
         const override = yield* loadOverride(input.userId);
-        const baseMaxTunnels = override ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
+        // SCIENT-FORK:START — configured default in place of the contract constant.
+        const baseMaxTunnels = override ?? defaultMaxTunnels;
+        // SCIENT-FORK:END
 
         const pendingCutoff = DateTime.formatIso(
           DateTime.subtract(yield* DateTime.now, {

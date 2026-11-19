@@ -31,6 +31,7 @@ import {
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
+import { parseUrl } from "@t3tools/shared/url";
 
 /** Shown after a row's name; healthy entries show nothing. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
@@ -55,6 +56,7 @@ export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, st
   "needs-credential": "Credential missing",
   disabled: "Turned off",
   "project-deselected": "Off for this project",
+  "agent-deselected": "Not chosen for this agent",
   "transport-unsupported": "Not supported by this agent",
   "name-collision": "Name taken by the agent's own server",
   "native-servers-unknown": "Agent's own servers couldn't be checked",
@@ -64,19 +66,27 @@ export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, st
 export const TEST_OUTCOME_LABELS: Readonly<Record<ConnectorTestResult["outcome"], string>> = {
   ok: "Reachable",
   "needs-auth": "Needs sign-in",
+  "needs-setup": "Needs setup",
   unreachable: "Unreachable",
   error: "Error",
 };
 
 /** A turned-off connector says so first; otherwise its health. */
-export function connectorStatusText(connector: Pick<ConnectorSummary, "status" | "enabled">) {
+export function connectorStatusText(
+  connector: Pick<ConnectorSummary, "status" | "enabled" | "lastError" | "local">,
+) {
   if (!connector.enabled) return "Off";
+  if (connector.local?.problem !== undefined) return "Can't read its folder";
+  if (connector.local?.signIn?.state === "needs-user") return "Needs sign-in";
+  if (connector.local !== undefined && connector.local.missing.length > 0) return "Needs setup";
+  if (connector.local !== undefined && connector.lastError !== undefined)
+    return "Stopped with an error";
   return CONNECTOR_STATUS_TEXT[connector.status];
 }
 
 export interface ConnectorActions {
   /** The primary action appears only when a grant is needed. */
-  readonly signIn: "sign-in" | "reconnect" | null;
+  readonly signIn: "sign-in" | null;
   readonly canTest: boolean;
 }
 
@@ -84,7 +94,7 @@ export interface ConnectorActions {
  * A missing credential cannot be repaired by sign-in: the entered key is gone
  * and the connector must be added again.
  */
-export function connectorActions(connector: Pick<ConnectorSummary, "status" | "auth">) {
+export function connectorActions(connector: Pick<ConnectorSummary, "status">) {
   const actions: Readonly<Record<ConnectorStatus, ConnectorActions>> = {
     connected: { signIn: null, canTest: true },
     "needs-auth": { signIn: "sign-in", canTest: false },
@@ -108,6 +118,8 @@ export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
             : `Header ${auth.headerName ?? ""}`.trim();
       return auth.storage === "bound" ? `${kind} from Accounts` : kind;
     }
+    case "source-control":
+      return `${auth.account} from Source Control`;
   }
 }
 
@@ -127,6 +139,8 @@ export function connectorSourceLabel(
       return curated ? "Scient catalog" : "Added by URL";
     case "plugin":
       return `Plugin ${pluginName ?? source.pluginId}`;
+    case "local":
+      return source.registry === undefined ? "Runs on this computer" : "MCP Registry, runs locally";
   }
 }
 
@@ -138,7 +152,7 @@ export function entrySourceLabel(entry: DiscoverEntry): string {
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
 export function urlHost(url: string): string | null {
-  return URL.canParse(url) ? new URL(url).hostname.replace(/^www\./u, "") : null;
+  return parseUrl(url)?.hostname.replace(/^www\./u, "") ?? null;
 }
 
 const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {
@@ -215,7 +229,7 @@ export function matchesQuery(query: string, texts: ReadonlyArray<string | undefi
   return words.every((word) => haystack.includes(word));
 }
 
-function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+export function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
   if (provider.driver === "scient" && (!provider.displayName || provider.displayName === "Scient"))
     return "Scient Agent";
   if (provider.displayName) return provider.displayName;
@@ -250,6 +264,23 @@ export function worksWithOptions(
     });
   }
   return options;
+}
+
+/** An agent the person has and can use now: installed, turned on and ready. */
+export function providerAvailable(provider: ServerProvider): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    (provider.status === "ready" || provider.status === "warning") &&
+    provider.availability !== "unavailable"
+  );
+}
+
+/** A Scient connector's audience: every agent, or the ones the person chose. */
+export function connectorAudience(connector: Pick<ConnectorSummary, "agents">): ExtensionAudience {
+  return connector.agents === undefined
+    ? { layer: "scient" }
+    : { layer: "scient", agents: connector.agents };
 }
 
 /** Connectors reach an agent only when its instance reports remote MCP support. */
@@ -394,14 +425,34 @@ export function providerExtensionAudience(
         ? "Uses Codex's own ChatGPT account"
         : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
           ? "Uses Claude's own Claude account"
-          : "Managed by this agent",
+          : provider.driver === "scient" && "scope" in entry && entry.scope === "chatgpt"
+            ? "Uses Scient Agent's own ChatGPT account"
+            : provider.driver === "codex" && "scope" in entry && entry.scope === "chatgpt"
+              ? "Uses Codex's own ChatGPT account"
+              : "Managed by this agent",
   };
+}
+
+/** Who a store's plugin is for: Claude's stores serve Claude and Scient Agent, Codex's serve Codex. */
+export function providerStoreAudience(
+  provider: Pick<ServerProvider, "driver" | "instanceId">,
+  kind: "shared" | "codex",
+): ExtensionAudience {
+  return kind === "shared"
+    ? { layer: "shared", ownerInstanceId: provider.instanceId }
+    : {
+        layer: "agent",
+        driver: provider.driver,
+        instanceId: provider.instanceId,
+        label: "Codex",
+        reason: "Uses Codex’s own ChatGPT account",
+      };
 }
 
 export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
   switch (audience.layer) {
     case "scient":
-      return true;
+      return audience.agents === undefined || audience.agents.includes(provider.instanceId);
     case "shared":
       return (
         provider.driver === "claudeAgent" ||
@@ -412,17 +463,48 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
       );
     case "agent":
       return provider.instanceId === audience.instanceId;
+    case "account":
+      return audience.connected.some((agent) => agent.instanceId === provider.instanceId);
   }
 }
 
-export function audienceLabel(audience: ExtensionAudience): string {
+/** "Codex", "Codex and Claude", "Codex, Claude and Scient Agent". */
+export function listLabels(labels: ReadonlyArray<string>): string {
+  return labels.length <= 1
+    ? (labels[0] ?? "")
+    : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+}
+
+/** Who can use it, as the value beside a "Works with" label: "All your agents", "Codex only". */
+export function audienceNames(audience: ExtensionAudience): string {
   switch (audience.layer) {
     case "scient":
-      return "Works with all your agents";
+      return audience.agents === undefined ? "All your agents" : "The agents you chose";
     case "shared":
-      return "Works with Claude and Scient Agent";
+      return "Claude and Scient Agent";
     case "agent":
       return `${audience.label} only`;
+    case "account":
+      return audience.connected.length === 0
+        ? audience.pending.length === 0
+          ? "Through your ChatGPT or Claude account"
+          : "Not connected yet"
+        : listLabels([...new Set(audience.connected.map((agent) => agent.label))]);
+  }
+}
+
+/** The same as a sentence of its own: "Works with all your agents", "Codex only". */
+export function audienceLabel(audience: ExtensionAudience): string {
+  const names = audienceNames(audience);
+  switch (audience.layer) {
+    case "scient":
+      return `Works with ${names.charAt(0).toLowerCase()}${names.slice(1)}`;
+    case "shared":
+      return `Works with ${names}`;
+    case "agent":
+      return names;
+    case "account":
+      return audience.connected.length === 0 ? names : `Works with ${names}`;
   }
 }
 
@@ -436,7 +518,27 @@ export function audienceSupport(
     const connector = connectorSupport.find(
       (entry) => entry.providerInstanceId === provider.instanceId,
     );
+    // An agent left out of a connector's chosen agents shows as such, not as unable to take it.
+    if (audience.layer === "scient" && connector && !supported)
+      return {
+        ...connector,
+        status: "unsupported",
+        reason: "Not chosen for this agent",
+      };
     if (audience.layer === "scient" && connector) return connector;
+    const pending =
+      audience.layer === "account"
+        ? audience.pending.find((agent) => agent.instanceId === provider.instanceId)
+        : undefined;
+    // An agent one step away from a service (a sign-in, a connect) shows with that step.
+    if (!supported && pending)
+      return {
+        providerInstanceId: provider.instanceId,
+        driver: provider.driver,
+        displayName: providerLabel(provider),
+        status: "conditional",
+        reason: pending.reason,
+      };
     return {
       providerInstanceId: provider.instanceId,
       driver: provider.driver,
@@ -445,7 +547,11 @@ export function audienceSupport(
       ...(!supported
         ? {
             reason:
-              audience.layer === "agent" ? audience.reason : "Uses Claude Code's plugin format",
+              audience.layer === "agent"
+                ? audience.reason
+                : audience.layer === "account"
+                  ? "This agent has no account that offers it"
+                  : "Uses Claude Code's plugin format",
           }
         : {}),
     };
@@ -461,9 +567,18 @@ export function worksWithCardAgents(
   audience: ExtensionAudience,
   support: ReadonlyArray<ConnectorProviderSupport>,
 ): ReadonlyArray<ConnectorProviderSupport> {
-  return audience.layer === "scient"
+  return audience.layer === "scient" && audience.agents === undefined
     ? support
     : support.filter((entry) => entry.status !== "unsupported");
+}
+
+/** The action that opens an agent's account page for this server, or none. */
+export function providerServerConnectLabel(
+  server: Pick<ServerProviderMcpServer, "connectUrl" | "scope" | "status">,
+): string | undefined {
+  if (!server.connectUrl) return undefined;
+  if (server.scope === "chatgpt") return "Open in ChatGPT";
+  return server.status === "connected" ? "Manage on claude.ai" : "Connect on claude.ai";
 }
 
 export function providerServerDisplayName(
@@ -499,6 +614,7 @@ export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKi
 
 export function entryNeedsSetup(entry: DiscoverEntry): boolean {
   return (
+    (entry.localPackage !== undefined && entry.localPackage.environment.length > 0) ||
     entry.oauthClientRequired === true ||
     entryNeedsToken(entry) ||
     entry.apiKey !== undefined ||
@@ -526,8 +642,76 @@ export function entryFacts(
   ];
 }
 
+/** Who runs a hosted connector, and so receives what passes through it. */
+function connectorHost(
+  connector: Pick<ConnectorSummary, "url"> & { readonly local?: unknown },
+): string | undefined {
+  if (connector.local !== undefined) return undefined;
+  const url = parseUrl(connector.url);
+  if (url === null) return undefined;
+  return url.protocol === "https:" || url.protocol === "http:" ? url.host : undefined;
+}
+
+/**
+ * A connector's card facts: where it is hosted, then the catalog's. Once its sign-in works, the
+ * catalog's access words give way to whose account it uses, or to nothing when the service
+ * does not say.
+ */
+export function connectorFacts(
+  entry: DiscoverEntry | undefined,
+  connector: Pick<ConnectorSummary, "status" | "auth" | "url"> & { readonly local?: unknown },
+): ReadonlyArray<readonly [string, string]> {
+  const signedIn = connector.status === "connected" && connector.auth.type !== "none";
+  // Without a sign-in, the Connection card already says so.
+  const settled = signedIn || connector.auth.type === "none";
+  const host = connectorHost(connector);
+  return [
+    ...(host === undefined ? [] : [["Host", host] as const]),
+    ...entryFacts(entry).flatMap(([label, value]) =>
+      !settled || label !== "Access"
+        ? [[label, value] as const]
+        : connector.auth.type === "source-control"
+          ? [[label, `Signed in as ${connector.auth.account}`] as const]
+          : [],
+    ),
+  ];
+}
+
 export function validateCuratedAddress(value: string, template: string): string | null {
   return matchesExtensionAddressTemplate(value, template)
     ? null
     : "Enter an https address matching " + template + ".";
+}
+
+/**
+ * Splits a typed command line into a program and its arguments. Quotes group words, and `\"`
+ * inside double quotes is a quote; other backslashes stay, as in Windows paths. Null when a quote
+ * is left open.
+ */
+export function splitCommandLine(text: string): ReadonlyArray<string> | null {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let started = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else if (quote === '"' && char === "\\" && text[index + 1] === '"') current += text[++index];
+      else current += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) parts.push(current);
+      current = "";
+      started = false;
+    } else {
+      current += char;
+      started = true;
+    }
+  }
+  if (quote !== null) return null;
+  if (started) parts.push(current);
+  return parts;
 }

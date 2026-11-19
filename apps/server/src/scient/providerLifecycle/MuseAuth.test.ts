@@ -443,6 +443,7 @@ describe("Muse native account boundary", () => {
         generatePrContent: unused,
         generateThreadTitle: unused,
         generateReviewGuide: unused,
+        generateTranscriptionPostProcessing: unused,
         generateBranchName: () =>
           Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
       });

@@ -1,7 +1,8 @@
-import { type EnvironmentId, managedCapabilityDenial } from "@t3tools/contracts";
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-// SCIENT-FORK:START — guest links need T3 Connect, which Scient keeps off.
+// SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links.
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 // SCIENT-FORK:END
 import { environmentPresentations } from "~/state/presentation";
@@ -16,7 +17,7 @@ export const canShareWithGuestAtom = Atom.family((environmentId: EnvironmentId) 
   Atom.make((get) => {
     const serverConfig = get(environmentPresentations.serverConfigsAtom).get(environmentId);
     return (
-      // SCIENT-FORK:START — guest links need T3 Connect, which Scient keeps off.
+      // SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links.
       hasCloudPublicConfig() &&
       // SCIENT-FORK:END
       get(serverEnvironment.createGuestShare.permissionAtom(environmentId)) &&

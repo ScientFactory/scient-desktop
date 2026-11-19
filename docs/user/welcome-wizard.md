@@ -9,8 +9,10 @@ selection includes git repositories active within the last 30 days with at least
 to include older projects or change the selection.
 
 Linked worktrees of bare repositories can be offered as separate projects.
-Other linked worktrees, Codex scratch directories under `Documents/Codex`, and
-directories under `Downloads` are not offered.
+Conversations in other linked git worktrees count toward their main checkout,
+so a repository is offered even if you only worked in its worktrees. Codex
+scratch directories under `Documents/Codex`, and directories under `Downloads`
+are not offered.
 
 A large or malformed history can reach the scan limit. Scient keeps the
 projects it found and warns when projects or conversations may be missing.
@@ -30,11 +32,13 @@ same user turn. Ambiguous legacy or response-only context stays in the imported
 conversation so Scient does not remove user text. It reads one conversation at
 a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
-does not count toward that limit. It ignores malformed records and skips
-unreadable or unparseable conversations.
+does not count toward that limit. It ignores malformed records and
+conversations with no messages, such as a session opened in an editor but never
+used. It skips unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project,
-with up to 100,000 input records. Run import again to continue a large batch.
+Each import attempt reads up to 100 conversations and 4 GiB per project, with up
+to 100,000 input records. Conversations with no messages count toward the 4 GiB
+but not the 100. Run import again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 

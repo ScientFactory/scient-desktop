@@ -38,7 +38,7 @@ const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
   "-v",
 ]);
 
-const PI_ARGUMENTS_WITH_VALUES = new Set([
+export const PI_ARGUMENTS_WITH_VALUES = new Set([
   "--api-key",
   "--append-system-prompt",
   "--exclude-tools",
@@ -246,7 +246,16 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
       : makePiMcpExtensionSource(orchestrationInstructions);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
   if (existing !== source) {
-    yield* fs.writeFileString(dest, source);
+    // Concurrent pi launches read this file: stage it in a per-call directory
+    // and rename so readers and other writers never see a partial file.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stagingDir = yield* fs.makeTempDirectoryScoped({ directory: cacheDir });
+        const staging = `${stagingDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
+        yield* fs.writeFileString(staging, source);
+        yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
+      }),
+    );
   }
   // SCIENT-FORK:END
   return dest;

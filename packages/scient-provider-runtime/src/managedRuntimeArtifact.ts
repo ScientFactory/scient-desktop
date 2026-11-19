@@ -57,6 +57,17 @@ export interface ManagedRuntimeArtifactPolicy {
   readonly maximumVersionExclusive?: string;
   /** Exact release URL prefix immediately before the version; fixes asset and tag identity. */
   readonly releaseUrlPrefix?: string;
+  /**
+   * Scient's own copy of the same release, tried first: `<prefix><version>/<artifactName>`.
+   * It is checked against the catalog digest like the release itself.
+   */
+  readonly mirrorUrlPrefix?: string;
+  /**
+   * A zstd copy of the raw binary, published beside it in the same release folder (and in
+   * Scient's copy). Downloaded instead when the catalog names its size and digest; the raw
+   * binary's digest still decides what is installed.
+   */
+  readonly compressedArtifactName?: string;
   /** App-compiled identity for vendors whose downloads use version and artifact query parameters. */
   readonly releaseUrlTemplate?: string;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
@@ -83,6 +94,20 @@ export interface ManagedRuntimeArtifactPolicy {
   readonly supportMessage: string;
 }
 
+/** What a catalog says about a release binary's zstd copy. */
+export interface ManagedRuntimeCompressedRelease {
+  readonly format: "zstd";
+  readonly size: number;
+  readonly checksum: ManagedRuntimeChecksum;
+}
+
+/** A release binary's zstd copy, where to get it, and the bytes it must be. */
+export interface ManagedRuntimeCompressedArtifact extends ManagedRuntimeCompressedRelease {
+  readonly artifactName: string;
+  readonly url: string;
+  readonly mirrorUrl?: string | undefined;
+}
+
 /** Packaging policy plus immutable facts from a real, qualified release. */
 export interface ManagedRuntimeArtifact extends ManagedRuntimeArtifactPolicy {
   readonly version: string;
@@ -91,6 +116,15 @@ export interface ManagedRuntimeArtifact extends ManagedRuntimeArtifactPolicy {
   readonly checksum: ManagedRuntimeChecksum;
   readonly size: number;
   readonly catalogRevision: string;
+  /** Not part of the receipt: it is only another way to download the same binary. */
+  readonly compressed?: ManagedRuntimeCompressedArtifact | undefined;
+}
+
+/** Where Scient's own copy of this release lives, when the family has one. */
+export function managedRuntimeMirrorUrl(artifact: ManagedRuntimeArtifact): string | undefined {
+  return artifact.mirrorUrlPrefix
+    ? `${artifact.mirrorUrlPrefix}${artifact.version}/${artifact.artifactName}`
+    : undefined;
 }
 
 /** A source-owned minimum version also limits the family to stable semver releases. */
@@ -140,6 +174,38 @@ export function managedRuntimeArtifactReceipt(
 }
 
 /**
+ * The zstd copy a catalog names, when this app's policy has one for the family. A copy the app
+ * cannot read is left out, so the raw binary stays installable.
+ */
+function hydrateCompressedArtifact(
+  policy: ManagedRuntimeArtifactPolicy,
+  version: string,
+  release: ManagedRuntimeCompressedRelease | undefined,
+): ManagedRuntimeCompressedArtifact | undefined {
+  const name = policy.compressedArtifactName;
+  if (
+    !release ||
+    !name ||
+    !policy.releaseUrlPrefix ||
+    release.format !== "zstd" ||
+    release.checksum.algorithm !== "sha256" ||
+    !/^[0-9a-f]{64}$/u.test(release.checksum.digest) ||
+    !Number.isSafeInteger(release.size) ||
+    release.size <= 0
+  ) {
+    return undefined;
+  }
+  return {
+    format: "zstd",
+    size: release.size,
+    checksum: { algorithm: "sha256", digest: release.checksum.digest },
+    artifactName: name,
+    url: `${policy.releaseUrlPrefix}${version}/${name}`,
+    ...(policy.mirrorUrlPrefix ? { mirrorUrl: `${policy.mirrorUrlPrefix}${version}/${name}` } : {}),
+  };
+}
+
+/**
  * Applies immutable release facts to an app-owned packaging policy.
  *
  * Remote catalog data can select a release, but it cannot add targets, hosts,
@@ -149,6 +215,7 @@ export function managedRuntimeArtifactReceipt(
 export function hydrateManagedRuntimeArtifact(
   policy: ManagedRuntimeArtifactPolicy,
   receipt: ManagedRuntimeArtifactReceipt,
+  compressedRelease?: ManagedRuntimeCompressedRelease,
 ): ManagedRuntimeArtifact | undefined {
   if (
     (policy.auxiliaryExecutableRules !== undefined &&
@@ -210,6 +277,7 @@ export function hydrateManagedRuntimeArtifact(
   ) {
     return undefined;
   }
+  const compressed = hydrateCompressedArtifact(policy, receipt.version, compressedRelease);
   return {
     ...policy,
     ...(policy.auxiliaryExecutableRules !== undefined
@@ -238,5 +306,6 @@ export function hydrateManagedRuntimeArtifact(
     checksum: receipt.checksum,
     size: receipt.size,
     catalogRevision: receipt.catalogRevision,
+    ...(compressed ? { compressed } : {}),
   };
 }

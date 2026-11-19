@@ -1,59 +1,12 @@
-import { type ContextMenuItem, type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@t3tools/contracts";
 
-import { sectionLayoutOrder } from "./logic";
+/** The thread menu's Section entry, which opens the section picker. */
+export type SectionMenuId = "section";
 
-/** Ids contributed to thread context menus by the Section submenu. */
-export type SectionMenuId = "section" | "section:new" | "section:remove" | `section:set:${string}`;
-
-export type SectionMenuAction =
-  | { readonly kind: "set"; readonly sectionId: ThreadSectionId }
-  | { readonly kind: "new" }
-  | { readonly kind: "remove" };
-
-/**
- * The Section submenu for one or more threads, listing General and every
- * section of one catalog in sidebar order. The current choice is checked only
- * when every selected thread shares it; choosing General removes the section.
- */
-export function buildSectionSubmenu(input: {
-  readonly sections: readonly ThreadSection[];
-  readonly generalIndex: number;
-  /**
-   * Each selected thread's current section, or null when it shows in General
-   * (unsectioned, or its section is gone from its catalog).
-   */
-  readonly currentSectionIds: ReadonlyArray<string | null>;
-}): ContextMenuItem<SectionMenuId> {
-  const count = input.currentSectionIds.length;
-  const current = new Set(input.currentSectionIds);
-  const shared = current.size === 1 ? [...current][0]! : undefined;
-  const byId = new Map(input.sections.map((section) => [section.id as string, section]));
-  const choices = sectionLayoutOrder(input.sections, input.generalIndex).map((id) => {
-    const section = byId.get(id);
-    return section
-      ? {
-          id: `section:set:${section.id}` as const,
-          label: section.name,
-          checked: shared === section.id,
-        }
-      : { id: "section:remove" as const, label: "General", checked: shared === null };
-  });
+export function sectionMenuItem(threadCount: number): ContextMenuItem<SectionMenuId> {
   return {
     id: "section",
-    label: count > 1 ? `Move to section (${count})` : "Section",
+    label: threadCount > 1 ? `Move to section (${threadCount})…` : "Move to section…",
     icon: "list-filter",
-    children: [
-      ...choices,
-      { id: "section:new" as const, label: "New section…", separatorBefore: true },
-    ],
   };
-}
-
-export function parseSectionMenuAction(id: string): SectionMenuAction | null {
-  if (id === "section:new") return { kind: "new" };
-  if (id === "section:remove") return { kind: "remove" };
-  if (id.startsWith("section:set:")) {
-    return { kind: "set", sectionId: ThreadSectionId.make(id.slice("section:set:".length)) };
-  }
-  return null;
 }

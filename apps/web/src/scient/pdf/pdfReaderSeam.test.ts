@@ -14,21 +14,6 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("PdfSourceResolver");
   });
 
-  // regression: 473e44a01d feat: add browser HTML to PDF export
-  it("routes Save Copy through the typed host capability instead of navigation", () => {
-    const readerSource = NodeFS.readFileSync(
-      new URL("./ScientPdfReader.tsx", import.meta.url),
-      "utf8",
-    );
-    const sourceActions = NodeFS.readFileSync(new URL("./pdfSource.ts", import.meta.url), "utf8");
-
-    expect(sourceActions).toContain("documents.saveAssetCopy({");
-    expect(sourceActions).not.toContain('document.createElement("a")');
-    expect(readerSource).toContain("await observePdfCopy(");
-    expect(readerSource).toContain("props.actions.saveCopy(");
-    expect(readerSource).toContain("disabled={savingCopy || edit.busy");
-  });
-
   // regression: 62abb32e7f fix: preserve PDF reader state across remounts
   it("keeps the persisted viewport lifecycle wired to PDF.js view events", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");

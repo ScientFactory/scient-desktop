@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -139,7 +140,7 @@ const makeFixture = Effect.fn("stopConjunction.fixture")(function* (
   );
   const cwd = yield* checkpointWorkspace(scenario.name);
   const artifactDir =
-    process.env.SCIENT_STOP_PROOF_ARTIFACT_DIR ??
+    (yield* HostProcess.Environment).SCIENT_STOP_PROOF_ARTIFACT_DIR ??
     (yield* fs.makeTempDirectoryScoped({ prefix: "t3-stop-receipts-" }));
   assert.isDefined(artifactDir, "causal receipts need an explicit private artifact directory");
   const artifactPath = path.join(artifactDir!, scenario.name);
@@ -318,6 +319,7 @@ emit({ kind: "ready" });
               .pipe(Effect.orDie);
           return {
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+            renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -364,6 +366,7 @@ emit({ kind: "ready" });
         }).pipe(Effect.orDie),
       forkSession: () => Effect.die("No fork in Stop conjunction proof"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      subagentModel: () => Effect.succeed(null),
       assertComplete: Effect.void,
     },
   });
@@ -607,7 +610,7 @@ it.effect.each(
             providerThreadId: turn.providerThreadId,
             providerTurnId: turn.id,
           });
-          const interrupt = yield* worker.runOnce.pipe(Effect.forkScoped);
+          const interrupt = yield* worker.runOnce().pipe(Effect.forkScoped);
           yield* Deferred.await(session.interruptEntered);
           yield* h.save("phase", {
             phase: "native interrupt entered",

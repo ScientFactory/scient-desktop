@@ -1,3 +1,4 @@
+import { isLocalEditorFileUrl } from "@t3tools/contracts";
 // SCIENT-FORK:START — file links canonicalize paths, keep `~/` links as authored and copy the
 // workspace-relative path (scient-universal-file-opening.md).
 import {
@@ -33,6 +34,7 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  endLine?: number;
   // SCIENT-FORK:START — home-relative links are resolved by the environment that owns the files.
   /**
    * The link as authored when it is written from the home folder
@@ -70,6 +72,14 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   return target ? `${target.path}${target.hash}` : null;
 }
 
+export function isLocalEditorFileHref(href: string): boolean {
+  try {
+    return isLocalEditorFileUrl(new URL(href));
+  } catch {
+    return false;
+  }
+}
+
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
@@ -97,8 +107,10 @@ export function resolveInlineCodeFileLinkMeta(
     workspaceRoot,
     preserveRelativeSegments,
   );
+  const source = parseMarkdownFileLink(candidate);
   return withAuthoredHomeRelativePath(candidate, {
     ...meta,
+    ...(source?.endLine !== undefined ? { endLine: source.endLine } : {}),
     workspaceLookupPath: workspaceLookupPath(candidate, cwd, candidateBase, workspaceRoot),
   });
   // SCIENT-FORK:END
@@ -129,8 +141,10 @@ export function resolveMarkdownFileLinkMeta(
   // buildFileLinkMetaFromTarget: home-relative links, the relative copy path, and canonical
   // file-link paths resolved against the editable workspace root.
   const meta = buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
+  const source = href ? parseMarkdownFileLink(href) : null;
   return withAuthoredHomeRelativePath(href, {
     ...meta,
+    ...(source?.endLine !== undefined ? { endLine: source.endLine } : {}),
     workspaceLookupPath: workspaceLookupPath(href, cwd, baseDir, workspaceRoot),
   });
 }

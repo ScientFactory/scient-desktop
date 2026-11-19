@@ -409,7 +409,6 @@ describe("PiAdapterV2 Extensions", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const command = "git status --short";
       const output = " M src/app.ts";
@@ -470,20 +469,32 @@ describe("PiAdapterV2 Extensions", () => {
           ? [event.turnItem]
           : [],
       );
-      assert.lengthOf(commands, 3);
+      // Running shell output arrives as output deltas, not as a stored row per update.
+      assert.lengthOf(commands, 2);
       assert.lengthOf(edits, 3);
       for (const items of [commands, edits]) {
         assert.equal(new Set(items.map((item) => item.id)).size, 1);
         assert.equal(new Set(items.map((item) => item.ordinal)).size, 1);
-        assert.deepEqual(
-          items.map((item) => item.status),
-          ["running", "running", items === edits && failedEdit ? "failed" : "completed"],
-        );
       }
+      assert.deepEqual(
+        commands.map((item) => item.status),
+        ["running", "completed"],
+      );
+      assert.deepEqual(
+        edits.map((item) => item.status),
+        ["running", "running", failedEdit ? "failed" : "completed"],
+      );
+      assert.deepEqual(
+        observed.flatMap((event) =>
+          event.type === "command_output.delta" && event.itemId === commands[0]?.id
+            ? [event.chunk]
+            : [],
+        ),
+        [output],
+      );
       assert.isTrue(commands.every((item) => item.input === command));
       assert.equal(commands[1]?.output, output);
-      assert.equal(commands[2]?.output, output);
-      assert.equal(commands[2]?.exitCode, 0);
+      assert.equal(commands[1]?.exitCode, 0);
       assert.isTrue(edits.every((item) => item.fileName === "src/app.ts"));
       assert.isTrue(edits.every((item) => item.oldStr === "old" && item.newStr === "new"));
       assert.deepEqual(edits[2]?.changes, [{ operation: "edit", path: "src/app.ts" }]);
@@ -649,6 +660,7 @@ describe("PiAdapterV2 Extensions", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.deferNextLifecycle("prompt");
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({
@@ -689,6 +701,7 @@ describe("PiAdapterV2 Extensions", () => {
             event.type === "provider_turn.updated" && event.providerTurn.acceptedAt !== undefined,
         ),
       );
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled" });
       assert.equal(
@@ -1206,6 +1219,7 @@ describe("PiAdapterV2 Offers", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.deferNextLifecycle("prompt");
       yield* startTurn(runtime, providerThread, "default", [], "/extension-command");
       yield* fake.takeRequest("prompt");
       const pending = yield* takeEvent((e) => e.type === "provider_turn.updated");
@@ -1265,7 +1279,6 @@ describe("PiAdapterV2 Offers", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const accepted = yield* takeEvent(
         (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
@@ -1321,7 +1334,6 @@ describe("PiAdapterV2 Offers", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const accepted = yield* takeEvent(
         (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
@@ -1383,12 +1395,12 @@ describe("PiAdapterV2 Offers", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const accepted = yield* takeEvent(
         (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
       );
       if (accepted.type !== "provider_turn.updated") return;
+      fake.deferNextLifecycle("prompt");
       yield* runtime.steerTurn({
         threadId: THREAD_ID,
         runId: RunId.make(`run:${THREAD_ID}:1`),
@@ -1926,6 +1938,7 @@ describe("PiAdapterV2 Recovery", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.deferNextLifecycle("prompt");
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({
@@ -2298,6 +2311,9 @@ describe("PiAdapterV2 restored upstream cases", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      // Pi is attached to another file, so the resume must switch (T3 keeps an attached file).
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
+      fake.queueState({ sessionFile: FAKE_SESSION_FILE });
       fake.deferNextLifecycle("switch_session");
       const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
       const request = yield* fake.takeRequest("switch_session");
@@ -2326,6 +2342,8 @@ describe("PiAdapterV2 restored upstream cases", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      // Pi is attached to another file, so the resume must switch (T3 keeps an attached file).
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
       fake.deferNextLifecycle("switch_session");
       const resumed = yield* runtime
         .resumeThread({ providerThread })

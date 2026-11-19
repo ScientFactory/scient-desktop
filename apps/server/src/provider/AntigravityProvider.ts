@@ -1,6 +1,8 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
+  settingsSecretLiteral,
   type AntigravitySettings,
   type ProviderSetupError,
   type ServerProvider,
@@ -44,7 +46,7 @@ import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
-const HEALTH_CHECK_TIMEOUT = "90 seconds";
+const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 // Set while a finished quota read republishes, so that health check does not read again.
 const PublishingUsage = Context.Reference<boolean>("t3/provider/AntigravityPublishingUsage", {
   defaultValue: () => false,
@@ -156,6 +158,7 @@ interface AntigravityProviderState {
 }
 
 interface AntigravityProviderOptions {
+  readonly environment?: NodeJS.ProcessEnv;
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
     EffectAcpSchema.InitializeResponse,
@@ -185,7 +188,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       : "Connect with the credentials in the Antigravity provider settings.";
   const authUncheckedMessage = usesCredentials
     ? `Antigravity is installed. Connect with ${options.auth.label} to load models.`
-    : (antigravityAuthConfigIssue(settings) ??
+    : (antigravityAuthConfigIssue({
+        ...settings,
+        apiKey: settingsSecretLiteral(settings.apiKey),
+      }) ??
       (usesBrowser
         ? "Antigravity is installed. Google account access is not checked yet."
         : "Antigravity is installed. Configured credentials have not been checked yet."));
@@ -213,7 +219,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       },
     }),
     setup: { canAuthenticate: true, canInstall: true },
-    supportsConversationRollback: false,
+    supportsConversationRollback: true,
     supportsTextGeneration: false,
     workspaceSnapshots: [],
   } satisfies ServerProviderDraft;
@@ -282,8 +288,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const checkProvider = Effect.fn("checkAntigravityProvider")(function* () {
     if (!settings.enabled) return yield* getSnapshot;
     const before = yield* SubscriptionRef.get(metadata);
+    const timeoutMs = resolveProviderProbeTimeoutMs(
+      "antigravity",
+      HEALTH_CHECK_TIMEOUT_MS,
+      options.environment,
+    );
     const [result, globalSkillsResult] = yield* Effect.all([
-      options.probe.pipe(Effect.timeoutOption(HEALTH_CHECK_TIMEOUT), Effect.result),
+      options.probe.pipe(Effect.timeoutOption(timeoutMs), Effect.result),
       options.discoverGlobalSkills ?? Effect.succeed(Result.succeed(before.draft.skills)),
     ]);
     const globalSkills = Result.isSuccess(globalSkillsResult)
@@ -305,7 +316,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
               ? "Antigravity could not complete its local health check."
-              : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
+              : `Antigravity did not respond to its local health check within ${timeoutMs / 1_000} seconds.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);

@@ -82,6 +82,9 @@ export function AccountHandoffs({
               <XIcon />
             </Button>
           </div>
+          {handoff.reason ? (
+            <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">{handoff.reason}</p>
+          ) : null}
           {handoff.tabId ? (
             <HandoffBrowser
               environmentId={environmentId}

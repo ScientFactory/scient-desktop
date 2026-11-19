@@ -28,7 +28,7 @@ it.live(
       const built = yield* ScientSkillsToolkit;
       const execute = <Name extends keyof typeof ScientSkillsToolkit.tools>(
         name: Name,
-        input: Tool.Parameters<(typeof ScientSkillsToolkit.tools)[Name]>,
+        input: Parameters<typeof built.handle<Name>>[1],
       ) =>
         built
           .handle(name, input)
@@ -79,16 +79,19 @@ it.live(
         expect(loaded.result.instructions).toBe(
           fixture.releases.get(fixture.skills.at(-1)!.releaseKey)!.instructions,
         );
+        // Agents ask for more than a page holds; the tool caps each page instead of refusing.
         const names: string[] = [];
         let offset: number | null = 0;
         while (offset !== null) {
-          const page: Effect.Success<ReturnType<typeof listScientSkillsForInvocation>> =
-            yield* listScientSkillsForInvocation({ offset, limit: 20 }).pipe(
-              Effect.provideService(AgentInvocationContext, invocation),
-            );
-          expect(page.skills.length).toBeLessThanOrEqual(20);
-          names.push(...page.skills.map((skill) => skill.name));
-          offset = page.nextOffset;
+          const from: number = offset;
+          const { result } = yield* execute("scient_skills_list", {
+            offset: from,
+            limit: 100,
+          }).pipe(Effect.provideService(AgentInvocationContext, invocation));
+          if (!("skills" in result)) throw new Error("Expected Skill discovery success");
+          expect(result.skills).toHaveLength(Math.min(50, count - from));
+          names.push(...result.skills.map((skill) => skill.name));
+          offset = result.nextOffset;
         }
         expect(names).toEqual(fixture.skills.map((skill) => skill.name));
         expect(new Set(names).size).toBe(names.length);
@@ -163,8 +166,9 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(46);
+      expect(scientTools).toHaveLength(86);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
+        "preview_network",
         "scient_account_add",
         "scient_account_browser_session",
         "scient_account_credentials",
@@ -173,6 +177,11 @@ it.live(
         "scient_account_request",
         "scient_account_sign_in",
         "scient_accounts_list",
+        "scient_annotations_add",
+        "scient_annotations_read",
+        "scient_annotations_remove",
+        "scient_annotations_restore",
+        "scient_annotations_update",
         "scient_compute_control",
         "scient_compute_inventory",
         "scient_compute_output",
@@ -181,6 +190,13 @@ it.live(
         "scient_compute_sessions",
         "scient_compute_setup",
         "scient_compute_variables",
+        "scient_connector_add",
+        "scient_connector_check",
+        "scient_connector_control",
+        "scient_connector_copy",
+        "scient_connector_list",
+        "scient_connector_save",
+        "scient_connector_setup",
         "scient_document_export",
         "scient_handoff_summary_read",
         "scient_latex_build",
@@ -199,18 +215,45 @@ it.live(
         "scient_papers_queue",
         "scient_papers_status",
         "scient_pdf_build",
+        "scient_references_check",
+        "scient_references_resolve",
+        "scient_results_check",
+        "scient_results_list",
+        "scient_results_markdown",
+        "scient_results_run",
         "scient_skill_load",
+        "scient_skill_read",
         "scient_skill_read_resource",
+        "scient_skill_save",
         "scient_skills_list",
         "scient_sources_add",
         "scient_sources_attach_pdf",
+        "scient_sources_bibliography",
+        "scient_sources_bulk_update",
+        "scient_sources_check",
+        "scient_sources_cite",
+        "scient_sources_collections",
         "scient_sources_detach_pdf",
+        "scient_sources_export",
         "scient_sources_get",
+        "scient_sources_import_file",
         "scient_sources_list",
         "scient_sources_note_update",
+        "scient_sources_organize",
+        "scient_sources_quote_check",
+        "scient_sources_read_text",
         "scient_sources_remove",
-        "scient_sources_review",
+        "scient_sources_restore",
+        "scient_sources_revert",
+        "scient_sources_save_page",
+        "scient_sources_search",
+        "scient_sources_systematic_review_update",
+        "scient_sources_systematic_reviews",
         "scient_sources_update",
+        "scient_sources_zotero_browse",
+        "scient_sources_zotero_import",
+        "scient_sources_zotero_refresh",
+        "scient_sources_zotero_send",
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",

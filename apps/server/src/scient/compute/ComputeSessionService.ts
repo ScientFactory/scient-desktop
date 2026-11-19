@@ -82,6 +82,7 @@ import {
   type ComputeFoundTool,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { RESULTS_FOLDER_VARIABLE } from "@t3tools/shared/computeResults";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -90,6 +91,12 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
+import {
+  computeRunAttribution,
+  COMPUTE_BRIDGE_LOSS_PREFIXES,
+  type ComputeLossReason,
+  type ComputeRunFailureFacts,
+} from "../../telemetry/FailureAttribution.ts";
 import { makeComputeOutputAnalytics } from "../../telemetry/ComputeOutputAnalytics.ts";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -106,6 +113,7 @@ import {
   ComputeProjectOutputObserver,
   disabledLayer as disabledProjectOutputObserverLayer,
   type ComputeProjectOutputObservation,
+  type ComputeProjectOutputWatch,
 } from "./ComputeProjectOutputObserver.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { makeComputeSessionNotifications } from "./ComputeSessionNotifications.ts";
@@ -136,6 +144,19 @@ const IDLE_SWEEP_MINIMUM_MS = 1_000;
 const SERVER_RESTART_REASON = "The server restarted while this session was running.";
 const TRANSPORT_CLOSED_REASON = "The runtime stopped without saying why.";
 const TRANSPORT_FAILED_REASON = "The connection to the runtime failed.";
+const ADMISSION_TIMEOUT_REASON =
+  "Execution admission timed out; the runtime was closed to avoid uncertain execution.";
+const PERSISTENCE_FAILED_REASON = "Unable to persist compute session state.";
+
+/** Why a run was lost, read from Scient's own fixed reasons; anything else is `exited`. */
+function computeLossReason(failureReason: string | null | undefined): ComputeLossReason {
+  if (failureReason === SERVER_RESTART_REASON) return "server-restart";
+  if (failureReason === TRANSPORT_FAILED_REASON) return "transport-failed";
+  if (failureReason === ADMISSION_TIMEOUT_REASON) return "admission-timeout";
+  if (failureReason === PERSISTENCE_FAILED_REASON) return "persistence-failed";
+  const bridge = COMPUTE_BRIDGE_LOSS_PREFIXES.find(([prefix]) => failureReason?.startsWith(prefix));
+  return bridge?.[1] ?? "exited";
+}
 const RESTART_DETAIL = "The session was restarted before this ran.";
 const STOP_DETAIL = "The session was stopped before this ran.";
 const INTERRUPT_TIMEOUT_DETAIL = "The runtime did not answer an interrupt.";
@@ -149,6 +170,7 @@ const sameRunOnce = (
     : right !== undefined &&
       left.executionId === right.executionId &&
       left.code === right.code &&
+      left.actor?.threadId === right.actor?.threadId &&
       sameExecutionSource(left.source, right.source);
 
 /** A language and the transport that can carry it, paired at wiring time. */
@@ -330,6 +352,8 @@ export interface ComputeSettledRun {
   /** What reading the session back must be admitted with. */
   readonly workspace: ComputeWorkspaceReceipt | null;
   readonly execution: ComputeExecutionRecord;
+  /** The session as it was when the run settled: its language and runtime. */
+  readonly session: ComputeSessionRecord;
 }
 
 /** How much of a transcript is already spent, and what it is allowed to spend. */
@@ -393,6 +417,8 @@ interface LiveComputeSession {
   readonly queueRef: Ref.Ref<ComputeQueueState>;
   readonly pendingRef: Ref.Ref<ReadonlyMap<ComputeExecutionId, ComputeExecutionRecord>>;
   readonly executionSourcesRef: Ref.Ref<NonNullable<ComputeDiagnosticContext["executionSources"]>>;
+  /** Listens to the project for the runtime scope, so each execution reads what it wrote. */
+  readonly projectOutputs: ComputeProjectOutputWatch;
   readonly projectOutputObservationsRef: Ref.Ref<
     ReadonlyMap<ComputeExecutionId, ComputeProjectOutputObservation>
   >;
@@ -1079,6 +1105,38 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const computeRunDimensions = Effect.fn("ComputeSessionService.computeRunDimensions")(function* (
+    live: LiveComputeSession,
+    execution: ComputeExecutionRecord,
+  ) {
+    const runtimeSource = (yield* Ref.get(live.recordRef)).runtime?.source;
+    const { source, actor } = execution.request;
+    const result = execution.result;
+    const facts: ComputeRunFailureFacts | null =
+      result === null
+        ? null
+        : result.status === "failed"
+          ? // A failed admission also records outcome "failed", but the runtime never accepted it.
+            result.startedAt !== null || result.diagnostics.length > 0
+            ? { kind: "runtime-reported", errorName: result.diagnostics[0]?.errorName }
+            : { kind: "not-admitted" }
+          : result.status === "lost"
+            ? // An admission that timed out never started, but the runtime did not fail to start.
+              result.startedAt === null &&
+              computeLossReason(result.failureReason) !== "admission-timeout"
+              ? { kind: "runtime-start" }
+              : { kind: "lost", reason: computeLossReason(result.failureReason) }
+            : null;
+    return {
+      actor: actor === undefined ? ("user" as const) : ("agent" as const),
+      entry: source?._tag === "document" ? source.origin : ("console" as const),
+      ...(runtimeSource === undefined ? {} : { runtimeSource }),
+      ...(facts === null
+        ? {}
+        : { attribution: computeRunAttribution(facts, runtimeSource === "managed") }),
+    };
+  });
+
   const publishExecution = Effect.fn("ComputeSessionService.publishExecution")(function* (
     live: LiveComputeSession,
     execution: ComputeExecutionRecord,
@@ -1105,9 +1163,10 @@ const make = Effect.gen(function* () {
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
         workspace: live.workspaceReceipt,
         execution,
+        session: yield* Ref.get(live.recordRef),
       });
     }
-    // Queue/phase changes must not recreate a start after consent is changed.
+    // Queue/phase changes must not recreate a start.
     if (
       !isNewExecution &&
       (status === undefined || !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status))
@@ -1134,6 +1193,7 @@ const make = Effect.gen(function* () {
       ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
       failureClass: status === "lost" ? "process-crash" : "unknown",
       language: live.adapter.languageId,
+      ...(yield* computeRunDimensions(live, execution)),
     });
     if (
       status === "succeeded" ||
@@ -1583,14 +1643,15 @@ const make = Effect.gen(function* () {
     const record = yield* Ref.get(live.recordRef);
     // Output minted by a namespace that has been replaced belongs to nothing
     // a client is looking at.
-    if (event.generation !== record.generation) return false;
+    if (event.generation !== record.generation)
+      return { retained: false, reason: "observation-unavailable" as const };
     const executionId = event.requestId === null ? null : ComputeExecutionId.make(event.requestId);
     const budgets = yield* readBudgets(live, executionId);
-    if (budgets === null) return false;
+    if (budgets === null) return { retained: false, reason: "observation-unavailable" as const };
     // A transcript that has already said it is incomplete says it once;
     // everything after the marker is dropped in silence.
     const silenced = budgets.execution?.truncated ?? budgets.session.truncated;
-    if (silenced) return false;
+    if (silenced) return { retained: false, reason: "output-limit" as const };
     const size = computeOutputByteLength(event.output);
     const overSession = budgets.session.bytes + size - budgets.session.ceiling;
     const crossed =
@@ -1609,7 +1670,7 @@ const make = Effect.gen(function* () {
         session: crossed.scope === "session",
       });
       yield* publishOutputs(live, executionId, [marker]);
-      return false;
+      return { retained: false, reason: "output-limit" as const };
     }
     // Store image bytes before their transcript reference. Missing or refused bytes must produce
     // the same visible loss marker as a ceiling, even when an internal transport supplied the
@@ -1633,7 +1694,7 @@ const make = Effect.gen(function* () {
           session: executionId === null,
         });
         yield* publishOutputs(live, executionId, [marker]);
-        return false;
+        return { retained: false, reason: "missing-resource" as const };
       }
       yield* store
         .writeOutputImage({
@@ -1693,7 +1754,7 @@ const make = Effect.gen(function* () {
           session: executionId === null,
         });
         yield* publishOutputs(live, executionId, [marker]);
-        return false;
+        return { retained: false, reason: "resource-mismatch" as const };
       }
       for (const resource of event.resources) {
         yield* store
@@ -1739,7 +1800,7 @@ const make = Effect.gen(function* () {
       },
     );
     yield* publishOutputs(live, executionId, [event.output]);
-    return true;
+    return { retained: true };
   });
 
   const applyOutput = Effect.fn("ComputeSessionService.applyOutput")(function* (
@@ -1755,25 +1816,33 @@ const make = Effect.gen(function* () {
         output.bundle.representations.some(
           (representation) => representation.mediaType !== "text/plain",
         ));
-    if (!rich || event.requestId === null) return yield* persistOutput(live, event);
+    if (!rich || event.requestId === null)
+      return yield* persistOutput(live, event).pipe(Effect.map((receipt) => receipt.retained));
     const record = yield* Ref.get(live.recordRef);
-    if (event.generation !== record.generation) return yield* persistOutput(live, event);
+    if (event.generation !== record.generation)
+      return yield* persistOutput(live, event).pipe(Effect.map((receipt) => receipt.retained));
     const key = analyticsExecutionKey(live, event.requestId, event.generation);
     return yield* persistOutput(live, event).pipe(
       Effect.onExit((exit) =>
         observeComputeOutputs({
           key,
           phase: "output",
-          retained: Exit.isSuccess(exit) && exit.value,
+          retained: Exit.isSuccess(exit) && exit.value.retained,
+          ...(Exit.isSuccess(exit)
+            ? "reason" in exit.value
+              ? { reason: exit.value.reason }
+              : {}
+            : { reason: "persistence-failed" as const }),
         }),
       ),
+      Effect.map((receipt) => receipt.retained),
     );
   });
 
   /**
    * File changes observed during execution do not prove producer attribution; retain project-file
-   * origin separately from runtime displays. The Scient observer owns authorized workspace
-   * scanning; language transports must not infer file authority from output paths.
+   * origin separately from runtime displays. The Scient observer decides which reported or
+   * watched files may be read; a runtime's write report is a list of candidates, not authority.
    */
   const collectProjectOutputs = Effect.fn("ComputeSessionService.collectProjectOutputs")(function* (
     live: LiveComputeSession,
@@ -1796,24 +1865,34 @@ const make = Effect.gen(function* () {
         budgets.session.ceiling - budgets.session.bytes,
       ),
     );
-    const collection = yield* projectOutputObserver.collect(observation, { maximumBytes }).pipe(
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit)
-          ? observeComputeOutputs({
-              key: analyticsExecutionKey(live, event.requestId, event.generation),
-              phase: "output",
-              retained: false,
-            })
-          : Effect.void,
-      ),
-    );
-    if (collection.warnings.length > 0) {
-      yield* observeComputeOutputs({
-        key: analyticsExecutionKey(live, event.requestId, event.generation),
-        phase: "output",
-        retained: false,
-      });
-    }
+    const collection = yield* live.projectOutputs
+      .collect(observation, { maximumBytes }, event.writes)
+      .pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? observeComputeOutputs({
+                key: analyticsExecutionKey(live, event.requestId, event.generation),
+                phase: "coverage",
+                capture: {
+                  coverage: "unavailable",
+                  coverageReason: "observation-unavailable",
+                  rejectedCount: 0,
+                },
+              })
+            : Effect.void,
+        ),
+      );
+    yield* observeComputeOutputs({
+      key: analyticsExecutionKey(live, event.requestId, event.generation),
+      phase: "coverage",
+      capture: collection.capture ?? {
+        coverage: collection.warnings.length > 0 ? "unavailable" : "complete",
+        ...(collection.warnings.length > 0
+          ? { coverageReason: "observation-unavailable" as const }
+          : {}),
+        rejectedCount: 0,
+      },
+    });
     for (const image of collection.images) {
       yield* applyOutput(live, {
         _tag: "output",
@@ -1982,19 +2061,7 @@ const make = Effect.gen(function* () {
               execution?.result?.status !== "submitting"
             )
               return;
-            // Observation is ancillary: a slow directory cannot hold the mutation
-            // lease or indefinitely prevent Stop. Missing baseline means no inferred files.
-            const observation = yield* projectOutputObserver.begin(live.workingDirectory).pipe(
-              Effect.timeoutOrElse({
-                duration: "1 second",
-                orElse: () =>
-                  Effect.succeed({
-                    projectRoot: live.workingDirectory,
-                    baseline: null,
-                    warnings: ["Project-file observation timed out."],
-                  }),
-              }),
-            );
+            const observation = yield* live.projectOutputs.begin;
             yield* Ref.update(live.projectOutputObservationsRef, (observations) =>
               new Map(observations).set(next.executionId, observation),
             );
@@ -2011,10 +2078,7 @@ const make = Effect.gen(function* () {
                 Effect.timeoutOrElse({
                   duration: "5 seconds",
                   orElse: () =>
-                    endSessionUnderLease(
-                      live,
-                      "Execution admission timed out; the runtime was closed to avoid uncertain execution.",
-                    ).pipe(
+                    endSessionUnderLease(live, ADMISSION_TIMEOUT_REASON).pipe(
                       Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
                       Effect.andThen(
                         Effect.fail(
@@ -2158,7 +2222,7 @@ const make = Effect.gen(function* () {
   const failClosedOnPersistenceError = (live: LiveComputeSession, error: ComputeOperationError) =>
     error.reason !== "persistence-failed"
       ? Effect.void
-      : endSessionUnderLease(live, "Unable to persist compute session state.").pipe(
+      : endSessionUnderLease(live, PERSISTENCE_FAILED_REASON).pipe(
           Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
           Effect.ignore,
         );
@@ -2302,11 +2366,14 @@ const make = Effect.gen(function* () {
         const executionId = ComputeExecutionId.make(event.requestId);
         yield* collectProjectOutputs(live, event);
         const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
-        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) =>
-          event.executionCount === undefined
-            ? result
-            : { ...result, executionCount: event.executionCount },
-        );
+        const reads = event.writes?.reads;
+        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) => ({
+          ...result,
+          ...(event.executionCount === undefined ? {} : { executionCount: event.executionCount }),
+          ...(reads === undefined
+            ? {}
+            : { reads: { files: reads, truncated: event.writes?.readsTruncated === true } }),
+        }));
         yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
         yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
         if (event.outcome !== "succeeded" && finished !== undefined) {
@@ -2600,7 +2667,29 @@ const make = Effect.gen(function* () {
           cause,
         ),
     });
-    const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
+    const { environment: hostRuntimeEnvironment } = sanitizeComputeEnvironment(
+      definedEnvironment(hostEnvironment),
+    );
+    const once = input.runOnce;
+    const publishes = once?.publishResults === true;
+    const environment =
+      publishes && once !== undefined
+        ? {
+            ...hostRuntimeEnvironment,
+            [RESULTS_FOLDER_VARIABLE]: yield* store
+              .prepareResultsFolder(input.projectId, input.sessionId, once.executionId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  computeError(
+                    "start",
+                    "runtime-unusable",
+                    "The results folder could not be made.",
+                    cause,
+                  ),
+                ),
+              ),
+          }
+        : hostRuntimeEnvironment;
     const profiles = yield* binding.adapter
       .discover({
         projectRoot,
@@ -2767,6 +2856,7 @@ const make = Effect.gen(function* () {
       ...(input.runOnce === undefined ? {} : { lifetime: "fresh" as const }),
     };
     const ready = yield* Deferred.make<ComputeSessionRecord, ComputeOperationError>();
+    const runtimeScope = yield* Scope.make("sequential");
     const live: LiveComputeSession = {
       workspaceReceipt,
       releaseWorkspace,
@@ -2774,7 +2864,7 @@ const make = Effect.gen(function* () {
       sessionId: input.sessionId,
       workingDirectory: projectRoot,
       adapter: binding.adapter,
-      scope: yield* Scope.make("sequential"),
+      scope: runtimeScope,
       releaseCapacity,
       channel: null,
       cleanup: null,
@@ -2789,6 +2879,9 @@ const make = Effect.gen(function* () {
       pendingRef: yield* Ref.make<ReadonlyMap<ComputeExecutionId, ComputeExecutionRecord>>(
         new Map(),
       ),
+      projectOutputs: yield* projectOutputObserver
+        .watch(projectRoot)
+        .pipe(Scope.provide(runtimeScope)),
       projectOutputObservationsRef: yield* Ref.make<
         ReadonlyMap<ComputeExecutionId, ComputeProjectOutputObservation>
       >(new Map()),

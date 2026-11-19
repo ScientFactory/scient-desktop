@@ -19,6 +19,7 @@ import {
   type ComputeOutput,
   type ComputeRequestId,
   type ComputeRuntimeIdentity,
+  type ComputeRuntimeWriteReport,
   type ComputeTransport,
   type ComputeTransportEvent,
   type ComputeTransportOpenRequest,
@@ -839,6 +840,7 @@ export function makeComputeBridgeTransport(
             const payload = message.payload as {
               outcome: "succeeded" | "failed" | "cancelled";
               executionCount?: number | null;
+              writes?: ComputeRuntimeWriteReport;
             };
             yield* emit({
               _tag: "completed",
@@ -850,6 +852,7 @@ export function makeComputeBridgeTransport(
               ...(typeof payload.executionCount === "number"
                 ? { executionCount: payload.executionCount }
                 : {}),
+              ...(payload.writes === undefined ? {} : { writes: payload.writes }),
             });
             MutableRef.set(activeRequestId, null);
             break;

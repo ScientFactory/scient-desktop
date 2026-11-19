@@ -3,6 +3,7 @@
   "owner": "ScientFactory",
   "ownedRoots": [],
   "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
     "apps/web/src/scient/rightPanel/AllTabsMenu.tsx",
     "apps/web/src/scient/rightPanel/PanelFilesColumn.tsx",
     "apps/web/src/scient/rightPanel/SurfaceLauncher.tsx",

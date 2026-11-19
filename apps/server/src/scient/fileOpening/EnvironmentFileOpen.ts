@@ -292,7 +292,12 @@ export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare
           bytes,
         };
       }),
-    (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.orElseSucceed(() => undefined)),
+    (handle) =>
+      Effect.tryPromise({
+        try: () => handle.close(),
+        catch: (cause) =>
+          new EnvironmentFilePrepareError({ path: input.path, failure: nodeFileFailure(cause) }),
+      }).pipe(Effect.orElseSucceed(() => undefined)),
   );
 
   return {

@@ -26,6 +26,7 @@ import {
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -176,6 +177,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(PullRequestWatchService.PullRequestWatchService)({}),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
@@ -201,7 +203,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>
-        Effect.succeed(id === THREAD_ID && thread ? v2PullRequestThread(thread) : null),
+        Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
@@ -243,7 +245,7 @@ describe("pull request toolkit handlers", () => {
           url: "https://github.com/t3tools/t3code/pull/123",
         })
         .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestThreadNotFoundError", threadId: THREAD_ID });
+      expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
@@ -259,6 +261,23 @@ describe("pull request toolkit handlers", () => {
         capability: "pull-requests",
         threadId: THREAD_ID,
       });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("points a bare thread uuid at the mcp: thread it belongs to", () =>
+    Effect.gen(function* () {
+      const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
+      const harness = yield* makeHarness({
+        thread: { ...makeThread([]), id: ThreadId.make(`mcp:${bareId}`) },
+      });
+      const error = yield* harness
+        .call("link_pull_request", { threadId: bareId, number: 123 })
+        .pipe(Effect.flip);
+      expect(error.message).toBe(
+        `Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`? Thread ids belong to one environment: for a thread on a linked one, find it with \`scient_environment_links\` and pass its \`environmentId\` to a tool that takes one.`,
+      );
+      expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
@@ -286,93 +305,6 @@ describe("pull request toolkit handlers", () => {
           source: "agent",
         },
       ]);
-    }),
-  );
-
-  it.effect("watching an unlinked pull request links it first", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const result = yield* harness.call("watch_pull_request", {
-        url: "https://github.com/t3tools/t3code/pull/9",
-      });
-      expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        {
-          type: "thread.pull-request.watch",
-          number: 9,
-          watching: true,
-          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
-        },
-      ]);
-    }),
-  );
-
-  it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
-    Effect.gen(function* () {
-      const watch = {
-        startedAt: "2026-08-20T00:00:00.000Z",
-        headSha: null,
-        failedChecks: [],
-        passed: false,
-        passedChecks: [],
-        remarksThrough: "2026-08-20T00:00:00.000Z",
-        remarkIds: [],
-        conflicting: false,
-        wakes: 0,
-      };
-      const merged = makeLink(1, { headBranch: "done" });
-      const harness = yield* makeHarness({
-        thread: makeThread([
-          { ...merged, snapshot: merged.snapshot && { ...merged.snapshot, state: "merged" } },
-          makeLink(2, { headBranch: "idle" }),
-          makeLink(3, { headBranch: "watched", watch }),
-        ]),
-      });
-      const error = yield* harness
-        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
-      expect(
-        yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 3 }),
-      ).toMatchObject({ wasWatching: true });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.watch", number: 3, watching: false },
-      ]);
-    }),
-  );
-
-  it.effect("watches a pull request saved as closed, since it may have reopened", () =>
-    Effect.gen(function* () {
-      const closed = makeLink(1, { headBranch: "closed" });
-      const harness = yield* makeHarness({
-        thread: makeThread([
-          { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
-        ]),
-      });
-      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.watch", number: 1, watching: true },
-      ]);
-    }),
-  );
-
-  it.effect("refuses a watch from a subagent thread, whose parent owns the pull request", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        thread: {
-          ...makeThread([makeLink(1, { headBranch: "feature" })]),
-          lineage: {
-            rootThreadId: ThreadId.make("parent"),
-            parentThreadId: ThreadId.make("parent"),
-            relationshipToParent: "subagent",
-          },
-        },
-      });
-      const error = yield* harness
-        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 
@@ -633,8 +565,8 @@ describe("pull request toolkit handlers", () => {
         ]),
       });
       const result = yield* harness.call("list_thread_pull_requests", {});
-      expect(result.pullRequests.map((entry) => entry.number)).toEqual([3, 1, 2, 10]);
-      expect(result.pullRequests[0]).toEqual({
+      expect(result.pullRequests.map((entry) => entry.number)).toEqual([1, 2, 3, 10]);
+      expect(result.pullRequests[2]).toEqual({
         host: "github.com",
         repository: "t3tools/t3code",
         number: 3,
@@ -683,8 +615,8 @@ describe("listThreadPullRequests", () => {
       ],
     });
     expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
-      [2, { kind: "native", position: 2, size: 2 }],
       [1, { kind: "native", position: 1, size: 2 }],
+      [2, { kind: "native", position: 2, size: 2 }],
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
@@ -703,6 +635,58 @@ describe("listThreadPullRequests", () => {
       [3, { kind: "derived", position: 2, size: 3 }],
     ]);
     expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
+  });
+
+  it("pages a large list once through, with each page's stacks whole", () => {
+    const thread = {
+      pullRequests: [
+        makeLink(1, { headBranch: "feat-a" }),
+        ...Array.from({ length: 118 }, (_, index) => makeLink(index + 2)),
+        makeLink(120, { headBranch: "feat-z", baseBranch: "feat-a" }),
+      ],
+    };
+    const pages = [listThreadPullRequests(thread)];
+    for (let next = pages[0]!.nextCursor; next !== null; next = pages.at(-1)!.nextCursor) {
+      pages.push(listThreadPullRequests(thread, next));
+    }
+    expect(pages.map((page) => page.pullRequests.length)).toEqual([50, 50, 20]);
+    expect(pages.flatMap((page) => page.pullRequests.map((entry) => entry.number))).toEqual(
+      Array.from({ length: 120 }, (_, index) => index + 1),
+    );
+    const stack = { kind: "derived", numbers: [1, 120] };
+    expect(pages.map((page) => page.chains.length)).toEqual([50, 50, 20]);
+    expect(pages.map((page) => page.chains.filter((chain) => chain.numbers.length > 1))).toEqual([
+      [stack],
+      [],
+      [stack],
+    ]);
+
+    // Unlinking the first page must not shift the cursor past PRs not yet seen.
+    const remaining = { pullRequests: thread.pullRequests.slice(50) };
+    expect(
+      listThreadPullRequests(remaining, pages[0]!.nextCursor!).pullRequests.map(
+        (entry) => entry.number,
+      ),
+    ).toEqual(Array.from({ length: 50 }, (_, index) => index + 51));
+  });
+
+  it("filters by state before paging, counting a PR with no known state as open", () => {
+    const merged = (number: number) => {
+      const link = makeLink(number, { headBranch: `feat-${number}` });
+      return { ...link, snapshot: { ...link.snapshot!, state: "merged" as const } };
+    };
+    const thread = {
+      pullRequests: [
+        ...Array.from({ length: 50 }, (_, index) => merged(index + 1)),
+        ...Array.from({ length: 10 }, (_, index) => makeLink(index + 51)),
+      ],
+    };
+    const open = listThreadPullRequests(thread, undefined, ["open"]);
+    expect(open.pullRequests.map((entry) => entry.number)).toEqual(
+      Array.from({ length: 10 }, (_, index) => index + 51),
+    );
+    expect(open.nextCursor).toBeNull();
+    expect(listThreadPullRequests(thread, undefined, ["merged"]).nextCursor).toBeNull();
   });
 });
 
@@ -769,6 +753,36 @@ describe("pull request guide tools", () => {
     }),
   );
 
+  it.effect(
+    "reads a guide on a host readable without a checkout through the caller's project",
+    () =>
+      Effect.gen(function* () {
+        const api = makeProject({
+          canonicalKey: "bitbucket.org/acme/api",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@bitbucket.org:acme/api.git",
+          },
+          provider: SourceControlProviderKind.make("bitbucket"),
+          displayName: "acme/api",
+          owner: "acme",
+          name: "api",
+        });
+        const harness = yield* makeHarness({ project: api });
+        const result = yield* harness.call("read_pull_request_guide", {
+          url: "https://bitbucket.org/acme/web/pull-requests/123",
+        });
+        expect(result).toMatchObject({
+          host: "bitbucket.org",
+          repository: "acme/web",
+          number: 123,
+          guide: null,
+          currentHeadSha: "head-1",
+        });
+      }),
+  );
+
   it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>
     Effect.gen(function* () {
       const azure = {
@@ -819,7 +833,7 @@ describe("native review-guide project scope", () => {
   };
 
   it.effect(
-    "refuses foreign guide writes and reads without using that project's provider or stored guide",
+    "refuses foreign guide writes and reads a foreign pull request only through its own project",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({ projects: [makeProject(), other] });
@@ -833,9 +847,12 @@ describe("native review-guide project scope", () => {
           number: 7,
         });
         expect(yield* Ref.get(harness.guideRequests)).toEqual([]);
-        const error = yield* harness.call("read_pull_request_guide", target).pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "PullRequestProjectNotFoundError" });
-        expect(yield* Ref.get(harness.guideReads)).toEqual([]);
+        // GitHub reads without a checkout, so the caller's own project serves it, never `other`.
+        const read = yield* harness.call("read_pull_request_guide", target);
+        expect(read).toMatchObject({ repository: "acme/web", number: 7, guide: null });
+        expect((yield* Ref.get(harness.guideReads)).map((ref) => ref.projectId)).toEqual([
+          PROJECT_ID,
+        ]);
       }),
   );
 
@@ -864,10 +881,7 @@ describe("native review-guide project scope", () => {
         const error = yield* harness
           .call("read_pull_request_guide", { url: "https://github.com/acme/web/pull/7" })
           .pipe(Effect.flip);
-        expect(error).toMatchObject({
-          _tag: "PullRequestThreadNotFoundError",
-          threadId: THREAD_ID,
-        });
+        expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
         expect(yield* Ref.get(harness.guideReads)).toEqual([]);
       }),
   );

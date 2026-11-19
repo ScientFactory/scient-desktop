@@ -39,6 +39,12 @@ export interface AddonSkillRejection {
   readonly message: string;
 }
 
+/** A personal skill withheld because its name is already taken. */
+export interface PersonalSkillRejection {
+  readonly name: string;
+  readonly message: string;
+}
+
 export interface ScientSkillRegistryShape {
   /** The current reviewed catalog. Add-on releases may change between reads. */
   readonly current: Effect.Effect<ScientSkillCatalogView>;
@@ -50,6 +56,15 @@ export interface ScientSkillRegistryShape {
   readonly replaceAddonReleases: (
     contributions: ReadonlyArray<AddonSkillContribution>,
   ) => Effect.Effect<ReadonlyArray<AddonSkillRejection>>;
+  /**
+   * Replace every personal skill (origin `personal`). Scient and add-on skills keep their
+   * names: a personal skill with a taken name is withheld and reported.
+   */
+  readonly replacePersonalReleases: (
+    releases: ReadonlyArray<SkillRelease>,
+  ) => Effect.Effect<ReadonlyArray<PersonalSkillRejection>>;
+  /** Personal skills withheld now; this changes when plugins come or go, too. */
+  readonly personalRejections: Effect.Effect<ReadonlyArray<PersonalSkillRejection>>;
 }
 
 const compareStrings = (left: string, right: string): number =>
@@ -63,9 +78,12 @@ const makeView = (
   return {
     catalog,
     resolveReleaseKey: (releaseKey) => byReleaseKey.get(releaseKey),
-    // Shipping defaults are Scient-owned; an add-on can never be active by default.
+    // Shipping defaults are Scient-owned; an add-on can never be active by default. A personal
+    // skill was added on purpose, by the user or for them, so it starts on.
     defaultActive: (release) =>
-      release.origin === "scient" ? (defaultActiveById.get(release.id) ?? false) : false,
+      release.origin === "scient"
+        ? (defaultActiveById.get(release.id) ?? false)
+        : release.origin === "personal",
   };
 };
 
@@ -74,6 +92,46 @@ const makeRegistry = (
   defaultActiveById: ReadonlyMap<string, boolean> = new Map(),
 ): ScientSkillRegistryShape => {
   let view = makeView(base, defaultActiveById);
+  let addonReleases: ReadonlyArray<SkillRelease> = [];
+  // Every personal skill on disk; which are published depends on the current add-ons.
+  let personalCandidates: ReadonlyArray<SkillRelease> = [];
+  let personalRejections: ReadonlyArray<PersonalSkillRejection> = [];
+  const acceptPersonal = () => {
+    const rejections: PersonalSkillRejection[] = [];
+    const takenNames = new Set(
+      [...base.releases, ...addonReleases].map((release) => release.name.toLowerCase()),
+    );
+    const accepted: SkillRelease[] = [];
+    for (const release of personalCandidates) {
+      if (release.origin !== "personal") {
+        rejections.push({ name: release.name, message: "This is not a personal skill." });
+        continue;
+      }
+      if (takenNames.has(release.name.toLowerCase())) {
+        rejections.push({
+          name: release.name,
+          message: `A skill built into Scient or a plugin is already named '${release.name}'. Rename this one to use it.`,
+        });
+        continue;
+      }
+      takenNames.add(release.name.toLowerCase());
+      accepted.push(release);
+    }
+    personalRejections = rejections;
+    return accepted;
+  };
+  const publish = () => {
+    const releases = [...base.releases, ...addonReleases, ...acceptPersonal()].sort(
+      (left, right) =>
+        compareStrings(left.id, right.id) ||
+        compareStrings(right.version, left.version) ||
+        compareStrings(left.digest, right.digest),
+    );
+    view = makeView(
+      Object.freeze({ releases: Object.freeze(releases), diagnostics: base.diagnostics }),
+      defaultActiveById,
+    );
+  };
 
   const replaceAddonReleases: ScientSkillRegistryShape["replaceAddonReleases"] = (contributions) =>
     Effect.sync(() => {
@@ -109,23 +167,23 @@ const makeRegistry = (
           accepted.push({ source: `${origin}/${release.id}`, release });
         }
       }
-      const addonCatalog = createSkillCatalog(accepted);
-      const releases = [...base.releases, ...addonCatalog.releases].sort(
-        (left, right) =>
-          compareStrings(left.id, right.id) ||
-          compareStrings(right.version, left.version) ||
-          compareStrings(left.digest, right.digest),
-      );
-      view = makeView(
-        Object.freeze({ releases: Object.freeze(releases), diagnostics: base.diagnostics }),
-        defaultActiveById,
-      );
+      addonReleases = createSkillCatalog(accepted).releases;
+      publish();
       return rejections;
+    });
+
+  const replacePersonalReleases: ScientSkillRegistryShape["replacePersonalReleases"] = (releases) =>
+    Effect.sync(() => {
+      personalCandidates = releases;
+      publish();
+      return personalRejections;
     });
 
   return {
     current: Effect.sync(() => view),
     replaceAddonReleases,
+    replacePersonalReleases,
+    personalRejections: Effect.sync(() => personalRejections),
   };
 };
 

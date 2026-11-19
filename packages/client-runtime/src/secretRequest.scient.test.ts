@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { secretRequestDisplay, secretRequestPrivacyNote } from "./secretRequest.ts";
 
 describe("Accounts secret cards", () => {
-  it("say the key is kept in Accounts, and only for the Accounts tool's cards", () => {
+  it("say the key is kept in Accounts only for the Accounts tool's cards, and not kept otherwise", () => {
     const account = "turn-item:secret-request:thread-1:scient-account%3Aabc";
     const ordinary = "turn-item:secret-request:thread-1:scient-accountabc";
     expect(secretRequestPrivacyNote({ id: account })).toContain(
@@ -16,7 +16,7 @@ describe("Accounts secret cards", () => {
       "Stored securely, never shown to the agent",
     );
     expect(secretRequestDisplay({ id: ordinary, secretStatus: "saved" }, "local")).toMatchObject({
-      label: "Saved securely and kept private",
+      label: "Sent to this agent only, not kept in Accounts",
     });
   });
 });

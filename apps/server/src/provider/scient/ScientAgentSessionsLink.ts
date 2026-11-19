@@ -13,13 +13,17 @@ export const linkScientAgentSessions = (input: {
   readonly agentRoot: string;
   readonly sessionsRoot: string;
 }): Effect.Effect<string | undefined> =>
-  Effect.tryPromise(async () => {
-    const link = NodePath.join(input.agentRoot, "agent", "sessions");
-    await NodeFSP.mkdir(NodePath.dirname(link), { recursive: true, mode: 0o700 });
-    await NodeFSP.symlink(input.sessionsRoot, link, "junction").catch(() => undefined);
-    const [reached, sessions] = await Promise.all([
-      NodeFSP.realpath(link),
-      NodeFSP.realpath(input.sessionsRoot),
-    ]);
-    return reached === sessions ? link : undefined;
-  }).pipe(Effect.orElseSucceed(() => undefined));
+  Effect.promise(async () => {
+    try {
+      const link = NodePath.join(input.agentRoot, "agent", "sessions");
+      await NodeFSP.mkdir(NodePath.dirname(link), { recursive: true, mode: 0o700 });
+      await NodeFSP.symlink(input.sessionsRoot, link, "junction").catch(() => undefined);
+      const [reached, sessions] = await Promise.all([
+        NodeFSP.realpath(link),
+        NodeFSP.realpath(input.sessionsRoot),
+      ]);
+      return reached === sessions ? link : undefined;
+    } catch {
+      return undefined;
+    }
+  });

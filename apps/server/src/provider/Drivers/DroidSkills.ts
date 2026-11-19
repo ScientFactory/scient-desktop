@@ -77,6 +77,7 @@ function droidMcpServersToServerProvider(raw: unknown): ReadonlyArray<ServerProv
         ...(scope ? { scope } : {}),
         ...(server.toolCount === undefined ? {} : { toolCount: server.toolCount }),
         ...(error ? { error } : {}),
+        ...(server.requiresAuth && server.hasAuthTokens ? { signedIn: true } : {}),
       },
     ];
   });
@@ -155,7 +156,7 @@ export const discoverDroidInventory = Effect.fn("discoverDroidInventory")(functi
         ),
         Effect.map((inventory) => droidSkillsToServerProviderSkills(inventory.skills)),
         Effect.flatMap((skills) =>
-          Effect.tryPromise(client.listMcpServers).pipe(
+          droidControlCall("Droid failed to list its MCP servers.", client.listMcpServers).pipe(
             Effect.map(droidMcpServersToServerProvider),
             Effect.option,
             Effect.map((mcpServers) => ({

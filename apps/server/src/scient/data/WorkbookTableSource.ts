@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- formats decoded file values outside any Effect.
 import { dataTableCellText, type DataTableColumn } from "@scientfactory/compute";
 import { SaxesParser, type SaxesTagPlain } from "saxes";
+import * as Schema from "effect/Schema";
 import * as Yauzl from "yauzl";
 
 import { formatDate, inferTextColumnType } from "./cellText.ts";
@@ -12,7 +13,12 @@ const MAX_COLUMNS = 16_384;
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024;
 const SAMPLE_ROWS = 1000;
 
-export class WorkbookFormatError extends Error {}
+export class WorkbookFormatError extends Schema.TaggedError<WorkbookFormatError>()(
+  "WorkbookFormatError",
+  {
+    message: Schema.String,
+  },
+) {}
 
 export interface WorkbookSheet {
   readonly sheets: ReadonlyArray<string>;
@@ -85,9 +91,10 @@ interface Archive {
 function openArchive(path: string): Promise<Archive> {
   return new Promise((resolve, reject) => {
     Yauzl.open(path, { lazyEntries: true, autoClose: false }, (openError, zip) => {
-      if (openError || !zip) return reject(new WorkbookFormatError("Not a valid workbook."));
+      if (openError || !zip)
+        return reject(new WorkbookFormatError({ message: "Not a valid workbook." }));
       const entries = new Map<string, Yauzl.Entry>();
-      zip.on("error", () => reject(new WorkbookFormatError("Not a valid workbook.")));
+      zip.on("error", () => reject(new WorkbookFormatError({ message: "Not a valid workbook." })));
       zip.on("entry", (entry: Yauzl.Entry) => {
         entries.set(entry.fileName, entry);
         zip.readEntry();
@@ -99,10 +106,12 @@ function openArchive(path: string): Promise<Archive> {
           parse: (entry, parser) =>
             new Promise((done, fail) => {
               if (entry.uncompressedSize > MAX_ENTRY_BYTES)
-                return fail(new WorkbookFormatError("This workbook is too large to open."));
+                return fail(
+                  new WorkbookFormatError({ message: "This workbook is too large to open." }),
+                );
               zip.openReadStream(entry, (streamError, stream) => {
                 if (streamError || !stream)
-                  return fail(new WorkbookFormatError("Not a valid workbook."));
+                  return fail(new WorkbookFormatError({ message: "Not a valid workbook." }));
                 const decoder = new TextDecoder("utf-8");
                 stream.on("data", (bytes: Uint8Array) => {
                   try {
@@ -112,7 +121,9 @@ function openArchive(path: string): Promise<Archive> {
                     fail(cause);
                   }
                 });
-                stream.on("error", () => fail(new WorkbookFormatError("Not a valid workbook.")));
+                stream.on("error", () =>
+                  fail(new WorkbookFormatError({ message: "Not a valid workbook." })),
+                );
                 stream.on("end", () => {
                   try {
                     parser.close();
@@ -164,7 +175,7 @@ async function readXlsx(path: string, sheet: number): Promise<WorkbookSheet> {
   try {
     const part = (name: string) => archive.entry(name);
     const workbookEntry = part("xl/workbook.xml");
-    if (!workbookEntry) throw new WorkbookFormatError("Not a valid workbook.");
+    if (!workbookEntry) throw new WorkbookFormatError({ message: "Not a valid workbook." });
     const sheets: Array<{ name: string; relation: string }> = [];
     let date1904 = false;
     const workbook = new SaxesParser();
@@ -244,7 +255,8 @@ async function readXlsx(path: string, sheet: number): Promise<WorkbookSheet> {
 
     const chosen = sheets[sheet];
     const sheetEntry = chosen ? part(targets.get(chosen.relation) ?? "") : undefined;
-    if (!chosen || !sheetEntry) throw new WorkbookFormatError("This sheet could not be found.");
+    if (!chosen || !sheetEntry)
+      throw new WorkbookFormatError({ message: "This sheet could not be found." });
     const rows = new SheetRows();
     let type = "n";
     let style = 0;
@@ -291,7 +303,7 @@ async function readOds(path: string, sheet: number): Promise<WorkbookSheet> {
   const archive = await openArchive(path);
   try {
     const content = archive.entry("content.xml");
-    if (!content) throw new WorkbookFormatError("Not a valid workbook.");
+    if (!content) throw new WorkbookFormatError({ message: "Not a valid workbook." });
     const sheets: string[] = [];
     const rows = new SheetRows();
     let inSheet = false;
@@ -353,7 +365,8 @@ async function readOds(path: string, sheet: number): Promise<WorkbookSheet> {
       } else if (name === "table:table-row") rows.endRow(rowRepeat);
     });
     await archive.parse(content, parser);
-    if (sheet >= sheets.length) throw new WorkbookFormatError("This sheet could not be found.");
+    if (sheet >= sheets.length)
+      throw new WorkbookFormatError({ message: "This sheet could not be found." });
     return { sheets, rows: rows.rows, truncated: rows.truncated };
   } finally {
     archive.close();

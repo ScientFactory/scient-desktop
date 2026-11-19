@@ -89,12 +89,13 @@ const decodeManifestHeader = Schema.decodeUnknownOption(ManifestHeader);
 const decodeManifest = Schema.decodeUnknownOption(Manifest);
 const decodeSnapshot = Schema.decodeUnknownOption(ConversationSnapshotV1);
 
-export interface LocalConversationFileIdentity {
-  readonly dev: string;
-  readonly ino: string;
-  readonly size: string;
-  readonly mtimeNs: string;
-}
+export const LocalConversationFileIdentity = Schema.Struct({
+  dev: Schema.String,
+  ino: Schema.String,
+  size: Schema.String,
+  mtimeNs: Schema.String,
+});
+export type LocalConversationFileIdentity = typeof LocalConversationFileIdentity.Type;
 
 export interface LocalConversationPreview {
   readonly title: string;
@@ -107,26 +108,23 @@ export interface LocalConversationPreview {
 }
 
 /** A readable local preview failure. `unsupported-too-large` is intentionally distinct. */
-export class LocalConversationPreviewError extends Error {
-  readonly reason: "invalid" | "unsupported-too-large" | "file-changed" | "cancelled";
-  /** Set only when structural checks passed but the snapshot exceeded the preview cap. */
-  readonly identity: LocalConversationFileIdentity | undefined;
-  constructor(
-    reason: "invalid" | "unsupported-too-large" | "file-changed" | "cancelled",
-    message: string,
-    identity?: LocalConversationFileIdentity,
-  ) {
-    super(message);
-    this.name = "LocalConversationPreviewError";
-    this.reason = reason;
-    this.identity = identity;
-  }
-}
+export class LocalConversationPreviewError extends Schema.TaggedError<LocalConversationPreviewError>()(
+  "LocalConversationPreviewError",
+  {
+    reason: Schema.Literals(["invalid", "unsupported-too-large", "file-changed", "cancelled"]),
+    message: Schema.String,
+    /** Set only when structural checks passed but the snapshot exceeded the preview cap. */
+    identity: Schema.optional(LocalConversationFileIdentity),
+  },
+) {}
+
+export const isLocalConversationPreviewError = Schema.is(LocalConversationPreviewError);
 
 const invalid = (message: string): never => {
-  throw new LocalConversationPreviewError("invalid", message);
+  throw new LocalConversationPreviewError({ reason: "invalid", message });
 };
-const cancelled = () => new LocalConversationPreviewError("cancelled", "Preview cancelled.");
+const cancelled = () =>
+  new LocalConversationPreviewError({ reason: "cancelled", message: "Preview cancelled." });
 const checkAbort = (signal?: AbortSignal) => {
   if (signal?.aborted) throw cancelled();
 };
@@ -141,7 +139,7 @@ const parseJson = (bytes: Uint8Array): unknown => {
   try {
     return JSON.parse(decodeUtf8(bytes)) as unknown;
   } catch (cause) {
-    if (cause instanceof LocalConversationPreviewError) throw cause;
+    if (isLocalConversationPreviewError(cause)) throw cause;
     return invalid("The archive contains invalid JSON.");
   }
 };
@@ -433,7 +431,12 @@ async function listEntries(zip: Yauzl.ZipFile, signal?: AbortSignal): Promise<Ya
       entries.push(entry);
       if (entries.length > MAX_ENTRIES) {
         cleanup();
-        reject(new LocalConversationPreviewError("invalid", "The archive has too many entries."));
+        reject(
+          new LocalConversationPreviewError({
+            reason: "invalid",
+            message: "The archive has too many entries.",
+          }),
+        );
       } else zip.readEntry();
     };
     const onEnd = () => {
@@ -465,10 +468,10 @@ async function readEntry(
 ): Promise<Buffer> {
   checkAbort(signal);
   if (entry.uncompressedSize > limit) {
-    throw new LocalConversationPreviewError(
-      "unsupported-too-large",
-      "This conversation is too large for a local preview. Import it to read it.",
-    );
+    throw new LocalConversationPreviewError({
+      reason: "unsupported-too-large",
+      message: "This conversation is too large for a local preview. Import it to read it.",
+    });
   }
   const stream = await new Promise<NodeStream.Readable>((resolve, reject) => {
     const abort = () => reject(cancelled());
@@ -535,10 +538,10 @@ export async function readLocalConversationPreview(
       stat.size !== before.size ||
       stat.mtimeNs !== before.mtimeNs
     ) {
-      throw new LocalConversationPreviewError(
-        "file-changed",
-        "The selected file changed before preview opened it.",
-      );
+      throw new LocalConversationPreviewError({
+        reason: "file-changed",
+        message: "The selected file changed before preview opened it.",
+      });
     }
     if (stat.size > BigInt(SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES))
       invalid("The selected archive is too large.");
@@ -579,16 +582,16 @@ export async function readLocalConversationPreview(
         after.size !== stat.size ||
         after.mtimeNs !== stat.mtimeNs
       ) {
-        throw new LocalConversationPreviewError(
-          "file-changed",
-          "The selected file changed during preview.",
-        );
+        throw new LocalConversationPreviewError({
+          reason: "file-changed",
+          message: "The selected file changed during preview.",
+        });
       }
-      throw new LocalConversationPreviewError(
-        "unsupported-too-large",
-        "This conversation is too large for a local preview. Import it to read it.",
+      throw new LocalConversationPreviewError({
+        reason: "unsupported-too-large",
+        message: "This conversation is too large for a local preview. Import it to read it.",
         identity,
-      );
+      });
     }
     const bytes = await readEntry(zip, snapshotEntry, MAX_PREVIEW_SNAPSHOT_BYTES, signal);
     const digest = `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
@@ -616,10 +619,10 @@ export async function readLocalConversationPreview(
       after.size !== stat.size ||
       after.mtimeNs !== stat.mtimeNs
     ) {
-      throw new LocalConversationPreviewError(
-        "file-changed",
-        "The selected file changed during preview.",
-      );
+      throw new LocalConversationPreviewError({
+        reason: "file-changed",
+        message: "The selected file changed during preview.",
+      });
     }
     return {
       title: snapshot.thread.title,
@@ -630,11 +633,11 @@ export async function readLocalConversationPreview(
     };
   } catch (cause) {
     if (signal?.aborted) throw cancelled();
-    if (cause instanceof LocalConversationPreviewError) throw cause;
-    throw new LocalConversationPreviewError(
-      "invalid",
-      "The selected .scic file could not be read.",
-    );
+    if (isLocalConversationPreviewError(cause)) throw cause;
+    throw new LocalConversationPreviewError({
+      reason: "invalid",
+      message: "The selected .scic file could not be read.",
+    });
   } finally {
     if (zip) await closeZip(zip);
     else if (fd !== undefined) await closeDescriptor(fd);

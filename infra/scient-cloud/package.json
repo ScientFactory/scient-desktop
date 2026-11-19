@@ -1,0 +1,29 @@
+{
+  "name": "@scientfactory/scient-cloud-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "node scripts/build-share.ts && alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "node scripts/dev.ts",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "typecheck": "effect-tsgo tsrs --noEmit"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@clerk/backend": "catalog:",
+    "@effect/sql-sqlite-do": "catalog:",
+    "@noble/hashes": "catalog:",
+    "@scientfactory/scient-cloud": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.1",
+    "@effect/vitest": "catalog:",
+    "@t3tools/shared": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

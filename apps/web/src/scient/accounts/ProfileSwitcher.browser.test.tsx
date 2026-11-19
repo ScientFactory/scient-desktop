@@ -6,12 +6,16 @@ import { ProfileSwitcher } from "./ProfileSwitcher";
 
 const state = vi.hoisted(() => ({
   accounts: [] as ReadonlyArray<unknown>,
+  profileChoices: undefined as unknown,
   profiles: [] as ReadonlyArray<{ id: string; name: string }>,
   choose: vi.fn(),
   addBrowserProfile: vi.fn(),
 }));
 vi.mock("./useAccounts", () => ({
-  useAccounts: () => ({ data: { accounts: state.accounts, profiles: [] }, canWrite: true }),
+  useAccounts: () => ({
+    data: { accounts: state.accounts, profiles: [], profileChoices: state.profileChoices },
+    canWrite: true,
+  }),
   useAccountCommand: () => state.choose,
 }));
 vi.mock("./addBrowserProfile", () => ({ addBrowserProfile: state.addBrowserProfile }));
@@ -21,7 +25,7 @@ vi.mock("~/components/preview/previewBridge", () => ({ previewBridge: {} }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<object>()),
   useClientSettings: (select: (settings: object) => unknown) =>
-    select({ browserProfiles: state.profiles }),
+    select({ browserProfiles: state.profiles, browserDefaultProfileId: "default" }),
 }));
 vi.mock("~/state/entities", async (original) => ({
   ...(await original<object>()),
@@ -40,6 +44,7 @@ const signedInOnWork = {
 
 function reset() {
   state.accounts = [];
+  state.profileChoices = undefined;
   state.profiles = [];
   state.choose.mockReset();
   state.addBrowserProfile.mockReset();
@@ -104,4 +109,23 @@ it("stays out of an incognito tab", async () => {
   reset();
   await using screen = await render(switcher("incognito"));
   expect(screen.container.querySelector("button")).toBeNull();
+});
+
+it("says why the tab opened in its profile", async () => {
+  reset();
+  state.accounts = [
+    { ...signedInOnWork, signIn: { state: "signed-in", at: "2026-11-03T11:41:00Z" } },
+  ];
+  state.profiles = [
+    { id: "home", name: "Home" },
+    { id: "work", name: "Work" },
+  ];
+  // Paired with Home, which has no row for the site: the tab is Main's.
+  state.profileChoices = {
+    projects: {},
+    threads: { "thread-fixture": { profileId: "home", sites: {} } },
+  };
+  await using _screen = await render(switcher("default"));
+  await page.getByRole("button", { name: "Profile: Main" }).click();
+  await expect.element(page.getByText("Main · has your sign-ins")).toBeVisible();
 });

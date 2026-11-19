@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -46,13 +47,14 @@ import { DEFAULT_CODEX_SETTINGS } from "./Adapters/CodexAdapterV2.replay.testkit
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as PortScanner from "../preview/PortScanner.ts";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
 
 const encodeEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -175,11 +177,26 @@ function codexReplayPreamble(input: {
         },
       },
     },
+    // Codex reads its configured reasoning summary before every turn/start.
+    {
+      type: "expect_outbound",
+      label: "config/read",
+      frame: {
+        id: 3,
+        method: "config/read",
+        params: { cwd: input.cwd ?? "/workspace", includeLayers: false },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "config/read",
+      frame: { id: 3, result: { config: {}, origins: {} } },
+    },
     {
       type: "expect_outbound",
       label: "turn/start",
       frame: {
-        id: 3,
+        id: 4,
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
@@ -189,7 +206,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
           collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
@@ -209,7 +226,7 @@ function codexReplayPreamble(input: {
       type: "emit_inbound",
       label: "turn/start",
       frame: {
-        id: 3,
+        id: 4,
         result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
       },
     },
@@ -413,6 +430,7 @@ it.live(
         ).pipe(
           Layer.provide(
             Layer.mergeAll(
+              PortScanner.layerTest,
               factoryLayer,
               Layer.succeed(ServerConfig.ServerConfig, config),
               allocatorLayer,
@@ -449,7 +467,7 @@ it.live(
           requests,
           privateHome: home,
         };
-        const evidenceDirectory = process.env.SCIENT_NATIVE_FORK_EVIDENCE_DIR;
+        const evidenceDirectory = (yield* HostProcess.Environment).SCIENT_NATIVE_FORK_EVIDENCE_DIR;
         const capture = Effect.fnUntraced(function* (phase: string, value: unknown) {
           evidence[phase] = value;
           if (evidenceDirectory !== undefined) {
@@ -535,7 +553,8 @@ it.live(
             );
             const sourceItem = source.turnItems.find(
               (item) =>
-                item.type === "assistant_message" && item.nativeItemRef?.nativeId === nativeItemId,
+                item.type === "assistant_message" &&
+                item.nativeItemRef?.nativeId === `generated-image-message:${nativeItemId}`,
             );
 
             assert.ok(sourceItem?.type === "assistant_message");
@@ -565,7 +584,7 @@ it.live(
 
             yield* capture("receivedRunning", source);
             const forkCommandId = CommandId.make(`${mode}-running-fork`);
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: forkCommandId,
               originThreadId: threadId,
@@ -580,7 +599,7 @@ it.live(
               ),
             );
             const frozen = yield* orchestrator.getThreadProjection(forkId);
-            assert.equal(frozen.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
             assert.isEmpty(frozen.runs);
             assert.isEmpty(frozen.providerTurns);
             assert.isEmpty(frozen.providerThreads);
@@ -670,7 +689,8 @@ it.live(
             );
             const answer = completed.turnItems.find(
               (item) =>
-                item.type === "assistant_message" && item.nativeItemRef?.nativeId === nativeItemId,
+                item.type === "assistant_message" &&
+                item.nativeItemRef?.nativeId === `generated-image-message:${nativeItemId}`,
             );
             assert.ok(answer?.type === "assistant_message");
             assert.equal(answer.status, "completed");

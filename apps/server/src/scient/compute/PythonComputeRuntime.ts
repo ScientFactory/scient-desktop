@@ -366,9 +366,10 @@ export const pythonRuntimeBinding: Effect.Effect<
     yield* Effect.addFinalizer(() => Effect.sync(() => managedSetup.managedRuntime.dispose()));
   }
   const bridgeHost = yield* Effect.gen(function* () {
-    const specDirectory = yield* Effect.tryPromise(() =>
-      resolveManagedPythonSpecPath(moduleDirectory(), "bridge-host"),
-    );
+    const specDirectory = yield* Effect.tryPromise({
+      try: () => resolveManagedPythonSpecPath(moduleDirectory(), "bridge-host"),
+      catch: (cause) => runtimeError("Unable to find Scient's private Python host.", cause),
+    });
     const host = makeBridgeHost({
       recipes: makeComputeRecipeSource({
         computeDir: config.computeDir,
@@ -384,7 +385,10 @@ export const pythonRuntimeBinding: Effect.Effect<
       platform: hostPlatform,
       arch: hostArchitecture,
     });
-    yield* Effect.tryPromise(() => host.reconcile());
+    yield* Effect.tryPromise({
+      try: () => host.reconcile(),
+      catch: (cause) => runtimeError("Unable to reconcile Scient's private Python host.", cause),
+    });
     return host;
   }).pipe(
     Effect.catchCause((cause) =>

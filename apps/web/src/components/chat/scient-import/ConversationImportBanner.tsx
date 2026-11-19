@@ -5,8 +5,9 @@ import type {
 } from "@t3tools/contracts";
 import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
+import { ComposerBanner } from "../ComposerBanner";
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 
@@ -40,6 +41,7 @@ function listLabels(labels: ReadonlyArray<string>): string {
 export function conversationImportNotice(
   conversationImport: OrchestrationConversationImport,
   sessionStarted = false,
+  takenOver = false,
 ): {
   readonly title: string;
   readonly description: string;
@@ -56,9 +58,11 @@ export function conversationImportNotice(
     description: [
       document
         ? "The original document is attached to this conversation."
-        : markdown
-          ? "Text copied from a Scient Markdown export, which anyone can edit."
-          : "Copied from a Scient conversation file, which anyone can edit.",
+        : takenOver
+          ? "Continued from that computer; files stay where they are. The conversation there stays as it was."
+          : markdown
+            ? "Text copied from a Scient Markdown export, which anyone can edit."
+            : "Copied from a Scient conversation file, which anyone can edit.",
       omitted.length > 0 ? `Not included: ${listLabels(omitted)}.` : null,
       // The file's own notes, which the server keeps only when no omission says the same.
       ...new Set(conversationImport.notices ?? []),
@@ -114,6 +118,7 @@ export function ConversationImportProvenanceBadge({
 /**
  * The composer notice on an imported thread until its first provider session
  * starts, when "the next message starts a fresh session" stops being true.
+ * `continuedFrom` names the computer a take-over continued it from.
  */
 export function conversationImportBannerItem(
   thread:
@@ -121,18 +126,34 @@ export function conversationImportBannerItem(
     | null
     | undefined,
   onDismiss: () => void,
+  continuedFrom: ReactNode = null,
 ): ComposerBannerStackItem | null {
   const conversationImport = thread?.conversationImport ?? null;
   if (thread == null || conversationImport === null || thread.activeProviderThreadId !== null)
     return null;
+  const notice = conversationImportNotice(conversationImport, false, continuedFrom !== null);
   return {
     id: `conversation-import:${thread.id}`,
     variant: "info",
     icon: <ImportIcon />,
-    ...conversationImportNotice(conversationImport),
     dismissLabel: "Dismiss import notice",
     onDismiss,
+    ...(continuedFrom === null
+      ? { title: notice.title, description: notice.description }
+      : {
+          title: <>Continued from {continuedFrom}</>,
+          children: <ComposerBannerText>{notice.description}</ComposerBannerText>,
+        }),
   };
+}
+
+/** A banner's explanation in full, wrapped under its title, where the row would cut it off. */
+export function ComposerBannerText({ children }: { readonly children: ReactNode }) {
+  return (
+    <ComposerBanner.Body className="pe-2 pb-1.5 text-muted-foreground">
+      {children}
+    </ComposerBanner.Body>
+  );
 }
 
 /** The open thread's import notice, until the reader dismisses it on that thread. */
@@ -141,13 +162,16 @@ export function useConversationImportBanner(
     readonly id: string;
     readonly source: NonNullable<Parameters<typeof conversationImportBannerItem>[0]>;
   } | null,
+  continuedFrom: ReactNode = null,
 ): ComposerBannerStackItem | null {
   const [dismissedImportNoticeThreadId, setDismissedImportNoticeThreadId] = useState<string | null>(
     null,
   );
   return thread == null || dismissedImportNoticeThreadId === thread.id
     ? null
-    : conversationImportBannerItem(thread.source, () =>
-        setDismissedImportNoticeThreadId(thread.id),
+    : conversationImportBannerItem(
+        thread.source,
+        () => setDismissedImportNoticeThreadId(thread.id),
+        continuedFrom,
       );
 }

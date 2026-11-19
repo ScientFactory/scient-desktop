@@ -69,6 +69,8 @@ jobs:
 
       - id: catalog
         name: Build one provider candidate from its official stable channel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           node scripts/update-managed-runtime-catalog.ts
           --provider "${{ inputs.provider }}"
@@ -92,6 +94,44 @@ jobs:
           AVAILABLE: ${{ steps.catalog.outputs.available }}
           CHANGED: ${{ steps.catalog.outputs.changed }}
         run: echo "$PROVIDER discovery — $RESULT; available=$AVAILABLE; changed=$CHANGED" >> "$GITHUB_STEP_SUMMARY"
+
+  # Its own job: a missing copy turns the run red without blocking a new
+  # release, because installs still fall back to the official release.
+  mirror-health:
+    name: Check Scient's copies of the published ${{ inputs.provider }} release
+    if: inputs.provider == 'scient'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout qualification source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.publish && github.ref == 'refs/heads/main' && 'main' || github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Check every copy of the published release is present at its catalog size
+        shell: bash
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: |
+          set -euo pipefail
+          published="$RUNNER_TEMP/published-managed-runtime-catalog.json"
+          git fetch --no-tags --depth=1 origin \
+            "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
+          git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$published"
+          node scripts/check-managed-runtime-mirror.ts --provider "$PROVIDER" --catalog "$published"
 
   qualify:
     name: Qualify ${{ inputs.provider }} / ${{ matrix.runner }}
@@ -240,6 +280,15 @@ jobs:
           name: managed-runtime-catalog-${{ inputs.provider }}
           path: ${{ runner.temp }}/managed-runtime-catalog-candidate
 
+      - name: Require Scient's own copies to match the qualified release
+        if: inputs.provider == 'scient'
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: >-
+          node scripts/check-managed-runtime-mirror.ts --full
+          --provider "$PROVIDER"
+          --catalog "$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+
       - name: Merge and publish the qualified provider
         shell: bash
         env:
@@ -283,6 +332,11 @@ jobs:
             apps/server/src/provider/AntigravityInstallation.ts \
             apps/server/src/provider/runtimeFilesystem.ts \
             apps/server/src/provider/antigravityRelease.ts \
+            apps/server/src/provider/antigravityCliRelease.ts \
+            apps/server/src/provider/ModelManifest.ts \
+            apps/server/src/provider/ClaudeModelManifest.ts \
+            apps/server/src/provider/model-manifest.json \
+            apps/server/src/provider/providerCompatibility.ts \
             apps/server/src/provider/antigravityAuthSupport.ts \
             apps/server/src/provider/acp \
             apps/server/src/scient/skills/antigravityPluginSkillProjection.ts \
@@ -299,6 +353,7 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/scient/threadSections \
             apps/server/src/sourceControl/sourceControlDefinitions.ts \
@@ -330,6 +385,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
@@ -358,6 +414,7 @@ jobs:
             scripts/lib/cli-external-packages.ts \
             scripts/lib/managed-runtime-live-tests.ts \
             scripts/lib/public-config.ts \
+            scripts/lib/tagged-source-version.ts \
             apps/server/package.json \
             apps/server/src/testUtils \
             packages/effect-acp \
@@ -369,6 +426,7 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/background \
             apps/server/src/git \
@@ -378,7 +436,9 @@ jobs:
             apps/server/src/process \
             apps/server/src/provider \
             apps/server/src/resourceTelemetry \
+            apps/server/src/scient/observability/ResourceRecord.ts \
             apps/server/src/scient/providerLifecycle \
+            apps/server/src/scient/sourceControl \
             apps/server/src/scient/threadSections \
             apps/server/src/scient/workspace/CheckoutBarrier.ts \
             apps/server/src/scient/workspace/NativeFilePublication.ts \
@@ -386,6 +446,7 @@ jobs:
             apps/server/src/scient/workspace/WindowsNativeFile.ts \
             apps/server/src/sourceControl \
             apps/server/src/telemetry \
+            apps/server/src/cloud/config.ts \
             apps/server/src/textGeneration \
             apps/server/src/utils \
             apps/server/src/vcs \
@@ -415,6 +476,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
@@ -427,6 +489,7 @@ jobs:
 
           # Scient qualification runs the same isolated activation check used by Desktop.
           if [[ "$PROVIDER" == scient ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            scripts/check-managed-runtime-mirror.ts \
             apps/server/src/policy \
             packages/tailscale \
             packages/provider-fx \
@@ -440,6 +503,7 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/provider \
             apps/server/src/scient/providerLifecycle \
@@ -471,6 +535,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
@@ -494,6 +559,7 @@ jobs:
             scripts/lib/cli-external-packages.ts \
             scripts/lib/managed-runtime-live-tests.ts \
             scripts/lib/public-config.ts \
+            scripts/lib/tagged-source-version.ts \
             apps/server/src/provider/pi \
             apps/server/src/customModels.ts \
             apps/server/src/customModelCapabilities.ts \
@@ -524,6 +590,7 @@ jobs:
             apps/server/src/customModels.ts \
             apps/server/src/imageMime.ts \
             apps/server/src/modelReasoning.ts \
+            apps/server/src/noCopyOnWrite.ts \
             apps/server/src/scientServerSettings.ts \
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \
@@ -537,11 +604,13 @@ jobs:
             packages/provider-fx \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/settingsDirectoryWatch.ts \
             apps/server/src/settingsSecrets.ts \
             apps/server/src/statFingerprint.ts \
             apps/server/src/auth/ServerSecretStore.ts \
             apps/server/src/provider/omp \
+            apps/server/src/provider/scient/ScientAgentToolLoading.ts \
             apps/server/src/scient/providerLifecycle/ManagedProviderRuntimeActions.ts \
             apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts \
             apps/server/src/scient/providerLifecycle/ProviderConnectionActions.ts \
@@ -567,6 +636,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \

@@ -5,10 +5,10 @@ import type {
   UsageAccountingRow,
   UsageAccountingSourceConfig,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const API = "https://openrouter.ai/api/v1";
@@ -74,9 +74,10 @@ function limitReset(value: unknown): "daily" | "weekly" | "monthly" | null {
   return value === "daily" || value === "weekly" || value === "monthly" ? value : null;
 }
 
-class OpenRouterAnalyticsError extends Data.TaggedError("OpenRouterAnalyticsError")<{
-  readonly detail: string;
-}> {}
+class OpenRouterAnalyticsError extends Schema.TaggedError<OpenRouterAnalyticsError>()(
+  "OpenRouterAnalyticsError",
+  { detail: Schema.String },
+) {}
 
 export interface OpenRouterAnalyticsSnapshot {
   readonly keys: readonly UsageAccountingKey[];

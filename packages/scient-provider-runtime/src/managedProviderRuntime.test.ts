@@ -8,6 +8,7 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
+import { managedRuntimeFailedCheck, markManagedRuntimeCheck } from "./runtimeFiles.ts";
 import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
 import { tryAcquireManagedRuntimeMutationLock } from "./runtimeMutationLock.ts";
 import {
@@ -59,6 +60,7 @@ async function makeRuntime(
     readonly onStateCommitted?: (statePath: string) => Promise<void>;
     readonly filesystem?: ManagedProviderRuntimeDependencies["filesystem"];
     readonly acquireMutationLock?: ManagedProviderRuntimeDependencies["acquireMutationLock"];
+    readonly download?: ManagedProviderRuntimeDependencies["download"];
   } = {},
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
@@ -73,11 +75,13 @@ async function makeRuntime(
     ...(input.filesystem ? { filesystem: input.filesystem } : {}),
     ...(input.acquireMutationLock ? { acquireMutationLock: input.acquireMutationLock } : {}),
     now: () => now++,
-    download: async ({ destination }) => {
-      events.push("download");
-      await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
-      await NodeFSP.writeFile(destination, "asset", { flag: "wx" });
-    },
+    download:
+      input.download ??
+      (async ({ destination }) => {
+        events.push("download");
+        await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+        await NodeFSP.writeFile(destination, "asset", { flag: "wx" });
+      }),
     verify: async () => {
       verifyCalls += 1;
       events.push("verify");
@@ -257,7 +261,9 @@ describe("ManagedProviderRuntime contract", () => {
     await install(runtime, recipe);
     const originalState = await NodeFSP.readFile(statePath(root), "utf8");
     shouldLock = true;
-    await expect(install(runtime, recipe)).rejects.toThrow("could not be restored");
+    const rollback = await install(runtime, recipe).catch((cause: unknown) => cause);
+    expect(rollback).toMatchObject({ message: expect.stringContaining("could not be restored") });
+    expect(managedRuntimeFailedCheck(rollback)).toBe("rollback");
     expect(await NodeFSP.readFile(statePath(root), "utf8")).toBe(originalState);
     const journal = JSON.parse(await NodeFSP.readFile(activationPath(root), "utf8"));
     expect(
@@ -424,6 +430,36 @@ describe("ManagedProviderRuntime contract", () => {
     });
   });
 
+  it("keeps a failed download's bytes outside staging and drops those of other releases", async () => {
+    const partials: string[] = [];
+    let failNext = true;
+    const download: ManagedProviderRuntimeDependencies["download"] = async ({
+      destination,
+      partialPath,
+    }) => {
+      partials.push(partialPath!);
+      if (failNext) {
+        await NodeFSP.mkdir(NodePath.dirname(partialPath!), { recursive: true });
+        await NodeFSP.writeFile(partialPath!, "ass");
+        throw new Error("connection dropped");
+      }
+      expect(await NodeFSP.readFile(partialPath!, "utf8")).toBe("ass");
+      await NodeFSP.rename(partialPath!, destination);
+    };
+    const { root, runtime } = await makeRuntime({ download });
+    const downloads = NodePath.join(privateRoot(root), "downloads");
+    await NodeFSP.mkdir(downloads, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(downloads, `${"f".repeat(64)}.part`), "old release");
+    await expect(install(runtime, artifact("1.0.0"))).rejects.toThrow("connection dropped");
+    failNext = false;
+    await install(runtime, artifact("1.0.0"));
+    expect(partials).toEqual([
+      NodePath.join(downloads, `${"0".repeat(64)}.part`),
+      NodePath.join(downloads, `${"0".repeat(64)}.part`),
+    ]);
+    expect(await NodeFSP.readdir(downloads)).toEqual([]);
+  });
+
   it("activates an update while recording and preserving the previous version", async () => {
     const { root, runtime } = await makeRuntime();
     const first = await install(runtime, artifact("1.0.0"));
@@ -570,6 +606,43 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await runtime.readState()).toMatchObject({ activeVersion: "1.0.0" });
     expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
     await expect(NodeFSP.access(runtime.launchPath(replacement))).rejects.toThrow();
+  });
+
+  it("records the step each failed install stopped in, nearest the root cause", async () => {
+    const failure = (promise: Promise<unknown>) =>
+      promise.then(
+        () => undefined,
+        (cause: unknown) => managedRuntimeFailedCheck(cause),
+      );
+    const smoke = await makeRuntime({ smokeFailsAtCall: 1 });
+    expect(await failure(install(smoke.runtime, artifact("1.0.0")))).toBe("smoke");
+
+    const { runtime } = await makeRuntime({ stateCommitFailsAtCall: 1 });
+    expect(await failure(install(runtime, artifact("1.0.0")))).toBe("activation");
+    const qualifying = (qualify: () => Promise<void>) =>
+      failure(
+        runtime.install({
+          artifact: artifact("1.0.0"),
+          signal: new AbortController().signal,
+          qualify,
+        }),
+      );
+    expect(
+      await qualifying(async () => {
+        throw new Error("runtime incompatible");
+      }),
+    ).toBe("qualification");
+    expect(
+      await qualifying(async () => {
+        throw new Error("wrapped", {
+          cause: markManagedRuntimeCheck("version", new Error("reported 1.0.1")),
+        });
+      }),
+    ).toBe("version");
+    // A plain Effect failure object carries its step too.
+    expect(managedRuntimeFailedCheck(markManagedRuntimeCheck("refresh", { message: "x" }))).toBe(
+      "refresh",
+    );
   });
 
   it("keeps launching the active release while a newer artifact is only reviewed", async () => {

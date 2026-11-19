@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import {
   BROWSER_IMPORT_SOURCES,
+  connectableDefinition,
   listSourceProfiles,
   sourcePathContext,
   type BrowserImportPathContext,
@@ -52,8 +53,15 @@ export const discoverSourceProfiles = Effect.fn("DesktopAccounts.sourceProfiles"
   const context = suppliedContext ?? (yield* sourcePathContext);
   const fs = yield* FileSystem.FileSystem;
   const result: DesktopSourceProfileDetails[] = [];
-  for (const definition of definitions) {
-    if (!definition.platforms.includes(context.platform)) continue;
+  for (const listedDefinition of definitions) {
+    // A browser Windows keeps from other apps shows its profiles when it hands their cookies
+    // over itself; its password files stay unread there.
+    const throughBrowser = listedDefinition.platforms.includes(context.platform)
+      ? undefined
+      : connectableDefinition(listedDefinition, context);
+    if (!listedDefinition.platforms.includes(context.platform) && throughBrowser === undefined)
+      continue;
+    const definition = throughBrowser?.definition ?? listedDefinition;
     const root = definition.userDataDirectory(context);
     if (root === undefined) continue;
     const profiles = yield* listSourceProfiles(definition, context, false);
@@ -73,7 +81,7 @@ export const discoverSourceProfiles = Effect.fn("DesktopAccounts.sourceProfiles"
         ? yield* profilePicture(context, root, info.directory, info.pictureFile)
         : undefined;
       const passwordCount =
-        definition.engine === "chromium"
+        definition.engine === "chromium" && throughBrowser === undefined
           ? yield* countBrowserPasswords(context.path.join(root, profile.directory, "Login Data"))
           : undefined;
       result.push({

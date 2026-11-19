@@ -65,6 +65,10 @@ export function resolveScientAgentArtifactPolicy(
     allowedHosts: ["github.com", "release-assets.githubusercontent.com"],
     allowedUrlPathPrefixes: ["/ScientFactory/scient-agent/releases/download/"],
     releaseUrlPrefix: "https://github.com/ScientFactory/scient-agent/releases/download/v",
+    // Scient's own copy, so an outage at GitHub doesn't block installs.
+    mirrorUrlPrefix: "https://downloads.scientfactory.com/scient-agent/v",
+    // The release's zstd copy, about 40% of the binary's size.
+    compressedArtifactName: `${artifactName}.zst`,
     checksum: { algorithm: "sha256" },
     minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
     maximumVersionExclusive: SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE,

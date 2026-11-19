@@ -7,7 +7,7 @@ import {
   RefreshCwIcon,
   SearchIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { type ReactNode, type Ref, useState } from "react";
 
 import { FileSurfaceFailure } from "~/components/files/fileSurfaceChrome";
 import { Button } from "~/components/ui/button";
@@ -227,15 +227,21 @@ export function ScientFileTreeSurface(props: {
  * The file search field. In a narrow header it folds into a search button
  * that opens the same field in a popover.
  */
-export function FileSearchField(props: {
+export function FileSearchField({
+  ref,
+  ...props
+}: {
   ariaLabel: string;
   name: string;
   onClose: () => void;
   onValueChange: (value: string) => void;
+  /** The inline field, which the Files panel's find shortcut focuses. */
+  ref?: Ref<HTMLInputElement>;
   value: string;
 }) {
   const renderSearchInput = (autoFocus = false) => (
     <InputGroupInput
+      {...(autoFocus || !ref ? {} : { ref })}
       type="search"
       name={props.name}
       size="sm"

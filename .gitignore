@@ -39,6 +39,7 @@ apps/mobile/.android-cache/
 artifacts/app-store/screenshots/
 artifacts/mobile-e2e/
 artifacts/mobile-behavior/
+scripts/.e2e/
 .github/pr-assets/
 native/**/target/
 native/whisper-runtime/
@@ -54,3 +55,4 @@ node_modules/
 
 # Host-compiled file-exchange helper; source is versioned.
 native/file-exchange/*/
+/packages/ssh/.ssh-launcher-test-*/

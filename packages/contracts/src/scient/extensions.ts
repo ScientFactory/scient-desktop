@@ -64,8 +64,96 @@ export const ConnectorSource = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("url") }),
   Schema.Struct({ type: Schema.Literal("plugin"), pluginId: ScientPluginId }),
+  /** A program Scient runs on the environment's computer (see `LocalConnectorSummary`). */
+  Schema.Struct({
+    type: Schema.Literal("local"),
+    /** The MCP Registry entry a `package` connector was added from. */
+    registry: Schema.optional(
+      Schema.Struct({ name: TrimmedNonEmptyString, version: TrimmedNonEmptyString }),
+    ),
+  }),
 ]);
 export type ConnectorSource = typeof ConnectorSource.Type;
+
+/**
+ * How a local connector came in: an MCP Bundle file or folder, a command the user typed, an npm
+ * or PyPI package from the MCP Registry, or a server another app on that computer already runs.
+ */
+export const LocalConnectorKind = Schema.Literals(["bundle", "command", "package", "import"]);
+export type LocalConnectorKind = typeof LocalConnectorKind.Type;
+
+/** One thing a local connector needs, from its manifest's `user_config`. */
+export const LocalBundleField = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  type: Schema.Literals(["string", "number", "boolean", "directory", "file"]),
+  title: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.String),
+  required: Schema.Boolean,
+  /** A key: kept as a linked Accounts API-key account, never on the connector. */
+  sensitive: Schema.Boolean,
+  multiple: Schema.Boolean,
+  /** With `${HOME}` and the other directory variables already filled in. */
+  default: Schema.optional(
+    Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Array(Schema.String)]),
+  ),
+  min: Schema.optional(Schema.Number),
+  max: Schema.optional(Schema.Number),
+  /** The variable a key is passed in, used to offer a matching Accounts key. */
+  envName: Schema.optional(TrimmedNonEmptyString),
+});
+export type LocalBundleField = typeof LocalBundleField.Type;
+
+/** A field with what the connector has for it now. Key values never appear. */
+export const LocalConnectorSetupItem = Schema.Struct({
+  field: LocalBundleField,
+  value: Schema.optional(
+    Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Array(Schema.String)]),
+  ),
+  /** The linked Accounts key's name. */
+  account: Schema.optional(TrimmedNonEmptyString),
+});
+export type LocalConnectorSetupItem = typeof LocalConnectorSetupItem.Type;
+
+/**
+ * `missing`: no Accounts sign-in is linked. `linked`: Scient hands the program the site's session.
+ * `needs-user`: signing in again needs the person (a captcha, a text-message code).
+ */
+export const LocalConnectorSignIn = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  state: Schema.Literals(["missing", "linked", "needs-user"]),
+  accountId: Schema.optional(TrimmedNonEmptyString),
+  /** The linked Accounts sign-in's name. */
+  account: Schema.optional(TrimmedNonEmptyString),
+});
+export type LocalConnectorSignIn = typeof LocalConnectorSignIn.Type;
+
+export const LocalConnectorSummary = Schema.Struct({
+  kind: LocalConnectorKind,
+  /** The folder holding the connector's `manifest.json`, on the environment's computer. */
+  directory: TrimmedNonEmptyString,
+  /** How the program starts, for display; key values never appear in it. */
+  commandLine: Schema.optional(TrimmedNonEmptyString),
+  version: Schema.optional(TrimmedNonEmptyString),
+  author: Schema.optional(TrimmedNonEmptyString),
+  setup: Schema.Array(LocalConnectorSetupItem),
+  /** Titles of required settings and keys that are missing: the row shows Needs setup. */
+  missing: Schema.Array(TrimmedNonEmptyString),
+  /** Set when the manifest can no longer be read. */
+  problem: Schema.optional(TrimmedNonEmptyString),
+  /** Copies running now, one per agent session that uses it. */
+  running: NonNegativeInt,
+  /** Scient keeps the folder (removed with the connector); false for a bundle used in place. */
+  owned: Schema.Boolean,
+  /** Who made the last change to its folder. */
+  changedBy: Schema.optional(Schema.Literals(["you", "agent"])),
+  /** The bundle this is the user's own copy of, by name, after an agent changed it. */
+  forkedFrom: Schema.optional(TrimmedNonEmptyString),
+  /** The last change to its folder can be undone. */
+  canUndo: Schema.Boolean,
+  /** The website it signs in to with the user's saved sign-in from Accounts. */
+  signIn: Schema.optional(LocalConnectorSignIn),
+});
+export type LocalConnectorSummary = typeof LocalConnectorSummary.Type;
 
 /** Public view of how a connector authenticates. Never carries credential material. */
 export const ConnectorAuthSummary = Schema.Union([
@@ -85,11 +173,18 @@ export const ConnectorAuthSummary = Schema.Union([
     /** `owned`: entered for this connector only. `bound`: a user secret from Secrets. */
     storage: Schema.Literals(["owned", "bound"]),
   }),
+  /** Source Control's own credential for `host`, only while it still belongs to `account`. */
+  Schema.Struct({
+    type: Schema.Literal("source-control"),
+    host: TrimmedNonEmptyString,
+    /** The login the host reported for the credential when it was connected. */
+    account: TrimmedNonEmptyString,
+  }),
 ]);
 export type ConnectorAuthSummary = typeof ConnectorAuthSummary.Type;
 
 /**
- * `needs-auth`: OAuth sign-in required. `needs-credential`: the bound or owned
+ * `needs-auth`: OAuth sign-in required. `needs-credential`: the bound, owned or Source Control
  * credential is gone (for example unbound in Settings → Secrets); never falls back.
  */
 export const ConnectorStatus = Schema.Literals(["connected", "needs-auth", "needs-credential"]);
@@ -101,6 +196,13 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  * 64 KiB of image (about 87,400 base64 characters).
  */
 export { ExtensionIconDataUri, isExtensionIconDataUri } from "./extensionIcon.ts";
+
+/** Agents a connector goes to, when the person chose some; absent means every agent. */
+export const ConnectorAgents = Schema.Array(ProviderInstanceId).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+);
+export type ConnectorAgents = typeof ConnectorAgents.Type;
 
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
@@ -119,12 +221,16 @@ export const ConnectorSummary = Schema.Struct({
   authRevision: NonNegativeInt,
   /** Projects whose sessions receive this connector. Shared model with Secrets. */
   availability: GrantScope,
+  /** Agents whose sessions receive it; absent means every agent that takes connectors. */
+  agents: Schema.optional(ConnectorAgents),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   /** Most recent user-facing failure, cleared by the next success. */
   lastError: Schema.optional(TrimmedNonEmptyString),
   /** Logo of the curated server this connector points at. */
   iconUrl: Schema.optional(ExtensionIconDataUri),
+  /** Present when Scient runs this connector as a program instead of reaching a URL. */
+  local: Schema.optional(LocalConnectorSummary),
 });
 export type ConnectorSummary = typeof ConnectorSummary.Type;
 
@@ -206,6 +312,113 @@ const ConnectorNameInput = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
 const ConnectorDescriptionInput = TrimmedNonEmptyString.check(Schema.isMaxLength(1_000));
 const ConnectorUrlInput = TrimmedNonEmptyString.check(Schema.isMaxLength(2_048));
 
+const LocalPathInput = TrimmedNonEmptyString.check(Schema.isMaxLength(4_096));
+const LocalTextInput = Schema.String.check(Schema.isMaxLength(4_096));
+
+/** Environment variable names are portable shell names. */
+export const LocalEnvironmentName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+);
+
+/** A key for a local connector: an existing Accounts API-key account, or a value to save as one. */
+export const LocalKeyInput = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("account"), ref: VaultSecretRef }),
+  Schema.Struct({
+    type: Schema.Literal("value"),
+    value: TrimmedNonEmptyString.check(Schema.isMaxLength(65_536)),
+  }),
+]);
+export type LocalKeyInput = typeof LocalKeyInput.Type;
+
+/** Keys by field key (a bundle's `user_config` key, or a variable name). */
+export const LocalKeysInput = Schema.Record(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  LocalKeyInput,
+);
+export type LocalKeysInput = typeof LocalKeysInput.Type;
+
+/** A variable for a typed command or a registry package; a `secret` one is passed as `key`. */
+export const LocalEnvironmentInput = Schema.Struct({
+  name: LocalEnvironmentName,
+  value: LocalTextInput,
+  secret: Schema.Boolean,
+  /** For a secret variable: an existing Accounts key instead of `value`. */
+  account: Schema.optional(VaultSecretRef),
+});
+export type LocalEnvironmentInput = typeof LocalEnvironmentInput.Type;
+
+/** Plain answers by field key. Keys go in `LocalKeysInput`, never here. */
+export const LocalBundleSettingsInput = Schema.Record(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  Schema.Union([
+    LocalTextInput,
+    Schema.Number,
+    Schema.Boolean,
+    Schema.Array(LocalTextInput).check(Schema.isMaxLength(64)),
+  ]),
+);
+export type LocalBundleSettingsInput = typeof LocalBundleSettingsInput.Type;
+
+const LocalEnvironmentListInput = Schema.Array(LocalEnvironmentInput).check(Schema.isMaxLength(64));
+
+/** An npm or PyPI package of an MCP Registry entry that runs locally over stdio. */
+export const LocalPackage = Schema.Struct({
+  runner: Schema.Literals(["npx", "uvx"]),
+  identifier: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(214),
+    Schema.isPattern(/^(?:@[a-z0-9][\w.-]*\/)?[A-Za-z0-9][\w.-]*$/),
+  ),
+  version: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(128),
+    Schema.isPattern(/^[A-Za-z0-9][\w.+-]*$/),
+  ),
+  /** Fixed arguments the registry declares, after the package. */
+  args: Schema.Array(LocalTextInput).check(Schema.isMaxLength(64)),
+  environment: Schema.Array(
+    Schema.Struct({
+      name: LocalEnvironmentName,
+      description: Schema.optional(Schema.String),
+      required: Schema.Boolean,
+      secret: Schema.Boolean,
+      default: Schema.optional(Schema.String),
+    }),
+  ).check(Schema.isMaxLength(64)),
+});
+export type LocalPackage = typeof LocalPackage.Type;
+
+/** An MCP Bundle (`.mcpb`) an MCP Registry entry publishes by https address and SHA-256. */
+export const LocalBundleDownload = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048), Schema.isPattern(/^https:\/\//)),
+  sha256: TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
+export type LocalBundleDownload = typeof LocalBundleDownload.Type;
+
+/** Where a server set up in another app was found. */
+export const LocalImportSource = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("app"),
+    app: Schema.Literals(["claude-desktop", "claude-code", "codex", "cursor"]),
+    /** Claude Code's servers for one folder. */
+    folder: Schema.optional(LocalPathInput),
+  }),
+  /** A `.mcp.json` in a folder the user chose. */
+  Schema.Struct({ type: Schema.Literal("file"), path: LocalPathInput }),
+]);
+export type LocalImportSource = typeof LocalImportSource.Type;
+
+/** A local server another app runs. Variable values stay on the server. */
+export const LocalImportableServer = Schema.Struct({
+  source: LocalImportSource,
+  /** "Claude Desktop", "Claude Code", "Codex", "Cursor", or the folder's name. */
+  sourceLabel: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  commandLine: TrimmedNonEmptyString,
+  /** Variables that look like keys; they become Accounts keys when added. */
+  keys: Schema.Array(TrimmedNonEmptyString),
+  installedConnectorId: Schema.optional(ConnectorId),
+});
+export type LocalImportableServer = typeof LocalImportableServer.Type;
+
 export const ConnectorAddInput = Schema.Struct({
   target: Schema.Union([
     Schema.Struct({
@@ -216,10 +429,46 @@ export const ConnectorAddInput = Schema.Struct({
       url: ConnectorUrlInput,
     }),
     Schema.Struct({ type: Schema.Literal("url"), url: ConnectorUrlInput }),
+    /** A `.mcpb` or `.zip` file, or a bundle folder, as a path on the environment's computer. */
+    Schema.Struct({
+      type: Schema.Literal("local-bundle"),
+      path: LocalPathInput,
+      settings: LocalBundleSettingsInput,
+      keys: LocalKeysInput,
+    }),
+    /** A server another app runs, or one entry of a folder's `.mcp.json`. */
+    Schema.Struct({
+      type: Schema.Literal("local-import"),
+      source: LocalImportSource,
+      name: ConnectorNameInput,
+    }),
+    Schema.Struct({
+      type: Schema.Literal("local-command"),
+      command: LocalPathInput,
+      args: Schema.Array(LocalTextInput).check(Schema.isMaxLength(64)),
+      environment: LocalEnvironmentListInput,
+    }),
+    /** A registry entry's `localPackage`, as Discover returned it. */
+    Schema.Struct({
+      type: Schema.Literal("local-package"),
+      name: ConnectorNameInput,
+      version: ConnectorNameInput,
+      package: LocalPackage,
+      environment: LocalEnvironmentListInput,
+    }),
+    /** A registry entry's `localBundle`: downloaded, checked against its hash, unpacked. */
+    Schema.Struct({
+      type: Schema.Literal("registry-bundle"),
+      name: ConnectorNameInput,
+      version: ConnectorNameInput,
+      bundle: LocalBundleDownload,
+    }),
   ]),
   displayName: Schema.optional(ConnectorNameInput),
   /** Shown in Installed; from the Discover entry the connector was added from. */
   description: Schema.optional(ConnectorDescriptionInput),
+  /** Only these agents get it; absent means every agent. */
+  agents: Schema.optional(ConnectorAgents),
   oauthClient: Schema.optional(ConnectorOAuthClientInput),
   /** API-key style servers. */
   credential: Schema.optional(
@@ -237,6 +486,12 @@ export const ConnectorAddInput = Schema.Struct({
         headerName: Schema.optional(TrimmedNonEmptyString),
         /** A user secret; adding the connector is the user's binding confirmation. */
         secretRef: VaultSecretRef,
+      }),
+      /** GitHub's own MCP server only: Source Control's GitHub account. */
+      Schema.Struct({
+        type: Schema.Literal("source-control"),
+        /** One of Source Control's GitHub logins; Source Control's own choice when absent. */
+        account: Schema.optional(TrimmedNonEmptyString),
       }),
     ]),
   ),
@@ -272,8 +527,69 @@ export const ConnectorUpdateInput = Schema.Struct({
   displayName: Schema.optional(ConnectorNameInput),
   enabled: Schema.optional(Schema.Boolean),
   availability: Schema.optional(GrantScope),
+  /** Only these agents get it; null gives it to every agent again. */
+  agents: Schema.optional(Schema.NullOr(ConnectorAgents)),
+  /** Local connectors: stop every running copy; agents start a fresh one on their next request. */
+  restart: Schema.optional(Schema.Literal(true)),
+  /** Local connectors: change settings and keys; running copies restart. */
+  localSetup: Schema.optional(
+    Schema.Struct({
+      settings: LocalBundleSettingsInput,
+      keys: LocalKeysInput,
+      /** The Accounts website or university sign-in it uses for its `signIn` site. */
+      signIn: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
 });
 export type ConnectorUpdateInput = typeof ConnectorUpdateInput.Type;
+
+/** Undoes the last change to a local connector's folder, or brings a removed one back. */
+export const ConnectorUndoInput = Schema.Struct({ connectorId: ConnectorId });
+export type ConnectorUndoInput = typeof ConnectorUndoInput.Type;
+
+export const ConnectorExportInput = Schema.Struct({ connectorId: ConnectorId });
+export type ConnectorExportInput = typeof ConnectorExportInput.Type;
+
+/** A local connector as an MCP Bundle (`.mcpb`), to share. */
+export const ConnectorExport = Schema.Struct({
+  fileName: TrimmedNonEmptyString,
+  base64: Schema.String,
+});
+export type ConnectorExport = typeof ConnectorExport.Type;
+
+export const LocalBundleInspectInput = Schema.Struct({ path: LocalPathInput });
+export type LocalBundleInspectInput = typeof LocalBundleInspectInput.Type;
+
+export const LocalBundleInspection = Schema.Struct({
+  kind: Schema.Literal("bundle"),
+  name: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.String),
+  author: Schema.optional(TrimmedNonEmptyString),
+  runtime: Schema.Literals(["node", "python", "binary", "uv"]),
+  fields: Schema.Array(LocalBundleField),
+  tools: Schema.Array(
+    Schema.Struct({ name: TrimmedNonEmptyString, description: Schema.optional(Schema.String) }),
+  ),
+  /** Set when this computer cannot run the bundle, for example a missing `uv`. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
+});
+export type LocalBundleInspection = typeof LocalBundleInspection.Type;
+
+/** What a picked file or folder holds: a bundle, or servers listed in its `.mcp.json`. */
+export const LocalInspection = Schema.Union([
+  LocalBundleInspection,
+  Schema.Struct({ kind: Schema.Literal("servers"), servers: Schema.Array(LocalImportableServer) }),
+  /** A Scient plugin folder (`scient.plugin.json`), installed as a plugin instead. */
+  Schema.Struct({ kind: Schema.Literal("plugin"), displayName: Schema.String }),
+]);
+export type LocalInspection = typeof LocalInspection.Type;
+
+export const LocalImportablesResult = Schema.Struct({
+  servers: Schema.Array(LocalImportableServer),
+});
+export type LocalImportablesResult = typeof LocalImportablesResult.Type;
 
 export const ConnectorRemoveInput = Schema.Struct({ connectorId: ConnectorId });
 export type ConnectorRemoveInput = typeof ConnectorRemoveInput.Type;
@@ -302,7 +618,7 @@ export type ConnectorToolSummary = typeof ConnectorToolSummary.Type;
 
 export const ConnectorTestResult = Schema.Struct({
   connectorId: ConnectorId,
-  outcome: Schema.Literals(["ok", "needs-auth", "unreachable", "error"]),
+  outcome: Schema.Literals(["ok", "needs-auth", "needs-setup", "unreachable", "error"]),
   checkedAt: IsoDateTime,
   serverName: Schema.optional(TrimmedNonEmptyString),
   serverVersion: Schema.optional(TrimmedNonEmptyString),
@@ -313,18 +629,19 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 
 /** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
 export const ExtensionCategory = Schema.Literals([
-  "featured",
+  "most-used",
   "papers",
   "biology",
+  "code",
+  "data",
+  "physics-math",
+  "files",
+  "communication",
+  "projects",
+  "figures",
   "chemistry",
   "earth",
-  "physics-math",
   "social-science",
-  "data",
-  "writing",
-  "figures",
-  "code",
-  "teamwork",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
@@ -391,6 +708,10 @@ export const DiscoverEntry = Schema.Struct({
   websiteUrl: Schema.optional(TrimmedNonEmptyString),
   repositoryUrl: Schema.optional(TrimmedNonEmptyString),
   remotes: Schema.Array(DiscoverRemote),
+  /** A registry package Scient can run locally; offered only when no remote is installable. */
+  localPackage: Schema.optional(LocalPackage),
+  /** A registry bundle Scient can download and run; offered when nothing above is. */
+  localBundle: Schema.optional(LocalBundleDownload),
   installable: Schema.Boolean,
   /** Why the entry cannot be installed as a connector (for example local packages only). */
   unsupportedReason: Schema.optional(TrimmedNonEmptyString),
@@ -448,6 +769,8 @@ export const ExtensionDeliverySkipReason = Schema.Literals([
   "needs-credential",
   "disabled",
   "project-deselected",
+  /** The person chose other agents for this connector. */
+  "agent-deselected",
   "transport-unsupported",
   "name-collision",
   /** The agent could not say which MCP servers it already has, so no connector name was safe. */

@@ -99,6 +99,7 @@ else if (args.includes('repos/ScientFactory/scient-desktop-beta/releases?per_pag
     { channel: "beta", failure: "none" },
     { channel: "beta", failure: "corrupt-upload" },
     { channel: "beta", failure: "stable-advanced" },
+    { channel: "beta", failure: "publisher-pinned" },
   ])(
     "publishes $channel only into its owning repository, failure=$failure",
     ({ channel, failure }) => {
@@ -110,6 +111,21 @@ else if (args.includes('repos/ScientFactory/scient-desktop-beta/releases?per_pag
       try {
         NodeFS.mkdirSync(bin);
         NodeFS.mkdirSync(NodePath.join(root, "release-assets"));
+        NodeFS.mkdirSync(NodePath.join(root, "scripts"));
+        NodeFS.copyFileSync(
+          NodePath.join(import.meta.dirname, "windows-publication-signing.ts"),
+          NodePath.join(root, "scripts/windows-publication-signing.ts"),
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(root, "release-assets/scient-release-handoff.json"),
+          JSON.stringify({
+            version,
+            windows:
+              channel === "beta"
+                ? { signed: false }
+                : { signed: true, publisherName: "ScientFactory Ltd" },
+          }),
+        );
         NodeFS.writeFileSync(
           NodePath.join(root, "release-assets/fixture.txt"),
           "immutable fixture",
@@ -122,17 +138,32 @@ const path = require('node:path');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + '\\n');
 if (args[0] === 'api') {
-  if (args[1].endsWith('/releases/latest')) process.stdout.write(process.env.RELEASE_CHANNEL === 'beta' ? (process.env.FAILURE === 'stable-advanced' ? 'v0.6.23' : 'v0.6.22') : process.env.RELEASE_TAG);
-  else if (args[1] === 'repos/ScientFactory/scient-desktop-beta') process.stdout.write('main');
+  const endpoint = args.find((arg) => arg.startsWith('repos/'));
+  if (endpoint?.endsWith('/releases/latest')) {
+    const tag = process.env.RELEASE_CHANNEL === 'beta'
+      ? (process.env.FAILURE === 'stable-advanced' ? 'v0.6.23' : 'v0.6.22')
+      : process.env.RELEASE_TAG;
+    process.stdout.write(args.includes('--jq') ? tag : JSON.stringify({ tag_name: 'v0.6.22' }));
+  } else if (endpoint === 'repos/ScientFactory/scient-desktop-beta/releases?per_page=100') {
+    process.stdout.write(JSON.stringify([[]]));
+  } else if (endpoint === 'repos/ScientFactory/scient-desktop-beta') process.stdout.write('main');
   else process.exit(2);
 } else if (args[0] === 'release' && ['create', 'edit'].includes(args[1])) {
   if (args[1] === 'create') fs.writeFileSync(process.env.NOTES_RECEIPT, fs.readFileSync(args[args.indexOf('--notes-file') + 1]));
 } else if (args[0] === 'release' && args[1] === 'view') {
   process.stdout.write(JSON.stringify({ isDraft: false, isPrerelease: true }));
 } else if (args[0] === 'release' && args[1] === 'download') {
-  const destination = args[args.indexOf('--dir') + 1];
-  for (const name of fs.readdirSync('release-assets')) fs.copyFileSync(path.join('release-assets', name), path.join(destination, name));
-  if (process.env.FAILURE === 'corrupt-upload') fs.writeFileSync(path.join(destination, 'fixture.txt'), 'modified upload');
+  if (args.includes('--output')) {
+    process.stdout.write(JSON.stringify({
+      windows: process.env.FAILURE === 'publisher-pinned'
+        ? { signed: true, publisherName: 'ScientFactory Ltd' }
+        : { signed: false },
+    }));
+  } else {
+    const destination = args[args.indexOf('--dir') + 1];
+    for (const name of fs.readdirSync('release-assets')) fs.copyFileSync(path.join('release-assets', name), path.join(destination, name));
+    if (process.env.FAILURE === 'corrupt-upload') fs.writeFileSync(path.join(destination, 'fixture.txt'), 'modified upload');
+  }
 } else process.exit(2);
 `,
           { mode: 0o700 },
@@ -155,6 +186,7 @@ process.stdout.write(process.env.SOURCE_SHA + '\\trefs/tags/' + process.env.RELE
               ...process.env,
               PATH: `${bin}:${process.env.PATH}`,
               GH_TOKEN: "synthetic-unused-token",
+              PIN_READ_TOKEN: "synthetic-read-token",
               CALLS: calls,
               FAILURE: failure,
               NOTES_RECEIPT: NodePath.join(root, "published-notes.md"),
@@ -184,11 +216,11 @@ process.stdout.write(process.env.SOURCE_SHA + '\\trefs/tags/' + process.env.RELE
         );
         if (failure !== "none") {
           expect(result.status).not.toBe(0);
-          expect(mutations).toHaveLength(failure === "corrupt-upload" ? 1 : 0);
+          expect(mutations).toHaveLength(failure === "stable-advanced" ? 0 : 1);
           expect(mutations.some((args) => args[1] === "edit")).toBe(false);
           return;
         }
-        expect(result.status).toBe(0);
+        expect(result.status, result.stderr.toString()).toBe(0);
         expect(mutations).toHaveLength(2);
         for (const args of mutations) expect(args[args.indexOf("--repo") + 1]).toBe(repository);
         if (channel === "beta") {

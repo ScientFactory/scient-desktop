@@ -49,6 +49,16 @@ describe("password import", () => {
       expect(explicit.entries[0]).toMatchObject({ site: "login.example.co.uk", username: "user" });
     },
   );
+  it("keeps the date Chrome last changed the password, from Scient's own read of it", () => {
+    const parsed = parsePasswordImport(
+      `name,url,username,password,password_changed\nSynthetic,https://example.com,user,${syntheticValue()},2024-05-01T10:00:00.000Z\nOther,https://example.com,user2,${syntheticValue()},`,
+      "auto",
+    );
+    expect(parsed.entries.map((entry) => entry.changedAt)).toEqual([
+      "2024-05-01T10:00:00.000Z",
+      undefined,
+    ]);
+  });
   it("handles BOM, escaped quotes, embedded commas and multiline fields", () => {
     const value = `${syntheticValue()},\n"quoted"`;
     const escaped = value.replaceAll('"', '""');

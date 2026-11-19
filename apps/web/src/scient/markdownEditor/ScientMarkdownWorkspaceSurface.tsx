@@ -13,11 +13,12 @@ import { readLocalApi } from "~/localApi";
 import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { editorCompositions } from "../editorFlush/editorComposition";
 import { Button } from "~/components/ui/button";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
 import type { MarkdownCitationSource, MarkdownCiteHandler } from "./markdownCitation";
+import { MarkdownResults, type MarkdownResultsHandle } from "../results/MarkdownResults";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import { showScientMarkdownFootnoteContextMenu } from "./footnoteContextMenu";
@@ -50,6 +51,12 @@ import {
   type MarkdownPersistenceLease,
 } from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
+import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
+import { markdownQuote } from "../annotations/quoteFormat";
+import type { LibraryCitationCandidate } from "../sources/libraryCitations";
+import type { ScientMarkdownCitationOpenRequest } from "./prosemirror/citationOpenRequest";
+
+const EMPTY_LIBRARY_CITATIONS: ReadonlyArray<LibraryCitationCandidate> = [];
 
 const CHROME_BLOCK_SHORTCUTS = [
   ["moveBlockUp", "move-up"],
@@ -86,6 +93,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
+  /** Library sources offered after `[@`. */
+  readonly libraryCitations?: ReadonlyArray<LibraryCitationCandidate>;
+  readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
@@ -170,6 +180,17 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   });
   const readBindings = useStableCallback(() => bindingsRef.current);
   const selectImage = useStableCallback(() => imageInputRef.current?.click());
+  const resultsRef = useRef<MarkdownResultsHandle | null>(null);
+  const registerResults = useStableCallback((handle: MarkdownResultsHandle) => {
+    resultsRef.current = handle;
+    return () => {
+      if (resultsRef.current === handle) resultsRef.current = null;
+    };
+  });
+  const openResult = useStableCallback((href: string, anchor: HTMLElement, position?: number) =>
+    resultsRef.current?.openCard(href, anchor, position),
+  );
+  const selectResult = useStableCallback(() => resultsRef.current?.openPicker());
   const [controller] = useState(
     () =>
       new ScientMarkdownEditorView({
@@ -229,6 +250,13 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             }
           : {}),
         wikiLinkTargetExists: (target) => readBindings().wikiLinkTargetExists?.(target) ?? null,
+        onOpenCitation: (request) => readBindings().onOpenCitation?.(request) ?? false,
+        ...(props.citationSource
+          ? {
+              onOpenResult: openResult,
+              selectResult,
+            }
+          : {}),
         showLinkContextMenu: async (request) => {
           const api = readLocalApi();
           if (!api) return null;
@@ -264,6 +292,21 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   useLayoutEffect(() => {
     controllerRef.current = controller;
   });
+  useDocumentQuoteTarget(
+    props.citationSource
+      ? {
+          environmentId: props.citationSource.environmentId,
+          root: props.citationSource.cwd,
+          label: props.citationSource.path.split("/").at(-1) ?? props.citationSource.path,
+          element: () => controller.view?.dom ?? null,
+          insert: (quote) => controller.insertQuotation(markdownQuote(quote)),
+        }
+      : null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the loaded Library to the imperative editor controller
+  useLayoutEffect(() => {
+    controller.setLibraryCitations(props.libraryCitations ?? EMPTY_LIBRARY_CITATIONS);
+  }, [controller, props.libraryCitations]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers an external-projection handler on the persistence lease until unmount
   useLayoutEffect(
@@ -481,6 +524,15 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
           }}
         />
       ) : null}
+      {props.citationSource ? (
+        <MarkdownResults
+          controller={controller}
+          environmentId={props.citationSource.environmentId}
+          cwd={props.citationSource.cwd}
+          documentPath={props.citationSource.path}
+          register={registerResults}
+        />
+      ) : null}
       <div className="scient-markdown-rich-pane">
         <ScientMarkdownControls
           controller={controller}
@@ -520,7 +572,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
               onClick={() =>
                 void writeTextToClipboard(
                   JSON.stringify(pendingWriteback.document.toJSON(), null, 2),
-                  "pending document input",
+                  namedClipboardTarget("pending document input"),
                 )
               }
             >

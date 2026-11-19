@@ -17,6 +17,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -41,7 +42,9 @@ import {
 
 const ACCOUNT_METHOD = "scient_agent_account";
 
-class SignInInterrupted extends Error {}
+class SignInInterrupted extends Schema.TaggedError<SignInInterrupted>()("SignInInterrupted", {}) {}
+
+const isSignInInterrupted = Schema.is(SignInInterrupted);
 
 type Pending =
   | { readonly kind: "sign-in" | "sign-out"; readonly account: string }
@@ -56,6 +59,8 @@ export function ScientAgentAccounts(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly disabled?: boolean;
+  /** Only these accounts, without the heading or search: one sign-in offered where it is needed. */
+  readonly only?: (account: ProviderConnectionAccount) => boolean;
 }) {
   const startConnection = useAtomCommand(serverEnvironment.startProviderConnection, {
     reportFailure: false,
@@ -97,7 +102,7 @@ export function ScientAgentAccounts(props: {
   // Without a list there is nothing to choose from, but a sign-in that is
   // running or just failed is still shown.
   if (listed === undefined && active === null && failed === null) return null;
-  const accounts = listed ?? [];
+  const accounts = (listed ?? []).filter((account) => props.only?.(account) ?? true);
 
   const instanceId = props.provider.instanceId;
   const nameOf = (id: string | undefined) =>
@@ -136,7 +141,7 @@ export function ScientAgentAccounts(props: {
       (cause: unknown) => cause,
     );
     setPending(null);
-    if (failure !== null && !(failure instanceof SignInInterrupted)) {
+    if (failure !== null && !isSignInInterrupted(failure)) {
       fail(failure, `Scient could not start the ${account.name} sign-in.`);
     }
   };
@@ -195,7 +200,7 @@ export function ScientAgentAccounts(props: {
 
   return (
     <section aria-label="Model accounts" className="space-y-3">
-      <p className="text-sm font-medium text-foreground">Model accounts</p>
+      {props.only ? null : <p className="text-sm font-medium text-foreground">Model accounts</p>}
       {active ? (
         <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
           <div className="flex items-start gap-3">
@@ -275,17 +280,19 @@ export function ScientAgentAccounts(props: {
         </div>
       ) : listed === undefined ? null : (
         <>
-          <input
-            aria-label="Search model accounts"
-            autoCapitalize="none"
-            autoComplete="off"
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring"
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search accounts and keys"
-            spellCheck={false}
-            type="search"
-            value={query}
-          />
+          {props.only ? null : (
+            <input
+              aria-label="Search model accounts"
+              autoCapitalize="none"
+              autoComplete="off"
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring"
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="Search accounts and keys"
+              spellCheck={false}
+              type="search"
+              value={query}
+            />
+          )}
           <div className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border">
             <AccountGroup
               accounts={sections.yours}

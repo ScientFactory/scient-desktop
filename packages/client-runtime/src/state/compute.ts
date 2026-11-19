@@ -475,10 +475,9 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeListSessions,
       staleTimeMs: 0,
     }),
-    activeWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+    activeWork: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:compute:active-work",
-      tag: WS_METHODS.computeActiveWork,
-      staleTimeMs: 0,
+      tag: WS_METHODS.subscribeComputeActiveWork,
     }),
     session: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:compute:session",
@@ -551,6 +550,39 @@ export function createComputeEnvironmentAtoms<R, E>(
       label: "environment-data:compute:save-output",
       tag: WS_METHODS.computeSaveOutput,
       scheduler: executionScheduler,
+    }),
+    resultsResolve: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-resolve",
+      tag: WS_METHODS.computeResultsResolve,
+    }),
+    resultsList: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-list",
+      tag: WS_METHODS.computeResultsList,
+    }),
+    resultsPlaceFigure: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-place-figure",
+      tag: WS_METHODS.computeResultsPlaceFigure,
+    }),
+    resultsRerun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-rerun",
+      tag: WS_METHODS.computeResultsRerun,
+      scheduler: executionScheduler,
+    }),
+    resultsPlaceLatex: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-place-latex",
+      tag: WS_METHODS.computeResultsPlaceLatex,
+    }),
+    resultsPlacements: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-placements",
+      tag: WS_METHODS.computeResultsPlacements,
+    }),
+    resultsUpdateFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-update-files",
+      tag: WS_METHODS.computeResultsUpdateFiles,
+    }),
+    resultsUndoUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:results-undo-update",
+      tag: WS_METHODS.computeResultsUndoUpdate,
     }),
     saveConsoleNotebook: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:save-console-notebook",

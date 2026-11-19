@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
+import { EnvironmentThemeService } from "../../../environmentTheme.ts";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
@@ -28,6 +29,9 @@ import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdap
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as IssueService from "../../../issue/IssueService.ts";
+import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -70,6 +74,7 @@ const StubServicesLive = Layer.mergeAll(
   AccountsTestkit.layer,
   // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
+  Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),
   }),
@@ -94,6 +99,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+  Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(IssueService.IssueService)({}),
+  Layer.mock(ThreadIssueService.ThreadIssueService)({}),
   ServerSettings.layerTest({ linkedEnvironmentsEnabled: true }),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
@@ -228,9 +236,16 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      // The credential holds worktree, orchestration and preview: only the device
-      // tools, whose every call needs a grant it lacks, are not listed.
-      const unlisted = new Set(McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name));
+      // The credential holds worktree, orchestration and preview: only the device and
+      // issue tools, whose every call needs a grant it lacks, are not listed.
+      // Device tools need their grant, and only a deferring client lists tool_search.
+      // The background wait is listed only for providers that can hold a thread on one.
+      const unlisted = new Set([
+        ...McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name),
+        ...McpHttpServer.hostMcpToolGrants.issues.map((tool) => tool.name),
+        "tool_search",
+        "scient_background_wait",
+      ]);
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,

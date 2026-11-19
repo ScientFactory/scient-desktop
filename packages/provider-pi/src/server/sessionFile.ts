@@ -3,17 +3,6 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-
-export const PiSessionCursor = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
-  sessionFile: Schema.String,
-  sessionId: Schema.String.check(
-    Schema.makeFilter((value) => value.length > 0 && value.trim() === value),
-  ),
-});
-export type PiSessionCursor = typeof PiSessionCursor.Type;
-const decodeSessionHeader = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class PiSessionFileError extends Schema.TaggedError<PiSessionFileError>()(
   "PiSessionFileError",
@@ -52,74 +41,6 @@ const canonicalContainedPath = (path: Path.Path, root: string, candidate: string
     ? canonical
     : undefined;
 };
-
-export const validatePiResumeSessionFile = Effect.fn("PiSessionFile.validateResume")(
-  function* (input: {
-    readonly stateRoot: string;
-    readonly cursor: PiSessionCursor;
-    readonly cwd: string;
-  }) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const rootReal = yield* fs.realPath(path.resolve(input.stateRoot));
-    const cwdReal = yield* fs.realPath(path.resolve(input.cwd));
-    const sessionFile = canonicalContainedPath(path, rootReal, input.cursor.sessionFile);
-    if (!sessionFile || sessionFile !== input.cursor.sessionFile || !path.isAbsolute(sessionFile)) {
-      return yield* new PiSessionFileError({
-        operation: "containment",
-        sessionFile: input.cursor.sessionFile,
-        cause: rootReal,
-      });
-    }
-    const fileReal = yield* fs.realPath(sessionFile);
-    if (fileReal !== sessionFile || canonicalContainedPath(path, rootReal, fileReal) !== fileReal) {
-      return yield* new PiSessionFileError({ operation: "symlink", sessionFile, cause: fileReal });
-    }
-    const info = yield* fs.stat(sessionFile);
-    if (info.type !== "File")
-      return yield* new PiSessionFileError({
-        operation: "regularFile",
-        sessionFile,
-        cause: info.type,
-      });
-    yield* fs.access(sessionFile, { readable: true });
-    // Session bodies grow across turns; resume validates only the bounded header.
-    const maxHeaderBytes = 64 * 1024;
-    const prefix = yield* fs.stream(sessionFile, { bytesToRead: maxHeaderBytes }).pipe(
-      Stream.decodeText(),
-      Stream.runFold(
-        () => "",
-        (text, chunk) => text + chunk,
-      ),
-    );
-    if (!prefix.includes("\n") && info.size > BigInt(maxHeaderBytes))
-      return yield* new PiSessionFileError({
-        operation: "header",
-        sessionFile,
-        cause: "Session header exceeds its size limit.",
-      });
-    const firstLine = prefix.split(/\r?\n/, 1)[0] ?? "";
-    const header = yield* decodeSessionHeader(firstLine).pipe(
-      Effect.mapError(
-        (cause) => new PiSessionFileError({ operation: "header", sessionFile, cause }),
-      ),
-    );
-    if (
-      typeof header !== "object" ||
-      header === null ||
-      !("type" in header) ||
-      header.type !== "session" ||
-      !("id" in header) ||
-      header.id !== input.cursor.sessionId ||
-      !("cwd" in header) ||
-      typeof header.cwd !== "string" ||
-      (yield* fs.realPath(path.resolve(header.cwd))) !== cwdReal
-    ) {
-      return yield* new PiSessionFileError({ operation: "header", sessionFile, cause: header });
-    }
-    return { ...input.cursor, sessionFile };
-  },
-);
 
 export const allocateFreshPiSessionFile = Effect.fn("PiSessionFile.allocateFresh")(
   function* (input: { readonly stateRoot: string; readonly fileId: string }) {
@@ -163,13 +84,3 @@ export const cleanupFreshPiSessionFile = Effect.fn("PiSessionFile.cleanupFresh")
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(fresh.sessionFile, { force: true });
 });
-
-export const cleanupResumedPiSessionFile = (_cursor: PiSessionCursor): Effect.Effect<void> =>
-  Effect.void;
-
-export function piStateMatchesCursor(
-  state: { readonly sessionFile?: unknown; readonly sessionId?: unknown },
-  cursor: PiSessionCursor,
-): boolean {
-  return state.sessionFile === cursor.sessionFile && state.sessionId === cursor.sessionId;
-}

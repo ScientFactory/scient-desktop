@@ -26,7 +26,7 @@ import {
   CURATED_SERVERS,
   curatedServerForUrl,
   curatedDiscoverEntry,
-  FEATURED_SERVER_IDS,
+  MOST_USED_SERVER_IDS,
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
@@ -141,15 +141,16 @@ describe("MCP Registry discover", () => {
         });
 
         const byName = Object.fromEntries(page.entries.map((entry) => [entry.name, entry]));
+        // A name or title hit ranks first; the rest keep the registry's order.
         expect(Object.keys(byName)).toEqual([
+          "com.mcparmory/github",
+          "io.github.0Xflacko/justclip",
           "ac.inference.sh/mcp",
           "academy.apexai/apex-ai-academy",
           "ae.easyvoice/tts",
           "agency.kesey/pretrip",
           "ai.autorfp/mcp",
           "ai.agentrapay/agentra",
-          "com.mcparmory/github",
-          "io.github.0Xflacko/justclip",
         ]);
         expect(page.nextCursor).toBe("io.github.0Xflacko/justclip:0.3.0");
 
@@ -179,14 +180,16 @@ describe("MCP Registry discover", () => {
           remotes: [{ url: "https://{api_host}/mcp", requiresInput: true }],
           unsupportedReason: Discover.UNSUPPORTED_REQUIRES_CONFIGURATION,
         });
+        // npm and PyPI stdio packages run locally through npx and uvx.
         expect(byName["agency.kesey/pretrip"]).toMatchObject({
-          installable: false,
+          installable: true,
           remotes: [],
-          unsupportedReason: Discover.UNSUPPORTED_LOCAL_ONLY,
+          localPackage: { runner: "npx", identifier: "pretrip-mcp", version: "1.0.1", args: [] },
         });
-        expect(byName["com.mcparmory/github"]?.unsupportedReason).toBe(
-          Discover.UNSUPPORTED_LOCAL_ONLY,
-        );
+        expect(byName["com.mcparmory/github"]).toMatchObject({
+          installable: true,
+          localPackage: { runner: "uvx", identifier: "mcparmory-github", version: "1.0.6" },
+        });
         expect(byName["ai.agentrapay/agentra"]).toMatchObject({
           installable: false,
           remotes: [],
@@ -270,6 +273,121 @@ describe("MCP Registry discover", () => {
       });
     }
     expect(Discover.parseRegistryPage("<html>")).toBeUndefined();
+  });
+
+  it("runs the packages it can and says why it can't run the rest", () => {
+    const entry = (...packages: ReadonlyArray<object>) =>
+      Discover.parseRegistryPage(
+        JSON.stringify({
+          servers: [
+            {
+              server: { name: "example/local", version: "1.0.0", packages },
+              _meta: { "io.modelcontextprotocol.registry/official": { status: "active" } },
+            },
+          ],
+        }),
+      )!.entries[0]!;
+    const npm = { registryType: "npm", identifier: "@acme/mcp", version: "2.3.3" };
+    // npx -y is what Scient runs already, so it is not passed again.
+    expect(entry({ ...npm, runtimeArguments: [{ type: "named", name: "-y" }] })).toMatchObject({
+      installable: true,
+      localPackage: { runner: "npx", identifier: "@acme/mcp", args: [] },
+    });
+    const sha256 = "a".repeat(64);
+    expect(
+      entry({ registryType: "mcpb", identifier: "https://example.com/a.mcpb", fileSha256: sha256 }),
+    ).toMatchObject({
+      installable: true,
+      localBundle: { url: "https://example.com/a.mcpb", sha256 },
+    });
+    // The first package's reason is shown when none of them can run.
+    for (const [packages, reason] of [
+      [[{ registryType: "oci", identifier: "acme/mcp" }, npm], undefined],
+      [[{ registryType: "oci", identifier: "acme/mcp" }], "Runs in Docker"],
+      [[{ registryType: "nuget", identifier: "Acme.Mcp" }], "Runs from .NET (NuGet) packages"],
+      [[{ ...npm, transport: { type: "sse" } }], "Runs here as a sse server"],
+      [
+        [{ ...npm, runtimeArguments: [{ type: "named", name: "--package" }] }],
+        "Needs runner options Scient doesn't pass (--package)",
+      ],
+      // regression: an option that did not decode skipped the package: "Publishes no remote endpoint".
+      [
+        [{ ...npm, runtimeArguments: [{ type: "named", name: "--registry", isRequired: "yes" }] }],
+        "Needs runner options Scient doesn't pass (an option it can't read)",
+      ],
+      [[{ registryType: "npm" }], "listed in a form Scient can't read"],
+      [
+        [{ ...npm, packageArguments: [{ type: "named", name: "--root", isRequired: true }] }],
+        "Needs a value for --root",
+      ],
+      [[{ registryType: "mcpb", identifier: "http://example.com/a.mcpb" }], "checksum"],
+    ] as const) {
+      const shown = entry(...packages);
+      if (reason === undefined) expect(shown.installable).toBe(true);
+      else
+        expect(shown).toMatchObject({
+          installable: false,
+          unsupportedReason: expect.stringContaining(reason),
+        });
+    }
+  });
+
+  it.effect("finds every word of a query, not only the phrase, and ranks name hits first", () => {
+    const server = (name: string, title: string, description: string) => ({
+      server: {
+        name,
+        title,
+        description,
+        version: "1.0.0",
+        remotes: [{ type: "streamable-http", url: `https://${name.replaceAll("/", ".")}/mcp` }],
+      },
+      _meta: { "io.modelcontextprotocol.registry/official": { status: "active", isLatest: true } },
+    });
+    const pages: Record<string, unknown[]> = {
+      // The registry matches the text as one phrase: "google drive" finds nothing.
+      "google drive": [],
+      "google-drive": [server("io.example/gdrive", "Google Drive", "Files in Drive.")],
+      google: [
+        server("io.example/rent", "Rent a car", "Drive away today, found on Google Maps."),
+        server("io.example/gdrive", "Google Drive", "Files in Drive."),
+        server("io.example/gmail", "Gmail", "Google mail."),
+      ],
+    };
+    const http = harness((url) =>
+      Response.json({
+        servers: pages[url.searchParams.get("search") ?? ""] ?? [],
+        metadata: { count: 0 },
+      }),
+    );
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const page = yield* discover.search({ scope: "registry", query: "Google Drive" });
+      expect(http.requests.map((url) => url.searchParams.get("search")).toSorted()).toEqual([
+        "Google Drive",
+        "google",
+        "google-drive",
+      ]);
+      expect(page.entries.map((entry) => entry.name)).toEqual([
+        "io.example/gdrive",
+        "io.example/rent",
+      ]);
+      expect(page.nextCursor).toBeUndefined();
+      expect(page.message).toBeUndefined();
+    }).pipe(Effect.provide(http.layer()));
+  });
+
+  it.effect("says a merged search was cut when a registry page has more", () => {
+    const http = harness((url) =>
+      Response.json({
+        servers: [],
+        metadata: url.searchParams.get("search") === "google" ? { nextCursor: "more:1" } : {},
+      }),
+    );
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const page = yield* discover.search({ scope: "registry", query: "Google Drive" });
+      expect(page.message).toContain("Narrow the search");
+    }).pipe(Effect.provide(http.layer()));
   });
 
   it.effect("serves a query from cache for ten minutes and keeps installed state live", () => {
@@ -367,13 +485,13 @@ const curated = (
 const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
   // Declared in an order that differs from the section order.
   curated("figure", ["figures"]),
-  curated("semantic", ["featured", "papers"], {
+  curated("semantic", ["most-used", "papers"], {
     tagline: "Search papers and citations",
     icon: ICON_URIS.semantic,
   }),
   curated("kaggle", ["data", "papers"]),
   ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["papers"])),
-  curated("hub", ["featured", "data"], {
+  curated("hub", ["most-used", "data"], {
     url: "https://hub.example/mcp/",
     registry: { name: "ac.inference.sh/mcp", version: "2.0.1" },
     icon: ICON_URIS.hub,
@@ -395,13 +513,13 @@ describe("curated Discover catalog", () => {
           section.entries.length,
         ]),
       ).toEqual([
-        ["featured", 2, 2],
+        ["most-used", 2, 2],
         ["papers", 9, 6],
         ["data", 3, 3],
         ["figures", 1, 1],
       ]);
       const research = catalog.sections[1]!;
-      expect(research.title).toBe("Papers & evidence");
+      expect(research.title).toBe("Papers & literature");
       // Primary members first, in catalog order; secondary members after them.
       expect(research.entries.map((entry) => entry.title)).toEqual([
         "semantic",
@@ -411,9 +529,10 @@ describe("curated Discover catalog", () => {
         "paper-3",
         "paper-4",
       ]);
+      // A most used member leads its field.
       expect(catalog.sections[2]!.entries.map((entry) => entry.title)).toEqual([
-        "kaggle",
         "hub",
+        "kaggle",
         "lab",
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
@@ -424,7 +543,7 @@ describe("curated Discover catalog", () => {
         title: "semantic",
         description: "semantic description.",
         tagline: "Search papers and citations",
-        categories: ["featured", "papers"],
+        categories: ["most-used", "papers"],
         websiteUrl: "https://semantic.example",
         remotes: [
           { type: "streamable-http", url: "https://semantic.example/mcp", requiresInput: false },
@@ -525,7 +644,7 @@ describe("curated Discover catalog", () => {
       expect(byName["ac.inference.sh/mcp"]).toMatchObject({
         title: "hub",
         tagline: "hub tagline",
-        categories: ["featured", "data"],
+        categories: ["most-used", "data"],
         iconUrl: "data:image/svg+xml;base64,aGY=",
       });
       expect(byName["ae.easyvoice/tts"]).toMatchObject({ categories: [] });
@@ -537,22 +656,24 @@ describe("curated Discover catalog", () => {
   it("ships a catalog that satisfies its own rules", () => {
     const ids = new Set(CURATED_SERVERS.map((server) => server.id));
     expect(ids.size).toBe(CURATED_SERVERS.length);
-    expect(new Set(CURATED_SERVERS.map((server) => canonicalConnectorUrl(server.url))).size).toBe(
-      CURATED_SERVERS.length,
-    );
+    const remote = CURATED_SERVERS.flatMap((server) => (server.url ? [server.url] : []));
+    expect(new Set(remote.map(canonicalConnectorUrl)).size).toBe(remote.length);
     for (const server of CURATED_SERVERS) {
       expect(server.tagline.length, server.id).toBeLessThanOrEqual(60);
-      expect(new URL(server.url.replace("<tenant>", "example-lab")).protocol, server.id).toBe(
-        "https:",
-      );
+      // Each server is reached at a web address or run from a pinned package, never both.
+      expect(server.url === undefined, server.id).toBe(server.localPackage !== undefined);
+      if (server.url)
+        expect(new URL(server.url.replace("<tenant>", "example-lab")).protocol, server.id).toBe(
+          "https:",
+        );
       expect(new URL(server.websiteUrl).protocol, server.id).toBe("https:");
       expect(
-        server.categories.filter((category) => category !== "featured").length,
+        server.categories.filter((category) => category !== "most-used").length,
       ).toBeGreaterThan(0);
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "featured" ? 6 : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 12 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });
@@ -570,18 +691,22 @@ describe("curated Discover catalog", () => {
         expect(entry.address).toEqual(server.address);
         expect(entry.remotes[0]?.requiresInput).toBe(true);
       }
-      if (server.url.includes(".caseyjhand.com/")) expect(entry.hosting).toBe("Community");
-      if (server.url.includes(".mcp.claude.com/"))
+      if (server.localPackage) {
+        expect(entry.remotes).toEqual([]);
+        expect(entry.localPackage).toEqual(server.localPackage);
+      }
+      if (server.url?.includes(".caseyjhand.com/")) expect(entry.hosting).toBe("Community");
+      if (server.url?.includes(".mcp.claude.com/"))
         expect(entry.hosting).toBe("Hosted by Anthropic");
     }
   });
 
-  it.effect("ranks Featured independently of catalog order", () =>
+  it.effect("ranks Most used independently of catalog order", () =>
     Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
       const catalog = yield* discover.catalog();
       expect(catalog.sections[0]?.entries.map((entry) => entry.title)).toEqual(
-        FEATURED_SERVER_IDS.map(
+        MOST_USED_SERVER_IDS.map(
           (id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName,
         ),
       );
@@ -865,7 +990,7 @@ describe("split Discover search", () => {
     const http = harness(registryRoutes, [
       ...CURATED_FIXTURE,
       // Not in the registry by name, but publishing a registry server's remote URL.
-      curated("voice", ["teamwork"], { url: "https://easyvoice.ae/api/mcp" }),
+      curated("voice", ["communication"], { url: "https://easyvoice.ae/api/mcp" }),
     ]);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
@@ -877,7 +1002,7 @@ describe("split Discover search", () => {
       expect(fromRegistry).toEqual(fromCurated);
       // A URL alias takes the curated name, so clients can dedup by `name`.
       const voice = registryHub.entries.find((entry) => entry.title === "voice");
-      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["teamwork"] });
+      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["communication"] });
       expect(registryHub.entries.some((entry) => entry.name === "ae.easyvoice/tts")).toBe(false);
       const names = registryHub.entries.map((entry) => entry.name);
       expect(new Set(names).size).toBe(names.length);
@@ -966,7 +1091,7 @@ describe("split Discover search", () => {
           });
           expect(next.entries).toEqual([]);
         }
-        const featured = yield* discover.search({ scope: "registry", category: "featured" });
+        const featured = yield* discover.search({ scope: "registry", category: "most-used" });
         expect(featured.entries).toEqual([]);
       }).pipe(Effect.provide(http.layer()));
     },

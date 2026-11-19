@@ -1,5 +1,7 @@
 import { expect, it } from "@effect/vitest";
-import { universitiesFrom } from "./universityDirectory.ts";
+import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { searchUniversities, universitiesFrom } from "./universityDirectory.ts";
 
 const entry = (fields: Record<string, unknown>) => ({
   title: "Hebrew University of Jerusalem",
@@ -45,3 +47,33 @@ it("hides test entries and national services that cover many universities", () =
 it("reads an answer that isn't the directory's as no match", () => {
   expect(universitiesFrom({ error: "no" }, "huji")).toEqual([]);
 });
+
+it.effect("finds a mail host's university under its own domain, first", () =>
+  Effect.gen(function* () {
+    const asked: Array<string | null> = [];
+    const found = yield* searchUniversities("mail.huji.ac.il").pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          const query = new URL(request.url).searchParams.get("q");
+          asked.push(query);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                query === "huji.ac.il"
+                  ? [
+                      entry({ title: "Another", entityID: "https://o.org/i", scope: "o.ac.il" }),
+                      entry({}),
+                    ]
+                  : [],
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+    expect(asked).toEqual(["mail.huji.ac.il", "huji.ac.il"]);
+    expect(found[0]?.domain).toBe("huji.ac.il");
+  }),
+);

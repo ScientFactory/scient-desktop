@@ -267,7 +267,10 @@ Configuration fields use compact secondary typography. Repetitive binary-path ex
 omitted; other field guidance remains available through keyboard-accessible information controls,
 including the account-isolation explanation for a shadow home. Authentication prompts avoid
 repeating command-line instructions when a supported sign-in action is available. Failed operations
-and compatibility problems retain their diagnostic details.
+and compatibility problems retain their diagnostic details. A failed setup keeps its reason behind a
+small information button beside the status (settings and getting started); hovering or clicking it
+opens a card. Unknown error messages stay hidden there because they can carry paths or secrets; only
+a system error code such as `EEXIST` is added.
 
 Provider authorization pages open through the system browser in the native desktop client.
 Web clients request a separate authorization popup, including when hosted inside Scient's preview
@@ -509,13 +512,33 @@ catalog is authoritative for the selected release's version, artifact name, URL,
 An install, update, or repair:
 
 1. creates a unique private staging directory;
-2. downloads with size, total-time, idle-time, redirect-host, and cancellation bounds;
+2. downloads with size, total-time, idle-time, redirect-host, and cancellation bounds, retrying
+   failures that are usually temporary (see below);
 3. verifies the exact qualified digest;
 4. extracts in process while rejecting traversal, links, duplicates, excessive files, and excessive
    expanded data, or stages the qualified raw executable;
 5. validates provider-specific required package contents;
 6. runs the provider's bounded smoke test with an explicit environment; and
 7. activates the verified directory atomically and cleans staging.
+
+Every managed download, provider or Compute, gives a failure that is usually temporary four more
+tries over about a minute: HTTP 408, 429 and 5xx other than 501, a failed or dropped connection, a stall, or a body
+shorter than the catalog size. Waits are about 2, 5, 15 and 30 seconds with jitter, or the server's
+`Retry-After` up to a minute, and each retry starts again from the catalog URL because redirect
+targets expire. Cancellation, the total-time bound, size and host refusals, other 4xx, certificate
+errors and local disk errors stay final. While waiting, the operation reports `retrying` and the UI
+says Retrying; the final message says what failed in plain words. This exists because release hosts
+have outages: on 2026-11-09 GitHub returned 504 to anonymous release downloads for hours.
+
+A family can also name Scient's own copy of its releases (`mirrorUrlPrefix`; Scient Agent's is
+`downloads.scientfactory.com/scient-agent/v<version>/`, on Cloudflare R2). That copy is tried first
+and the official release second. Any problem with one copy, including a missing file, a wrong size
+or a digest mismatch, moves straight to the other without waiting. Each copy has its own time limit,
+so a slow copy cannot use up the other's; only both failing ends the
+download, and the message names both. The catalog still names only the official release, so older
+apps are unaffected. The release workflow uploads the copy, publication of a new catalog entry
+requires every copy to match its digest (`scripts/check-managed-runtime-mirror.ts --full`), and every
+scheduled catalog scan checks that the published release's copies are present at their sizes.
 
 Routine status refresh never deletes staging because a serialized mutation may still own it.
 Abandoned staging is reconciled when the next mutation acquires ownership. Cross-process mutation locks are reclaimed when their owner is gone or when the OS process start identity proves that its PID was reused. An overdue heartbeat alone does not revoke ownership: a suspended process can resume. If an older lock has no start identity or the OS identity cannot be read, a live PID remains busy until that process exits. Scient has no automatic override for that case; with every Scient instance closed, deleting the provider's `mutation.lock` under its runtime root clears it. A newly qualified artifact
@@ -559,9 +582,36 @@ client therefore does not duplicate or orphan an operation.
 
 A managed runtime change starts in a manager-owned fiber from the first step, including planning,
 which can take tens of seconds on a loaded Windows machine. A reload or disconnect only detaches the
-start request; cancel and manager teardown still end it. Before the operation is published, nothing
-can cancel it, so its first runtime-state read gives up after two minutes and releases the
-reservation.
+start request; cancel and manager teardown still end it. Its first runtime-state read gives up after
+two minutes. Background startup is tracked before it reserves the lifecycle, so a foreground runtime
+change can interrupt it even while that read is blocked. Cleanup releases only its own reservation.
+
+Requested installs, updates and repairs retain their reviewed plan and a stable request identity
+across transient failures and process restarts. While waiting, the runtime snapshot exposes scheduled
+recovery separately from a running operation. Settings shows the next retry time and **Cancel retry**;
+cancel clears the durable request, including during background startup. Agent cancellation first
+saves the same stop/skip policy used for an active change: install stops automatic installs, update
+skips that release, and repair does both. No synthetic running operation is created for a pending
+request. A failed policy or request write reports an error and retains the request for a later try.
+Success, removal, disabling
+the instance, or a superseding choice also clears it. Recovery rechecks the enabled instance, runtime
+identity and exact reviewed plan before running. It never provisions a new third-party runtime on
+its own; Scient Agent retains its existing automatic provisioning policy. Automatic setup defers
+while a requested recovery owns the runtime, across all instances sharing that runtime. Only the
+exact recovery request can use that reservation of intent; it still revalidates the reviewed plan.
+
+Recovery waits a jittered five minutes, thirty minutes, then two hours after failures, followed by a
+four-hour cooldown. A server's Retry-After delay, capped at four hours of remaining time, can extend
+the next wait: recovery uses the later of its jittered backoff and that remaining delay. A foreground change
+takes priority over uncommitted background work; yielding preserves the reviewed request and partial
+download for a later try. The request store publishes mutations only after an atomic durable write.
+If settlement cannot persist, the manager still finishes operation cleanup and keeps the previous
+request and retry deadline. A failed recovery write ends that pass, and the next pass can try again.
+An unreadable or malformed recovery journal does not block server startup. Managed-runtime
+changes and recovery fail closed while that store is unavailable, preserving the file;
+repair its permissions/content and restart to re-enable them. Startup pruning errors are
+contained without discarding intent. Automatic Agent admission rechecks the current durable
+stop/skip policy after planning, including across instances sharing one runtime.
 
 One lifecycle coordinator serializes connection, managed runtime mutation, and inherited provider
 maintenance for the same instance. Shared runtime mutation also takes a driver-wide reservation
@@ -622,9 +672,9 @@ presentation rules; provider views retain their real authentication and recovery
 - Settings Install and managed Update run the existing plan/start command directly from the click,
   without opening a dialog. The same button shows concise server-derived progress and remains
   clickable for details. Percentages represent download bytes only and disappear after download.
-  A failed runtime operation opens existing recovery controls, not an implicit retry. Preflight/start
-  errors retain the existing toast. This presentation does not alter backend retry, failure, or
-  rollback behavior; sign-in and external updater flows retain their existing behavior.
+  A failed runtime operation opens recovery controls. Eligible requested changes also show their
+  scheduled retry and **Cancel retry**. Preflight/start errors retain the existing toast. Sign-in and
+  external updater flows retain their existing behavior.
 - **Composer** is the fastest safe setup path. An unavailable selected provider can show Enable,
   Install, or Sign in in place of its model list. Full maintenance remains in Manage.
 - A disabled provider opens one shared disabled state. A permitted Enable action keeps the surface

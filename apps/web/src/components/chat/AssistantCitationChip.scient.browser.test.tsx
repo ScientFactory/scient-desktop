@@ -3,7 +3,7 @@ import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { assistantCitationHash } from "~/lib/assistantCitationNavigation";
+import { assistantCitationRoute } from "~/lib/assistantCitationNavigation";
 import { computeCitationHash } from "~/scient/compute/computeCitationNavigation";
 import { fileCitationHash } from "~/scient/markdownEditor/fileCitationNavigation";
 
@@ -41,7 +41,7 @@ vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
   )) as never,
 }));
 
-import { AssistantCitationChip } from "./AssistantCitationChip";
+import { AssistantCitationChip, AssistantCitationEmbed } from "./AssistantCitationChip";
 
 const citation = {
   version: 1 as const,
@@ -105,7 +105,7 @@ describe("citation hover content", () => {
     async (composer) => {
       using _source = setup();
       await using screen = await render(
-        <AssistantCitationChip citation={fileCitation} composer={composer} />,
+        <AssistantCitationChip citation={fileCitation} sentMessage={!composer} />,
       );
       expect(sourceLink(screen.container).hasAttribute("title")).toBe(false);
       const popup = await hoverFile(screen.container);
@@ -138,7 +138,7 @@ describe("citation hover content", () => {
       await using screen = await render(
         <AssistantCitationChip
           citation={quote}
-          composer={composer}
+          sentMessage={!composer}
           {...(composer ? { onRemove } : {})}
         />,
       );
@@ -174,27 +174,29 @@ describe("citation hover content", () => {
       "Lines 12–18 · unsaved at capture",
     );
   });
-  it("shows the assistant quote, its saved comment and its source", async () => {
+  it("shows a sent assistant quote as a card that links to its source", async () => {
     using _source = setup();
     const quoted = {
       ...citation,
       text: "hello\nquoted source",
       comment: "Explain this result",
     };
-    await using screen = await render(<AssistantCitationChip citation={quoted} />);
-    const trigger = screen.container.querySelector<HTMLButtonElement>(
-      'button[aria-label^="Quoted assistant text:"]',
+    await using screen = await render(
+      <AssistantCitationEmbed citation={quoted} leading trailing />,
+    );
+    const source = screen.container.querySelector<HTMLAnchorElement>(
+      'a[aria-label^="Go to quoted response:"]',
     )!;
-    await act(async () => trigger.click());
-    const popup = document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
-    expect(popup.querySelector("blockquote")?.textContent).toBe(quoted.text);
-    expect(popup.querySelector("p")?.textContent).toBe("Explain this result");
+    expect(source.textContent).toBe("hello quoted source");
+    expect(screen.container.textContent).toContain("Explain this result");
     expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull();
-    const source = [...popup.querySelectorAll("a")].find((a) =>
-      a.textContent?.includes("Go to source"),
-    )!;
     expect(source.getAttribute("href")).toBe(
-      "/" + quoted.environmentId + "/" + quoted.threadId + "#" + assistantCitationHash(quoted),
+      "/" +
+        quoted.environmentId +
+        "/" +
+        quoted.threadId +
+        "#" +
+        assistantCitationRoute(quoted, null).hash,
     );
     const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
     await act(async () => source.dispatchEvent(event));
@@ -202,7 +204,7 @@ describe("citation hover content", () => {
     expect(mocks.navigate).toHaveBeenCalledWith(
       expect.objectContaining({
         params: { environmentId: quoted.environmentId, threadId: quoted.threadId },
-        hash: assistantCitationHash(quoted),
+        hash: assistantCitationRoute(quoted, null).hash,
         resetScroll: false,
         state: { assistantCitationActivation: expect.any(String) },
       }),
@@ -214,7 +216,7 @@ describe("citation hover content", () => {
     async (composer) => {
       using _source = setup();
       await using screen = await render(
-        <AssistantCitationChip citation={fileCitation} composer={composer} />,
+        <AssistantCitationChip citation={fileCitation} sentMessage={!composer} />,
       );
       expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
       const source = sourceLink(screen.container);

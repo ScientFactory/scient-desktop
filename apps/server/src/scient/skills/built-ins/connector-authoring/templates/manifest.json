@@ -1,0 +1,49 @@
+{
+  "manifest_version": "0.3",
+  "name": "{{NAME}}",
+  "display_name": "{{DISPLAY_NAME}}",
+  "version": "0.1.0",
+  "description": "Search scholarly works in OpenAlex and read their details. Replace with what this connector does.",
+  "author": {
+    "name": "Made with Scient"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server.mjs"],
+      "env": {
+        "OPENALEX_API_KEY": "${user_config.api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "OpenAlex API key",
+      "description": "Optional. A free key from openalex.org/settings/api raises the daily limit.",
+      "sensitive": true,
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "search_works",
+      "description": "Search scholarly works by words, years and open access."
+    },
+    {
+      "name": "get_work",
+      "description": "Read one work by OpenAlex id or DOI, with its abstract."
+    }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=20.0.0"
+    }
+  },
+  "_meta": {
+    "com.scientfactory.scient": {}
+  }
+}

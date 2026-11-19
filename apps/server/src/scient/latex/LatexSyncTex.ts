@@ -82,6 +82,15 @@ const PAGE_ANCHOR_BUDGET = "8 minutes";
 const PAGE_ANCHOR_SCAN_CHUNK = 4 * 1024 * 1024;
 
 /** Counts lines of the form `{<digits>` starting in `[from, to)`, without decoding. */
+class SyncTexIndexDecompressError extends Schema.TaggedError<SyncTexIndexDecompressError>()(
+  "SyncTexIndexDecompressError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not decompress the SyncTeX index.";
+  }
+}
+
 function countSheets(index: Uint8Array, from: number, to: number): number {
   let count = 0;
   for (let at = from; at < to; at++) {
@@ -620,8 +629,8 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(bytes)) continue;
       // Decompressed off the event loop, with a bound on its size.
       const index = name.endsWith(".gz")
-        ? yield* Effect.tryPromise(
-            () =>
+        ? yield* Effect.tryPromise({
+            try: () =>
               new Promise<Uint8Array>((resolve, reject) =>
                 NodeZlib.gunzip(
                   bytes.value,
@@ -629,7 +638,8 @@ export const make = Effect.gen(function* () {
                   (error, result) => (error ? reject(error) : resolve(result)),
                 ),
               ),
-          ).pipe(Effect.option)
+            catch: (cause) => new SyncTexIndexDecompressError({ cause }),
+          }).pipe(Effect.option)
         : Option.some(bytes.value);
       if (Option.isNone(index)) return 0;
       let count = 0;

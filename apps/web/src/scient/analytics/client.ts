@@ -3,11 +3,7 @@ import {
   getEnvironmentScientAnalyticsStatus,
   recordEnvironmentScientAnalyticsEvent,
 } from "@t3tools/client-runtime/state/scient-analytics";
-import type {
-  ScientAnalyticsStatus,
-  ScientAnalyticsUiEvent,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { ScientAnalyticsUiEvent, EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 import * as Option from "effect/Option";
 
@@ -26,20 +22,24 @@ const gate = createAnalyticsClientGate<PreparedConnection>({
     runtime.runPromise(recordEnvironmentScientAnalyticsEvent({ prepared, event })),
 });
 
-/** Observe current view after consent discovery, not historical clicks. */
+/**
+ * Observe current view after consent discovery, not historical clicks. A new `viewKey`, which is
+ * never sent, counts the same event again, such as another tab of the same kind.
+ */
 export function useScientAnalyticsView(
   event: ScientAnalyticsUiEvent | null,
   explicitEnvironmentId?: EnvironmentId | null,
+  viewKey?: string,
 ) {
   const primary = usePrimaryEnvironmentId();
   const environmentId = explicitEnvironmentId === undefined ? primary : explicitEnvironmentId;
   const prepared = usePreparedConnection(environmentId);
   const connection = Option.getOrNull(prepared);
-  const eventKey = JSON.stringify(event);
+  const eventKey = event === null ? null : JSON.stringify([viewKey ?? null, event]);
   const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a view observation with the analytics gate plus a document visibilitychange listener, disposed on unmount
   useEffect(() => {
-    if (connection === null || eventKey === "null") return;
+    if (connection === null || eventKey === null) return;
     const observation = gate.observeView(connection, () => read());
     document.addEventListener("visibilitychange", observation.refresh);
     return () => {
@@ -71,6 +71,29 @@ export function recordScientAnalytics(
   gate.record(prepared, event);
 }
 
+/**
+ * The consent context product-level work beginning now belongs to, or undefined when it may not
+ * be collected. Its outcome is recorded with `recordScientAnalyticsInContext`.
+ */
+export function scientAnalyticsProductContext(environmentId: EnvironmentId): string | undefined {
+  try {
+    const prepared = readPreparedConnection(environmentId);
+    return prepared === null ? undefined : gate.productContext(prepared);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Records an outcome only under the consent context its work began in; the server checks too. */
+export function recordScientAnalyticsInContext(
+  environmentId: EnvironmentId,
+  context: string,
+  event: ScientAnalyticsUiEvent,
+): void {
+  const prepared = readPreparedConnection(environmentId);
+  if (prepared !== null) gate.recordInContext(prepared, context, event);
+}
+
 export function useRecordScientAnalytics() {
   const environmentId = usePrimaryEnvironmentId();
   const prepared = usePreparedConnection(environmentId);
@@ -86,8 +109,17 @@ export function useRecordScientAnalytics() {
   };
 }
 
-export function readScientAnalyticsStatus(
-  prepared: PreparedConnection,
-): Promise<ScientAnalyticsStatus> {
-  return gate.readStatus(prepared);
+/** Bind a committed dictation to its original connection and consent context. */
+export function useBeginVoiceAnalytics(explicitEnvironmentId?: EnvironmentId) {
+  const primary = usePrimaryEnvironmentId();
+  const environmentId = explicitEnvironmentId ?? primary;
+  const prepared = usePreparedConnection(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes the imperative analytics consent cache when the bound connection changes
+  useEffect(() => {
+    if (Option.isSome(prepared)) gate.prime(prepared.value);
+  }, [prepared]);
+  return () => {
+    const connection = environmentId === null ? null : readPreparedConnection(environmentId);
+    return connection === null ? () => {} : gate.beginVoiceOperation(connection);
+  };
 }

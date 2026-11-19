@@ -15,11 +15,16 @@ import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnecti
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderActivity from "./providerLifecycle/ProviderActivity.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
+import * as ProviderRuntimeRecovery from "./providerLifecycle/ProviderRuntimeRecovery.ts";
+import * as ProviderRuntimeRequests from "./providerLifecycle/ProviderRuntimeRequests.ts";
 import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import * as ProviderModelFreshness from "./providerLifecycle/ProviderModelFreshness.ts";
+import * as ScientAgentBackgroundRuntime from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
+import * as ComputeResults from "./results/ComputeResults.ts";
 import * as ComputeProjectOutputObserver from "./compute/ComputeProjectOutputObserver.ts";
 import * as NotebookRunRecorder from "./notebook/NotebookRunRecorder.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
@@ -38,6 +43,8 @@ import * as LatexTexDirectory from "./latex/latexTexDirectory.ts";
 import * as LatexSyncTex from "./latex/LatexSyncTex.ts";
 import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
+import * as RegistryContact from "./sources/RegistryContact.ts";
+import { scientReferencesHttpApiLayer } from "./references/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
 import { scientPdfHttpApiLayer } from "./pdf/http.ts";
@@ -52,6 +59,9 @@ import { scientConversationImportHttpApiLayer } from "./conversationImport/http.
 import * as ConversationImportStaging from "./conversationImport/ConversationImportStaging.ts";
 import * as ConversationImporterLive from "./conversationImport/ConversationImporterLive.ts";
 import * as ConversationImportCommit from "./conversationImport/ConversationImportCommit.ts";
+import * as PersonalSkills from "./skills/PersonalSkills.ts";
+import * as ScientSkillPolicy from "./skills/ScientSkillPolicy.ts";
+import * as ScientSkillRegistry from "./skills/ScientSkillRegistry.ts";
 import * as ScientSkillSession from "./skills/ScientSkillSession.ts";
 import * as ScientSkillManagement from "./skills/ScientSkillManagement.ts";
 import { scientWordExportHttpApiLayer } from "./pandoc/http.ts";
@@ -59,12 +69,23 @@ import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
 import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import { scientCloudHttpApiLayer } from "./cloud/http.ts";
+import * as CloudApi from "./cloud/CloudApi.ts";
+import * as CloudSync from "./cloud/CloudSync.ts";
+import * as CloudSyncSourceLive from "./cloud/CloudSyncSourceLive.ts";
+import * as CloudSyncState from "./cloud/CloudSyncState.ts";
+import * as ConversationExtras from "./cloud/ConversationExtras.ts";
+import * as ScientCloud from "./cloud/ScientCloud.ts";
+import * as ShareBuilder from "./cloud/ShareBuilder.ts";
+import * as TakeOverImport from "./cloud/TakeOverImport.ts";
 import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
 import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
-// Skill discovery and selected-turn delivery share one live policy/catalog.
+// Skill discovery, personal skills and selected-turn delivery share one live policy/catalog.
 export const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
-  Layer.provideMerge(ScientSkillSession.live),
+  Layer.provideMerge(ScientSkillSession.layer),
+  Layer.provideMerge(PersonalSkills.layer),
+  Layer.provideMerge(Layer.merge(ScientSkillRegistry.layer, ScientSkillPolicy.layer)),
 );
 
 export const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.pipe(
@@ -75,10 +96,18 @@ export const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.
 
 /** Connection, runtime and catalog managers over one lifecycle coordinator. */
 export const ScientProviderLifecycleLive = Layer.mergeAll(
-  ProviderConnectionManager.layer,
-  ProviderRuntimeManager.layer,
-  ManagedRuntimeCatalogReconciler.layer,
+  ScientAgentBackgroundRuntime.layer,
+  ProviderRuntimeRecovery.layer,
 ).pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ProviderConnectionManager.layer,
+      ProviderRuntimeManager.layer,
+      ManagedRuntimeCatalogReconciler.layer,
+      ProviderModelFreshness.layer,
+    ),
+  ),
+  Layer.provideMerge(ProviderRuntimeRequests.layer),
   Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   Layer.provideMerge(ProviderActivity.layer),
 );
@@ -122,6 +151,27 @@ export function makeScientRouteServices<
     Layer.provide(
       ConversationImporterLive.layer.pipe(Layer.provide(ConversationImportCommit.layer)),
     ),
+  );
+  const RegistryContactLive = RegistryContact.layer.pipe(Layer.provide(ServerSettingsLayerLive));
+  // Scient Cloud: the copy worker, share building and take-over import over one state file. The
+  // state layer is the same instance turn admission reads (see server.ts), by memoization.
+  const ConversationSnapshotServiceLive = ConversationSnapshotService.layer.pipe(
+    Layer.provide(PersistenceLayerLive),
+  );
+  const ScientCloudLive = ScientCloud.layer.pipe(
+    Layer.provide(
+      TakeOverImport.layer.pipe(
+        Layer.provide(ConversationImportStagingLive),
+        Layer.provide(ConversationExportFiles.layer),
+      ),
+    ),
+    Layer.provide(ShareBuilder.layer),
+    Layer.provide(CloudSync.layer.pipe(Layer.provide(CloudSyncSourceLive.layer))),
+    Layer.provide(ConversationSnapshotServiceLive),
+    Layer.provide(ConversationExtras.layer),
+    Layer.provide(CloudApi.layer),
+    Layer.provide(CloudSyncState.layer),
+    Layer.provide(ServerSettingsLayerLive),
   );
   const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
     Layer.provide(ServerSettingsLayerLive),
@@ -184,6 +234,8 @@ export function makeScientRouteServices<
       Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(scientOverleafHttpApiLayer),
+      Layer.provide(scientReferencesHttpApiLayer),
+      Layer.provide(scientCloudHttpApiLayer),
     );
 
   /** Scient services behind the routes, provided in order. */
@@ -192,14 +244,17 @@ export function makeScientRouteServices<
       Layer.provide(BrowserHistory.layer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(ConversationExportServiceLive),
       Layer.provide(ConversationImportStagingLive),
+      Layer.provide(ScientCloudLive),
       Layer.provide(WordFileExportLive),
       Layer.provide(ComputeMcpGatewayLive),
       Layer.provide(AnalysisServiceLive),
       Layer.provide(NotebookRunRecorder.layer),
+      Layer.provide(ComputeResults.layer),
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(DataTables.layer),
       Layer.provide(NotebookStore.layer),
       Layer.provide(ScientificRuntimePreferencesLive),
+      Layer.provide(RegistryContactLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),
       // The Overleaf service saves a folder's editors through the editor-save request.

@@ -1,4 +1,5 @@
 import { TracePathTooltipEnabled } from "~/scient/presentation/TracePathLabel.context";
+import { useMessages } from "gt-react";
 import { type ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -22,6 +23,7 @@ export function TimelineRowTimestamp({
   className?: string;
   alwaysVisible?: boolean;
 }) {
+  const m = useMessages();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -35,14 +37,20 @@ export function TimelineRowTimestamp({
           />
         }
       >
-        {formatDayAwareTimestamp(createdAt, timestampFormat)}
+        {formatDayAwareTimestamp(createdAt, timestampFormat, undefined, undefined, m)}
       </TooltipTrigger>
-      <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat)}</TooltipPopup>
+      <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat, m)}</TooltipPopup>
     </Tooltip>
   );
 }
 
-export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+export function ActivityShimmerOverlay({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   // SCIENT-FORK:START — the light's copy of a label shows no path tooltip of its own.
   return (
     <TracePathTooltipEnabled value={false}>
@@ -51,7 +59,9 @@ export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
         className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
       >
         <span className="live-activity-focus-counter block">
-          <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+          <span className={cn("live-activity-focus-aligned block text-foreground", className)}>
+            {children}
+          </span>
         </span>
       </span>
     </TracePathTooltipEnabled>

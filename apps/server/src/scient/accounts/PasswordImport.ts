@@ -1,4 +1,6 @@
 import { AccountsError, type PasswordImportFormat } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { getDomain } from "tldts";
 
 const invalid = () =>
@@ -72,6 +74,8 @@ export interface ImportedPassword {
   readonly username: string;
   readonly password: string;
   readonly totp?: string;
+  /** When the source browser last changed the password, where its export says. */
+  readonly changedAt?: string;
 }
 
 export const parsePasswordImport = (content: string, format: PasswordImportFormat) => {
@@ -86,6 +90,7 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
           password: ["loginpassword"],
           totp: ["logintotp"],
           title: ["name"],
+          changed: [],
         }
       : {
           url: ["url", "website", "websiteurl"],
@@ -93,6 +98,7 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
           password: ["password"],
           totp: ["otpauth", "totp", "onetimepassword", "otp"],
           title: ["title", "name"],
+          changed: ["passwordchanged"],
         };
   const indexOf = (names: string[]) => headers.findIndex((header) => names.includes(header));
   const indices = {
@@ -101,6 +107,7 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
     password: indexOf(aliases.password),
     title: indexOf(aliases.title),
     totp: indexOf(aliases.totp),
+    changed: indexOf(aliases.changed),
   };
   if (indices.url < 0 || indices.username < 0 || indices.password < 0) throw invalid();
   let skipped = 0;
@@ -136,6 +143,7 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
       skipped++;
       continue;
     }
+    const changed = Option.map(DateTime.make(row[indices.changed] ?? ""), DateTime.formatIso);
     entries.push({
       name: (row[indices.title]?.trim() || site).slice(0, 80),
       site,
@@ -143,6 +151,7 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
       username: row[indices.username] ?? "",
       password,
       ...(totp ? { totp } : {}),
+      ...(Option.isSome(changed) ? { changedAt: changed.value } : {}),
     });
   }
   return { entries, skipped };

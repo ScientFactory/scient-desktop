@@ -16,13 +16,13 @@ export interface EffectiveUserSkillPolicy {
 }
 
 /**
- * A trusted Scient app update keeps the user's choice for a stable skill id.
- * Any other origin (add-ons) binds the choice to the exact reviewed release:
- * changed bytes or versions need a fresh activation, even under one origin.
+ * A trusted Scient app update keeps the user's choice for a stable skill id, and so does an edit
+ * to a personal skill (the user's own folder, changed by them or an agent for them). Add-ons bind
+ * the choice to the exact reviewed release: changed bytes or versions need a fresh activation.
  */
 const preferenceKey = (release: SkillReleaseRef): string =>
-  release.origin === "scient"
-    ? `scient:${release.id}`
+  release.origin === "scient" || release.origin === "personal"
+    ? `${release.origin}:${release.id}`
     : `${release.origin}:${skillReleaseKey(release)}`;
 
 /**

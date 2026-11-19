@@ -1,53 +1,5 @@
 [
   {
-    "path": "apps/web/src/components/clerk/",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/cloud/",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/cloud/",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/server/src/relay/",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "packages/client-runtime/src/relay/",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "packages/contracts/src/relay.ts",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/server/src/cli/connect.ts",
-    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "The `connect` command group, registered only when cloud public configuration exists; Scient builds register the unlisted unavailable stub in binCli.ts instead."
-  },
-  {
-    "path": "apps/server/src/cloud/",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect names in the cloud module. Reachable Scient copy in this directory (for example selfUpdate.ts) stays checked by the other rules."
-  },
-  {
     "path": "apps/server/src/cli/service.ts",
     "rules": ["t3-command", "bare-t3", "t3-connect"],
     "kind": "dormant-service",
@@ -86,32 +38,18 @@
     "reason": "PowerShell Add-Type namespace used to broadcast PATH changes; never shown to users."
   },
   {
-    "path": "apps/server/src/cloud/CloudLink.ts",
-    "line": "return \"Run `t3 connect link` to authorize this environment.\";",
+    "path": "apps/server/src/cloud/bootService.ts",
+    "line": "install: \"t3 service update\",",
     "rules": ["t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+    "kind": "dormant-service",
+    "reason": "Default repair command for boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
     "path": "apps/server/src/cloud/bootService.ts",
-    "line": "return \"The service is not enabled to start automatically. Run `t3 service update` to repair it.\";",
+    "line": "restart: \"t3 service update\",",
     "rules": ["t3-command"],
     "kind": "dormant-service",
-    "reason": "Boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."
-  },
-  {
-    "path": "apps/server/src/cloud/bootService.ts",
-    "line": "return \"The installed version will run after the service restarts. Run `t3 service update` to restart it.\";",
-    "rules": ["t3-command"],
-    "kind": "dormant-service",
-    "reason": "Boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."
-  },
-  {
-    "path": "apps/server/src/cloud/bootService.ts",
-    "line": "return `The service is not running. Check the service log and \\`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\\`, then run \\`t3 service update\\`.`;",
-    "rules": ["t3-command"],
-    "kind": "dormant-service",
-    "reason": "Boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."
+    "reason": "Default repair command for boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
     "path": "apps/server/src/cloud/bootService.ts",
@@ -121,95 +59,11 @@
     "reason": "Boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
-    "path": "apps/server/src/cloud/relayResponse.ts",
-    "line": "return \"Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart Scient after signing in.\";",
-    "rules": ["t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
     "path": "apps/server/src/provider/CodexProvider.ts",
     "line": "const CODEX_COMPATIBILITY_ORIGINATOR = \"T3 Code\";",
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "compat",
     "reason": "Opaque Codex originator the Codex service expects; never shown to users."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "recovered ? Effect.logInfo(\"T3 Connect managed tunnel recovered\") : Effect.void,",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": ": Effect.logWarning(\"Failed to recover the T3 Connect managed tunnel\", {",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "Effect.logWarning(\"Failed to read the desired T3 Connect link\", { cause }).pipe(",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "Effect.logWarning(\"Failed to read the desired T3 Connect link mode\", {",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "Effect.logWarning(\"Failed to start the confirmed T3 Connect tunnel\", {",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "\"T3 Connect started the stored tunnel without relay confirmation\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "Effect.logWarning(\"Failed to start the stored T3 Connect tunnel\", { cause }),",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "? Effect.logInfo(\"T3 Connect managed tunnel recovery registered\")",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": ": Effect.logWarning(\"Failed to register T3 Connect managed tunnel recovery\", {",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": ": Effect.logInfo(\"T3 Connect desired link reconciled on startup\"),",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
-    "path": "apps/server/src/server.ts",
-    "line": "\"T3 Connect relay is still unavailable; retrying the desired link in the background\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Unchanged upstream diagnostic names the T3-operated relay; this reconciliation path is unreachable without cloud public configuration."
   },
   {
     "path": "apps/server/src/telemetry/Identify.ts",
@@ -219,13 +73,6 @@
     "reason": "Unchanged upstream diagnostic in retained identity helpers, not a Scient production mount. This exemption does not authorize identity collection."
   },
   {
-    "path": "apps/server/src/server.ts",
-    "line": "Effect.logWarning(\"Failed to reconcile T3 Connect desired link on startup\", {",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "T3 Connect managed-tunnel log line; the recovery and reconcile path runs only when cloud public configuration exists."
-  },
-  {
     "path": "apps/server/src/serviceLauncher.ts",
     "line": "throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);",
     "rules": ["t3-command"],
@@ -233,221 +80,11 @@
     "reason": "Service launcher error, reachable only from an installed background service, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
-    "path": "apps/web/src/components/chat/MessagesTimeline.logic.ts",
-    "line": "const THREAD_READ_OBJECTS = [\" a Scient thread\", \" a T3 thread\"] as const;",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "compat",
-    "reason": "Recognizes thread-read tool titles written by older servers; the Scient variant is listed first."
-  },
-  {
-    "path": "apps/web/src/components/onboarding/WelcomeWizard.tsx",
-    "line": "<span className=\"flex-1 text-left\">T3 Connect</span>",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/onboarding/WelcomeWizard.tsx",
-    "line": "command={'npx --package=\"$SCIENT_SERVER_PACKAGE\" t3 connect'}",
+    "path": "apps/server/src/serviceLauncher.ts",
+    "line": "throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);",
     "rules": ["t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "ariaLabel = \"Enable T3 Connect\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": ": \"Your session does not have permission to manage T3 Connect access.\";",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"Sign in to make this environment available to your other devices through T3 Connect.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": ": \"Send activity to mobile notifications and Live Activities without T3 Connect.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"T3 Connect linked\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"T3 Connect tunnel disabled\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": ": \"T3 Connect unlinked\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"This environment is available through T3 Connect.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": ": \"This environment is no longer available through T3 Connect.\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"T3 Connect keeps webhook requests for up to 24 hours while this environment is offline.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"This environment was removed from T3 Connect. Turn it on to link it again.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"This environment is available to your other devices through T3 Connect.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": ": \"Make this environment available to your other devices through T3 Connect.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "description=\"This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.\"",
-    "rules": ["t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "description=\"Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: T3 Connect only forwards requests and stores nothing.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "title=\"T3 Connect\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"Click “Add environment” to pair another environment, or connect one from T3 Connect.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/AddEnvironmentDialog.tsx",
-    "line": "description: `${routeTarget.label} falls back to T3 Connect when its other routes are unreachable.`,",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/AddEnvironmentDialog.tsx",
-    "line": "This machine is on your T3 Connect account. Use it as a fallback route.",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/AddEnvironmentDialog.tsx",
-    "line": "Add T3 Connect",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/EnvironmentRow.tsx",
-    "line": "if (environment.relayManaged) return \"T3 Connect\";",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/ProviderSettingsPanel.tsx",
-    "line": "if (environment.relayManaged) return \"T3 Connect\";",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/settingsSearch.ts",
-    "line": "title: \"T3 Connect\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Settings search entry or keyword for the switched-off T3 Connect section; the keyword only helps a search match."
-  },
-  {
-    "path": "apps/web/src/components/settings/settingsSearch.ts",
-    "line": "searchTerms: [\"webhook automations offline queue mailbox t3 connect\"],",
-    "rules": ["t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Settings search entry or keyword for the switched-off T3 Connect section; the keyword only helps a search match."
-  },
-  {
-    "path": "apps/web/src/components/settings/settingsSearch.ts",
-    "line": "searchTerms: [\"add pair backend host code ssh config agent tunnel saved t3 connect\"],",
-    "rules": ["t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Settings search entry or keyword for the switched-off T3 Connect section; the keyword only helps a search match."
-  },
-  {
-    "path": "apps/web/src/connection/platform.ts",
-    "line": "detail: \"Sign in to T3 Connect to connect this environment.\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/connection/platform.ts",
-    "line": "detail: \"The T3 Connect session is unavailable.\",",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+    "kind": "dormant-service",
+    "reason": "Service launcher error for adopted legacy service state, reachable only from an installed background service, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
     "path": "apps/web/src/scient/releaseNotes/catalog.ts",
@@ -485,13 +122,6 @@
     "reason": "States that Scient sends no usage events to T3's telemetry."
   },
   {
-    "path": "packages/client-runtime/src/connection/routes.ts",
-    "line": "return \"T3 Connect\";",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
     "path": "packages/client-runtime/src/errors/transport.ts",
     "line": "/Unable to connect to the T3 server WebSocket\\./i,",
     "rules": ["bare-t3"],
@@ -515,20 +145,6 @@
   {
     "path": "packages/provider-core/src/server/runtimeInstructions.ts",
     "line": "const productName = toSingleLine(runtime.productName ?? \"T3 Code\");",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
-    "path": "packages/provider-cursor/src/server/accountUsage.ts",
-    "line": "? `Allow Keychain access on the Mac running ${options?.productName ?? \"T3 Code\"}, then refresh.`",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
-    "path": "packages/shared/src/promptLinks.ts",
-    "line": "appName = \"T3 Code\",",
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "overridden-default",
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
@@ -576,27 +192,6 @@
     "reason": "Upstream process-teardown diagnostic carried only in the internal termination error payload; users see the generic teardown error."
   },
   {
-    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
-    "line": "description=\"Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
-    "line": "approve. Needs T3 Connect: sign in and link this machine in{\" \"}",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/settingsSearch.ts",
-    "line": "searchTerms: [\"beta share guest invite link teammate watch t3 connect tunnel\"],",
-    "rules": ["t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
     "path": "apps/server/src/provider/ScientAgentCopy.ts",
     "rules": ["inherited-brand", "bare-t3", "t3-connect"],
     "kind": "rewritten-agent-copy",
@@ -604,7 +199,7 @@
   },
   {
     "path": "apps/server/src/provider/ScientProviderInstructions.ts",
-    "line": "To wait for a background command or Monitor you started (tests, a build), call \\`t3_background_wait\\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.",
+    "line": "To wait for a background command or Monitor you started (tests, a build), call \\`t3_background_wait\\` with \\`taskIds: [id]\\` in a later response, once the start result shows the ID, before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.",
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "rewritten-agent-copy",
     "reason": "Verbatim copy of upstream's private Claude background-wait note; agents receive it only through scientAgentCopy (ScientAgentCopy.test.ts)."
@@ -612,6 +207,12 @@
   {
     "path": "apps/server/src/mcp/toolkits/orchestrator/tools.ts",
     "rules": ["inherited-brand", "bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
+    "path": "apps/server/src/mcp/toolkits/toolSearch/tools.ts",
+    "rules": ["inherited-brand", "bare-t3"],
     "kind": "rewritten-agent-copy",
     "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
   },
@@ -635,30 +236,23 @@
     "reason": "Unchanged upstream CSS comment describes the donor theme colour; it is not rendered product copy. The alignment protocol preserves accurate upstream developer comments."
   },
   {
-    "path": "apps/web/src/components/settings/LinkMachineSelect.tsx",
-    "line": "{machine.connectOnly ? \"T3 Connect\" : \"Not connected\"}",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Connect-only machines come from a T3 Connect account, which is unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false."
-  },
-  {
     "path": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "unmounted-upstream",
     "reason": "Scient's SidebarUpdatePill replaces this upstream dialog and never mounts it; the file is kept unchanged for alignment."
   },
   {
-    "path": "packages/source-control-github/src/shared/definition.ts",
-    "line": "appName: \"T3 Code for GitHub\",",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "external-name",
-    "reason": "The registered name of T3's GitHub App. App sign-in stays off unless the operator sets T3CODE_GITHUB_APP_CLIENT_ID, which Scient builds do not ship."
-  },
-  {
     "path": "apps/server/src/cloud/selfUpdate.ts",
     "rules": ["t3-command"],
     "kind": "dormant-service",
     "reason": "Upstream's Stable/Nightly track-switch guard (trackSwitchBlockReason). Scient's Stable and Beta never cross tracks (crossesReleaseTrack), so it never answers."
+  },
+  {
+    "path": "apps/server/src/cli/install.ts",
+    "line": "reason: `A t3.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Keep using npx t3.`,",
+    "rules": ["t3-command"],
+    "kind": "dormant-service",
+    "reason": "Inherited standalone `install` command, registered only while the service lifecycle is enabled (binCli.ts); the npx install offer needs a package-runner launch, which Scient builds do not ship."
   },
   {
     "path": "apps/web/src/components/sidebar/updateEverything.logic.ts",
@@ -683,5 +277,304 @@
     "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
     "kind": "unmounted-upstream",
     "reason": "Upstream's service and T3 Connect setup. Scient does not register `up`, so nobody reaches this text."
+  },
+  {
+    "path": "apps/web/src/components/clerk/T3ChatUserProfilePage.tsx",
+    "rules": ["bare-t3", "inherited-brand", "t3-command", "t3-connect"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/clerk/T3ConnectAccountPages.tsx",
+    "line": "label: \"T3 Chat\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/clerk/useT3ChatLink.ts",
+    "rules": ["bare-t3", "inherited-brand", "t3-command", "t3-connect"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"read linked T3 Chat account\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"start T3 Chat linking\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"unlink T3 Chat account\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat link lookup\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat link request\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat unlinking\",",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "Effect.mapError(relayRequestError(\"read linked T3 Chat account\")),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "timeoutRelayRequest(\"Relay T3 Chat link lookup\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "Effect.mapError(relayRequestError(\"start T3 Chat linking\")),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "timeoutRelayRequest(\"Relay T3 Chat link request\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "Effect.mapError(relayRequestError(\"unlink T3 Chat account\")),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "timeoutRelayRequest(\"Relay T3 Chat unlinking\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/contracts/src/relay.ts",
+    "line": "}).annotate(OpenApi.Summary, \"Get the linked T3 Chat account\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/contracts/src/relay.ts",
+    "line": "}).annotate(OpenApi.Summary, \"Start linking a T3 Chat account\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/contracts/src/relay.ts",
+    "line": "}).annotate(OpenApi.Summary, \"Unlink the T3 Chat account\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/scient-sources/src/bibliography/ris.ts",
+    "line": "[\"T3\", \"collection-title\"],",
+    "rules": ["bare-t3"],
+    "kind": "file-format",
+    "reason": "RIS tag T3 (a work's series title) in the reference-file format, not the product name."
+  },
+  {
+    "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
+    "line": "{t3Chat.pending === \"link\" ? gt(\"Opening…\") : gt(\"Link T3 Chat\")}",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
+    "line": "<T>Upgrade on T3 Chat</T>",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "msg(\"Link T3 Chat Pro for up to {pro} tunnels, or Premier for up to {premier}.\", {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "msg(\"Upgrade to T3 Chat Pro for up to {pro} tunnels, or Premier for up to {premier}.\", {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "return resolve(msg(\"Upgrade to T3 Chat Premier for up to {premier} tunnels.\", { premier }));",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "<T>Link T3 Chat</T>",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "<T>Upgrade on T3 Chat</T>",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "? gt(\"Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)\")",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "apps/web/src/components/cloud/TunnelUsage.tsx",
+    "line": "? gt(\"Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)\")",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/errorPresentation.ts",
+    "line": "\"Relay refused the link: this account already has its maximum of {maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your T3 Connect account settings on web or desktop. Pro raises the default limit to {pro} and Premier to {premier}.\",",
+    "rules": ["bare-t3", "t3-connect"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat link lookup\": msg(\"Relay T3 Chat link lookup timed out.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat link request\": msg(\"Relay T3 Chat link request timed out.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"Relay T3 Chat unlinking\": msg(\"Relay T3 Chat unlinking timed out.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"read linked T3 Chat account\": {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failed: msg(\"Could not read linked T3 Chat account.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failedWithDetail: msg(\"Could not read linked T3 Chat account:\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"start T3 Chat linking\": {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failed: msg(\"Could not start T3 Chat linking.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failedWithDetail: msg(\"Could not start T3 Chat linking:\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "\"unlink T3 Chat account\": {",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failed: msg(\"Could not unlink T3 Chat account.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelay.ts",
+    "line": "failedWithDetail: msg(\"Could not unlink T3 Chat account:\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelayState.ts",
+    "line": "\"link-t3chat\": msg(\"Sign in to Scient Connect before linking T3 Chat.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/client-runtime/src/relay/managedRelayState.ts",
+    "line": "\"unlink-t3chat\": msg(\"Sign in to Scient Connect before unlinking T3 Chat.\"),",
+    "rules": ["bare-t3"],
+    "kind": "relay-gated",
+    "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
   }
 ]

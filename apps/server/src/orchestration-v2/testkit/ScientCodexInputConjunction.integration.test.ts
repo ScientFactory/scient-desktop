@@ -51,6 +51,7 @@ import {
 } from "../../attachmentStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
@@ -163,13 +164,13 @@ const runConjunction = (refusal = false) =>
       const allocator = yield* IdAllocatorV2;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       let offeredScope: McpInvocationScope | undefined;
-      const offered = yield* Deferred.make<typeof CodexSchema.V2TurnStartParams.Type>();
+      const offered = yield* Deferred.make<CodexSchema.V2TurnStartParams>();
       const peerInput = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
       let buffered = "";
       const methods: string[] = [];
-      const nativeOffers: Array<typeof CodexSchema.V2TurnStartParams.Type> = [];
+      const nativeOffers: Array<CodexSchema.V2TurnStartParams> = [];
       const nativeThread = "controlled-native-thread";
       const nativeTurn = {
         id: "controlled-native-turn",
@@ -236,6 +237,10 @@ const runConjunction = (refusal = false) =>
                 sandbox: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
                 reasoningEffort: "medium",
               };
+              break;
+            // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+            case "config/read":
+              result = { config: {}, origins: {} };
               break;
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
@@ -484,7 +489,13 @@ const runConjunction = (refusal = false) =>
           assert.deepEqual(yield* fs.readFile(location), index === 0 ? fileBytes : imageBytes);
         }
         const params = yield* Deferred.await(offered).pipe(Effect.timeout("15 seconds"));
-        assert.deepEqual(methods, ["initialize", "initialized", "thread/start", "turn/start"]);
+        assert.deepEqual(methods, [
+          "initialize",
+          "initialized",
+          "thread/start",
+          "config/read",
+          "turn/start",
+        ]);
         const textItem = params.input.find((item) => item.type === "text");
         assert.ok(textItem && textItem.type === "text");
         const text = textItem.text;
@@ -752,7 +763,8 @@ const runConjunction = (refusal = false) =>
           (item) => item.type === "error" && item.runId === held.id,
         );
         assert.ok(failure?.type === "error");
-        assert.include(failure.failure.message, "complete current request");
+        // The quote this message carries already takes it past the limit, which T3 checks first.
+        assert.include(failure.failure.message, "after expanding quotes");
         assert.deepEqual(
           refused.messages.find((item) => item.id === messageId),
           acceptedMessage,
@@ -886,6 +898,7 @@ const runConjunction = (refusal = false) =>
           ),
           idAllocatorLayer,
           McpProviderSessions.layer,
+          McpAppModelContext.layerEmpty,
         ),
       ),
     ),

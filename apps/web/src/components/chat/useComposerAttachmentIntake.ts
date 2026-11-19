@@ -2,6 +2,8 @@ import { stageComposerAttachmentBatch } from "./composerAttachmentStaging";
 import { composerDraftAttachmentFacts } from "./composerAttachmentFiles";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { questionAttachmentDraftId } from "../../questionAttachments";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ChatFileAttachment,
@@ -21,6 +23,8 @@ import {
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
+import type { PendingUserInputProgress } from "../../pendingUserInput";
+import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { type PendingUserInput } from "../../session-logic";
 import {
   changeQuestionAttachmentPreparation,
@@ -29,6 +33,7 @@ import {
 import {
   classifyComposerAttachmentFile,
   composerFileAttachmentMimeType,
+  composerImageSourceKey,
   normalizeComposerImageFileMimeType,
 } from "./composerAttachmentFiles";
 import {
@@ -47,6 +52,7 @@ import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
 import {
   addPreparingComposerImages,
+  getPreparingComposerImages,
   isPreparingComposerImage,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
@@ -59,7 +65,7 @@ export function useComposerAttachmentIntake(input: {
   readonly environmentId: ChatComposerProps["environmentId"];
   readonly attachmentDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
-  readonly activePendingProgress: ChatComposerProps["activePendingProgress"];
+  readonly activePendingProgress: PendingUserInputProgress | null;
   readonly activePendingIsResponding: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
@@ -82,6 +88,7 @@ export function useComposerAttachmentIntake(input: {
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
+    pendingInsertion?: ComposerAttachmentInsertion,
   ) => boolean;
 }) {
   const {
@@ -147,7 +154,7 @@ export function useComposerAttachmentIntake(input: {
     ) {
       toastManager.add({
         type: "error",
-        title: "This question cannot accept attachments.",
+        title: m(msg("This question cannot accept attachments.")),
       });
       return false;
     }
@@ -194,22 +201,26 @@ export function useComposerAttachmentIntake(input: {
         replacedReattachMarkerIds.add(matchingReattachMarker.id);
       }
       if (!matchingReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
+        error = m(
+          msg("You can attach up to {max} files per message.", {
+            max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        );
         continue;
       }
       if (attachmentKind === "image") {
         acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
         if (fileStagingLimit === null) {
-          error = "This server does not support file attachments.";
+          error = m(msg("This server does not support file attachments."));
           continue;
         }
         if (file.size <= 0) {
-          error = `'${file.name}' is empty or could not be read.`;
+          error = m(msg("''{name}'' is empty or could not be read.", { name: file.name }));
           continue;
         }
         if (file.size > fileStagingLimit) {
-          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit);
+          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit, m);
           continue;
         }
         const attachmentFile =
@@ -231,20 +242,37 @@ export function useComposerAttachmentIntake(input: {
       }
     }
     setThreadError(threadId, error);
-    const preparingImages = acceptedImages.map((file) => ({
-      id: randomUUID(),
-      name: file.name || "image",
-      file,
-    }));
+    // The store drops a repeated image only after compressing it, so a likely repeat prepares
+    // without a tile instead of flashing one. Only the store decides it is a duplicate.
+    const imageSourceKeys = new Set(
+      [...composerImagesRef.current, ...getPreparingComposerImages(attachmentTargetKey)].map(
+        (image) => composerImageSourceKey(image.file),
+      ),
+    );
+    // The draft image reuses its placeholder's id and thumbnail so the strip tile stays exactly
+    // as it is when the compressed file replaces it.
+    const preparingImages = acceptedImages.map((file) => {
+      const sourceKey = composerImageSourceKey(file);
+      const hidden = imageSourceKeys.has(sourceKey);
+      imageSourceKeys.add(sourceKey);
+      return { id: randomUUID(), name: file.name || "image", file, hidden };
+    });
     if (preparingImages.length > 0)
       addPreparingComposerImages(attachmentTargetKey, preparingImages);
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
     const preparingIds = new Set(preparingImages.map((image) => image.id));
+    // Images land where the caret was when they were added, not where it is after compression.
+    const pendingInsertion = imageAttachmentsGetChips
+      ? composerEditorRef.current?.captureAttachmentInsertion()
+      : undefined;
     // Runs at commit and again in the finally. The size check keeps an empty second run from
-    // recreating a cleared question's count: `-0` is not a decrement.
-    const releasePreparingImages = () => {
-      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds);
+    // recreating a cleared question's count: `-0` is not a decrement. A send held for these
+    // images is dropped when one failed or none joined the draft.
+    const releasePreparingImages = (cancelSubmission: boolean) => {
+      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds, {
+        cancelSubmission,
+      });
       if (questionAttachmentTarget && removed.size > 0)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -removed.size);
     };
@@ -278,7 +306,7 @@ export function useComposerAttachmentIntake(input: {
           acceptedImages.length === 0 ||
           !questionAttachmentTarget ||
           questionAttachmentTarget in useQuestionAttachmentPreparation.getState().counts,
-        commit: ({ images, files }) => {
+        commit: ({ images, files, error }) => {
           let insertedAny = false;
           if (files.length > 0) {
             const storedIds = new Set(addComposerFilesToDraft([...files]));
@@ -293,17 +321,20 @@ export function useComposerAttachmentIntake(input: {
               const attached = storedFiles[0]!;
               toastManager.add({
                 type: "info",
-                title: `Large paste attached as ${attached.name}`,
-                description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
-                  isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
-                } to keep a large paste inline.`,
+                title: m(msg("Large paste attached as {name}", { name: attached.name })),
+                description: m(
+                  msg("{size} · Use {shortcut} to keep a large paste inline.", {
+                    size: formatAttachmentSize(attached.sizeBytes, m),
+                    shortcut: isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V",
+                  }),
+                ),
                 data: { hideCopyButton: true },
               });
             }
           }
           // Same tick as the draft insert below, with nothing that could render in between, so
           // the strip swaps each placeholder for its ready tile under one key in one render.
-          releasePreparingImages();
+          releasePreparingImages(error !== null);
           const nextImages: ComposerImageAttachment[] = images.map(({ id, file }) => ({
             type: "image",
             id,
@@ -326,7 +357,11 @@ export function useComposerAttachmentIntake(input: {
           }
           if (storedImages.length > 0 && imageAttachmentsGetChips) {
             insertedAny =
-              insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+              insertAttachmentReferences(
+                storedImages.map(imageContextReference),
+                undefined,
+                pendingInsertion,
+              ) || insertedAny;
           }
           return insertedAny;
         },
@@ -334,11 +369,18 @@ export function useComposerAttachmentIntake(input: {
       if (staged.error !== null) setThreadError(threadId, staged.error);
       return staged.inserted;
     };
-    return await stageAttachments().finally(releasePreparingImages);
+    return await stageAttachments().finally(() => {
+      pendingInsertion?.dispose();
+      releasePreparingImages(true);
+    });
   };
 
   const removeComposerImage = (imageId: string) => {
-    if (removePreparingComposerImages(attachmentTargetKey, new Set([imageId])).size > 0) {
+    if (
+      removePreparingComposerImages(attachmentTargetKey, new Set([imageId]), {
+        cancelSubmission: true,
+      }).size > 0
+    ) {
       // Its compression finishes in the background and is dropped.
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
@@ -353,7 +395,18 @@ export function useComposerAttachmentIntake(input: {
       return;
     }
     const confirmation = requestConfirmDialog(
-      `Remove ${image?.name ?? "this image"} from the message?\nIt is referenced in your text; removing it also removes every reference.`,
+      image?.name != null
+        ? m(
+            msg(
+              "Remove {name} from the message?\nIt is referenced in your text; removing it also removes every reference.",
+              { name: image.name },
+            ),
+          )
+        : m(
+            msg(
+              "Remove this image from the message?\nIt is referenced in your text; removing it also removes every reference.",
+            ),
+          ),
       { variant: "destructive" },
     );
     if (!confirmation) {
@@ -406,8 +459,8 @@ export function useComposerAttachmentIntake(input: {
       }
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large for this message",
-        description: "Remove some text or an attachment, then paste again.",
+        title: m(msg("Pasted text is too large for this message")),
+        description: m(msg("Remove some text or an attachment, then paste again.")),
         data: { hideCopyButton: true },
       });
       return true;
@@ -428,8 +481,8 @@ export function useComposerAttachmentIntake(input: {
       if (!wouldExceedInputLimit) return false;
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large to attach",
-        description: "Reduce the clipboard contents or save a smaller excerpt as a file.",
+        title: m(msg("Pasted text is too large to attach")),
+        description: m(msg("Reduce the clipboard contents or save a smaller excerpt as a file.")),
         data: { hideCopyButton: true },
       });
       return true;

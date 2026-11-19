@@ -69,6 +69,7 @@ export interface WhisperRuntimePaths {
   readonly executablePath: string;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/scient-voice has no Effect runtime; hosts catch it as a native error.
 export class WhisperRuntimeError extends Error {
   readonly kind: "timeout" | "busy" | "disposed";
 

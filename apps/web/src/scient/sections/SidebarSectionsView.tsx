@@ -45,11 +45,12 @@ import {
 } from "react";
 
 import { EnvironmentMachineIcon } from "../../components/EnvironmentMachineIcon";
-import type { SidebarDropVerb } from "../../components/Sidebar.logic";
+import { resolveThreadLastVisitedAt, type SidebarDropVerb } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn } from "../../lib/utils";
+import { useUiStateStore } from "../../uiStateStore";
 import { readEnvironmentSupportsThreadReorder, useThreadSectionActions } from "./actions";
 import { FadeTruncate } from "./FadeTruncate";
 import {
@@ -72,6 +73,7 @@ import {
 } from "./logic";
 import type { SectionCreateAnchor } from "./NewSectionPopover";
 import { readTypedSectionName } from "./sectionNameInput";
+import { type SectionStatusKind, summarizeSectionStatus } from "./sectionStatus";
 
 type Shell = EnvironmentThreadShell;
 
@@ -796,9 +798,18 @@ function SectionHeaderRow(props: {
     id: props.itemId,
     disabled: { draggable: props.renaming },
   });
-  const runningCount = props.collapsed
-    ? group.threads.filter((thread) => thread.runtime?.status === "running").length
-    : 0;
+  const visits = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const status = props.collapsed
+    ? summarizeSectionStatus(
+        group.threads.map((thread) => ({
+          ...thread,
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            visits[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+          ),
+        })),
+      )
+    : [];
   const openMenu = (event: { clientX: number; clientY: number; preventDefault: () => void }) => {
     event.preventDefault();
     props.onMenu({ x: event.clientX, y: event.clientY });
@@ -891,12 +902,7 @@ function SectionHeaderRow(props: {
                     "rotate-90 opacity-0 group-focus-within/section-header:opacity-100 group-hover/section-header:opacity-100",
                 )}
               />
-              {runningCount > 0 ? (
-                <span
-                  aria-label={`${runningCount} working`}
-                  className="size-1.5 shrink-0 rounded-full bg-primary"
-                />
-              ) : null}
+              {status.length > 0 ? <SectionStatusDot status={status} /> : null}
             </span>
             <span aria-hidden className="flex h-full min-w-6 flex-1 items-center">
               <span
@@ -934,6 +940,46 @@ function SectionHeaderRow(props: {
         )}
       </div>
     </li>
+  );
+}
+
+const SECTION_STATUS_DOT_CLASS_NAME: Record<SectionStatusKind, string> = {
+  attention: "bg-warning",
+  failed: "bg-error",
+  done: "bg-success",
+  working: "bg-info",
+  waiting: "border border-muted-foreground",
+};
+
+const SECTION_STATUS_LABEL: Record<SectionStatusKind, string> = {
+  attention: "needs you",
+  failed: "failed",
+  done: "done",
+  working: "working",
+  waiting: "waiting",
+};
+
+/** A closed section's most urgent thread state; hovering lists every state's count. */
+function SectionStatusDot(props: { status: ReturnType<typeof summarizeSectionStatus> }) {
+  const label = props.status
+    .map(({ kind, count }) => `${count} ${SECTION_STATUS_LABEL[kind]}`)
+    .join(" · ");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={label}
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              SECTION_STATUS_DOT_CLASS_NAME[props.status[0]!.kind],
+            )}
+          />
+        }
+      />
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 

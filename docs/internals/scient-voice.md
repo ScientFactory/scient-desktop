@@ -27,6 +27,14 @@ contracts.
   applies a bounded provider-specific adapter. `packages/contracts/src/voice.ts`
   also owns the correction request/result/failure contract; client settings
   keep correction disabled by default.
+- Dictation with ChatGPT runs on the server through a provider instance's
+  `voiceDictation` seam (`voice.dictateWithChatGpt`). Scient Agent runs
+  `scient-agent dictate` with its own ChatGPT sign-in
+  (`provider/scient/ScientAgentDictation.ts`). Codex is asked for its ChatGPT
+  access token over a one-shot app-server connection (`getAuthStatus`), and
+  the server uploads the WAV to ChatGPT's transcription service with it,
+  refreshing once after a 401 (`scient/voice/CodexChatGptDictation.ts`). The
+  token is never stored or sent to the client.
 
 The direct inherited-host changes are deliberately narrow: one composer mount,
 one ready-model-only citation-comment mount, footer busy-state layout, one
@@ -54,6 +62,31 @@ Waveform updates follow incoming worklet messages rather than a continuous
 animation loop. Inline errors have a bounded width and ellipsis with the full
 human-readable message available on hover. Presentation strips internal error
 names and uses concise copy for recording-duration validation.
+
+## Dictation engines
+
+The client setting `voiceDictationEngine` is `auto` (the default), `local` or
+`chatgpt`. `auto` means nothing has been chosen yet:
+
+- When an enabled Scient Agent (0.1.9 or newer) or Codex in the environment is
+  signed in to ChatGPT, the microphone opens the setup picker with ChatGPT
+  first and its OpenAI retention notice, then the local models. A model already
+  downloaded is listed as ready and is only selected, not downloaded again.
+  No audio leaves the computer until ChatGPT is chosen; choosing it saves
+  `chatgpt`, and a local model that becomes ready from that picker saves
+  `local`. This includes people who set up Whisper before ChatGPT dictation
+  existed: they never chose local over ChatGPT, so they are asked once.
+- Without such a sign-in, `auto` behaves as `local` did: a ready model
+  dictates, otherwise the picker offers the local models.
+
+An explicit `chatgpt` never falls back to Whisper: a missing sign-in asks for
+one, and an outdated Scient Agent asks for an update rather than being offered.
+The web client prefers a signed-in Scient Agent new enough to dictate, then a
+Codex signed in with ChatGPT. Client settings are saved whole, so reset
+revision 2 (`scientClientSettingsResets.ts`) turns a saved `local` from before
+`auto` existed back into `auto`. Settings → Voice shows a ready model as in use
+under `auto` only while ChatGPT is not on offer, and the citation-comment
+microphone stays hidden until the choice is made in the composer.
 
 ## Reliability invariants
 

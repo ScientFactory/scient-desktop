@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Final local alignment gates: serial, never stopping at a failure, with one
 // recorded result per gate. Qualification evidence, not a qualification policy.
+// SCIENT-FORK: the server suite runs its files in parallel, and one gates run per
+// repository at a time (docs/internals/scripts.md#alignment-gates-and-receipt-facts).
 
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -21,7 +24,15 @@ const GATES = [
     id: "typecheck",
     argv: ["pnpm", "run", "typecheck"],
   },
-  { id: "test", argv: ["pnpm", "run", "test"], windows: WINDOWS_TESTS },
+  // `pnpm run test`, split so that one failing package cannot cancel the others.
+  {
+    id: "test",
+    argv: ["pnpm", "run", "test"],
+    command:
+      "pnpm exec vp run --filter !t3 test; pnpm exec vp run --filter t3 test --fileParallelism",
+    run: runTests,
+    windows: WINDOWS_TESTS,
+  },
   { id: "build", argv: ["pnpm", "run", "build"] },
   { id: "smoke", argv: ["pnpm", "run", "test:desktop-smoke"] },
   { id: "brand", argv: ["pnpm", "run", "brand:check"] },
@@ -29,13 +40,297 @@ const GATES = [
   { id: "diff-worktree", argv: ["git", "diff", "--check"] },
 ];
 
+const GiB = 1024 ** 3;
+const SERVER = { name: "t3", dir: "apps/server" };
+// More failures than this point at a broken setup, and rerunning them would take long.
+const RERUN_LIMIT = 20;
+// Gates that load the whole machine wait for another worktree's run of them.
+const HEAVY_GATES = new Set(["typecheck", "test", "build", "smoke"]);
+
+/**
+ * Parallel server test files: CI runs one per vCPU on 4-vCPU runners. Locally,
+ * half the cores (efficiency cores count) leave room for the owner and other
+ * work, at most six, and 4 GiB of memory each (a worker peaks near 1.5 GiB).
+ */
+export const serverWorkers = (cores = NodeOS.availableParallelism(), memory = NodeOS.totalmem()) =>
+  Math.max(1, Math.min(6, Math.floor(cores / 2), Math.floor(memory / (4 * GiB))));
+
+const runLogged = (argv, { root, home, log, env }) => {
+  const fd = NodeFS.openSync(log, "a");
+  try {
+    return runTool(argv, { cwd: root, home, env, stdio: ["ignore", fd, fd] });
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+};
+
+const failedFiles = (reportPath, cwd) => {
+  try {
+    const report = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
+    return report.testResults
+      .filter((file) => file.status === "failed")
+      .map((file) => NodePath.relative(cwd, file.name).replaceAll("\\", "/"))
+      .toSorted();
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * vp's summary of the aggregate, from the empty cache directory that run alone used:
+ * package name -> exit code, 0 for a pass. Cancelled packages are killed (137, or
+ * 143) and skipped dependents are absent. Unreadable: null.
+ */
+export function readAggregateOutcomes(cacheRoot) {
+  try {
+    const [summary, ...others] = NodeFS.readdirSync(cacheRoot)
+      .map((entry) => NodePath.join(cacheRoot, entry, "last-summary.json"))
+      .filter((file) => NodeFS.existsSync(file));
+    if (!summary || others.length) return null;
+    const { tasks } = JSON.parse(NodeFS.readFileSync(summary, "utf8"));
+    return new Map(
+      tasks.map((task) => {
+        const outcome = task.result?.Spawned?.outcome;
+        return [task.package_name, outcome?.Success ? 0 : (outcome?.Failed?.exit_code ?? -1)];
+      }),
+    );
+  } catch {
+    return null;
+  }
+}
+const CANCELLED = new Set([137, 143]);
+
+/**
+ * Packages other than the server run in one aggregate. One failure there cancels
+ * running packages and skips dependents, so only those rerun on their own. The
+ * server runs alone with parallel files; up to RERUN_LIMIT failed files rerun alone
+ * as a diagnostic, and the gate still fails.
+ */
+function runTests({ root, home, out, log, workers }) {
+  const packagesLog = log;
+  const started = performance.now();
+  const cacheRoot = NodePath.join(out, "aggregate-task-cache");
+  const aggregate = runLogged(
+    ["pnpm", "exec", "vp", "run", "--filter", `!${SERVER.name}`, "test"],
+    { root, home, log: packagesLog, env: { VITE_CACHE_PATH: cacheRoot } },
+  );
+  const packagesFailed = [];
+  const packagesRerun = [];
+  if (aggregate.status !== 0 || aggregate.error) {
+    const outcomes = readAggregateOutcomes(cacheRoot);
+    const listed = runTool(["pnpm", "-r", "ls", "--depth", "-1", "--json"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const packages = JSON.parse(listed.stdout || "[]").filter(
+      (entry) =>
+        entry.name !== SERVER.name &&
+        NodePath.resolve(entry.path) !== NodePath.resolve(root) &&
+        JSON.parse(NodeFS.readFileSync(NodePath.join(entry.path, "package.json"), "utf8")).scripts
+          ?.test,
+    );
+    if (packages.length === 0) packagesFailed.push("(the workspace listing failed)");
+    for (const entry of packages) {
+      const exit = outcomes?.get(entry.name);
+      if (exit === 0) continue;
+      // A package that ran to its own failure is a complete result.
+      if (exit !== undefined && !CANCELLED.has(exit)) {
+        packagesFailed.push(entry.name);
+        continue;
+      }
+      packagesRerun.push(entry.name);
+      NodeFS.appendFileSync(packagesLog, `\n### ${entry.name} on its own\n`);
+      const result = runLogged(["pnpm", "exec", "vp", "run", "--filter", entry.name, "test"], {
+        root,
+        home,
+        log: packagesLog,
+      });
+      if (result.status !== 0 || result.error) packagesFailed.push(entry.name);
+    }
+    if (packagesFailed.length === 0)
+      packagesFailed.push("(the aggregate failed, yet no package failed on its own)");
+  }
+
+  const packagesSeconds = Math.round((performance.now() - started) / 1000);
+  const serverStarted = performance.now();
+  const serverLog = log;
+  NodeFS.appendFileSync(serverLog, `\n### ${SERVER.name}, ${workers} file(s) at a time\n`);
+  const serverCwd = NodePath.join(root, SERVER.dir);
+  const serverRun = (files, reportPath, parallel) =>
+    runLogged(
+      [
+        "pnpm",
+        "exec",
+        "vp",
+        "run",
+        "--filter",
+        SERVER.name,
+        "test",
+        ...(parallel
+          ? ["--fileParallelism", `--maxWorkers=${workers}`]
+          : ["--no-file-parallelism"]),
+        "--reporter=default",
+        "--reporter=json",
+        `--outputFile.json=${reportPath}`,
+        ...files,
+      ],
+      { root, home, log: serverLog },
+    );
+  const report = NodePath.join(out, "test-server.json");
+  const parallelRun = serverRun([], report, workers > 1);
+  const server = { workers, report };
+  if (parallelRun.status !== 0 || parallelRun.error) {
+    const failed = failedFiles(report, serverCwd);
+    if (!failed?.length) {
+      server.reason = "the server suite failed without a failed file in its report";
+    } else if (workers === 1 || failed.length > RERUN_LIMIT) {
+      server.failed = failed;
+    } else {
+      NodeFS.appendFileSync(serverLog, `\n### Failed files again, one at a time\n`);
+      const recheck = NodePath.join(out, "test-server-alone.json");
+      const alone = serverRun(failed, recheck, false);
+      const stillFailing = alone.status === 0 ? [] : failedFiles(recheck, serverCwd);
+      if (stillFailing === null || (alone.status !== 0 && stillFailing.length === 0)) {
+        server.reason = "the one-at-a-time rerun of the failed files did not finish";
+        server.failed = failed;
+      } else {
+        server.failedAgainAlone = stillFailing;
+        server.passedWhenRerunAlone = failed.filter((file) => !stillFailing.includes(file));
+      }
+    }
+  }
+  const serverPassed = parallelRun.status === 0 && !parallelRun.error;
+  server.seconds = Math.round((performance.now() - serverStarted) / 1000);
+  return {
+    status: packagesFailed.length === 0 && serverPassed ? 0 : 1,
+    details: { packagesSeconds, packagesFailed, packagesRerun, server },
+  };
+}
+
+const describeTests = ({ packagesFailed, packagesRerun = [], server }) => {
+  const parts = [
+    `server ${server.seconds} s, ${server.workers} file${server.workers === 1 ? "" : "s"} at a time`,
+  ];
+  if (packagesFailed.length) parts.push(`failed packages: ${packagesFailed.join(", ")}`);
+  if (packagesRerun.length)
+    parts.push(`rerun after the aggregate stopped: ${packagesRerun.join(", ")}`);
+  if (server.reason) parts.push(`server: ${server.reason}`);
+  if (server.failed?.length) parts.push(`failed: ${server.failed.join(", ")}`);
+  if (server.failedAgainAlone?.length)
+    parts.push(`failed again alone: ${server.failedAgainAlone.join(", ")}`);
+  if (server.passedWhenRerunAlone?.length)
+    parts.push(`passed when rerun alone: ${server.passedWhenRerunAlone.join(", ")}`);
+  return parts.join("; ");
+};
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+};
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+const gatesLock = (commonDir) => NodePath.join(commonDir, "scient-alignment-gates.lock");
+const slots = (lock) =>
+  NodeFS.readdirSync(lock)
+    .filter((name) => /^\d+$/u.test(name))
+    .map(Number);
+const ownerOf = (lock, slot) => {
+  try {
+    return JSON.parse(NodeFS.readFileSync(NodePath.join(lock, String(slot), "owner.json"), "utf8"));
+  } catch {
+    return null;
+  }
+};
+const discard = (lock, slot) => {
+  const gone = NodePath.join(lock, `.gone-${NodeCrypto.randomUUID()}`);
+  try {
+    NodeFS.renameSync(NodePath.join(lock, String(slot)), gone);
+  } catch {
+    return;
+  }
+  NodeFS.rmSync(gone, { recursive: true, force: true });
+};
+
+/**
+ * Claims slot `seen + 1` for `owner`, the slot after the highest one the caller saw.
+ * Returns it if it is now the highest slot, otherwise removes it and returns null.
+ */
+export function claimGatesSlot(commonDir, seen, owner) {
+  const lock = gatesLock(commonDir);
+  const slot = seen + 1;
+  const staging = NodePath.join(lock, `.claim-${owner.token}`);
+  NodeFS.mkdirSync(staging);
+  NodeFS.writeFileSync(NodePath.join(staging, "owner.json"), JSON.stringify(owner));
+  try {
+    // A slot always holds its owner, so renaming onto a taken one fails.
+    NodeFS.renameSync(staging, NodePath.join(lock, String(slot)));
+  } catch (error) {
+    NodeFS.rmSync(staging, { recursive: true, force: true });
+    // Taken: that slot, or a later one once its holder cleared it. The highest slot stays.
+    if (slots(lock).some((taken) => taken >= slot)) return null;
+    throw error;
+  }
+  if (Math.max(...slots(lock)) === slot) return slot;
+  discard(lock, slot);
+  return null;
+}
+
+/**
+ * One gates run per repository, across its worktrees: the lock lives in the shared Git
+ * directory as numbered slots, and the highest slot is the lock. That slot is never
+ * removed, only marked released, and it is free once released or its process has exited.
+ * No timeout decides, and no run removes a slot another run may still hold.
+ */
+export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.log } = {}) {
+  const lock = gatesLock(commonDir);
+  NodeFS.mkdirSync(lock, { recursive: true });
+  const token = NodeCrypto.randomUUID();
+  let announced = false;
+  for (;;) {
+    const top = Math.max(0, ...slots(lock));
+    const holder = top === 0 ? null : ownerOf(lock, top);
+    const free =
+      holder === null ||
+      NodeFS.existsSync(NodePath.join(lock, String(top), "released")) ||
+      !alive(holder.pid);
+    if (free) {
+      const owner = { pid: process.pid, root, token, started: new Date().toISOString() };
+      const slot = claimGatesSlot(commonDir, top, owner);
+      if (slot === null) continue;
+      for (const older of slots(lock)) if (older < slot) discard(lock, older);
+      return () => {
+        // Only this run's slot: the lock folder may have been deleted by hand meanwhile.
+        if (ownerOf(lock, slot)?.token !== token) return;
+        NodeFS.writeFileSync(NodePath.join(lock, String(slot), "released"), "");
+      };
+    }
+    if (!announced) {
+      log(
+        `Waiting for the gates run in ${holder.root} (pid ${holder.pid}, since ${holder.started}). ` +
+          `If that process is not a gates run, delete ${lock}.`,
+      );
+      announced = true;
+    }
+    wait(5000);
+  }
+}
+
 function parseArgs(argv) {
-  const args = { only: null, tests: false };
+  const args = { only: null, tests: false, serverWorkers: null };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     if (key === "--") continue;
     if (key === "--tests" && !args.tests) args.tests = true;
-    else if (key === "--only" && args.only === null) {
+    else if (key === "--server-workers" && args.serverWorkers === null) {
+      args.serverWorkers = Number(argv[++i]);
+      if (!Number.isSafeInteger(args.serverWorkers) || args.serverWorkers < 1)
+        throw new Error("--server-workers takes a positive integer");
+    } else if (key === "--only" && args.only === null) {
       const value = argv[++i];
       args.only = value?.split(",").filter(Boolean) ?? [];
       const unknown = args.only.filter((id) => !GATES.some((gate) => gate.id === id));
@@ -61,11 +356,13 @@ const countFiles = (directory) =>
 function formatTable(record) {
   const rows = record.gates.map(
     (gate) =>
-      `| ${gate.id} | ${gate.status === "not-run" ? gate.reason : `${gate.status}, ${gate.seconds} s`} |`,
+      `| ${gate.id} | ${gate.status === "not-run" ? gate.reason : `${gate.status}, ${gate.seconds} s`}` +
+      `${gate.tests ? `; ${describeTests(gate.tests)}` : ""} |`,
   );
   return [
     `Candidate \`${record.head}\` (tree \`${record.tree}\`${record.dirty ? ", plus uncommitted changes" : ""}), ` +
-      `${record.platform}, Node ${record.node}, pnpm ${record.pnpm}` +
+      `${record.platform}, Node ${record.node}, pnpm ${record.pnpm}, ${record.cores} CPUs` +
+      `${record.load === null ? "" : ` (load average ${record.load} at start)`}` +
       `${record.partial ? `; partial run: ${record.partial.join(", ")}` : ""}.`,
     "",
     "| Gate | Result |",
@@ -86,6 +383,9 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
     platform: `${platform} ${NodeOS.release()}`,
     node: process.version,
     pnpm: capture(["pnpm", "--version"], root),
+    cores: NodeOS.availableParallelism(),
+    // Windows reports no load average.
+    load: platform === "win32" ? null : Number(NodeOS.loadavg()[0].toFixed(1)),
     partial: args.only,
     gates: [],
   };
@@ -94,7 +394,36 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
       NodePath.join(out, "results.json"),
       `${JSON.stringify(record, null, 2)}\n`,
     );
-  for (const gate of GATES.filter((gate) => !args.only || args.only.includes(gate.id))) {
+  const selected = GATES.filter((gate) => !args.only || args.only.includes(gate.id));
+  const release = selected.some((gate) => HEAVY_GATES.has(gate.id))
+    ? acquireGatesLock(
+        NodePath.resolve(root, capture(["git", "rev-parse", "--git-common-dir"], root)),
+        { root },
+      )
+    : () => {};
+  const onSignal = (signal) => {
+    release();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  try {
+    runGates(selected, { args, platform, root, out, record, save });
+  } finally {
+    release();
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  }
+  console.log(`\nResults: ${NodePath.join(out, "results.json")}\n\n${formatTable(record)}`);
+  const failed = record.gates.filter((gate) => gate.status === "failed").map((gate) => gate.id);
+  const notRun = record.gates.filter((gate) => gate.status === "not-run").map((gate) => gate.id);
+  if (failed.length) console.log(`\nFailed: ${failed.join(", ")}`);
+  if (notRun.length) console.log(`Not run: ${notRun.join(", ")}`);
+  return failed.length ? 1 : 0;
+}
+
+function runGates(selected, { args, platform, root, out, record, save }) {
+  for (const gate of selected) {
     if (gate.windows && platform === "win32" && !args.tests) {
       record.gates.push({ id: gate.id, status: "not-run", reason: gate.windows });
       save();
@@ -107,7 +436,9 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
     let result;
     let homeFiles;
     try {
-      result = runTool(gate.argv, { cwd: root, home, stdio: ["ignore", fd, fd] });
+      result = gate.run
+        ? gate.run({ root, home, out, log, workers: args.serverWorkers ?? serverWorkers() })
+        : runTool(gate.argv, { cwd: root, home, stdio: ["ignore", fd, fd] });
       homeFiles = countFiles(home);
     } finally {
       NodeFS.closeSync(fd);
@@ -118,8 +449,9 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
       status: result.status === 0 && !result.error ? "passed" : "failed",
       exit: result.status,
       seconds: Math.round((performance.now() - start) / 1000),
-      command: gate.argv.join(" "),
+      command: gate.command ?? gate.argv.join(" "),
       log,
+      ...(result.details ? { tests: result.details } : {}),
     };
     // A smoke run that wrote nothing under the synthetic home resolved its state elsewhere.
     if (gate.id === "smoke" && entry.status === "passed" && homeFiles === 0) {
@@ -130,12 +462,6 @@ export function main(argv, { cwd = process.cwd(), platform = NodeOS.platform() }
     save();
     console.log(`${entry.id}: ${entry.status}, ${entry.seconds} s (${log})`);
   }
-  console.log(`\nResults: ${NodePath.join(out, "results.json")}\n\n${formatTable(record)}`);
-  const failed = record.gates.filter((gate) => gate.status === "failed").map((gate) => gate.id);
-  const notRun = record.gates.filter((gate) => gate.status === "not-run").map((gate) => gate.id);
-  if (failed.length) console.log(`\nFailed: ${failed.join(", ")}`);
-  if (notRun.length) console.log(`Not run: ${notRun.join(", ")}`);
-  return failed.length ? 1 : 0;
 }
 
 if (

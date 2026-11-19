@@ -61,6 +61,7 @@ it("ends a follow that lands on its target, once, with no frames left running", 
   function Follow() {
     useBoundedAnswerFollow({
       listRef: dom.listRef,
+      viewport: null,
       rows: dom.rows,
       promptMessageId: "prompt",
       responseSettled: true,

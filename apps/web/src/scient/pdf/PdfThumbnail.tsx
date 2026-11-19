@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ScientPdfRuntime } from "./pdfRuntime";
 import { ReaderPageThumbnail } from "../writing/ReaderPageThumbnail";
 import { startPdfPageDragFollow } from "./pdfPageDragImage";
+import { drawPdfThumbnail } from "./pdfThumbnailQueue";
 
 let stopDragScroll: (() => void) | null = null;
 function startDragScroll(container: HTMLElement) {
@@ -83,60 +84,16 @@ export function PdfThumbnail(props: {
     observer.observe(root);
     return () => observer.disconnect();
   }, []);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renders the PDF page into the canvas DOM node via PDF.js and cancels the render task on cleanup
+  const rotation = props.runtime.viewer.pagesRotation;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- draws the page into the canvas DOM node through pdf.js's rendering queue and cancels it on cleanup
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || !canvas) return;
-    let current = true,
-      cancelRender: (() => void) | null = null;
-    let loadedPage: Awaited<ReturnType<typeof props.runtime.document.getPage>> | null = null;
     setFailed(false);
-    void props.runtime.document
-      .getPage(props.pageNumber)
-      .then((page) => {
-        loadedPage = page;
-        if (!current) return;
-        const rotation = page.rotate + props.runtime.viewer.pagesRotation;
-        const unscaled = page.getViewport({ scale: 1, rotation });
-        const width = 132,
-          pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-        const viewport = page.getViewport({
-          scale: (width / unscaled.width) * pixelRatio,
-          rotation,
-        });
-        // Drawn off screen and copied in whole: resizing the shown canvas clears it to black
-        // until PDF.js finishes, which flashed every thumbnail after an edit.
-        const offscreen = document.createElement("canvas");
-        offscreen.width = Math.max(1, Math.floor(viewport.width));
-        offscreen.height = Math.max(1, Math.floor(viewport.height));
-        const context = offscreen.getContext("2d", { alpha: false });
-        if (!context) return;
-        const task = page.render({ canvas: offscreen, canvasContext: context, viewport });
-        cancelRender = () => task.cancel();
-        return task.promise.then(
-          () => {
-            if (!current) return;
-            canvas.width = offscreen.width;
-            canvas.height = offscreen.height;
-            canvas.style.width = width + "px";
-            canvas.style.height = Math.round(viewport.height / pixelRatio) + "px";
-            canvas.getContext("2d", { alpha: false })?.drawImage(offscreen, 0, 0);
-          },
-          (error: unknown) => {
-            if (!(error instanceof Error && error.name === "RenderingCancelledException"))
-              throw error;
-          },
-        );
-      })
-      .catch(() => {
-        if (current) setFailed(true);
-      });
-    return () => {
-      current = false;
-      cancelRender?.();
-      loadedPage?.cleanup();
-    };
-  }, [props.pageNumber, props.runtime, props.runtime.viewer.pagesRotation, visible]);
+    return drawPdfThumbnail(props.runtime, props.pageNumber, rotation, canvas, () =>
+      setFailed(true),
+    );
+  }, [props.pageNumber, props.runtime, rotation, visible]);
 
   return (
     <div

@@ -237,6 +237,13 @@ it.effect("decodes native inventory and always closes the client", () =>
           servers: [
             { name: "docs", status: "connected", source: "project", toolCount: 3 },
             { name: "github", status: "failed", source: "user", requiresAuth: true },
+            {
+              name: "linear",
+              status: "connected",
+              source: "user",
+              requiresAuth: true,
+              hasAuthTokens: true,
+            },
           ],
         }),
       });
@@ -252,6 +259,7 @@ it.effect("decodes native inventory and always closes the client", () =>
     NodeAssert.deepEqual(mcpServers, [
       { name: "docs", status: "connected", scope: "project", toolCount: 3 },
       { name: "github", status: "needs-auth", scope: "user" },
+      { name: "linear", status: "connected", scope: "user", signedIn: true },
     ]);
     NodeAssert.equal(closed, 1);
   }),

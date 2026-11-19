@@ -1,5 +1,6 @@
 import {
   isProviderAvailable,
+  ProviderDriverKind,
   type VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
   type VoiceTranscriptCorrectionResult,
@@ -9,6 +10,12 @@ import * as Option from "effect/Option";
 
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
+import type { TextGenerators } from "../../textGeneration/TextGenerators.ts";
+import {
+  buildVoiceTranscriptCorrectionPrompt,
+  validateVoiceTranscriptCorrectionOutput,
+  VoiceTranscriptCorrectionOutput,
+} from "./VoiceTranscriptCorrectionPrompt.ts";
 
 const VOICE_TRANSCRIPT_CORRECTION_TIMEOUT_MS = 12_000;
 
@@ -22,6 +29,9 @@ function failure(
 export function makeVoiceTranscriptCorrection(input: {
   readonly registry: ProviderRegistryShape;
   readonly serverSettings: ServerSettingsService["Service"];
+  /** Text generators (model APIs) configured in settings, and where their requests run. */
+  readonly textGenerators?: TextGenerators["Service"];
+  readonly cwd?: string;
   readonly timeoutMs?: number;
 }) {
   const timeoutMs = input.timeoutMs ?? VOICE_TRANSCRIPT_CORRECTION_TIMEOUT_MS;
@@ -37,6 +47,37 @@ export function makeVoiceTranscriptCorrection(input: {
         ),
       );
       const modelSelection = settings.textGenerationModelSelection;
+      // A text generator (a model API) corrects the transcript directly with Scient's prompt.
+      const textGenerator =
+        input.textGenerators === undefined
+          ? undefined
+          : yield* input.textGenerators.runner(modelSelection.instanceId);
+      if (textGenerator !== undefined) {
+        const output = yield* textGenerator({
+          operation: "generateTranscriptionPostProcessing",
+          cwd: input.cwd ?? ".",
+          prompt: buildVoiceTranscriptCorrectionPrompt(request.transcript, request.language),
+          outputSchema: VoiceTranscriptCorrectionOutput,
+          modelSelection,
+        }).pipe(
+          Effect.mapError(() =>
+            failure("provider-unavailable", "The selected text generator could not correct it."),
+          ),
+          Effect.timeoutOption(timeoutMs),
+        );
+        if (Option.isNone(output)) {
+          return yield* failure("timeout", "Transcript correction timed out.");
+        }
+        const { text } = yield* validateVoiceTranscriptCorrectionOutput({
+          transcript: request.transcript,
+          output: output.value,
+        });
+        const kind = settings.textGenerators[modelSelection.instanceId]?.kind;
+        return {
+          text,
+          provider: ProviderDriverKind.make(kind === "anthropic" ? "anthropic" : "openai"),
+        };
+      }
       const providers = yield* input.registry.getProviders;
       const provider = providers.find(
         (candidate) => candidate.instanceId === modelSelection.instanceId,

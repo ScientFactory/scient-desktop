@@ -25,6 +25,84 @@ const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> =
       stopReason: "error",
       errorMessage: "Session cost cap reached",
       failureClass: "usage_limit",
+      failureCode: "cost_cap",
+    },
+  ],
+  [
+    "the most specific of several kinds names the failure, beside its status",
+    {
+      ...terminal,
+      promptStatus: "error",
+      promptError: "429 Usage limit reached",
+      promptHttpStatus: 429,
+      promptErrorKinds: ["transient", "usage-limit"],
+    },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "429 Usage limit reached",
+      failureClass: "usage_limit",
+      failureCode: "usage-limit",
+      httpStatus: 429,
+    },
+  ],
+  [
+    "a network failure is named apart from a transient provider error",
+    {
+      ...terminal,
+      promptStatus: "error",
+      promptError: "Couldn't reach chatgpt.com (getaddrinfo ENOTFOUND).",
+      promptErrorKinds: ["transient", "network"],
+    },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "Couldn't reach chatgpt.com (getaddrinfo ENOTFOUND).",
+      failureCode: "network",
+    },
+  ],
+  [
+    "a kind names the failure without changing its class",
+    {
+      ...terminal,
+      promptStatus: "error",
+      promptError: "401 invalid API key",
+      promptHttpStatus: 401,
+      promptErrorKinds: ["auth-failed"],
+    },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "401 invalid API key",
+      failureCode: "auth-failed",
+      httpStatus: 401,
+    },
+  ],
+  [
+    "an agent without kinds is named by its HTTP status",
+    { ...terminal, promptStatus: "error", promptError: "overloaded", promptHttpStatus: 503 },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "overloaded",
+      failureCode: "http_503",
+      httpStatus: 503,
+    },
+  ],
+  [
+    "a kind this host does not know and an impossible status name only an unknown kind",
+    {
+      ...terminal,
+      promptStatus: "error",
+      promptError: "boom",
+      promptHttpStatus: 0,
+      promptErrorKinds: ["future-kind"],
+    },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "boom",
+      failureCode: "unrecognized_error_kind",
     },
   ],
   [
@@ -45,7 +123,12 @@ const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> =
   [
     "a model error fails with the message's error",
     { ...terminal, stopReason: "error", errorMessage: "401 invalid API key" },
-    { outcome: "failed", stopReason: "error", errorMessage: "401 invalid API key" },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "401 invalid API key",
+      failureCode: "assistant_error",
+    },
   ],
   [
     "a model error prefers the retry's final error",
@@ -56,22 +139,42 @@ const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> =
       retryExhausted: true,
       retryFinalError: "429 after 3 attempts",
     },
-    { outcome: "failed", stopReason: "error", errorMessage: "429 after 3 attempts" },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "429 after 3 attempts",
+      failureCode: "retry_exhausted",
+    },
   ],
   [
     "prompt_result error without a message error uses the prompt error",
     { ...terminal, promptStatus: "error", promptError: "provider unavailable" },
-    { outcome: "failed", stopReason: "error", errorMessage: "provider unavailable" },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "provider unavailable",
+      failureCode: "prompt_result_error",
+    },
   ],
   [
     "a model error with no text at all still has a message",
     { ...terminal, stopReason: "error", errorMessage: "   " },
-    { outcome: "failed", stopReason: "error", errorMessage: "Oh My Pi failed this turn." },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "Oh My Pi failed this turn.",
+      failureCode: "assistant_error",
+    },
   ],
   [
     "an exhausted retry fails even when the last stop was not an error",
     { ...terminal, stopReason: "stop", retryExhausted: true, retryFinalError: "Retry cancelled" },
-    { outcome: "failed", stopReason: "error", errorMessage: "Retry cancelled" },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "Retry cancelled",
+      failureCode: "retry_exhausted",
+    },
   ],
   [
     "prompt_result completed outranks a stale error stop",
@@ -92,7 +195,12 @@ const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> =
   [
     "an unknown prompt status falls back to the message evidence",
     { ...terminal, promptStatus: "paused", stopReason: "error", errorMessage: "boom" },
-    { outcome: "failed", stopReason: "error", errorMessage: "boom" },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "boom",
+      failureCode: "assistant_error",
+    },
   ],
 ];
 

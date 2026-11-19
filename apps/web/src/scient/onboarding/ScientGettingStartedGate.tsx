@@ -2,16 +2,16 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
-import { usePrimarySessionState } from "../../environments/primary";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
 } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentSessionState } from "../../state/session";
 import { primaryServerConfigAtom } from "../../state/server";
 import { ScientGettingStartedFlow } from "./ScientGettingStartedFlow";
-import { resolveScientOnboardingEntry } from "./policy";
+import { resolveScientOnboardingEntry, shouldAskScientProfile } from "./policy";
 import { useScientOnboardingStorage } from "./storage";
 
 export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }) {
@@ -20,15 +20,15 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
   const shellBootstrapped = useAllEnvironmentShellsBootstrapped();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryServerConfig = useAtomValue(primaryServerConfigAtom);
-  const sessionState = usePrimarySessionState();
-  const { state, complete } = useScientOnboardingStorage();
+  const sessionState = useEnvironmentSessionState(primaryEnvironmentId);
+  const { state, profile, complete } = useScientOnboardingStorage();
   const [presentationActive, setPresentationActive] = useState(false);
   const operateAccess = resolvePrimaryOperateAccess({
     isPrimary: true,
     hasDesktopBridge: typeof window !== "undefined" && Boolean(window.desktopBridge),
     session: sessionState.data,
     isPending: sessionState.isPending,
-    hasError: sessionState.error !== null,
+    hasError: sessionState.hasError,
   });
   const decision = resolveScientOnboardingEntry({
     status: state.status,
@@ -48,5 +48,16 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
 
   if (decision === "wait") return null;
   if (decision === "present") return <ScientGettingStartedFlow mode="automatic" />;
+  if (
+    shouldAskScientProfile({
+      status: state.status,
+      asked: profile.askedAt !== undefined,
+      answered: profile.field !== undefined || profile.role !== undefined,
+      shellBootstrapped,
+      primaryEnvironmentReady: primaryEnvironmentId !== null && primaryServerConfig !== null,
+      operateAccess,
+    })
+  )
+    return <ScientGettingStartedFlow mode="profile" />;
   return props.fallback;
 }

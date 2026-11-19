@@ -1,7 +1,7 @@
 import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../native/NativeWorkspaceColumns";
 import Constants from "expo-constants";
 import { Image } from "expo-image";
-import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { Platform, View } from "react-native";
 
@@ -12,6 +12,7 @@ import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 const BRAND_MAX_FONT_SCALE = 1.4;
+const WORDMARK_SUFFIX = "Scient"; // Scient: the whole wordmark, after the brand mark image.
 
 export function brandTitleOffset(): number {
   if (Platform.OS !== "ios") return 0;
@@ -26,6 +27,7 @@ export function CompactBrandTitle(
     readonly fit?: boolean;
   } = {},
 ) {
+  const gt = useGT();
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset();
   const { scale } = useAndroidControlSizing();
@@ -41,7 +43,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
-      accessibilityLabel={props.accessibilityLabel ?? "Scient, Threads"}
+      accessibilityLabel={props.accessibilityLabel ?? gt("Scient, Threads")}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -63,7 +65,7 @@ export function CompactBrandTitle(
         className="font-t3-medium text-foreground-muted"
         style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
       >
-        Scient
+        {WORDMARK_SUFFIX}
       </Text>
       {showStage ? (
         <View
@@ -97,19 +99,4 @@ export function CompactBrandTitle(
   ) : (
     title
   );
-}
-
-function renderCompactBrandTitle() {
-  return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
-}
-
-export function getCompactBrandHeaderOptions(
-  fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"],
-): NativeStackNavigationOptions {
-  return {
-    headerTitle: renderCompactBrandTitle,
-    headerTitleStyle: fallbackTitleStyle,
-    title: "Threads",
-    unstable_headerLeftItems: undefined,
-  };
 }

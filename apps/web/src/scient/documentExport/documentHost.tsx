@@ -38,10 +38,14 @@ export async function executeScientDocumentHostRequest(
     case "documentPdfRender": {
       const bridge = previewBridge;
       if (!bridge || httpBaseUrl === null)
-        throw new ScientDocumentHostExecutionError("The desktop document renderer is unavailable.");
+        throw new ScientDocumentHostExecutionError({
+          message: "The desktop document renderer is unavailable.",
+        });
       const sourceUrl = resolveAssetUrl(httpBaseUrl, request.input.assetRelativeUrl);
       if (sourceUrl === null)
-        throw new ScientDocumentHostExecutionError("The signed HTML source URL is invalid.");
+        throw new ScientDocumentHostExecutionError({
+          message: "The signed HTML source URL is invalid.",
+        });
       const artifact = await bridge.renderHtmlPdf(sourceUrl);
       signal?.throwIfAborted();
       return {
@@ -57,16 +61,18 @@ export async function executeScientDocumentHostRequest(
     }
     case "documentPagePdfRender": {
       if (httpBaseUrl === null)
-        throw new ScientDocumentHostExecutionError("The environment connection is unavailable.");
+        throw new ScientDocumentHostExecutionError({
+          message: "The environment connection is unavailable.",
+        });
       const rendered = await renderDocumentPagePdfForHost(httpBaseUrl, request.input);
       signal?.throwIfAborted();
       return rendered;
     }
     case "documentPdfPresent":
       if (request.input.source._tag !== "generated-pdf")
-        throw new ScientDocumentHostExecutionError(
-          "The document build returned an unsupported PDF source.",
-        );
+        throw new ScientDocumentHostExecutionError({
+          message: "The document build returned an unsupported PDF source.",
+        });
       useRightPanelStore
         .getState()
         .openScient(threadRef, scientGeneratedPdfSurface(request.input.source));

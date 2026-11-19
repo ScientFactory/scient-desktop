@@ -54,6 +54,7 @@ export interface ManagedRuntimeMutationLock {
 }
 
 /** Another owner took over a lock whose heartbeat looked overdue. */
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedRuntimeMutationLockLostError extends Error {
   constructor() {
     super("Another owner took over the managed runtime mutation lock.");

@@ -13,7 +13,7 @@ in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
 credentials, paths and query strings are rejected. Use only synthetic state;
 never send development review traffic to the production gateway. This override
-does not set consent, change released defaults or enable generic T3 telemetry.
+does not change released defaults or enable generic T3 telemetry.
 
 This document describes the source implementation, not deployed collection or a
 privacy approval. Release/activation evidence must refer to exact desktop and
@@ -25,15 +25,18 @@ Like T3, Scient sends every event its code records; there is no list of event or
 [`contract.ts`](../../packages/scient-analytics/src/contract.ts) shapes each event: a Scient
 normalizer decides the fields it reads (buckets, model keys, closed values), and every other field
 passes through as recorded. [`wireContract.ts`](../../packages/scient-analytics/src/wireContract.ts)
-then checks only shape and privacy: an event name, at most 64 properties of strings up to 256
+then checks shape and privacy: an event name, at most 64 properties of strings up to 256
 characters, finite numbers, booleans or arrays of up to 32 of those, 16 KiB in all, and no free-text
 key (`prompt`, `message`, `error`, `path`, `url`, `email` and the like) or value that looks like a
-path, link or email address. Such fields are dropped before queueing; the gateway rejects them too.
-Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
+path, link or email address. Revision 11 permits a validated `email` only on
+`install.account_observed`; ordinary events retain the same exclusions.
+Every event is queued at the full `diagnostic` level the gateway reads, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
 The Settings privacy section, with its switch and “Delete data” request, was
-removed, along with the server's consent and deletion routes.
+removed, along with the server's consent and deletion routes. The server and worker no longer
+carry consent levels, collection epochs or a deletion request; the status the server reports
+keeps `consent` (always `diagnostic` when available) only for clients that still read it.
 
 The notification is implemented but disabled by default at its component boundary
 pending an approved audience and timing policy. This gate does not change analytics
@@ -59,6 +62,12 @@ are not anonymous people or unlinked events and still require the consent/deleti
 protections below. Final copy and layout require human review before activation.
 
 ## Contract and delivery
+
+T3's `apps/server/src/telemetry/AnalyticsService.ts` stays exactly as T3 wrote it. Scient's
+`ScientAnalytics.ts` provides that service and Scient's availability flag, and `server.ts`
+composes it in place of T3's PostHog layer, which is never built. `server.scient.test.ts` builds
+the composed analytics with T3's PostHog settings switched on and checks that nothing reaches
+PostHog.
 
 `contract.ts` normalizes raw call-site values. `wireContract.ts` is the strict
 persisted/wire validator; the website gateway consumes its generated copy.
@@ -98,8 +107,8 @@ event with a normalizer. Each event's ordinary case supplies only the fields its
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v10.json \
-  /absolute/website/workers/events/fixtures/contract-v10.json
+  packages/scient-analytics/fixtures/contract-v11.json \
+  /absolute/website/workers/events/fixtures/contract-v11.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -202,9 +211,8 @@ small-input turns dominate. Rows without `reportVersion` keep their missing
 fields unknown; a missing origin is never a person.
 
 UI export operations require a cached, positive status with an ephemeral
-`collectionContext`. The server derives that context from its current consent
-epoch and a random value; a new server/HTTP lifetime invalidates it. Consent is
-fixed for a server's lifetime, so the epoch stays 0. The UI carries it outside event properties, and the
+`collectionContext`. The server derives that context from a random value; a new
+server/HTTP lifetime invalidates it. The UI carries it outside event properties, and the
 HTTP adapter verifies and removes it before recording. It never enters the
 outbox or gateway and is not an installation identity. Old status responses
 remain compatible, but without a context the new UI-operation observers stay
@@ -219,15 +227,21 @@ failures. Missing terminal events are not automatically failures.
 
 The dedicated worker owns SQLite and remote delivery. Limits are 1,000 memory
 events, two in-flight local batches, 10,000 durable events, 50 events per upload,
-three-second upload deadlines, 20 delivery attempts, and 100 metadata-only dead
-letters. Summary events are trimmed before core/critical events. Expired,
+up to 10 uploads per flush, 15-second upload deadlines,
+20 gateway rejections per event, and 100 metadata-only dead letters. A timeout,
+network error, 408, 429 or 5xx backs off the endpoint (30 seconds doubling to 15
+minutes, with jitter, and at least any `Retry-After` on 429/503); it never parks or
+retires the events, so an outage only delays them. Other refusals and invalid
+acknowledgements hold that batch alone. `droppedCountBucket` reports events
+removed undelivered (retired, invalid or trimmed) since the last diagnostic. The
+worker applies the main thread's outbound networking setup. Summary events are
+trimmed before core/critical events. Expired,
 malformed, or no-longer-valid persisted events cannot bypass the shape and
 privacy check. Local raw events expire after 180 days, diagnostics after 30 days,
 and dead-letter metadata after 30 days when maintenance runs. An app that is
 not running cannot execute cleanup; old events are filtered before delivery.
 
-Off makes no per-event HTTP, SQLite, or worker call. The server sets consent once,
-when the worker starts, and sends no later consent or deletion controls. The worker schedules delivery only while eligible events remain;
+Unavailable analytics makes no per-event HTTP, SQLite, or worker call. The worker schedules delivery only while eligible events remain;
 diagnostic summaries do not create an endless diagnostic-only feedback loop.
 Shutdown gets 300 ms for local persistence and does not await remote delivery.
 These are implementation bounds, not a claim of zero CPU cost or universally
@@ -265,8 +279,7 @@ billion; invalid values are omitted rather than clamped. Unknown counts are not
 zero. Cache and reasoning are already included in input/output and must not be
 added again. Private or mixed model labels become `other`; absent labels remain
 `unknown`. No transcript scan, raw usage object, cost estimate or subagent total
-is exported. Product consent must cover the observed turn interval; epoch
-changes suppress deferred totals. Missing/evicted starts emit unavailable usage
+is exported. Missing/evicted starts emit unavailable usage
 rather than attributing an unproven interval. Terminal failures/stops can consume
 tokens but usage remains Product-class, separate from Essential failures.
 
@@ -278,9 +291,7 @@ submission, not proof of provider delivery, an answer, or a human action.
 Progress updates, queued-to-steer promotions, retries, restart continuations,
 restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
 uses the canonical run event or configured instance's driver, never the instance
-name. Consent/identity changes clear the bounded observation state and never
-backfill earlier admissions. Consent is fixed for the server's lifetime, so
-the collection period set at start (epoch 0) never changes.
+name. Only events committed after the observers start are observed.
 Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
 held Droid re-delivery and queue promotion are not first admissions, even after
 local correlation state resets. Unknown legacy provenance is not counted.
@@ -300,6 +311,39 @@ count user turns.
 
 Scient Agent uses the existing installation observations, installed-state
 changes, lifecycle operations, submissions, terminal outcomes and token usage.
+`provider.lifecycle.*` says who started a runtime change (`trigger`: `user` or
+`background`) and the background `attempt`: Scient Agent's own provisioning, or Scient trying again a
+change the user asked for (from 1). For a finished download, or as far as a failed one got, it adds
+`resumedBucket`, `downloadSource` (`primary` is Scient's copy where one exists), `sourceKind`
+(`scient_mirror`, `github` or `vendor`), `downloadVariant` (`compressed` or `raw`),
+`downloadAttempts` (the downloader's own tries, not `attempt`), `progressBucket` (how much of the
+file the last try had), `throughputBucket` (bytes received per second of request time in Mbit/s
+buckets, kept bytes and waits between tries excluded), `networkKind` (how the last try's connection
+failed: `dns`, `refused`, `reset`, `unreachable`, `connect_timeout`, `stalled`, `cut_off` or
+`other`) and `compressedFailure` (why the compressed copy was given up for the raw one). Only
+`provider.lifecycle.failed` carries `failureClass`; it reports `stalled` (30 seconds without data)
+apart from `timeout`, while the operation itself still says `timeout` so older clients decode it.
+When the step is known, it also carries `failedCheck`: `smoke` (the new runtime's version check),
+`reserve`, `stop_sessions`, `rpc_start`, `protocol`, `version` and `get_state` (Scient Agent's RPC
+check, `qualification` when the step inside it is unknown), `activation` (moving or recording
+files), `rollback` (the previous runtime could not be restored) or `refresh` (the new runtime was
+already active and only restarting its sessions failed).
+A failed sign-in (`action: sign-in`) carries `failureReason`, set where the failure is known:
+`start_failed`, `no_signin_page`, `invalid_response`, `timeout` (a deadline Scient set),
+`provider_failed` (the provider reported failure), `provider_exited` (its process ended first),
+`verification` (an account the provider accepted that Scient could not confirm),
+`post_signin_setup` (a failure after the provider accepted the sign-in), `flow_stopped` or
+`unknown`. Every sign-in end also carries `signInPage`: `primary` (Scient opened the page),
+`manual_fallback` (the provider opened its own page; Scient kept a link) or `none`. A sign-in whose
+provider's own account check is authoritative (Claude) finishes as soon as a fresh check, every
+15 seconds while it waits, finds the account connected, even when the provider's process has not
+ended; builds up to 0.6.30 reported such a sign-in as failed after 10 minutes.
+No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
+`downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
+`provider.runtime.first_pick` is sent once per installation when the user first
+picks Scient Agent in the composer: `state` is `ready`, `in_progress` (with
+`percentBucket`), `failed` or `not_started`. Its `ready` share is the headline
+for background installs.
 Latest observed installed profiles, successful install operations, and profiles
 that submitted prompts are separate measures, not unique people or all-time
 installation totals. The gateway's `analytics:insights` report exposes these
@@ -314,11 +358,11 @@ unreported history. Offline/retry durability starts at local outbox acceptance;
 renderer disconnects, queue caps, expiry and abrupt termination can still lose
 observations. Never promise lossless telemetry at the expense of product work.
 
-The gateway report `analytics:insights` and prepared PostHog insights use
+The gateway report `analytics:insights` and Scient Insights use
 revision-3 Product participants, complete reporting days, distinct installation
 profiles and event-ID deduplication. Repeated use means at least two distinct
 days, not runtime sessions. The observed population is not feature eligibility
-or all users. D1 is UTC; qualify the PostHog project timezone before comparing.
+or all users. D1 is UTC.
 Deploy the generated validator before releasing these producers. No deployment,
 activation, dashboard installation or platform-wide performance proof follows
 from the source implementation alone.
@@ -344,7 +388,7 @@ from the source implementation alone.
 
 `OperationAnalytics` observes these owners; it does not own work, add retries,
 change failures, or write scientific state. Optional-service hosts still work
-without analytics. Correlation maps are bounded and cleared at consent epochs.
+without analytics. Correlation maps are bounded and cleared while analytics is unavailable.
 Compute correlation includes current project/session/execution identity and
 session generation only in memory. When workspace-binding authority lands,
 include that binding in this local key; caller-chosen execution IDs are not globally
@@ -384,14 +428,28 @@ Interactive compute uses `ComputeOutputAnalytics` to summarize retained rich
 output at **one capture workflow per newly admitted execution**. Images,
 non-plain-text MIME bundles and display updates use the existing persistence
 result; generated project figures use that same path after collection. The
-observer stores only retained/rejected flags, coalesces repeated updates, and
-emits a terminal summary when the execution ends. A rejection, persistence
-failure or project-collection warning makes capture failed, including partial
-capture. Retained output without a capture failure completes even when the
+observer stores bounded retained/rejected counts and structured coverage facts,
+and emits one terminal summary when the execution ends. A known rejection or
+persistence failure makes capture failed, including partial retention.
+Project-scan warnings describe incomplete coverage independently: reaching a
+depth, entry or time limit does not establish that an artifact was lost.
+Retained output without a known rejection completes even when the
 code later fails or is interrupted. No rich output or capture failure means
 skipped, regardless of the execution outcome; execution failure and cancellation
 remain separately recorded as `compute-run` outcomes. Plain text and
 clear-output controls alone are not artifacts.
+
+Capture schema version 2 distinguishes `retained`, `partial`, `none`, `failed`,
+and `unobserved`, alongside `complete`, `partial`, or `unavailable` project-scan
+coverage and a closed reason category. Empty output with incomplete coverage is
+`unobserved`, not evidence that no figures existed. Counts are bounded and bucketed;
+interactive counts include retained display updates, not unique files or figures.
+Starts identify the schema and capture source; outcome, coverage, reason and counts
+are terminal observations. Capture reasons stay separate from operation failure classes.
+Run File uses its saved receipt and identifies its separate publication owner;
+when that receipt does not enumerate rejected candidates, their count is unknown.
+Historical events without the version marker retain their older, coarser meaning.
+Do not combine them into a version-2 capture failure rate.
 
 The summary does not read transcripts, files, chart contents or warning text,
 and adds no network or persistence request. At most 1,000 active executions
@@ -402,6 +460,28 @@ capture. Existing output storage and execution ownership are unchanged.
 Durations include queueing/execution, not just persistence. Completion proves
 technical retention, not that a chart rendered or a researcher accepted it;
 a failed capture is not proof that no partial write occurred.
+
+Voice schema version 2 measures one committed dictation job, beginning when the
+user stops recording (including the final audio flush), with exactly one local
+completed, failed or cancelled outcome. Empty clips close as audio failures;
+cancelling correction closes as cancelled and bypassing correction delivers the
+original transcript once. Microphone/recorder failures and recording cancellation
+use separate `voice.recording.*` events, outside the transcription denominator.
+Total job, transcription and correction timings are separate buckets. Correction
+can be disabled, corrected, fallback, bypassed or cancelled; fallback remains a
+successful usable local transcript. Completion measures the delivery callback,
+not proof that the user submitted or accepted the transcript.
+
+The UI binds the job to its original connection and collection context. A
+previously verified context does not expire mid-job; the server validates it on
+every voice event and strips it before queueing. Unknown/Off work is never replayed,
+and a server restart invalidates old outcomes. A
+server must advertise lifecycle version 2 before the UI sends these job events.
+Essential permits failure metadata only; recording and successful-use events
+remain Product. Audio, transcripts, correction requests, document contents and
+raw error text are never analytics properties. These additive bounded properties
+use the existing revision-10 gateway wire contract; no new ingestion endpoint or
+gateway deployment is required.
 
 Browser PDF export emits `pdf-export` once for the initiating coalesced render/
 publication operation. Completion waits until its existing source checks,
@@ -426,8 +506,7 @@ Source imports use a small optional Promise observer at the existing
 coordinator's actual item-processing seam and the agent source-add seam.
 `SourceImportAnalytics` bridges to the same `AnalyticsService`; there is no
 global listener, second operation store, import retry, or additional filesystem/
-network request. Off bypasses outcome inspection. A consent epoch change during
-an attempt suppresses its terminal event; future genuine attempts can be observed.
+network request. Unavailable analytics bypasses outcome inspection.
 
 `source-import` has **item-attempt** grain. A successful source-store return
 emits `scient.operation.completed`; duplicates/possible matches emit
@@ -453,7 +532,7 @@ kind. Its private summary and payload are never read; the failure class remains
 memory. This covers reported outcomes, not an unreported server crash.
 
 Registered operation kinds without producers are not usage evidence. Non-PDF
-document/figure exports, desktop updater,
+document/figure exports,
 migration, desktop main-process crash, and cloud/mobile coverage still require their own
 authoritative seams and proof. `client.connected`/`client.turn.requested` remain
 unregistered as described below. Failure categories not known from a safe typed
@@ -467,14 +546,9 @@ not exact percentile measurements.
 
 ## Deletion and activation gates
 
-The desktop no longer sends deletion requests. The rest of this section describes the
-analytics worker and gateway, which keep their deletion handling.
-
-When the analytics runtime is enabled, an explicit deletion can authenticate
-while consent is Off; it does not temporarily enable Essential collection.
-The globally disabled runtime remains inert, including its remote controls.
-Acknowledgement permits local cleanup and identity rotation, not a claim that
-every downstream copy is gone.
+The desktop no longer sends deletion requests, and its analytics worker no longer
+carries one. The rest of this section describes the gateway, which keeps its
+deletion handling. The globally disabled runtime remains inert.
 
 The gateway owns atomic D1 erasure, durable anti-resurrection tombstones,
 delivery leases, and downstream erasure state. Its separate
@@ -484,22 +558,21 @@ false during preparation. Neither is enabled by building this desktop code.
 The approved storage split keeps Diagnostic-class events only in Scient's
 central Cloudflare D1 ledger, with 30-day pruning. Operators access aggregate
 diagnostic reports through the website repository's `bun run analytics:report`;
-these records are not stranded on users' devices. Essential/Product-class
-events may also be exported to EU PostHog. Their downstream retention is
-PostHog-managed; Scient does not promise a configurable physical-deletion
-deadline that this project cannot enforce. Consent at Diagnostic level does
-not change the routing of its Essential/Product-class events.
+these records are not stranded on users' devices. Until 2026-11-17
+Essential/Product-class events were also exported to EU PostHog; the gateway no
+longer exports anything. It still forwards installation deletions to PostHog for
+the copies sent before then, until that project is deleted.
 
-PostHog capture acknowledgement is asynchronous. Deletion stays pending until
-the provider verifies its person/event erasure operation, not merely submission.
-The gateway serializes export and deletion and rejects tombstoned identities;
+PostHog erasure is asynchronous. Deletion stays pending until the provider
+verifies its person/event erasure operation, not merely submission. The gateway
+rejects tombstoned identities;
 the app rotates identifiers and never intentionally reuses a deleted identity.
 Provider verification is not a synchronous transactional guarantee over every
 ambiguous capture. Desktop account linking remains disabled. See the gateway
 README for qualification, pending/blocked status and deployment procedures.
 
 Useful local checks include package contract/outbox/worker tests, service/UI
-consent tests, provider lifecycle and operation observer tests, the real gateway
+tests, provider lifecycle and operation observer tests, the real gateway
 SQLite migration/retention/deletion suite, whole-repository checks, and the
 packaged analytics worker. These do not prove deployed configuration, live
 PostHog queries, Windows/Linux behavior, or human privacy-UI acceptance.
@@ -575,12 +648,280 @@ imports and code runs keep their existing operation events, so they are not coun
 measure a new Scient feature, add its method, route or tool to that file; its test fails if a
 route or tool name no longer exists.
 
+### Extensions
+
+[`ExtensionAnalytics.ts`](../../apps/server/src/telemetry/ExtensionAnalytics.ts) says which
+extensions people have, sign in to and use. An extension is named by its public identity: a
+registry or plugin name, its display name, and a hosted service's host, never its address.
+
+- `extension.observed`: each Scient connector when Scient starts (`owner: "scient"`), and each
+  agent's own plugin and MCP server from its provider snapshot (`owner` = the agent), once per run
+  for each state, so a server that becomes signed in reports again.
+- `extension.changed`: every saved connector change, from any path: `added`, `removed`,
+  `connected` (signed in), `credential_replaced`, `needs_sign_in`, `needs_key`, `enabled`,
+  `disabled`.
+- `extension.sign_in.started` and `extension.sign_in.finished`: each connector sign-in, with
+  `outcome` and, when it fails, why (`failureClass`, or `reason`: `denied`, `expired_link`,
+  `exchange_failed`, `service_<OAuth error code>`, `service_error`, …).
+- `extension.tool.called`: every tool call an agent makes through Scient's connector proxy, with
+  `tool`, the calling provider instance and what the agent got: `ok`, `denied` (off, not signed
+  in) or `error` with `failureClass` (`busy`, `session_gone`, `lost`, `rejected`, `not_mcp`,
+  `http` with `httpStatus`). An MCP result that reports a tool error still counts as `ok`.
+- Extensions page actions (`extensions.connector.add`, plugin remove and on/off,
+  `providers.plugin.action`) carry the connector or plugin they name.
+
+Calls to an agent's own MCP servers do not pass through Scient, so their use is not counted.
+
+### Built-in browser
+
+Browser work is reported at three grains, all from the server, for tabs people and agents drive:
+
+- `browser.page.loaded` ([`BrowserPageAnalytics.ts`](../../apps/server/src/telemetry/BrowserPageAnalytics.ts)):
+  one per finished main-frame load, from the preview manager's events. `outcome` is loaded,
+  failed or download; `site` is the host only ([`BrowserSite.ts`](../../apps/server/src/telemetry/BrowserSite.ts):
+  private and single-label hosts are `local`, file pages `file`, other schemes `internal`);
+  `loadMs` runs from the first Loading report; failures carry Chromium's `errorCode` and, when it
+  is a Chromium name, `errorName`, once per navigation however often the desktop repeats it.
+  `owner` is agent when an agent opened the tab; a person taking over that tab is not visible
+  here. A Success with no Loading before it (title updates, same-page changes) is not a load.
+- `browser.tab.closed`: the tab's lifetime, loads, failures and distinct sites (counted up to 200).
+- `browser.turn.summary` ([`ScientMcpAnalytics.ts`](../../apps/server/src/telemetry/ScientMcpAnalytics.ts)):
+  one per agent turn that called `preview_*` tools, from the per-thread call ledger: calls,
+  failures, failures a later call of the same tool got past (`recoveredFailures`), the longest
+  failure streak, whether the turn ended on a failure, total/p50/p95/max call time, per-tool
+  `<tool>Calls`/`<tool>Failures`/`<tool>Ms`, the sites and failed sites (most frequent first,
+  at most 16), error codes, page load errors and how often a page needed another account.
+
+Successful tool calls are still not recorded one by one. A failed `preview_*` call's
+`mcp.tool.invoked` also carries its `site`, its `preview_act` `action`, a snapshot timeout's
+first `pendingStage`, and failure classes for lost control (`control_<reason>`) and refused
+elements (`stale_ref`, `bad_locator`, `bad_selector`).
+
+### Sign-in and browser-import observations
+
+The desktop renderer records what Accounts and the browser observe about sign-ins, as
+`feature.used` through [`accountBrowserAnalytics.ts`](../../apps/web/src/scient/analytics/accountBrowserAnalytics.ts),
+whose closed field types are the full list. Every event carries `browserPlatform`, the desktop
+app's own platform (`getClientPlatform`), not the server's, which can be another computer.
+
+- `accounts.google_signin.blocked`: Scient's browser stopped a Google sign-in page (`variant`:
+  credentials, transit or rejected; `context`: tab, popup or frame), recorded once by the window hosting
+  the tab. It is not the person's screen: what Google would have shown is unknown.
+- `accounts.browser_window`: one run of the sign-in window in the person's own Chromium browser,
+  with its outcome, the browser kind, its purpose and, when Google cookies came back, Google's
+  answer right after the copy. `copied` means cookies were written, not that a sign-in will last.
+- `accounts.browser_import`: one import or refresh from a browser on this computer, with coarse
+  counts of what it imported (`importedUnit`: cookies, or sign-ins for an import into Main) and of
+  protected (app-bound) cookies that couldn't be. `partial` includes an import into Main that left
+  one of Main's own sign-ins in place.
+- `accounts.google_copy.checked` and `.ended`: Google's first definite answer about a copied Google
+  sign-in, and the first time Google stopped accepting one it had accepted (no account it accepts,
+  an empty list included), with coarse age buckets of the copy and of the last time it was seen
+  working. A copy Google never accepted is `checked` invalid and never `ended`; no answer from
+  Google counts as neither. This is an interval observed while Scient ran, not an exact
+  lifetime, and it says nothing about why a session ended.
+
+Each of these carries the collection context in force when its work began
+(`beginAccountBrowserObservation`), and `AnalyticsUiAdapter` drops it when consent changed or the
+server restarted since, as it does for voice and operation outcomes. A sign-in window opened while
+collection was off therefore records nothing, even if it closes after collection was turned on. A
+copy's lifetime is followed only when the copy was made under the consent still in force; the
+local record of copies (versioned, per environment and profile, in the window that owns Accounts)
+keeps that context, forgets a copy once it differs, and holds times and source kinds only, never
+addresses or cookies.
+
+## Whose failure, and what agents run outside Scient
+
+A failure count mixes Scient's bugs with ordinary bad code. Failed `scient.operation.*` events and
+failed `mcp.tool.invoked` calls carry `failureOwner`: `scient`, `code` (the code or document being
+run), `input` (a request the caller got wrong), `environment` (a missing runtime, package or
+permission), `external` (a network or remote service), `cancelled` or `unknown`.
+[`FailureAttribution.ts`](../../apps/server/src/telemetry/FailureAttribution.ts) decides it where
+the typed failure is still in hand, with a closed `failureCategory` beside it. A runtime-reported
+error is the code's own, unless its error class names a missing package, memory or network; a
+missing package in Scient-managed Python stays `unknown`, since its Toolkits are Scient's promise.
+A run that never reached the kernel, an app restart or a broken bridge connection is Scient's, and
+so are an admission the runtime never acknowledged (`admission-timeout`), session state Scient
+could not save (`persistence-failed`), a bridge protocol error (`protocol-error`) and a bridge
+missing what Scient needs (`missing-capability`). A kernel that died (`kernel-exited`) or stopped
+answering (`kernel-connection`), and any other runtime exit (`runtime-exited`), stays `unknown`. A
+run Scient refused because its source changed is `input` (`source-conflict`). A run file that never
+started says why: `source-changed` (`input`) or `runtime-missing` (`environment`). A PDF export
+reports its typed error code as the category (`renderer-unavailable`, `publication-failed` and
+`partial-publication` are Scient's; `output-write-failed` is `environment`; `render-failed` stays
+`unknown`; the rest are `input`); an export from the editor or the Browser names the step it failed
+at (`unsaved-changes`, `prepare-failed`, `render-failed`, `publication-failed`, `source-changed`,
+`renderer-unavailable`, `delivery-failed`). Builds up to 0.6.30 sent no reason for PDF exports.
+Error names and messages never leave the computer.
+A tool call that ends with no result is `exception` and Scient's, except arguments the tool refused
+(`invalid_params`, `input`) and a cancelled call (`interrupted`, `cancelled`).
+A broad tool failure built from a more specific cause keeps that cause as a fixed `failureClass`
+([`ScientMcpAnalytics.ts`](../../apps/server/src/telemetry/ScientMcpAnalytics.ts)
+`withFailureClass`), and the class decides the owner: an archived thread or one with no run to
+steer is `input`; Scient's own projection reads failing, or a delegation command that left no task,
+is `scient`. A browser `execution` failure is `code` only when the page reported the script's own
+exception (`script_exception`); any other execution failure stays `unknown`, since a broken browser
+call shares the tag. An Accounts failure without a connector's own class reports its reason
+(`accounts_invalid_input`, `accounts_denied`, …), and `accounts_unavailable` stays `unknown`.
+Exact codes: a merged or hostless pull request and an oversized script result are `input`; a
+preview that gave up while Scient's browser was still downloading (`preview_browser_installing`) or
+unpacking (`preview_browser_unpacking`) is `scient`. A delegation naming a model its provider does
+not list (`delegate_model_not_offered`) or a name matching several (`delegate_model_ambiguous`) is
+`input`; a model that needs a newer provider CLI (`delegate_model_needs_update`) is `environment`.
+Older builds keep their earlier owners, so compare owners by `appVersion`.
+Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
+`cell`, `run-file`) and `runtimeSource`.
+
+## Why a turn or delegated task failed
+
+`provider.turn.failed` keeps `failureClass` and adds the cause a provider gave, when it gave one.
+A Scient Agent turn whose code is `usage-limit` reports `usage_limit` even when the agent's own
+classifier said `provider_error` (it keys on cost caps and HTTP 429); only the report changes, not
+recovery. Claude's `usage_limit` with `compaction_failed` is a failed compaction under a rate limit,
+and holds queued work as a usage limit should; break it out by `failureCode` when counting quota.
+A Claude turn whose result gives no API status reports the SDK's terminal reason
+(`turn_setup_failed`, `model_error`, `api_error`, `blocking_limit` and the rest) or
+`sdk_result_error`; when that reason is generic and the turn's last message carried the SDK's
+closed error, the code is `assistant_<error>` (`assistant_authentication_failed`,
+`assistant_oauth_org_not_allowed`, `assistant_billing_error`, `assistant_model_not_found`, ...).
+A query that ends with no result is `claude_stream_ended`, or `claude_query_failed` when it
+failed without a process exit. Builds up to 0.6.30 dropped these codes.
+
+- `failureCode`: one machine reason. Scient Agent reports its error classifier's kinds in
+  `prompt_result.error.kinds` (scient-agent `SA-FAILURE-KIND`), and
+  [`OmpTurnOutcome.ts`](../../apps/server/src/provider/omp/OmpTurnOutcome.ts) keeps the most
+  specific: `cost_cap`, then `oauth-expiry`, `usage-limit`, `account-policy`, `auth-failed`,
+  `content-blocked`, `payload-rejected`, `context-overflow` and so on down to `transient`, then
+  `http_<status>` for an agent without kinds. The OMP host names its own outcomes:
+  `process_exit`, `prompt_result_timeout`, `drain_busy`, `idle_confirmation_failed`,
+  `command_rejected`, `command_timeout` and `rpc_failed`. A failed turn with no kind or status
+  names where its evidence came from: `unrecognized_error_kind` (kinds this build does not list),
+  `prompt_result_error`, `retry_exhausted`, `assistant_error` (the last message ended in error) or
+  `prompt_command_failed` (the prompt command itself failed). A retry the host stops after it
+  never resumed is `retry_stalled` unless the provider gave a code other than those; an out-of-memory kill is `oom_kill`;
+  an ACP agent that sent nothing until the inactivity watchdog stopped it is `prompt_inactivity`.
+  Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
+  ChatGPT sharing codes come from those adapters. Antigravity reports Google's RPC status (with
+  `httpStatus`), `mcp_load_failed` when a tool server failed to start and aborted the turn (with
+  `toolServerOwner`: `scient` for Scient's own server, `connector` for one Scient delivered to the
+  session, `user` for one in the profile's own `mcp_config.json`, or `unknown` when no single
+  source lists the name; and `httpStatus` when Scient's bridge reported one), and
+  `harness_error` for another harness error; Droid reports its turn-end reason
+  (`model_usage_exhausted`, `model_rate_limited`, …) and `no_active_subscription`.
+  [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each
+  provider's known codes, ChatGPT sharing codes included by name, and the contract itself drops
+  anything else, since a code that only looks like an identifier may be free text a provider sent.
+- `httpStatus`: the provider's HTTP status, 100 to 599, on the failure itself
+  (`OrchestrationV2ProviderFailure.httpStatus`).
+- `retryAttempts`, also on `provider.turn.completed`: retry attempts the provider reported anywhere
+  in the run (native retry rows sit on their own nodes, not the run's root), each retry cycle
+  counted at its highest attempt. These are reported attempts, not proven requests. Zero means none
+  was reported.
+- `started`: `false` when the run failed before its provider session started (the session would
+  not open, or its workspace could not be prepared). Such a run with no provider failure has
+  `failureClass` `unknown`. A run stopped before it started reports nothing.
+
+Every turn outcome (`provider.turn.completed`, `failed`, `stopped`) and `provider.request.completed`
+carry `runRef`, the first 16 hex characters of a SHA-256 of the local run id, so a run's outcome
+joins its request totals without sending the id. Turn outcomes also carry `providerVersion`, the
+provider runtime's own release (Scient Agent's version, for example), when it is a plain release
+number. `app.diagnostics` adds `oldestEventAgeBucket`, how long the delivered batch's oldest event
+waited on the computer, so an outage shows as late delivery rather than missing events. A renderer
+`app.health` termination adds `exitReason` (`crashed`, `oom`, `killed`, `abnormal-exit`) and
+`exitCode`; on macOS exit code 5 (SIGTRAP) is a Chromium `CHECK`, not memory pressure.
+
+The failure is the run's latest failed root error item, as `latestRootProviderFailure` picks it; a
+retry that recovered or a subagent's error is not the turn's failure. These fields explain a
+failure; they do not change its class or what recovery does with it.
+
+A failed `mcp.delegated_task.finished` adds `failurePhase` (`before_provider` when the child run
+failed before its provider started a turn, `provider`, or `unknown` when there is no local child
+run, as for a task on another machine) and the child run's `failureClass`, `failureCode` and
+`httpStatus`, read by [`DelegatedTaskFailure.ts`](../../apps/server/src/telemetry/DelegatedTaskFailure.ts)
+from the run the task reported, never from its result text. A call refused before a task exists is
+a failed `mcp.tool.invoked`, not a finished task.
+
+Agents also run programs in their own terminal, which bypasses Scient's tools. At each turn's end
+the native observer sends one `provider.commands.observed` per program category the turn ran, with
+`commandCount`, `failedCount` and `stoppedCount`.
+[`CommandCategories.ts`](../../apps/server/src/telemetry/CommandCategories.ts) reads the command
+on the computer and keeps only the category (`python`, `r`, `stata`, `latex`, `hpc`,
+`document-convert` and so on, or `shell-other`); the command, its arguments and output never
+leave it. Codex and Claude commands arrive as `command_execution`; native providers' shell tools
+as `dynamic_tool` with the command in their input. Scient's own workspace-preparation and
+sign-out rows are excluded. A command counts once, when it ends; a nonzero exit or a failed
+item counts as failed.
+
+The contract reads these fields with closed lists, so free text becomes `unknown` or is dropped.
+The gateway accepts them unchanged; reference queries on the ledger live in the website's
+`workers/events/src/attributionPipeline.test.ts`.
+
+## Desktop app updates
+
+The desktop updater records two Essential events, both fully closed: their normalizers read every
+field, so nothing passes through as recorded. Versions are public release numbers or omitted;
+URLs, hosts, paths, raw errors and the updater's `message` never enter them.
+
+`app.update.outcome` records a start and one terminal outcome per check/download attempt:
+`check` and `download` (`started`, `completed`, `failed`), `install` (`handoff-attempted`,
+`failed`) and `apply` (`completed`, `not-applied`, `superseded`). `trigger`
+is `user` or `background` (startup and four-hourly checks, the background download).
+`failureClass` (failed only) comes from electron-updater's codes, HTTP statuses and Node/Chromium
+network errors: `network`, `timeout`, `certificate`, `http_4xx`, `http_5xx`, `feed` (the feed lacks
+a channel file, release or asset), `checksum`, `signature`, `disk_full`, `permission`,
+`configuration`, `cancelled`, `internal` or `unknown`; a feed error wrapping a transport cause
+reports the transport cause. `targetVersion`, `sourceKind` (`github`, `scient_mirror`,
+`administrator`), `packageKind` (`zip`, `nsis`, `appimage`, `deb`; omitted when unknown), a random
+per-attempt `attemptRef` and `durationBucket` complete it. The rejected promise, not the updater's
+matching `error` event, is a check's or download's outcome; an install records one failure
+however many paths report it. An install attempt starts at Restart now: a failed native
+preparation is its `failed`, while a restart paused because a window could not save records
+nothing. `handoff-attempted` is recorded just before the installer takes
+over; the next launch reports `apply` with the same `attemptRef`: `completed` when the target
+runs, `not-applied` when the old version runs again (once, not at every launch), `superseded`
+when another build runs. A handoff without a later outcome is unresolved, not a failure; there is
+no timer that restarts servers after the handoff.
+An `apply` outcome omits `sourceKind`: the install record does not retain the previous
+process's feed. Its `attemptRef` links to the original handoff instead of guessing from
+the new process's configured feed.
+
+`app.update.summary` is sent at launch, when the status settles somewhere new (a check or a
+restart's preparation in progress is not a change, and a daily summary due during a
+preparation is skipped) and daily while running: `reason`, `status`, `channel`, `behind`
+(`yes` when a newer offer is known, `no` for an approved older/equal target or a
+successful check that found none, and `unknown` after a failed check even if an older
+offer remains retained), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),
+`errorContext` on errors, `progressBucket` and `sinceProgressBucket` while downloading,
+`readyAgeBucket` when downloaded, `disabledClass` when off and `droppedFactsBucket`. A ready
+update waiting for days is not a failed install.
+
+Installs run with every backend stopped and an apply outcome is known before any backend starts,
+so both events wait in a persisted journal in the desktop process
+([`DesktopUpdateFacts.ts`](../../apps/desktop/src/scient/updateOutcomes/DesktopUpdateFacts.ts):
+at most 64 facts and 14 days; drops are counted into the next summary). It records nothing while
+analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, or a managed
+policy without telemetry) and deletes what an earlier launch kept. Facts travel on the telemetry
+pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else the first ready
+one; two backends have two installation identities). That backend's `ScientRecordedAnalyticsIngest`
+queues them with their own event ids and times, through the normal shape checks, and the desktop
+forgets them only after the outbox persisted them or analytics there must never send them. A fact
+offered again stays one event: the outbox and gateway both ignore a repeated id. Pending facts are
+offered again every five minutes, so a timed-out ingest or a lost acknowledgement is retried. A
+primary started without the telemetry pipes (WSL-only) takes them over authenticated HTTP instead
+(`POST /api/scient/desktop-update-facts/v1`, served only by a desktop-mode backend without the
+pipes and only to the desktop's own bootstrap session), polled every 30 seconds
+while facts are pending; its response lists the ids the outbox holds, as the pipe's acknowledgement
+does.
+
 ## Privacy invariants
 
-Analytics must never include prompts, responses, file contents or paths, URLs, credential tokens, email
-addresses, provider account identifiers, or user-assigned device names. As in T3, this rests on what
+Analytics must never include prompts, responses, file contents or paths, URLs (except a public skill
+source's host and path, see [personal skills](./scient-skills.md#personal-skills)), credential tokens
+or user-assigned device names. Dedicated account observations
+may include a provider-reported email; account/device owner IDs are hashed. As in T3, this rests on what
 the code records: no call site passes free text. The wire check backs it up by dropping free-text
-keys and any value that looks like a path, link or email address. New upstream instrumentation is
+keys and any value that looks like a path, link or email address outside that
+account-event exception. New upstream instrumentation is
 sent as recorded, so review new `analytics.record` call sites during alignments.
 
 Who an install belongs to is sent as `install.owner_observed`, at most once per
@@ -596,3 +937,37 @@ delivery and relay tracing remain disabled.
 The detailed current event schema and tests live in `packages/scient-analytics`. Historical design
 and capability evidence remains in
 [`docs/reports/scient-specific-capabilities.md`](../reports/scient-specific-capabilities.md).
+
+## Account observations and activation
+
+Revision 11 adds `install.account_observed` and `install.profile_observed`.
+The gateway and generated conformance corpus must land before a desktop release
+using the account-email exception. The gateway defaults
+`IDENTITY_ANALYTICS_ENABLED=false`, independently of existing ingestion/export
+controls. With this flag off it acknowledges but discards account/profile/device
+observations and collects no new request-network observations. Activation waits
+for the reviewed privacy notice; ordinary quality instrumentation remains usable.
+
+The account observer uses authenticated provider snapshots, not credential files
+or browser profiles. Codex and Claude expose email and plan labels; Grok exposes
+email. Other providers contribute only fields they actually publish. Antigravity,
+Cursor, Droid, Pi, OpenCode and arbitrary ACP drivers do not currently expose a
+consistent account email/tier in their Desktop snapshots. Their model and tool
+usage is still recorded. Scient Agent's optional RPC `emails` list supplies
+active stored OAuth email metadata in newer agent builds; older builds remain
+compatible. Connected service IDs identify access to a service, not a subscription
+tier. API-key login options are not reported as subscription accounts.
+
+MCP and provider-turn model dimensions accept bounded names reported by agents,
+including Pi and custom models. Turn/request reports include the primary model
+and distinct-model count where usage lists them. Browser calls are counted before
+the tool response returns and consumed by the turn terminal observation; collection
+resets clear the ledger. Download and LaTeX failures use bounded classes, never
+raw diagnostic messages.
+
+When activated, Cloudflare retains linked usage until two years after the
+installation's last activity and diagnostics for 60 days. Local outbox limits
+remain separate delivery-buffer limits. Account, profile, device and network
+observations stay outside PostHog. Deletion covers these observations as well as
+the event ledger. Permanent daily totals contain no account/installation IDs;
+shared-IP/time download candidates never change canonical identity automatically.

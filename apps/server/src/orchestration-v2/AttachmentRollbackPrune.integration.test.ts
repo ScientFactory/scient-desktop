@@ -51,6 +51,7 @@ import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ThreadCommandExecutor, layer as commandsLayer } from "./ThreadCommandExecutor.ts";
 import { makeReplayServerConfig } from "./testkit/ProviderReplayHarness.ts";
+import { recordConversationFork } from "./testkit/ConversationForkCommand.ts";
 
 const now = DateTime.makeUnsafe("2026-10-05T00:00:00Z");
 const threadId = ThreadId.make("prune-owner");
@@ -302,19 +303,6 @@ it.live(
                 event("thread.created", foreignId, {
                   ...thread(foreignId),
                   archivedAt: now,
-                  conversationFork: {
-                    commandId: CommandId.make("pending-fork"),
-                    sourceThreadId: threadId,
-                    workspaceMode: "local",
-                    status: "failed",
-                    cwd: config.cwd,
-                    checkpointRef: null,
-                    checkpointOid: null,
-                    attachmentCopies: [
-                      { source: forkSource.attachment, target: foreign.attachment },
-                    ],
-                    error: "retryable",
-                  },
                 }),
                 ...[failed, queue, extractedRun, nativeRun].map((payload) =>
                   event("run.created", threadId, payload),
@@ -355,6 +343,17 @@ it.live(
                   event("turn-item.updated", threadId, payload),
                 ),
               ],
+            });
+            yield* recordConversationFork(foreignId, {
+              commandId: CommandId.make("pending-fork"),
+              sourceThreadId: threadId,
+              workspaceMode: "local",
+              status: "failed",
+              cwd: config.cwd,
+              checkpointRef: null,
+              checkpointOid: null,
+              attachmentCopies: [{ source: forkSource.attachment, target: foreign.attachment }],
+              error: "retryable",
             });
             expect(yield* fs.exists(removed.filename)).toBe(true);
             yield* sink.writeWithEffects({
@@ -483,6 +482,7 @@ it.live("rechecks a later retained reference and refuses managed reuse after cle
           Layer.provide(
             Layer.succeed(ThreadCommandExecutor, {
               activeKeys: commands.activeKeys,
+              withDeletionLock: commands.withDeletionLock,
               withLock: (key, effect) =>
                 Deferred.succeed(entered, undefined).pipe(
                   Effect.andThen(Deferred.await(resume)),
@@ -624,7 +624,7 @@ it.effect(
           ).pipe(Layer.provide(pruning));
           yield* Effect.gen(function* () {
             const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            expect(yield* worker.runOnce).toBe(true);
+            expect(yield* worker.runOnce()).toBe(true);
             const pending = yield* outbox.get("retry-prune");
             expect(Option.isSome(pending) && pending.value.status).toBe("pending");
             expect(Option.isSome(pending) && pending.value.attemptCount).toBe(1);
@@ -633,12 +633,12 @@ it.effect(
               "rolled_back",
             );
             yield* TestClock.adjust(100);
-            expect(yield* worker.runOnce).toBe(true);
+            expect(yield* worker.runOnce()).toBe(true);
             expect(yield* fs.exists(removed.filename)).toBe(false);
             const completed = yield* outbox.get("retry-prune");
             expect(Option.isSome(completed) && completed.value.status).toBe("succeeded");
             expect(attempts).toBe(2);
-            expect(yield* worker.runOnce).toBe(false);
+            expect(yield* worker.runOnce()).toBe(false);
           }).pipe(
             Effect.provide(
               EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(Layer.provide(executor)),

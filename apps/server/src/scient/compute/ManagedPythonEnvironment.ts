@@ -46,27 +46,25 @@ export interface ManagedPythonEnvironmentStatus {
   readonly movedFrom?: string;
 }
 
+const ManagedPythonEnvironmentFailureReason = Schema.Literals([
+  "invalid-request",
+  "cancelled",
+  "provision-failed",
+  "verification-failed",
+  "activation-failed",
+  "remove-failed",
+]);
 export type ManagedPythonEnvironmentFailureReason =
-  | "invalid-request"
-  | "cancelled"
-  | "provision-failed"
-  | "verification-failed"
-  | "activation-failed"
-  | "remove-failed";
+  typeof ManagedPythonEnvironmentFailureReason.Type;
 
-export class ManagedPythonEnvironmentError extends Error {
-  readonly reason: ManagedPythonEnvironmentFailureReason;
-
-  constructor(
+export class ManagedPythonEnvironmentError extends Schema.TaggedError<ManagedPythonEnvironmentError>()(
+  "ManagedPythonEnvironmentError",
+  {
     reason: ManagedPythonEnvironmentFailureReason,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "ManagedPythonEnvironmentError";
-    this.reason = reason;
-  }
-}
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export type ManagedPythonProvisionPhase =
   | "downloading"
@@ -199,10 +197,10 @@ async function managedDirectorySafety(
     });
     if (stat === null) return false;
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new ManagedPythonEnvironmentError(
-        "activation-failed",
-        `The ${label} path is not a private app-owned directory.`,
-      );
+      throw new ManagedPythonEnvironmentError({
+        reason: "activation-failed",
+        message: `The ${label} path is not a private app-owned directory.`,
+      });
     }
     return true;
   };
@@ -238,10 +236,10 @@ async function managedDirectorySafety(
     canonicalManaged === canonicalEnvironments ||
     !isContained(canonicalEnvironments, canonicalManaged)
   ) {
-    throw new ManagedPythonEnvironmentError(
-      "activation-failed",
-      `The ${managedPurposeNoun(purpose)} directory escaped the app-owned environments root.`,
-    );
+    throw new ManagedPythonEnvironmentError({
+      reason: "activation-failed",
+      message: `The ${managedPurposeNoun(purpose)} directory escaped the app-owned environments root.`,
+    });
   }
   return { environmentsPresent: true, managedPresent: true };
 }
@@ -254,10 +252,10 @@ async function ensureManagedDirectories(
   await NodeFSP.mkdir(paths.managedRoot, { recursive: true, mode: 0o700 });
   const safety = await managedDirectorySafety(paths, purpose);
   if (!safety.managedPresent) {
-    throw new ManagedPythonEnvironmentError(
-      "activation-failed",
-      `Scient could not prepare its private ${managedPurposeNoun(purpose)} directory.`,
-    );
+    throw new ManagedPythonEnvironmentError({
+      reason: "activation-failed",
+      message: `Scient could not prepare its private ${managedPurposeNoun(purpose)} directory.`,
+    });
   }
 }
 
@@ -466,10 +464,11 @@ export function makeManagedPythonEnvironmentManager(
         !entry.startsWith("generation-") ||
         !(await NodeFSP.realpath(executable).catch(() => null))
       )
-        throw new ManagedPythonEnvironmentError(
-          "invalid-request",
-          "This Python environment is no longer available. Refresh runtimes and try again.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "invalid-request",
+          message:
+            "This Python environment is no longer available. Refresh runtimes and try again.",
+        });
       const id = entry.slice("generation-".length);
       users.set(id, (users.get(id) ?? 0) + 1);
       let released = false;
@@ -504,10 +503,10 @@ export function makeManagedPythonEnvironmentManager(
   const assertUnused = () =>
     metadata(async () => {
       if (users.size > 0)
-        throw new ManagedPythonEnvironmentError(
-          "invalid-request",
-          "Stop sessions using Scient-managed Python before removing it.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "invalid-request",
+          message: "Stop sessions using Scient-managed Python before removing it.",
+        });
     });
 
   // A tombstone is a committed logical removal, never a rollback candidate:
@@ -519,11 +518,11 @@ export function makeManagedPythonEnvironmentManager(
     );
     for (const entry of entries) {
       await removeTree(NodePath.join(paths.environmentsRoot, entry)).catch((cause) => {
-        throw new ManagedPythonEnvironmentError(
-          "remove-failed",
-          `The ${managedPurposeNoun(purpose)} was removed from use, but some files could not be deleted. Scient retries cleanup at startup. You can install a new environment without restoring these files.`,
-          { cause },
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "remove-failed",
+          message: `The ${managedPurposeNoun(purpose)} was removed from use, but some files could not be deleted. Scient retries cleanup at startup. You can install a new environment without restoring these files.`,
+          cause,
+        });
       });
     }
     return entries.length > 0;
@@ -583,29 +582,29 @@ export function makeManagedPythonEnvironmentManager(
     const toolkitIds = [...input.toolkitIds];
     return serialize(async () => {
       if (input.signal.aborted) {
-        throw new ManagedPythonEnvironmentError(
-          "cancelled",
-          "The managed Python setup was cancelled before it started.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "cancelled",
+          message: "The managed Python setup was cancelled before it started.",
+        });
       }
       if (
         (purpose === "python" && toolkitIds.length === 0) ||
         new Set(toolkitIds).size !== toolkitIds.length
       ) {
-        throw new ManagedPythonEnvironmentError(
-          "invalid-request",
-          "Choose at least one distinct Toolkit for the managed Python environment.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "invalid-request",
+          message: "Choose at least one distinct Toolkit for the managed Python environment.",
+        });
       }
       if (
         input.toolkitRevision.trim().length === 0 ||
         input.pythonVersion.trim().length === 0 ||
         input.provisionerVersion.trim().length === 0
       ) {
-        throw new ManagedPythonEnvironmentError(
-          "invalid-request",
-          "Managed Python version metadata must be present before setup starts.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "invalid-request",
+          message: "Managed Python version metadata must be present before setup starts.",
+        });
       }
 
       await ensureManagedDirectories(paths, purpose);
@@ -613,19 +612,19 @@ export function makeManagedPythonEnvironmentManager(
       const generationId = nextGenerationId();
       const candidateRoot = generationRoot(paths.managedRoot, generationId);
       if (candidateRoot === null) {
-        throw new ManagedPythonEnvironmentError(
-          "invalid-request",
-          "The managed Python generation identifier was invalid.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "invalid-request",
+          message: "The managed Python generation identifier was invalid.",
+        });
       }
       preparing.add(generationId);
       await NodeFSP.mkdir(candidateRoot, { recursive: false, mode: 0o700 }).catch((cause) => {
         preparing.delete(generationId);
-        throw new ManagedPythonEnvironmentError(
-          "provision-failed",
-          "Scient could not prepare a fresh managed Python generation.",
-          { cause },
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "provision-failed",
+          message: "Scient could not prepare a fresh managed Python generation.",
+          cause,
+        });
       });
 
       let committed = false;
@@ -646,52 +645,52 @@ export function makeManagedPythonEnvironmentManager(
           })
           .catch((cause) => {
             if (input.signal.aborted) {
-              throw new ManagedPythonEnvironmentError(
-                "cancelled",
-                "The managed Python setup was cancelled.",
-                { cause },
-              );
+              throw new ManagedPythonEnvironmentError({
+                reason: "cancelled",
+                message: "The managed Python setup was cancelled.",
+                cause,
+              });
             }
-            throw new ManagedPythonEnvironmentError(
-              "provision-failed",
-              `Scient could not provision the ${managedPurposeNoun(purpose)}.`,
-              { cause },
-            );
+            throw new ManagedPythonEnvironmentError({
+              reason: "provision-failed",
+              message: `Scient could not provision the ${managedPurposeNoun(purpose)}.`,
+              cause,
+            });
           });
         if (input.signal.aborted) {
-          throw new ManagedPythonEnvironmentError(
-            "cancelled",
-            "The managed Python setup was cancelled.",
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "cancelled",
+            message: "The managed Python setup was cancelled.",
+          });
         }
 
         const lexicalExecutable = executablePath(candidateRoot, provisioned.executableRelativePath);
         if (lexicalExecutable === null) {
-          throw new ManagedPythonEnvironmentError(
-            "verification-failed",
-            "The provisioner returned an executable outside its managed generation.",
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "verification-failed",
+            message: "The provisioner returned an executable outside its managed generation.",
+          });
         }
         const canonicalRoot = await NodeFSP.realpath(candidateRoot).catch((cause) => {
-          throw new ManagedPythonEnvironmentError(
-            "verification-failed",
-            "The managed Python generation was not present after provisioning.",
-            { cause },
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "verification-failed",
+            message: "The managed Python generation was not present after provisioning.",
+            cause,
+          });
         });
         const canonicalExecutable = await NodeFSP.realpath(lexicalExecutable).catch((cause) => {
-          throw new ManagedPythonEnvironmentError(
-            "verification-failed",
-            "The managed Python executable was not present after provisioning.",
-            { cause },
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "verification-failed",
+            message: "The managed Python executable was not present after provisioning.",
+            cause,
+          });
         });
         const canonicalManagedRoot = await NodeFSP.realpath(paths.managedRoot).catch((cause) => {
-          throw new ManagedPythonEnvironmentError(
-            "verification-failed",
-            "The managed Python directory was not present after provisioning.",
-            { cause },
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "verification-failed",
+            message: "The managed Python directory was not present after provisioning.",
+            cause,
+          });
         });
         if (
           !isContained(canonicalManagedRoot, canonicalRoot) ||
@@ -702,10 +701,10 @@ export function makeManagedPythonEnvironmentManager(
             provisioned.interpreterRelativePath,
           ))
         ) {
-          throw new ManagedPythonEnvironmentError(
-            "verification-failed",
-            "The managed Python executable escaped its app-owned generation.",
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "verification-failed",
+            message: "The managed Python executable escaped its app-owned generation.",
+          });
         }
 
         await dependencies
@@ -718,23 +717,23 @@ export function makeManagedPythonEnvironmentManager(
           })
           .catch((cause) => {
             if (input.signal.aborted) {
-              throw new ManagedPythonEnvironmentError(
-                "cancelled",
-                "The managed Python setup was cancelled before activation.",
-                { cause },
-              );
+              throw new ManagedPythonEnvironmentError({
+                reason: "cancelled",
+                message: "The managed Python setup was cancelled before activation.",
+                cause,
+              });
             }
-            throw new ManagedPythonEnvironmentError(
-              "verification-failed",
-              `The ${managedPurposeNoun(purpose)} did not pass verification.`,
-              { cause },
-            );
+            throw new ManagedPythonEnvironmentError({
+              reason: "verification-failed",
+              message: `The ${managedPurposeNoun(purpose)} did not pass verification.`,
+              cause,
+            });
           });
         if (input.signal.aborted) {
-          throw new ManagedPythonEnvironmentError(
-            "cancelled",
-            "The managed Python setup was cancelled before activation.",
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "cancelled",
+            message: "The managed Python setup was cancelled before activation.",
+          });
         }
 
         const active: ManagedPythonGeneration = {
@@ -761,11 +760,11 @@ export function makeManagedPythonEnvironmentManager(
             previous: existing?.record.active ?? null,
           };
           await commitState(paths.statePath, record).catch((cause) => {
-            throw new ManagedPythonEnvironmentError(
-              "activation-failed",
-              `Scient could not activate the verified ${managedPurposeNoun(purpose)}.`,
-              { cause },
-            );
+            throw new ManagedPythonEnvironmentError({
+              reason: "activation-failed",
+              message: `Scient could not activate the verified ${managedPurposeNoun(purpose)}.`,
+              cause,
+            });
           });
           pendingSelection = undefined;
           return record;
@@ -796,25 +795,27 @@ export function makeManagedPythonEnvironmentManager(
           pendingSelection = selection;
           return null;
         }
-        throw new ManagedPythonEnvironmentError(
-          "invalid-request",
-          purpose === "matlab-connection"
-            ? "Set up the MATLAB connection helper before selecting it."
-            : "Set up Scientific Python before selecting it.",
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "invalid-request",
+          message:
+            purpose === "matlab-connection"
+              ? "Set up the MATLAB connection helper before selecting it."
+              : "Set up Scientific Python before selecting it.",
+        });
       }
       const chosen = selection === "managed";
       if (current.record.selection === selection && current.record.chosen === chosen)
         return current;
       const record = { ...current.record, selection, chosen };
       await commitState(paths.statePath, record).catch((cause) => {
-        throw new ManagedPythonEnvironmentError(
-          "activation-failed",
-          purpose === "matlab-connection"
-            ? "Scient could not change the selected MATLAB connection helper."
-            : "Scient could not change the selected Python environment.",
-          { cause },
-        );
+        throw new ManagedPythonEnvironmentError({
+          reason: "activation-failed",
+          message:
+            purpose === "matlab-connection"
+              ? "Scient could not change the selected MATLAB connection helper."
+              : "Scient could not change the selected Python environment.",
+          cause,
+        });
       });
       return { ...current, record } satisfies ManagedPythonEnvironmentStatus;
     });
@@ -824,10 +825,10 @@ export function makeManagedPythonEnvironmentManager(
       await collection.catch(() => undefined);
       return metadata(async () => {
         if (users.size > 0)
-          throw new ManagedPythonEnvironmentError(
-            "invalid-request",
-            "Stop sessions using Scient-managed Python before removing it.",
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "invalid-request",
+            message: "Stop sessions using Scient-managed Python before removing it.",
+          });
         const safety = await managedDirectorySafety(paths, purpose);
         if (!safety.managedPresent) return cleanupRemovals();
 
@@ -836,11 +837,11 @@ export function makeManagedPythonEnvironmentManager(
           `${purpose}.removing-${NodeCrypto.randomUUID()}`,
         );
         await NodeFSP.rename(paths.managedRoot, tombstone).catch((cause) => {
-          throw new ManagedPythonEnvironmentError(
-            "remove-failed",
-            `Scient could not prepare the ${managedPurposeNoun(purpose)} for removal.`,
-            { cause },
-          );
+          throw new ManagedPythonEnvironmentError({
+            reason: "remove-failed",
+            message: `Scient could not prepare the ${managedPurposeNoun(purpose)} for removal.`,
+            cause,
+          });
         });
         await cleanupRemovals();
         return true;

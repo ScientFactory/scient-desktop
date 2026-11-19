@@ -17,8 +17,8 @@ const findSignInCode = Effect.fn("AccountsAgent.findSignInCode")(function* (
   sources: Effect.Effect<{ readonly messages?: boolean | undefined } | undefined, AccountsError>,
 ) {
   if (!(yield* sources)?.messages) return undefined;
-  return yield* Effect.try(() => readMessageCode(sinceMs, service)).pipe(
-    Effect.orElseSucceed(() => undefined),
+  return yield* Effect.sync(() =>
+    Option.getOrUndefined(Option.liftThrowable(readMessageCode)(sinceMs, service)),
   );
 });
 

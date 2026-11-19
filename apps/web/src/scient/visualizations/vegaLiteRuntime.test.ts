@@ -1,12 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Static audit for the lazy renderer seam.
 import * as NodeFS from "node:fs";
 
-import { parse as parseVega, type Spec as VegaSpec } from "vega";
+import { parse as parseVega, type Spec as VegaSpec, View } from "vega";
 import { compile, type TopLevelSpec } from "vega-lite";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyScientVegaRuntimeDefaults,
+  authorSetsXLabelAngle,
+  axisLabelsCollide,
+  categoryAxisLabels,
   createVegaResourceLoader,
   fetchVegaRemoteResource,
   MAX_VEGA_REMOTE_RESOURCE_BYTES,
@@ -15,7 +18,30 @@ import {
   SCIENT_VEGA_TOOLTIP_CURSOR,
   validateVegaResourceUri,
   vegaLiteThemeConfig,
+  type XCategoryLabelAngle,
 } from "./vegaLiteRuntime";
+
+function categoryBars(categories: ReadonlyArray<string>) {
+  return {
+    data: { values: categories.map((category, index) => ({ category, value: index + 1 })) },
+    mark: "bar",
+    encoding: {
+      x: { field: "category", type: "nominal" },
+      y: { field: "value", type: "quantitative" },
+    },
+  } satisfies TopLevelSpec;
+}
+
+async function drawnCategoryLabels(spec: TopLevelSpec, angle: XCategoryLabelAngle) {
+  const view = new View(
+    parseVega(compile({ ...spec, config: vegaLiteThemeConfig("light", angle) }).spec),
+    { renderer: "none" },
+  );
+  await view.runAsync();
+  const axes = categoryAxisLabels(view, angle);
+  view.finalize();
+  return axes;
+}
 
 function compiledSpecWithMarks(marks: ReadonlyArray<Record<string, unknown>>) {
   return { marks } as unknown as Parameters<typeof applyScientVegaRuntimeDefaults>[0];
@@ -104,7 +130,7 @@ describe("Vega-Lite runtime policy", () => {
     ).rejects.toThrow("too large");
   });
 
-  it("provides stable light and dark defaults without changing author data colors", () => {
+  it("provides stable light and dark defaults", () => {
     expect(vegaLiteThemeConfig("light")).toMatchObject({
       background: null,
       axis: { labelColor: "#525252" },
@@ -113,7 +139,133 @@ describe("Vega-Lite runtime policy", () => {
       background: null,
       axis: { labelColor: "#d4d4d4" },
     });
-    expect(vegaLiteThemeConfig("dark")).not.toHaveProperty("range");
+  });
+
+  it("lays category labels flat by default and lets a chart's own angle win", () => {
+    expect(vegaLiteThemeConfig("light")).toMatchObject({ axisXDiscrete: { labelAngle: 0 } });
+    const authored = compile({
+      data: { values: [{ category: "A", value: 1 }] },
+      mark: "bar",
+      encoding: {
+        x: { field: "category", type: "nominal", axis: { labelAngle: 30 } },
+        y: { field: "value", type: "quantitative" },
+      },
+      config: vegaLiteThemeConfig("light"),
+    }).spec.axes?.find((axis) => axis.orient === "bottom");
+    expect(authored?.labelAngle).toBe(30);
+  });
+
+  it("leaves category labels alone when the chart's config sets their angle", async () => {
+    for (const scope of ["axis", "axisX", "axisDiscrete", "axisXBand"]) {
+      const spec = { ...categoryBars(["A", "B"]), config: { [scope]: { labelAngle: 30 } } };
+      expect(authorSetsXLabelAngle(spec)).toBe(true);
+      const view = new View(
+        parseVega(
+          compile({ ...spec, config: { ...vegaLiteThemeConfig("light", null), ...spec.config } })
+            .spec,
+        ),
+        { renderer: "none" },
+      );
+      await view.runAsync();
+      // Drawn at the chart's own 30 degrees.
+      expect(categoryAxisLabels(view, 30 as XCategoryLabelAngle)[0]).toHaveLength(2);
+      view.finalize();
+    }
+    expect(authorSetsXLabelAngle(categoryBars(["A"]))).toBe(false);
+    expect(
+      authorSetsXLabelAngle({ ...categoryBars(["A"]), config: { axisY: { labelAngle: 30 } } }),
+    ).toBe(false);
+    expect(vegaLiteThemeConfig("light", null)).not.toHaveProperty("axisXDiscrete");
+  });
+
+  it("judges only category axes, so a crowded number axis beside them changes nothing", async () => {
+    const numbers = Array.from({ length: 60 }, (_, index) => ({ n: index * 1000, v: index }));
+    const axes = await drawnCategoryLabels(
+      {
+        hconcat: [
+          {
+            data: { values: numbers },
+            mark: "point",
+            encoding: {
+              x: { field: "n", type: "quantitative", axis: { labelOverlap: false, tickCount: 60 } },
+              y: { field: "v", type: "quantitative" },
+            },
+          },
+          categoryBars(["A", "B", "C"]),
+        ],
+      },
+      0,
+    );
+    expect(axes).toHaveLength(1);
+    expect(axes[0]).toHaveLength(3);
+    expect(axisLabelsCollide(axes, 0)).toBe(false);
+  });
+
+  it("judges category axes inside facets, whose scales the view cannot reach", async () => {
+    const axes = await drawnCategoryLabels(
+      {
+        data: {
+          values: ["p", "q"].flatMap((group) =>
+            ["Oligodendrocyte precursors", "Astrocytes", "Microglia"].map((category) => ({
+              category,
+              group,
+              value: 1,
+            })),
+          ),
+        },
+        facet: { field: "group" },
+        resolve: { scale: { x: "independent" } },
+        spec: { mark: "bar", encoding: categoryBars([]).encoding },
+      } as unknown as TopLevelSpec,
+      0,
+    );
+    expect(axes).toHaveLength(2);
+    expect(axisLabelsCollide(axes, 0)).toBe(true);
+  });
+
+  it("skips an axis whose angle the chart set itself", async () => {
+    const authored = categoryBars(["Oligodendrocyte precursors", "Astrocytes", "Microglia"]);
+    const axes = await drawnCategoryLabels(
+      {
+        ...authored,
+        encoding: { ...authored.encoding, x: { ...authored.encoding.x, axis: { labelAngle: 30 } } },
+      },
+      0,
+    );
+    expect(axes).toHaveLength(0);
+  });
+
+  it("finds the category labels of a drawn chart and tells when they touch", async () => {
+    const short = await drawnCategoryLabels(categoryBars(["A", "B", "C", "D"]), 0);
+    expect(short).toHaveLength(1);
+    expect(short[0]?.map((label) => label.x)).toEqual(
+      [...(short[0]?.map((label) => label.x) ?? [])].sort((a, b) => a - b),
+    );
+    expect(short[0]).toHaveLength(4);
+    expect(axisLabelsCollide(short, 0)).toBe(false);
+
+    const long = await drawnCategoryLabels(
+      categoryBars(["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"]),
+      0,
+    );
+    expect(axisLabelsCollide(long, 0)).toBe(true);
+    // Twenty-pixel bands leave room for slanted 11-pixel text.
+    expect(
+      axisLabelsCollide(
+        await drawnCategoryLabels(
+          categoryBars(["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"]),
+          -45,
+        ),
+        -45,
+      ),
+    ).toBe(false);
+  });
+
+  it("stands slanted labels upright when their bands are narrower than the text is tall", () => {
+    const label = (x: number) => ({ fontSize: 11, x, x1: x - 40, x2: x });
+    expect(axisLabelsCollide([[label(0), label(20), label(40)]], -45)).toBe(false);
+    expect(axisLabelsCollide([[label(0), label(12), label(24)]], -45)).toBe(true);
+    expect(axisLabelsCollide([[label(0)], []], 0)).toBe(false);
   });
 
   it("adds the compact inspection cursor only to tooltip marks without an existing cursor", () => {
@@ -276,6 +428,23 @@ describe("Vega-Lite runtime policy", () => {
     expect(runtime.failures).toHaveLength(1);
     expect(runtime.failures[0]?.message).toContain("no stable base in chat");
     await expect(runtime.loader.load("data:text/plain,portable")).resolves.toBe("portable");
+  });
+
+  it("loads each resource once when a chart is drawn again", async () => {
+    const defaultLoader = {
+      file: vi.fn(),
+      http: vi.fn(),
+      load: vi.fn().mockResolvedValue("portable"),
+      sanitize: vi.fn(),
+    };
+    const runtime = createVegaResourceLoader({
+      loader: vi.fn(() => defaultLoader),
+    } as unknown as typeof import("vega"));
+
+    await runtime.loader.load("data:text/plain,portable");
+    await runtime.loader.load("data:text/plain,portable");
+    await runtime.loader.load("data:text/plain,other");
+    expect(defaultLoader.load).toHaveBeenCalledTimes(2);
   });
 });
 

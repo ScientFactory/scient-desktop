@@ -9,7 +9,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
 import { toastManager } from "~/components/ui/toast";
@@ -187,7 +187,8 @@ export function useProjectScriptAutoPreview<E>(input: {
     try {
       plan = planProjectScriptAutoPreview({
         script,
-        previewSupported: isPreviewSupportedInRuntime(),
+        // A web client previews through the server's browser too.
+        previewSupported: isPreviewAvailableFor(threadRef.environmentId),
         sessions: input.sessions,
         resolveRequest: () => resolveProjectScriptPreviewRequest(threadRef, script.previewUrl!),
       });

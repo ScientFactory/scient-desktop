@@ -1,4 +1,6 @@
-const DEFAULT_MARKETING_SITE_URL = "https://t3.codes";
+// SCIENT-FORK:START
+const DEFAULT_MARKETING_SITE_URL = "https://scientfactory.com";
+// SCIENT-FORK:END
 
 function resolveMarketingSiteUrl(override: string | undefined): URL {
   try {
@@ -22,17 +24,13 @@ function marketingSiteDocumentUrl(path: string): string {
   return new URL(path, MARKETING_SITE_URL).toString();
 }
 
-const PRIVACY_POLICY_URL = marketingSiteDocumentUrl("privacy-policy");
-const SECURITY_POLICY_URL = marketingSiteDocumentUrl("security-policy");
-const TERMS_OF_SERVICE_URL = marketingSiteDocumentUrl("terms-of-service");
+// SCIENT-FORK:START — scientfactory.com's legal pages.
+const PRIVACY_POLICY_URL = marketingSiteDocumentUrl("privacy");
+const TERMS_OF_SERVICE_URL = marketingSiteDocumentUrl("terms");
 export const LEGAL_URL = marketingSiteDocumentUrl("legal");
 
-const ALLOWED_LEGAL_DOCUMENT_URLS = [
-  LEGAL_URL,
-  PRIVACY_POLICY_URL,
-  TERMS_OF_SERVICE_URL,
-  SECURITY_POLICY_URL,
-] as const;
+const ALLOWED_LEGAL_DOCUMENT_URLS = [LEGAL_URL, PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL] as const;
+// SCIENT-FORK:END
 
 function webDocumentIdentity(value: string): string | null {
   try {

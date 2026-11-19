@@ -129,6 +129,8 @@ export interface DuplexProcessRequest {
    * `extendEnv: false`.
    */
   readonly extendEnv?: boolean;
+  /** `executable` is a complete, already escaped command line for the shell (Windows shims). */
+  readonly shell?: boolean;
 }
 
 export class DuplexProcessError extends Schema.TaggedError<DuplexProcessError>()(

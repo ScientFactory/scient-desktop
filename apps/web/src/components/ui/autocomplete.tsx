@@ -107,7 +107,8 @@ function AutocompletePopup({
           )}
         >
           <AutocompletePrimitive.Popup
-            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
+            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground [-webkit-app-region:no-drag]"
             data-slot="autocomplete-popup"
             {...props}
           >
@@ -203,7 +204,8 @@ function AutocompleteList({
     />
   );
   return scrollable ? (
-    <ScrollArea scrollbarGutter scrollFade>
+    // A flex column lets the viewport shrink with a height-capped parent instead of overflowing it.
+    <ScrollArea className="flex flex-col" scrollbarGutter scrollFade>
       {list}
     </ScrollArea>
   ) : (

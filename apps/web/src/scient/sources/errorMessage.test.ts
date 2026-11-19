@@ -1,3 +1,4 @@
+import { EnvironmentInternalError } from "@t3tools/contracts";
 import {
   RemoteEnvironmentAuthFetchError,
   RemoteEnvironmentAuthTimeoutError,
@@ -54,10 +55,25 @@ describe("Scient Sources error messages", () => {
     );
   });
 
+  it("says the Library is still moving when a change waited for the move", () => {
+    const error = new EnvironmentInternalError({
+      code: "internal_error",
+      reason: "scient_sources_library_moving",
+      traceId: "trace-1",
+    });
+
+    expect(scientSourcesErrorMessage(error, false)).toBe(
+      "The Library is still moving. Try again when it has finished.",
+    );
+  });
+
   it("does not call local endpoint failures remote", () => {
     expect(
       scientSourcesErrorMessage(
-        new RemoteEnvironmentAuthTimeoutError("http://127.0.0.1:14774/api/scient/sources", 25),
+        new RemoteEnvironmentAuthTimeoutError({
+          requestUrl: "http://127.0.0.1:14774/api/scient/sources",
+          timeoutMs: 25,
+        }),
         true,
       ),
     ).toBe(

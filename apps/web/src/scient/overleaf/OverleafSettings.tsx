@@ -1,7 +1,7 @@
 // SCIENT-OWNED: Overleaf in Settings. Synced folders ▸ Overleaf holds the token
 // and every linked folder on this computer, by project; Project Settings ▸
 // Overleaf holds one project's links.
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScientOverleafUnreadableRecord } from "@t3tools/contracts";
 import { ChevronDownIcon, ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -12,7 +12,7 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import type { SettingsSearchItemId } from "~/components/settings/settingsSearch";
 import { Button, InlineButton } from "~/components/ui/button";
 import { Collapsible, CollapsibleContent } from "~/components/ui/collapsible";
 import { Label } from "~/components/ui/label";
@@ -20,31 +20,30 @@ import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjects } from "~/state/entities";
 
-import { removeOverleafToken, saveOverleafToken } from "./client";
+import { removeOverleafToken, saveOverleafToken, setAsideUnreadableOverleafRecord } from "./client";
 import { lastSyncLabel } from "./OverleafFileChip";
-import { openOverleafProject, runOverleafSync, unlinkOverleaf } from "./overleafActions";
-import { OVERLEAF_TOKEN_PAGE_URL, operationErrorText, overleafChipView } from "./overleafModel";
 import {
+  openOverleafProject,
+  runOverleafSync,
+  settleOverleafOperation,
+  unlinkOverleaf,
+} from "./overleafActions";
+import {
+  OVERLEAF_TOKEN_PAGE_URL,
+  operationErrorText,
+  overleafChipView,
+  setAsideAction,
+  unreadableRecordLines,
+} from "./overleafModel";
+import {
+  loadOverleafWorkspace,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
   useNoOverleafLinks,
+  useOverleafListError,
+  useOverleafUnreadableRecords,
   useOverleafWorkspace,
 } from "./overleafStore";
-
-// Outside the components: the React Compiler does not compile try/finally.
-async function settleOverleafOperation(
-  task: () => Promise<void>,
-  failed: (error: unknown) => void,
-  settled: () => void,
-): Promise<void> {
-  try {
-    await task();
-  } catch (error) {
-    failed(error);
-  } finally {
-    settled();
-  }
-}
 
 /** The token: Create a token on Overleaf, Save, Remove and whether one is saved. */
 function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId }) {
@@ -137,10 +136,14 @@ function OverleafProjectLinks(props: {
   const workspace = useOverleafWorkspace(environmentId, workspaceRoot);
   const [unlinking, setUnlinking] = useState<string | null>(null);
   if (workspace.connections.length === 0) {
-    return props.empty && workspace.loaded ? (
-      <p className={cn("text-xs text-muted-foreground", asSettingsRows && "px-3 py-3 sm:px-4")}>
-        {props.empty}
+    if (!props.empty) return null;
+    const padded = asSettingsRows && "px-3 py-3 sm:px-4";
+    return workspace.error !== null ? (
+      <p className={cn("text-xs text-destructive", padded)} role="alert">
+        {listErrorText(workspace.error)}
       </p>
+    ) : workspace.loaded ? (
+      <p className={cn("text-xs text-muted-foreground", padded)}>{props.empty}</p>
     ) : null;
   }
   const unlink = async (connectionId: string) => {
@@ -235,18 +238,125 @@ function OverleafProjectLinks(props: {
   );
 }
 
+const listErrorText = (error: string) => `Couldn't read the linked folders. ${error}`;
+
+/**
+ * Link records this release can't read (damaged, or made by a newer Scient), one row each
+ * with its folder when the record names it. They stop linking, and bulk folder changes
+ * while they may hold an unfinished sync, until they're set aside or settled.
+ */
+function OverleafUnreadableRecords(props: {
+  readonly environmentId: EnvironmentId;
+  readonly workspaceRoots: ReadonlyArray<string>;
+  readonly records: ReadonlyArray<ScientOverleafUnreadableRecord>;
+}) {
+  const { environmentId, workspaceRoots, records } = props;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
+  const [firstRoot] = workspaceRoots;
+  if (firstRoot === undefined) return null;
+  const setAside = (record: ScientOverleafUnreadableRecord, acceptUnfinished: boolean) => {
+    setBusy(record.recordId);
+    setErrors((current) => {
+      const next = new Map(current);
+      next.delete(record.recordId);
+      return next;
+    });
+    void settleOverleafOperation(
+      async () => {
+        await setAsideUnreadableOverleafRecord(environmentId, {
+          workspaceRoot: firstRoot,
+          recordId: record.recordId,
+          acceptUnfinished,
+        });
+        await Promise.all(
+          workspaceRoots.map((root) => loadOverleafWorkspace(environmentId, root, { force: true })),
+        );
+      },
+      (cause) =>
+        setErrors((current) => new Map(current).set(record.recordId, operationErrorText(cause))),
+      () => setBusy(null),
+    );
+  };
+  return (
+    <div className="grid gap-3">
+      <p className="text-xs text-foreground">
+        {records.length === 1
+          ? "Scient can't read one of its Overleaf link records."
+          : `Scient can't read ${records.length} of its Overleaf link records.`}
+      </p>
+      {records.some((record) => record.setAside !== "held") ? (
+        <p className="text-xs text-muted-foreground">
+          Setting a record aside moves it to a recovery folder, and nothing on Overleaf changes. The
+          link's kept copies stay on disk, but Scient can no longer list or restore them.
+        </p>
+      ) : null}
+      <div className="grid divide-y divide-border">
+        {records.map((record) => {
+          const lines = unreadableRecordLines(record);
+          const action = setAsideAction(record);
+          const error = errors.get(record.recordId);
+          return (
+            <div
+              key={record.recordId}
+              className="grid gap-1 py-2 first:pt-0 last:pb-0"
+              data-unreadable-record
+            >
+              <p className="break-all text-xs font-medium text-foreground">
+                {record.folder ?? "Folder not recorded"}
+              </p>
+              <p className="text-xs text-muted-foreground">{lines.state}</p>
+              <p className="text-xs text-muted-foreground">{lines.holds}</p>
+              {action === null ? null : (
+                <div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={busy !== null}
+                    onClick={() => setAside(record, action.acceptUnfinished)}
+                  >
+                    {action.label}
+                  </Button>
+                </div>
+              )}
+              {error ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Every project's links on this computer, or a line saying none is linked. */
-function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId }) {
+export function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const noneLinked = useNoOverleafLinks(
-    environmentId,
-    projects.map((project) => project.workspaceRoot),
-  );
+  const workspaceRoots = projects.map((project) => project.workspaceRoot);
+  const noneLinked = useNoOverleafLinks(environmentId, workspaceRoots);
+  const listError = useOverleafListError(environmentId, workspaceRoots);
+  const unreadable = useOverleafUnreadableRecords(environmentId, workspaceRoots);
   return (
     <div className="grid gap-3">
       <p className="text-xs font-medium text-foreground">Linked folders</p>
-      {noneLinked ? <p className="text-xs text-muted-foreground">No folder is linked.</p> : null}
+      {unreadable.length > 0 ? (
+        <OverleafUnreadableRecords
+          environmentId={environmentId}
+          workspaceRoots={workspaceRoots}
+          records={unreadable}
+        />
+      ) : null}
+      {listError !== null ? (
+        <p className="text-xs text-destructive" role="alert">
+          {listErrorText(listError)}
+        </p>
+      ) : noneLinked ? (
+        <p className="text-xs text-muted-foreground">No folder is linked.</p>
+      ) : null}
       {projects.map((project) => (
         <OverleafProjectLinks
           key={project.workspaceRoot}
@@ -268,7 +378,7 @@ export function OverleafSyncedFolderRow(props: { readonly environmentId: Environ
   const { environmentId } = props;
   const token = useOverleafTokenSaved(environmentId);
   const [expanded, setExpanded] = useState(false);
-  const target = searchableSetting("synced-folders-overleaf").id;
+  const target = "synced-folders-overleaf" satisfies SettingsSearchItemId;
   // A search jump to Overleaf opens its details.
   const searchTargetId = useSettingsSearchTargetId();
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);

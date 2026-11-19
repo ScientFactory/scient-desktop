@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, EventId, ProviderDriverKind, type ServerSettings } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -15,6 +16,8 @@ import { threadCreated, THREAD_ID } from "../../integration/TransferBudgetV2Fixt
 import { ServerConfig } from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { GitManager } from "../git/GitManager.ts";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -134,7 +137,7 @@ const testLayer = Layer.merge(
     ProviderAdapterRegistry.layerFromAdapters([]),
     { databaseLayer: database, runEffectWorker: false },
   ),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("V2 Compute worktree cleanup lifecycle", () => {
   it.live.each(
@@ -279,6 +282,9 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                   ),
             }),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            // The branch follow-up is a no-op without a current branch.
+            Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
+            Layer.mock(ThreadManagementService)({}),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
@@ -320,9 +326,9 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                       assert.lengthOf(args, 4);
                       const source = args[2]!;
                       const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination).pipe(Effect.orDie));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")).pipe(Effect.orDie));
-                      yield* fs.rename(source, destination).pipe(Effect.orDie);
+                      assert.isFalse(yield* fs.exists(destination));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      yield* fs.rename(source, destination);
                       moves.push(args);
                     } else {
                       const isolatedPath = moves[0]![3]!;
@@ -334,12 +340,10 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                         "--",
                         isolatedPath,
                       ]);
-                      assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));
-                      assert.isTrue(
-                        yield* fs.exists(path.join(isolatedPath, ".git")).pipe(Effect.orDie),
-                      );
+                      assert.isFalse(yield* fs.exists(worktreePath));
+                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
                       removals.push(isolatedPath);
-                      yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
+                      yield* fs.remove(isolatedPath, { recursive: true });
                     }
                   }
                   return {
@@ -354,7 +358,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                     stdoutTruncated: false,
                     stderrTruncated: false,
                   };
-                }),
+                }).pipe(Effect.orDie),
             }),
           ),
         ),

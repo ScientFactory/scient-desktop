@@ -1,4 +1,5 @@
 export const SOURCE_PROFILES = "scient:accounts:source-profiles";
+export const BROWSER_CONNECTION = "scient:accounts:browser-connection";
 export const SIGNED_IN_SITES = "scient:accounts:signed-in-sites";
 export const SIGN_OUT_SITE = "scient:accounts:sign-out-site";
 export const FILL = "scient:accounts:fill";
@@ -17,3 +18,14 @@ export const QUIET_VISIT = "scient:accounts:quiet-visit";
 export const READ_BROWSER_PASSWORDS = "scient:accounts:read-browser-passwords";
 
 export const SITE_ICON = "scient:accounts:site-icon";
+
+export const QUALIFY_SESSION_COPY = "scient:accounts:qualify-session-copy";
+export const FILL_MAIN = "scient:accounts:fill-main";
+export const SIGN_OUT_MAIN_SITE = "scient:accounts:sign-out-main-site";
+export const WITHDRAW_FROM_MAIN = "scient:accounts:withdraw-from-main";
+export const ACCOUNTS_OWNER = "scient:accounts:owner";
+export const ACCOUNTS_OWNER_CHANGED = "scient:accounts:owner-changed";
+export const READ_SESSIONS = "scient:accounts:read-sessions";
+export const CHROME_SIGN_IN_BROWSER = "scient:accounts:chrome-sign-in-browser";
+export const CHROME_SIGN_IN = "scient:accounts:chrome-sign-in";
+export const END_CHROME_SIGN_IN = "scient:accounts:end-chrome-sign-in";

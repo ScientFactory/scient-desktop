@@ -4,7 +4,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 
-import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
   resolvePrimaryOperateAccess,
@@ -26,8 +25,7 @@ export function useProviderEnableAction(input: {
   readonly enable: () => Promise<void>;
 } {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const primarySession = usePrimarySessionState();
-  const remoteSession = useEnvironmentSessionState(input.environmentId);
+  const session = useEnvironmentSessionState(input.environmentId);
   const settings = useEnvironmentSettings(input.environmentId);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const isPrimary = input.environmentId === primaryEnvironmentId;
@@ -35,14 +33,14 @@ export function useProviderEnableAction(input: {
     ? resolvePrimaryOperateAccess({
         isPrimary: true,
         hasDesktopBridge: typeof window !== "undefined" && Boolean(window.desktopBridge),
-        session: primarySession.data,
-        isPending: primarySession.isPending,
-        hasError: primarySession.error !== null,
+        session: session.data,
+        isPending: session.isPending,
+        hasError: session.hasError,
       })
     : resolveRemoteOperateAccess({
-        session: remoteSession.data,
-        isPending: remoteSession.isPending,
-        hasError: remoteSession.hasError,
+        session: session.data,
+        isPending: session.isPending,
+        hasError: session.hasError,
       });
   const patch = buildEnableProviderPatch(settings, input.provider);
   const displayName = input.provider.displayName?.trim() || String(input.provider.driver);

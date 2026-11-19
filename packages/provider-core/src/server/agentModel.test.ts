@@ -39,6 +39,7 @@ describe("provider/model slug helpers", () => {
     expect(thinkingLevelCapabilities(["low", "high"], "high").optionDescriptors).toEqual([
       {
         id: "thinkingLevel",
+        role: "reasoning",
         label: "Reasoning",
         type: "select",
         strictSelection: true,

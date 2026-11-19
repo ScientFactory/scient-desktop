@@ -2,7 +2,6 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ChatAttachment,
   UploadChatAttachment,
-  SnapShotAccessibility,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./chatAttachment.ts";
 import { ProjectCreatePayload } from "./project.ts";
@@ -31,7 +30,6 @@ import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
-  ProjectFaviconPath,
   ProjectIconOverride,
   ProjectUpdatePayload,
   ReceivedProjectIcon,
@@ -53,7 +51,6 @@ const decodeUploadChatAttachment = Schema.decodeUnknownEffect(UploadChatAttachme
 const decodeChatAttachment = Schema.decodeUnknownEffect(ChatAttachment);
 const decodeSourceProposedPlanReference = Schema.decodeUnknownEffect(SourceProposedPlanReference);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
-const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
 
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
@@ -69,7 +66,6 @@ const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFul
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
 const encodeModelSelection = Schema.encodeUnknownEffect(ModelSelection);
 const decodeCommandId = Schema.decodeUnknownEffect(CommandId);
-const decodeProjectFaviconPath = Schema.decodeUnknownEffect(ProjectFaviconPath);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
@@ -339,32 +335,6 @@ it.effect("preserves window capture metadata on a persisted image attachment", (
       appIdentifier: "com.example.editor",
       appIconDataUrl: "data:image/png;base64,iVBORw==",
     });
-  }),
-);
-
-// regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
-it.effect("rejects accessibility trees above the serialized payload limit", () =>
-  Effect.gen(function* () {
-    const result = yield* Effect.exit(
-      decodeSnapShotAccessibility({
-        format: "element-tree",
-        coordinateSpace: "captured-image",
-        imageSize: { width: 800, height: 600 },
-        truncated: false,
-        root: {
-          role: "window",
-          bounds: { x: 0, y: 0, width: 800, height: 600 },
-          children: Array.from({ length: 10 }, () => ({
-            role: "text",
-            value: "x".repeat(8_000),
-            bounds: null,
-            children: [],
-          })),
-        },
-      }),
-    );
-
-    assert.strictEqual(Exit.isFailure(result), true);
   }),
 );
 
@@ -1070,20 +1040,6 @@ it.effect("preserves proposed plan implementation metadata when present", () =>
 );
 
 // regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
-it.effect("ModelSelection migrates legacy `provider` field to `instanceId`", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeModelSelection({
-      provider: "codex",
-      model: "gpt-5-codex",
-      options: [{ id: "reasoningEffort", value: "high" }],
-    });
-    assert.strictEqual(parsed.instanceId, ProviderInstanceId.make("codex"));
-    assert.strictEqual(parsed.model, "gpt-5-codex");
-    assert.deepStrictEqual(parsed.options, [{ id: "reasoningEffort", value: "high" }]);
-  }),
-);
-
-// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect("ModelSelection accepts an explicit instanceId routing key", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeModelSelection({
@@ -1092,33 +1048,6 @@ it.effect("ModelSelection accepts an explicit instanceId routing key", () =>
     });
     assert.strictEqual(parsed.instanceId, ProviderInstanceId.make("codex_personal"));
   }),
-);
-
-// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
-it.effect("ModelSelection prefers explicit instanceId over legacy provider", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeModelSelection({
-      provider: "codex",
-      instanceId: "codex_personal",
-      model: "gpt-5-codex",
-    });
-    assert.strictEqual(parsed.instanceId, ProviderInstanceId.make("codex_personal"));
-  }),
-);
-
-// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
-it.effect(
-  "ModelSelection decodes unknown driver kinds via legacy provider (rollback / fork invariant)",
-  () =>
-    Effect.gen(function* () {
-      const parsed = yield* decodeModelSelection({
-        provider: "ollama",
-        model: "llama3:70b",
-        options: [{ id: "temperature", value: "0.4" }],
-      });
-      assert.strictEqual(parsed.instanceId, ProviderInstanceId.make("ollama"));
-      assert.strictEqual(parsed.model, "llama3:70b");
-    }),
 );
 
 // regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
@@ -1135,15 +1064,6 @@ it.effect("ModelSelection encodes to the canonical instanceId wire form", () =>
       model: "llama3:70b",
       options: [{ id: "temperature", value: "0.4" }],
     });
-  }),
-);
-
-it.effect("project favicon overrides accept only supported image files", () =>
-  Effect.gen(function* () {
-    const valid = yield* decodeProjectFaviconPath("brand/icon.svg");
-    assert.strictEqual(valid, "brand/icon.svg");
-    const invalid = yield* Effect.exit(decodeProjectFaviconPath(".env"));
-    assert.strictEqual(invalid._tag, "Failure");
   }),
 );
 

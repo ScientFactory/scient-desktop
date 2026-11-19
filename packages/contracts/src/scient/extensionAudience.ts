@@ -4,7 +4,11 @@ import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 export const ExtensionAudience = Schema.Union([
-  Schema.Struct({ layer: Schema.Literal("scient") }),
+  /** Scient's own connectors and plugins: every agent, or only the agents the person chose. */
+  Schema.Struct({
+    layer: Schema.Literal("scient"),
+    agents: Schema.optional(Schema.Array(ProviderInstanceId)),
+  }),
   Schema.Struct({
     layer: Schema.Literal("shared"),
     ownerInstanceId: Schema.optional(ProviderInstanceId),
@@ -15,6 +19,18 @@ export const ExtensionAudience = Schema.Union([
     instanceId: ProviderInstanceId,
     label: TrimmedNonEmptyString,
     reason: TrimmedNonEmptyString,
+  }),
+  /** A service each agent reaches through its own account: a ChatGPT app or claude.ai connector. */
+  Schema.Struct({
+    layer: Schema.Literal("account"),
+    /** Agents whose own account has the service connected. */
+    connected: Schema.Array(
+      Schema.Struct({ instanceId: ProviderInstanceId, label: TrimmedNonEmptyString }),
+    ),
+    /** Agents that can have it after a step, and the step. */
+    pending: Schema.Array(
+      Schema.Struct({ instanceId: ProviderInstanceId, reason: TrimmedNonEmptyString }),
+    ),
   }),
 ]);
 export type ExtensionAudience = typeof ExtensionAudience.Type;

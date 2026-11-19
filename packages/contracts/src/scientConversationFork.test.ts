@@ -1,97 +1,45 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ThreadForkCommand } from "./scientConversationFork.ts";
+import { OrchestrationV2Command } from "./orchestrationV2.ts";
 
-const decodeFork = Schema.decodeUnknownEffect(ThreadForkCommand);
+const decodeCommand = Schema.decodeUnknownEffect(OrchestrationV2Command);
+const fork = {
+  type: "thread.fork",
+  commandId: "cmd-fork",
+  sourceThreadId: "origin-thread",
+  targetThreadId: "fork-thread",
+  sourcePoint: { type: "latest_stable" },
+  createdBy: "user",
+  creationSource: "web",
+};
 
-it.effect("accepts exactly one assistant or user fork source", () =>
+it.effect("T3's fork carries Scient's boundary and workspace choice", () =>
   Effect.gen(function* () {
-    const assistant = yield* decodeFork({
-      type: "thread.fork",
-      commandId: "cmd-fork-assistant",
-      originThreadId: "origin-thread",
-      newThreadId: "assistant-fork",
-      sourceAssistantMessageId: "assistant-3",
-      workspaceMode: "local",
+    const user = yield* decodeCommand({
+      ...fork,
+      scient: {
+        boundary: { kind: "user-message", messageId: "user-3" },
+        workspaceMode: "new-worktree",
+      },
     });
-    const user = yield* decodeFork({
-      type: "thread.fork",
-      commandId: "cmd-fork-user",
-      originThreadId: "origin-thread",
-      newThreadId: "user-fork",
-      sourceUserMessageId: "user-3",
-      workspaceMode: "local",
-    });
+    const plain = yield* decodeCommand(fork);
 
-    assert.strictEqual(assistant.type, "thread.fork");
     assert.strictEqual(user.type, "thread.fork");
-
-    const neither = yield* Effect.exit(
-      decodeFork({
-        type: "thread.fork",
-        commandId: "cmd-fork-neither",
-        originThreadId: "origin-thread",
-        newThreadId: "invalid-fork-neither",
-        workspaceMode: "local",
-      }),
-    );
-    const both = yield* Effect.exit(
-      decodeFork({
-        type: "thread.fork",
-        commandId: "cmd-fork-both",
-        originThreadId: "origin-thread",
-        newThreadId: "invalid-fork-both",
-        sourceAssistantMessageId: "assistant-3",
-        sourceUserMessageId: "user-3",
-        workspaceMode: "local",
-      }),
-    );
-
-    assert.strictEqual(neither._tag, "Failure");
-    assert.strictEqual(both._tag, "Failure");
+    assert.strictEqual(plain.type, "thread.fork");
+    if (user.type !== "thread.fork" || plain.type !== "thread.fork") return;
+    assert.strictEqual(user.scient?.boundary.kind, "user-message");
+    assert.strictEqual(user.scient?.workspaceMode, "new-worktree");
+    assert.strictEqual(plain.scient, undefined);
   }),
 );
 
-it.effect("decodes an optional trimmed title override for a fork", () =>
-  Effect.gen(function* () {
-    const automatic = yield* decodeFork({
-      type: "thread.fork",
-      commandId: "cmd-fork-automatic-title",
-      originThreadId: "origin-thread",
-      newThreadId: "automatic-title-fork",
-      sourceAssistantMessageId: "assistant-3",
-      workspaceMode: "local",
-    });
-    const explicit = yield* decodeFork({
-      type: "thread.fork",
-      commandId: "cmd-fork-explicit-title",
-      originThreadId: "origin-thread",
-      newThreadId: "explicit-title-fork",
-      sourceUserMessageId: "user-3",
-      workspaceMode: "new-worktree",
-      titleOverride: "  Deliberate fork title  ",
-    });
-
-    assert.strictEqual(automatic.type, "thread.fork");
-    assert.strictEqual(explicit.type, "thread.fork");
-    if (automatic.type !== "thread.fork" || explicit.type !== "thread.fork") return;
-    assert.strictEqual(automatic.titleOverride, undefined);
-    assert.strictEqual(explicit.titleOverride, "Deliberate fork title");
-  }),
-);
-
-it.effect("rejects a blank fork title override", () =>
+it.effect("refuses a fork boundary without its identity", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
-      decodeFork({
-        type: "thread.fork",
-        commandId: "cmd-fork-blank-title",
-        originThreadId: "origin-thread",
-        newThreadId: "blank-title-fork",
-        sourceAssistantMessageId: "assistant-3",
-        workspaceMode: "local",
-        titleOverride: "   ",
+      decodeCommand({
+        ...fork,
+        scient: { boundary: { kind: "running-turn" }, workspaceMode: "local" },
       }),
     );
     assert.strictEqual(result._tag, "Failure");

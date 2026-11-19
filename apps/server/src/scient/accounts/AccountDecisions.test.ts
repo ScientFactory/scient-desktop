@@ -12,10 +12,10 @@ import {
   effectiveProfile,
   inScope,
   isGoogleSessionRow,
+  signInHeld,
   siteMatches,
   withSignIn,
 } from "./AccountDecisions.ts";
-import { signInOnHold } from "@t3tools/shared/scientAccountSignIn";
 import { foldStoredAccounts } from "./AccountPersistence.ts";
 
 const projectId = ProjectId.make("synthetic-project");
@@ -104,20 +104,12 @@ describe("sign-in holds", () => {
   const now = Date.parse(at);
   const minutes = (count: number) => now + count * 60_000;
 
-  it("keeps a failed or unfinished sign-in on hold for a while, and a refused one until it changes", () => {
-    const failed = { signIn: { state: "failed", at } } as const;
-    expect(signInOnHold(failed, minutes(10))).toBe(true);
-    expect(signInOnHold(failed, minutes(16))).toBe(false);
-    expect(signInOnHold({ signIn: { state: "needs-you", at } }, minutes(10))).toBe(true);
-    expect(signInOnHold({ signIn: { state: "needs-you", at } }, minutes(16))).toBe(false);
-    expect(signInOnHold({ signIn: { state: "password-rejected", at } }, minutes(100_000))).toBe(
-      true,
-    );
-    expect(signInOnHold({ signIn: { state: "signed-in", at } }, minutes(1))).toBe(false);
-    // A one-time code the user typed wrong isn't something saved that needs fixing.
-    expect(
-      signInOnHold({ signIn: { state: "code-rejected", at }, secrets: {} }, minutes(100_000)),
-    ).toBe(false);
+  it("holds every attempt that didn't sign in, however long ago, and nothing else", () => {
+    for (const held of ["failed", "needs-you", "password-rejected", "code-rejected", "limited"])
+      expect(signInHeld({ state: held as "failed", at })).toBe(true);
+    for (const free of ["signed-in", "signed-out", "unknown"])
+      expect(signInHeld({ state: free as "unknown", at })).toBe(false);
+    expect(signInHeld(undefined)).toBe(false);
   });
 
   it("won't sign back in by itself right after a sign-in that worked", () => {
@@ -176,8 +168,9 @@ describe("what a sign-in or a look leaves on an account", () => {
     expect(state(withSignIn(limited, { state: "signed-in", at }, now + 60_000, "look"))).toBe(
       "signed-in",
     );
+    // The limit's hour is over, but a look is no user action: the hold stays.
     expect(state(withSignIn(limited, { state: "unknown", at }, now + 3_600_000, "look"))).toBe(
-      "unknown",
+      "limited",
     );
   });
 
@@ -194,6 +187,7 @@ describe("what a sign-in or a look leaves on an account", () => {
   it("clears a result that only needed a person, never a refused password", () => {
     const needed = summary({ signIn: { state: "needs-you", at } });
     expect(state(withSignIn(needed, { state: "signed-in", at }, now, "look"))).toBe("signed-in");
+    expect(withSignIn(needed, { state: "signed-out", at }, now + 3_600_000, "look")).toBe(needed);
     const refused = summary({ signIn: { state: "password-rejected", at } });
     expect(withSignIn(refused, { state: "signed-in", at }, now, "look")).toBe(refused);
     expect(withSignIn(refused, { state: "signed-out", at }, now, "look")).toBe(refused);

@@ -7,6 +7,8 @@ it("suppresses the click/Enter/submit duplicate with a controlled clock, then pe
   const accept = createCaptureDeduplicator();
   const capture = {
     url: "https://example.test",
+    path: "/login",
+    step: "password" as const,
     username: NodeCrypto.randomBytes(16).toString("hex"),
     password: NodeCrypto.randomBytes(16).toString("hex"),
   };
@@ -20,4 +22,6 @@ it("suppresses the click/Enter/submit duplicate with a controlled clock, then pe
     true,
   );
   expect(accept({ ...capture, url: "https://other.test" }, 5_003)).toBe(true);
+  // The username step before a password step is a different submit.
+  expect(accept({ ...capture, step: "username", password: "" }, 5_004)).toBe(true);
 });

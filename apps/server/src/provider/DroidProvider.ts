@@ -272,10 +272,8 @@ const probeAndDiscoverDroidViaAcp = (
         environment,
         makeAcpRuntime,
         cwd,
-      ).pipe(Effect.catch((error) => Effect.die(error)));
-      const initializeResult = yield* acp
-        .initialize()
-        .pipe(Effect.catch((error) => Effect.die(error)));
+      ).pipe(Effect.orDie);
+      const initializeResult = yield* acp.initialize().pipe(Effect.orDie);
       const accountCapabilities = droidAccountCapabilitiesFromInitializeResult(initializeResult);
       // `null` = the agent refused startup with the scoped Droid
       // authentication signal (CLI not signed in). Any other failure is a

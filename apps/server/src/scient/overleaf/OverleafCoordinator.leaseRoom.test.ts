@@ -1,9 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
-/** Each apply write takes one native lease binding at most 256 folders; a sync
- * with an unleaseable write is refused before anything is written, never stopped
- * part way through. */
+/** A sync or restore that could not finish its writes is refused before anything is
+ * written, never stopped part way through. */
 import * as HostProcess from "@t3tools/shared/HostProcess";
-
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -15,15 +13,16 @@ import {
   world,
 } from "./OverleafCoordinator.testkit.ts";
 
-/** Folders deep enough that a write there needs more than one lease can bind. */
-
-describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf apply and native leases", () => {
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
-    "refuses a host path budget before linking an apply",
+describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf writes refused up front", () => {
+  // A manuscript path holds at most 4 096 characters, far below Windows' budget.
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a path over the host's budget before linking an apply",
     () =>
       run(
         Effect.gen(function* () {
-          const path = `${"a/".repeat(430)}main.tex`;
+          // Within the manuscript limit, but over 4 KiB once inside the folder. 511 levels
+          // stay far under Git's tree depth limit.
+          const path = `${"abcdefg/".repeat(510)}main.tex`;
           const w = yield* world({
             synced: { "main.tex": "before" },
             remote: { "main.tex": "after", [path]: "new" },

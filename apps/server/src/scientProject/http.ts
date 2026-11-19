@@ -1,9 +1,9 @@
 import { initializeScientProject, inspectScientProject } from "@scientfactory/project-init";
 import { AuthOrchestrationOperateScope, EnvironmentHttpApi } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import {
   annotateEnvironmentRequest,
@@ -12,9 +12,10 @@ import {
 } from "../auth/http.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 
-class ScientProjectFilesystemError extends Data.TaggedError("ScientProjectFilesystemError")<{
-  readonly cause: unknown;
-}> {}
+class ScientProjectFilesystemError extends Schema.TaggedError<ScientProjectFilesystemError>()(
+  "ScientProjectFilesystemError",
+  { cause: Schema.Defect() },
+) {}
 
 function projectFailureClass(cause: unknown): "filesystem" | "permission" | "validation" {
   if (cause instanceof Error && "code" in cause) {

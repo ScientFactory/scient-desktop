@@ -28,7 +28,6 @@ import {
   resolveProviderCompatibility,
 } from "./providerCompatibility.ts";
 import preReleaseScopingCompatibility from "./testFixtures/pre-release-scoping-compatibility.json" with { type: "json" };
-import { resolveAntigravityReleaseAsset } from "./antigravityRelease.ts";
 import bundledManifest from "./model-manifest.json" with { type: "json" };
 
 const decodeCompatibilityPolicies = Schema.decodeUnknownSync(
@@ -440,19 +439,15 @@ describe("provider compatibility", () => {
     }
   });
 
-  it.each([
-    ["darwin", "arm64"],
-    ["win32", "x64"],
-  ] as const)(
-    "supports the managed Antigravity runtime for %s-%s in the bundled manifest",
-    (platform, arch) => {
+  it.each(["1.4.5", "1.5.7"])(
+    "supports the legacy and native Antigravity runtime %s in the bundled manifest",
+    (version) => {
       const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
-      const release = resolveAntigravityReleaseAsset(platform, arch);
       assert.strictEqual(
         resolveProviderCompatibility(
           policies,
           ProviderDriverKind.make("antigravity"),
-          `agy_acp_server_${release?.version}`,
+          `agy_acp_server_${version}`,
         )?.status,
         "supported",
       );
@@ -591,6 +586,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
         current: Ref.get(manifest),
         refresh,
         forceRefresh: refresh,
+        refreshOnDemand: refresh,
         refreshInBackground: Effect.void,
       }),
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -636,5 +632,5 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
         ),
       ),
     );
-  }).pipe(Effect.scoped),
+  }),
 );

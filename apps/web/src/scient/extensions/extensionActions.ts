@@ -1,11 +1,13 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type {
+  ConnectorAddInput,
   ConnectorAddResult,
   ConnectorSummary,
   ConnectorTestResult,
   DiscoverEntry,
   EnvironmentId,
   GrantScope,
+  ProviderInstanceId,
   ScientPluginSummary,
   ServerProvider,
   ServerProviderMcpServer,
@@ -30,7 +32,9 @@ import {
   removeScientPlugin,
   setScientPluginEnabled,
   startConnectorSignIn,
+  exportConnector,
   testConnector,
+  undoConnector,
   updateConnector,
 } from "./extensionsState";
 import { entryAddTarget, entryName, installableRemotes } from "./extensionsView";
@@ -62,9 +66,18 @@ export interface ConnectorActionsState extends ItemActionsState {
   readonly signIn: () => Promise<void>;
   readonly test: () => Promise<void>;
   readonly setEnabled: (enabled: boolean) => Promise<unknown>;
+  /** Local connectors: stops every running copy; the next request starts a fresh one. */
+  readonly restart: () => Promise<unknown>;
   /** Sends the whole new scope; the list re-reads the server's answer. */
   readonly setAvailability: (availability: GrantScope) => Promise<unknown>;
-  readonly remove: () => Promise<void>;
+  /** The agents that get it; null gives it to every agent again. */
+  readonly setAgents: (agents: ReadonlyArray<ProviderInstanceId> | null) => Promise<unknown>;
+  /** Whether it was removed; false when the person cancelled or it failed. */
+  readonly remove: () => Promise<boolean>;
+  /** Local connectors: back to the folder's earlier version, or back after a removal. */
+  readonly undo: () => Promise<void>;
+  /** Local connectors: saves it as an .mcpb file to share. */
+  readonly exportBundle: () => Promise<void>;
 }
 
 export interface PluginActionsState extends ItemActionsState {
@@ -171,6 +184,8 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
   const lock = useActionLock(connectorItem(connectorId));
   const update = useAtomCommand(updateConnector, { reportFailure: true });
   const remove = useAtomCommand(removeConnector, { reportFailure: true });
+  const undoChange = useAtomCommand(undoConnector, { reportFailure: true });
+  const exportLocal = useAtomCommand(exportConnector, { reportFailure: true });
   const test = useAtomCommand(testConnector, { reportFailure: true });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
   // A test result belongs to one environment, connector and sign-in
@@ -225,19 +240,64 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
     },
     setEnabled: (enabled: boolean) =>
       lock.run("enable", () => update({ environmentId, input: { connectorId, enabled } })),
+    restart: () =>
+      lock.run("restart", () => update({ environmentId, input: { connectorId, restart: true } })),
     setAvailability: (availability: GrantScope) =>
       lock.run("availability", () =>
         update({ environmentId, input: { connectorId, availability } }),
       ),
+    setAgents: (agents: ReadonlyArray<ProviderInstanceId> | null) =>
+      lock.run("availability", () => update({ environmentId, input: { connectorId, agents } })),
     remove: async () => {
-      if (lock.locked) return;
+      if (lock.locked) return false;
+      // A local connector is kept for Undo; a remote one's stored sign-in or key is deleted.
+      if (connector.local !== undefined) {
+        const removed = await lock.run("remove", () =>
+          remove({ environmentId, input: { connectorId } }),
+        );
+        if (removed?._tag !== "Success") return false;
+        toastManager.add({
+          type: "success",
+          title: `Removed ${connector.displayName}`,
+          actionProps: {
+            children: "Undo",
+            onClick: () => void undoChange({ environmentId, input: { connectorId } }),
+          },
+        });
+        return true;
+      }
       const confirmed = await confirmDestructive(
-        `Remove ${connector.displayName}? Its stored sign-in or key is deleted and agents stop receiving it.`,
+        connector.auth.type === "none"
+          ? `Remove ${connector.displayName}? Agents stop receiving it.`
+          : `Remove ${connector.displayName}? Its stored sign-in or key is deleted and agents stop receiving it.`,
       );
-      if (confirmed)
-        await lock.run("remove", () => remove({ environmentId, input: { connectorId } }));
+      if (!confirmed) return false;
+      const removed = await lock.run("remove", () =>
+        remove({ environmentId, input: { connectorId } }),
+      );
+      return removed?._tag === "Success";
+    },
+    undo: async () => {
+      await lock.run("undo", () => undoChange({ environmentId, input: { connectorId } }));
+    },
+    exportBundle: async () => {
+      const exported = await lock.run("export", () =>
+        exportLocal({ environmentId, input: { connectorId } }),
+      );
+      if (exported?._tag === "Success")
+        downloadFile(exported.value.fileName, exported.value.base64);
     },
   };
+}
+
+function downloadFile(fileName: string, base64: string) {
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 /**
@@ -258,19 +318,53 @@ export function useAddEntry(entry: DiscoverEntry) {
     busy: lock.busy,
     locked: lock.locked,
     feedback: lock.feedback,
-    canAdd: entry.installable && remote !== undefined,
-    add: async () => {
+    canAdd:
+      entry.installable &&
+      (remote !== undefined || entry.localPackage !== undefined || entry.localBundle !== undefined),
+    add: async (agents?: ReadonlyArray<ProviderInstanceId>) => {
+      const details = {
+        displayName: entryName(entry),
+        ...(entry.description?.trim()
+          ? { description: entry.description.trim().slice(0, 1000) }
+          : {}),
+        ...(agents === undefined ? {} : { agents }),
+      };
+      // Something Scient runs on the computer: a registry bundle, or a package that asks nothing.
+      const local: ConnectorAddInput["target"] | undefined =
+        remote !== undefined
+          ? undefined
+          : entry.localBundle !== undefined
+            ? {
+                type: "registry-bundle",
+                name: entry.name,
+                version: entry.version,
+                bundle: entry.localBundle,
+              }
+            : entry.localPackage !== undefined && entry.localPackage.environment.length === 0
+              ? {
+                  type: "local-package",
+                  name: entry.name,
+                  version: entry.version,
+                  package: entry.localPackage,
+                  environment: [],
+                }
+              : undefined;
+      if (entry.installable && local !== undefined) {
+        const added = await lock.run("add", () =>
+          add({ environmentId, input: { target: local, ...details } }),
+        );
+        if (added?._tag === "Success")
+          toastManager.add({
+            type: "success",
+            title: `${added.value.connector.displayName} added`,
+          });
+        return;
+      }
       if (!entry.installable || remote === undefined || lock.locked) return;
       const addEntry = () =>
         add({
           environmentId,
-          input: {
-            target: entryAddTarget(entry, remote.url),
-            displayName: entryName(entry),
-            ...(entry.description?.trim()
-              ? { description: entry.description.trim().slice(0, 1000) }
-              : {}),
-          },
+          input: { target: entryAddTarget(entry, remote.url), ...details },
         });
       const announceReady = (result: AtomCommandResult<ConnectorAddResult, unknown> | null) => {
         if (result?._tag === "Success" && result.value.nextStep === "ready") {

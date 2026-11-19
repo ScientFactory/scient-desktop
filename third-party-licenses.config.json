@@ -19,19 +19,6 @@
       }
     },
     {
-      "name": "franc",
-      "sourceUrl": "https://github.com/wooorm/franc",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": [
-          "Copyright (c) 2014 Titus Wormer <tituswormer@gmail.com>",
-          "Copyright (c) 2008 Kent S Johnson",
-          "Copyright (c) 2006 Jacob R Rideout <kde@jacobrideout.net>",
-          "Copyright (c) 2004 Maciej Ceglowski"
-        ]
-      }
-    },
-    {
       "name": "@unified-latex/unified-latex-util-parse",
       "sourceUrl": "https://github.com/siefkenj/unified-latex",
       "generatedNotice": {
@@ -266,6 +253,15 @@
       "generatedNotice": {
         "licenseId": "Apache-2.0",
         "copyrights": ["Copyright 2025 Pierre Computer Company"]
+      }
+    },
+    {
+      "name": "lerc",
+      "version": "3.0.0",
+      "sourceUrl": "https://github.com/Esri/lerc",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0",
+        "copyrights": ["Copyright 2015-2021 Esri"]
       }
     },
     {
@@ -748,33 +744,6 @@
       }
     },
     {
-      "name": "@react-native-async-storage/async-storage",
-      "version": "3.1.1",
-      "sourceUrl": "https://github.com/react-native-async-storage/async-storage",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) 2025 Krzysztof Borowy"]
-      }
-    },
-    {
-      "name": "deprecated-react-native-prop-types",
-      "version": "2.3.0",
-      "sourceUrl": "https://github.com/facebookarchive/react-native-deprecated-modules",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
-      "name": "@react-native/normalize-color",
-      "version": "2.1.0",
-      "sourceUrl": "https://github.com/facebook/react-native",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
       "name": "remark-math",
       "version": "6.0.0",
       "sourceUrl": "https://github.com/remarkjs/remark-math/blob/main/license",
@@ -815,7 +784,7 @@
     },
     {
       "name": "@betteroffice/xlsx",
-      "version": "0.3.0",
+      "version": "0.5.1",
       "license": "Apache-2.0",
       "sourceUrl": "https://github.com/openooxml/betteroffice",
       "generatedNotice": {
@@ -824,16 +793,7 @@
     },
     {
       "name": "@betteroffice/pptx",
-      "version": "0.2.0",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
-      "name": "@betteroffice/docx",
-      "version": "0.4.3",
+      "version": "0.5.1",
       "license": "Apache-2.0",
       "sourceUrl": "https://github.com/openooxml/betteroffice",
       "generatedNotice": {
@@ -887,6 +847,23 @@
       ]
     },
     {
+      "name": "@betteroffice/fonts-cjk",
+      "version": "0.4.0",
+      "license": "Apache-2.0 AND OFL-1.1",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0"
+        },
+        {
+          "licenseId": "OFL-1.1",
+          "copyrights": [
+            "Copyright 2014-2021 Adobe (https://adobe.com/), with Reserved Font Name 'Source'",
+            "Copyright 2017-2024 Adobe (https://adobe.com/), with Reserved Font Name 'Source'"
+          ]
+        }
+      ]
+    },
+    {
       "name": "sql.js",
       "license": "MIT",
       "sourceUrl": "https://github.com/sql-js/sql.js"
@@ -900,6 +877,15 @@
       "name": "iobuffer",
       "license": "MIT",
       "sourceUrl": "https://github.com/image-js/iobuffer"
+    },
+    {
+      "name": "@betteroffice/docx",
+      "version": "0.5.1",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/openooxml/betteroffice",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
     }
   ],
   "customNotices": [
@@ -1095,6 +1081,13 @@
       "version": "3.11"
     },
     {
+      "bundles": ["server", "web"],
+      "license": "CC-BY-SA-3.0",
+      "name": "Citation Style Language styles and locales",
+      "sourceUrl": "https://github.com/citation-style-language/styles/tree/7a37c5a736c10fbd468bc31f92cbc6eafaa2173d",
+      "noticeFile": "packages/scient-citations/CSL-NOTICE"
+    },
+    {
       "bundles": ["server"],
       "includeInBundles": ["server", "desktop", "web"],
       "license": "Unicode-3.0",
@@ -1165,6 +1158,13 @@
       "license": "MIT",
       "sourceUrl": "https://github.com/anomalyco/opencode",
       "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
+    },
+    {
+      "name": "Journal and publisher marks",
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0 AND LicenseRef-PD-textlogo",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/Template:PD-textlogo",
+      "noticeFile": "apps/web/src/assets/journals/NOTICE"
     }
   ]
 }

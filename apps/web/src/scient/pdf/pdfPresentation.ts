@@ -1,5 +1,13 @@
 import type { ScientPdfRuntime } from "./pdfRuntime";
 
+// pdf.js's own visible-page query, a search over page positions; its declaration says `object`.
+interface VisiblePages {
+  readonly views: readonly {
+    readonly id: number;
+    readonly view: { readonly renderingState: number; readonly textLayer: unknown };
+  }[];
+}
+
 /** A sized, invisible staging surface, not display:none (PDF.js needs layout). */
 export function createPdfPresentationLayer(mount: HTMLElement) {
   const container = document.createElement("div");
@@ -88,19 +96,13 @@ export function preparePdfPresentation(input: {
         }
       }
       viewer.update();
-      const top = container.scrollTop;
-      const bottom = top + container.clientHeight;
-      const visible = Array.from(
-        container.querySelectorAll<HTMLElement>(".page[data-page-number]"),
-      ).filter((page) => page.offsetTop < bottom && page.offsetTop + page.clientHeight > top);
+      const { views } = viewer._getVisiblePages() as VisiblePages;
       const ready =
-        visible.length > 0 &&
-        visible.every((page) => {
-          const number = Number(page.dataset.pageNumber);
-          const view = viewer.getPageView(number - 1);
+        views.length > 0 &&
+        views.every(
           // PDF.js FINISHED=3. pagesinit only creates placeholders; it is not a paint fence.
-          return view?.renderingState === 3 && (!view.textLayer || textReady.has(number));
-        });
+          ({ id, view }) => view.renderingState === 3 && (!view.textLayer || textReady.has(id)),
+        );
       stableFrames = ready ? stableFrames + 1 : 0;
       if (stableFrames >= 2) return finish();
       frame = requestAnimationFrame(tick);

@@ -39,14 +39,23 @@ export function useScientOnboardingStorage() {
   const complete = () => {
     setState((current) => completeScientOnboarding(current, nowIso()));
   };
-  const saveProfile = (next: Pick<ScientPersonalizationProfile, "workKinds" | "fieldOrTopic">) => {
+  const saveProfile = (
+    next: Pick<ScientPersonalizationProfile, "workKinds" | "fieldOrTopic" | "field" | "role">,
+  ) => {
+    const at = nowIso();
     setProfile({
       schemaVersion: 1,
       workKinds: next.workKinds,
       fieldOrTopic: next.fieldOrTopic.trim(),
-      updatedAt: nowIso(),
+      updatedAt: at,
+      ...(next.field === undefined ? {} : { field: next.field }),
+      ...(next.role === undefined ? {} : { role: next.role }),
+      askedAt: at,
     });
   };
+  const skipProfileQuestion = () => {
+    setProfile((current) => ({ ...current, askedAt: nowIso() }));
+  };
 
-  return { state, profile, start, move, dismiss, complete, saveProfile };
+  return { state, profile, start, move, dismiss, complete, saveProfile, skipProfileQuestion };
 }

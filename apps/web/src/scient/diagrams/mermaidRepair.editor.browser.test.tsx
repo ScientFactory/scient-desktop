@@ -47,7 +47,7 @@ vi.mock("../presentation/useNearViewport", () => ({
 vi.mock("./mermaidRuntime", async (original) => ({
   ...(await original<typeof import("./mermaidRuntime")>()),
   renderMermaidDiagram: vi.fn(async () => {
-    throw new MermaidRenderError(new Error("Parse error on line 2:\nA[\n ^"));
+    throw new MermaidRenderError({ cause: new Error("Parse error on line 2:\nA[\n ^") });
   }),
 }));
 

@@ -1,4 +1,4 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, PermissionRuleset } from "@opencode-ai/sdk/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderReplayEntry, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import {
   makeOpenCodeAdapterV2Driver,
+  openCodeChildPermissionRules,
   openCodePermissionRules,
 } from "@t3tools/provider-opencode/server";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
@@ -99,6 +100,7 @@ export type OpenCodeOrchestratorReplayHarnessError =
 
 function replayValueMatches(expected: unknown, actual: unknown): boolean {
   if (expected === "<any>" || expected === "<workspace>") return true;
+  if (expected === "<string>") return typeof actual === "string" && actual.length > 0;
   if (Array.isArray(expected)) {
     return (
       Array.isArray(actual) &&
@@ -119,9 +121,9 @@ function frameRecord(frame: unknown): Record<string, unknown> | null {
   return typeof frame === "object" && frame !== null ? (frame as Record<string, unknown>) : null;
 }
 
-/** The recorded peer predates per-turn permission confirmation. Add explicit
- * synthetic frames from the scenario's declared policy; never infer authority
- * from the request under test or relax the recorded prompt/event matcher.
+/** The recorded peer predates permission readback. Add explicit synthetic frames from the
+ * scenario's declared policy before each prompt and after each wake (an owned session busy
+ * again after idle), and read each recorded subagent write back as the peer reported it.
  */
 export function materializeOpenCodeReplayPermissions(
   transcript: ProviderReplayTranscript,
@@ -129,7 +131,33 @@ export function materializeOpenCodeReplayPermissions(
 ): ProviderReplayTranscript {
   const permission = openCodePermissionRules(runtimePolicy);
   const sessions = new Map<string, Record<string, unknown>>();
+  const settled = new Set<string>();
   const entries: ProviderReplayEntry[] = [];
+  const confirmation = (label: string, sessionId: string, nativeSession: object) => {
+    const confirmed = { ...nativeSession, permission };
+    return [
+      {
+        type: "expect_outbound",
+        label: `${label}.update`,
+        frame: { type: "session.update", input: { sessionID: sessionId, permission } },
+      },
+      {
+        type: "emit_inbound",
+        label: `${label}.update.response`,
+        frame: { type: "sdk.response", operation: "session.update", data: confirmed },
+      },
+      {
+        type: "expect_outbound",
+        label: `${label}.get`,
+        frame: { type: "session.get", input: { sessionID: sessionId } },
+      },
+      {
+        type: "emit_inbound",
+        label: `${label}.get.response`,
+        frame: { type: "sdk.response", operation: "session.get", data: confirmed },
+      },
+    ] satisfies ReadonlyArray<ProviderReplayEntry>;
+  };
   for (const entry of transcript.entries) {
     const frame = entry.type === "runtime_exit" ? null : frameRecord(entry.frame);
     const data = frameRecord(frame?.data);
@@ -151,32 +179,69 @@ export function materializeOpenCodeReplayPermissions(
           "Recorded OpenCode prompt has no owned session metadata for permission confirmation.",
         );
       }
-      const label = `${entry.label ?? "prompt"}.synthetic-permission`;
-      const confirmed = { ...nativeSession, permission };
+      settled.delete(sessionId as string);
       entries.push(
-        {
-          type: "expect_outbound",
-          label: `${label}.update`,
-          frame: { type: "session.update", input: { sessionID: sessionId, permission } },
-        },
-        {
-          type: "emit_inbound",
-          label: `${label}.update.response`,
-          frame: { type: "sdk.response", operation: "session.update", data: confirmed },
-        },
-        {
-          type: "expect_outbound",
-          label: `${label}.get`,
-          frame: { type: "session.get", input: { sessionID: sessionId } },
-        },
-        {
-          type: "emit_inbound",
-          label: `${label}.get.response`,
-          frame: { type: "sdk.response", operation: "session.get", data: confirmed },
-        },
+        ...confirmation(
+          `${entry.label ?? "prompt"}.synthetic-permission`,
+          sessionId as string,
+          nativeSession,
+        ),
       );
     }
     entries.push(entry);
+    // A recorded subagent rule write is read back with the rules the declared policy gives
+    // that child, from the child rules recorded before the write.
+    if (
+      entry.type === "emit_inbound" &&
+      frame?.type === "sdk.response" &&
+      frame.operation === "session.update" &&
+      data !== null &&
+      typeof data.id === "string"
+    ) {
+      const recorded = sessions.get(data.id);
+      const childPermission = openCodeChildPermissionRules(
+        runtimePolicy,
+        Array.isArray(recorded?.permission) ? (recorded.permission as PermissionRuleset) : [],
+      );
+      const label = `${entry.label ?? "session.update"}.synthetic-readback`;
+      entries.push(
+        {
+          type: "expect_outbound",
+          label,
+          frame: { type: "session.get", input: { sessionID: data.id } },
+        },
+        {
+          type: "emit_inbound",
+          label: `${label}.response`,
+          frame: {
+            type: "sdk.response",
+            operation: "session.get",
+            data: { ...recorded, id: data.id, permission: childPermission },
+          },
+        },
+      );
+    }
+    const event = frame?.type === "sdk.event" ? frameRecord(frame.event) : null;
+    const properties = frameRecord(event?.properties);
+    const statusSession = properties?.sessionID;
+    if (
+      entry.type === "emit_inbound" &&
+      event?.type === "session.status" &&
+      typeof statusSession === "string" &&
+      sessions.has(statusSession)
+    ) {
+      const status = frameRecord(properties?.status)?.type;
+      if (status === "idle") settled.add(statusSession);
+      else if (status === "busy" && settled.delete(statusSession)) {
+        entries.push(
+          ...confirmation(
+            `${entry.label ?? "wake"}.synthetic-permission`,
+            statusSession,
+            sessions.get(statusSession)!,
+          ),
+        );
+      }
+    }
   }
   return {
     ...transcript,

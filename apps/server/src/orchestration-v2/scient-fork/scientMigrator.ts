@@ -3,8 +3,8 @@
  * receipts, and remap import-17 only for its exact known prefix. Reject gaps, renamed entries, and
  * future IDs before the high-water-mark Migrator can silently accept them.
  */
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -38,12 +38,18 @@ import Migration025 from "./migrations/025_ContextHistorySources.ts";
 import Migration026 from "./migrations/026_CompactArchivedProjectionHandoffs.ts";
 import Migration027 from "./migrations/027_BrowserHistory.ts";
 import Migration028 from "./migrations/028_CopyLegacyHandoffSources.ts";
+import Migration029 from "./migrations/029_SharedHistoryBodies.ts";
+import Migration030 from "./migrations/030_ConversationForkRecords.ts";
+import Migration031 from "./migrations/031_ForkHandoffHistoryRanges.ts";
 
-export class ScientMigrationError extends Data.TaggedError("ScientMigrationError")<{
-  readonly kind: "BadState" | "Duplicates" | "Failed" | "ImportError" | "Locked";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ScientMigrationError extends Schema.TaggedError<ScientMigrationError>()(
+  "ScientMigrationError",
+  {
+    kind: Schema.Literals(["BadState", "Duplicates", "Failed", "ImportError", "Locked"]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 const fromMigrationError = (error: Migrator.MigrationError): ScientMigrationError =>
   new ScientMigrationError({
@@ -95,6 +101,9 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 26, name: "compact-archived-projection-handoffs", effect: Migration026 },
   { id: 27, name: "browser-history", effect: Migration027 },
   { id: 28, name: "copy-legacy-handoff-sources", effect: Migration028 },
+  { id: 29, name: "shared-history-bodies", effect: Migration029 },
+  { id: 30, name: "conversation-fork-records", effect: Migration030 },
+  { id: 31, name: "fork-handoff-history-ranges", effect: Migration031 },
 ] as const;
 
 const loader = Migrator.fromRecord(

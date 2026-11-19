@@ -45,9 +45,48 @@ it.effect("discovers only source metadata without opening a source cookie databa
       platform: "darwin",
       appData: undefined,
       localAppData: undefined,
+      linuxConfigHome: path.join(home, ".config"),
+      linuxChromeConfigHome: path.join(home, ".config"),
     });
     expect(result).toEqual([
       { sourceId: "chrome", directory: "Default", name: "Work", email: "person@example.test" },
     ]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "lists Windows Chrome's profiles from its metadata, leaving its password files unread",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "scient-accounts-source-win-" });
+      const localAppData = path.join(home, "Local");
+      const root = path.join(localAppData, "Google", "Chrome", "User Data");
+      yield* fs.makeDirectory(path.join(root, "Profile 2"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "Local State"),
+        JSON.stringify({
+          profile: { info_cache: { "Profile 2": { name: "Lab", user_name: "lab@example.test" } } },
+        }),
+      );
+      // Windows keeps it from other apps: a password count would mean opening it.
+      yield* fs.writeFileString(path.join(root, "Profile 2", "Login Data"), "synthetic store");
+      using _sqlite = vi.spyOn(NodeSqliteClient, "layer").mockImplementation(() => {
+        throw new Error("A Windows Chrome password database was opened.");
+      });
+      const chrome = BROWSER_IMPORT_SOURCES.find((source) => source.id === "chrome")!;
+      const result = yield* discoverSourceProfiles([chrome], {
+        path,
+        home,
+        platform: "win32",
+        appData: path.join(home, "Roaming"),
+        localAppData,
+        linuxConfigHome: path.join(home, ".config"),
+        linuxChromeConfigHome: path.join(home, ".config"),
+      });
+      expect(result).toEqual([
+        { sourceId: "chrome", directory: "Profile 2", name: "Lab", email: "lab@example.test" },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

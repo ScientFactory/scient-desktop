@@ -4,7 +4,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -36,6 +35,7 @@ import {
   type WorkspaceFileSystem,
 } from "../../workspace/WorkspaceFileSystem.ts";
 import type * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import { withinDeadline } from "./Deadline.ts";
 import {
   bindNativeFilePublication,
   bindNativeFilePublicationParent,
@@ -54,11 +54,14 @@ import {
   assertRootBinding,
   bytesRevision,
   directoryIdentity,
+  hostDirectoryIdentity,
   durableJson,
   fileIdentity,
   fileRevision,
   inspectGuardedFile,
+  isPlainTemporaryOf,
   mutateRetainedFile,
+  plainTemporaryName,
   prepareRetainedDirectory,
   publicationLeaseBindings,
   decodeRetainedRecord,
@@ -260,7 +263,11 @@ const within = (root: string, target: string) => {
  * instance so their epochs agree. The nonce names the run.
  */
 const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
+/** Temporary files of saves in flight in this process, which no sweep may take. */
+const liveTemporaries = new Set<string>();
 
+/** A save's temporary file is someone's leftover once untouched this long; before, it may be in use. */
+const LEFTOVER_TEMPORARY_AGE_MS = 10 * 60_000;
 const OLDER_RECORDS_SCAN_MS = 5_000;
 const OLDER_WORK_WRITE_WAIT_MS = 30_000;
 const OLDER_WORK_LIMIT_MS = 120_000;
@@ -271,11 +278,17 @@ const LAST_SAVED_FILES = 1024;
 const IN_PLACE_MAX_BYTES = 128n * 1024n * 1024n;
 
 /** A plain publication failed before it could change the target. */
-class PlainPublicationUnchangedError extends Error {
-  constructor(cause: unknown) {
-    super("A plain publication failed before changing its target.", { cause });
+class PlainPublicationUnchangedError extends Schema.TaggedError<PlainPublicationUnchangedError>()(
+  "PlainPublicationUnchangedError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "A plain publication failed before changing its target.";
   }
 }
+
+const isPlainPublicationUnchangedError = Schema.is(PlainPublicationUnchangedError);
+
 const isExistsError = Schema.is(WorkspaceFileExistsError);
 const isRevisionConflict = Schema.is(WorkspaceFileRevisionConflictError);
 
@@ -292,12 +305,15 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly workspacePaths: WorkspacePaths.WorkspacePaths["Service"];
   readonly workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"];
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
-  readonly nativePublicationHelper?: string;
+  /** Read at each use: a host can accept its helper after these methods are made. */
+  readonly nativePublicationHelper?: string | undefined;
   readonly resolveRetentionStorageDirectory: () => Promise<string>;
   readonly retentionDirectoryFor: (canonicalRoot: string, parentPath: string) => Promise<string>;
   readonly retentionLimitBytes?: number | null;
   /** Where earlier versions of overwritten files go. */
   readonly fileHistoryDirectory?: string;
+  /** How long a save's temporary file stays untouched before it counts as a leftover. */
+  readonly leftoverTemporaryAgeMs?: number;
   /** Only for tests of the native publication Overleaf still uses, until it is removed. */
   readonly nativeSaves?: boolean;
   readonly retainedHooks?: RetainedMutationHooks;
@@ -345,7 +361,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         cause,
       });
     }
-    if (cause instanceof PlainPublicationUnchangedError)
+    if (isPlainPublicationUnchangedError(cause))
       return new WorkspaceFileSystemOperationError({
         ...fields,
         operationPath: target,
@@ -1348,7 +1364,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           sameIdentity(current.identity, before.identity) &&
           current.revision === before.revision
     )
-      throw new PlainPublicationUnchangedError(cause);
+      throw new PlainPublicationUnchangedError({ cause });
     throw cause;
   };
   const publishPlainly = async (
@@ -1378,10 +1394,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const exclusive = intent.kind === "create" || intent.condition === "absent";
     const standing = snapshot ? await beforeChange(() => NodeFSP.stat(resolved.target)) : null;
     const mode = standing ? Number(standing.mode) & 0o7777 : intent.executable ? 0o777 : 0o666;
+    await sweepTemporaries(resolved.target);
     const temporary = NodePath.join(
       directory,
-      `.${NodePath.basename(resolved.target)}.${NodeCrypto.randomUUID()}.scient-tmp`,
+      plainTemporaryName(NodePath.basename(resolved.target)),
     );
+    liveTemporaries.add(temporary);
     try {
       // A replacement that can't be made yet is no failure: the file may still take the bytes.
       let refused: unknown =
@@ -1400,7 +1418,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           await handle.close();
         }
       }).catch((cause: unknown) => {
-        const stage = cause instanceof PlainPublicationUnchangedError ? cause.cause : cause;
+        const stage = isPlainPublicationUnchangedError(cause) ? cause.cause : cause;
         if (exclusive || !snapshot || !replacementRefused(stage)) throw cause;
         refused ??= stage;
       });
@@ -1464,7 +1482,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         }
       }
     } finally {
-      await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
+      await NodeFSP.rm(temporary, { force: true }).catch(() => swept.delete(resolved.target));
+      liveTemporaries.delete(temporary);
     }
     lastSaved.delete(resolved.target);
     lastSaved.set(resolved.target, desired);
@@ -1480,6 +1499,51 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     ["EPERM", "EACCES", "EBUSY", "EMLINK"].some((code) => isNodeError(cause, code));
   /** What Scient last wrote to each file, which tells its own autosaves from outside changes. */
   const lastSaved = new Map<string, string>();
+  /** Targets whose folder was swept; leftovers only come from an earlier run or a failed removal. */
+  const swept = new Set<string>();
+  /**
+   * Removes temporary files a killed save left beside `target`, by this release or an earlier
+   * one. Bytes that differ from the file stay unless its history took them: they may be the only
+   * copy of text that never reached it. One changed recently may be another process's save.
+   */
+  const sweepTemporaries = async (target: string) => {
+    if (swept.has(target)) return;
+    swept.add(target);
+    if (swept.size > LAST_SAVED_FILES) swept.delete(swept.values().next().value!);
+    const directory = NodePath.dirname(target),
+      basename = NodePath.basename(target);
+    try {
+      const now = await runPromise(Clock.currentTimeMillis);
+      for (const name of await NodeFSP.readdir(directory)) {
+        const path = NodePath.join(directory, name);
+        if (!isPlainTemporaryOf(name, basename) || liveTemporaries.has(path)) continue;
+        const stat = await NodeFSP.lstat(path);
+        if (!stat.isFile()) continue;
+        if (now - stat.mtimeMs < (deps.leftoverTemporaryAgeMs ?? LEFTOVER_TEMPORARY_AGE_MS)) {
+          swept.delete(target);
+          continue;
+        }
+        const revision = stat.size === 0 ? null : await fileRevision(path);
+        if (revision !== null && revision !== (await fileRevision(target))) {
+          const kept =
+            deps.fileHistoryDirectory !== undefined &&
+            (await keepFileVersion({
+              directory: deps.fileHistoryDirectory,
+              target,
+              source: path,
+              revision,
+              ownSave: false,
+              now: Math.floor(stat.mtimeMs),
+            }));
+          if (!kept) continue;
+        }
+        await NodeFSP.unlink(path);
+      }
+    } catch (cause) {
+      swept.delete(target);
+      await runPromise(Effect.logWarning("Could not tidy a save's leftover temporary file", cause));
+    }
+  };
   /**
    * Scient's own autosave can go without a copy, since the person's text is in the editor.
    * Text from anywhere else is only replaced once it is safely in the history.
@@ -1625,7 +1689,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       handle = await NodeFSP.open(target, "wx", mode);
     } catch (cause) {
       if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(fields);
-      throw new PlainPublicationUnchangedError(cause);
+      throw new PlainPublicationUnchangedError({ cause });
     }
     let created: { dev: string; ino: string } | null = null;
     try {
@@ -1640,7 +1704,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       const current = await fileIdentity(target, deps.nativePublicationHelper).catch(() => null);
       if (created !== null && current !== null && sameIdentity(current, created)) {
         await NodeFSP.rm(target, { force: true });
-        throw new PlainPublicationUnchangedError(cause);
+        throw new PlainPublicationUnchangedError({ cause });
       }
       throw cause;
     }
@@ -1652,12 +1716,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     } catch (cause) {
       if (
         cause instanceof RetainedMutationError ||
-        cause instanceof PlainPublicationUnchangedError ||
+        isPlainPublicationUnchangedError(cause) ||
         isExistsError(cause) ||
         isRevisionConflict(cause)
       )
         throw cause;
-      throw new PlainPublicationUnchangedError(cause);
+      throw new PlainPublicationUnchangedError({ cause });
     }
   };
   /**
@@ -3859,7 +3923,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     // `active` holds root keys; overlap is judged on the root part.
     const rootOf = (key: string) => key.slice(0, key.indexOf("\0"));
     const plainEpochOf = async (root: string) => {
-      const identity = await directoryIdentity(root, deps.nativePublicationHelper);
+      // The host's own identity: a workspace epoch must not need the native helper.
+      const identity = await hostDirectoryIdentity(root);
       return NodeCrypto.createHash("sha256")
         .update(`${identity.dev}:${identity.ino}\n${plainEpochComponent(true)}`)
         .digest("hex");
@@ -3968,7 +4033,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         normalized,
         async (signal) => {
           const root = await NodeFSP.realpath(normalized);
-          const identity = await directoryIdentity(root, deps.nativePublicationHelper);
+          // A plain read publishes nothing, so the host's own identity tells it the folder stayed
+          // the same; on Windows reads then work even when the native helper is unavailable.
+          const identity = await hostDirectoryIdentity(root);
           return owning(root, signal, async () => {
             const exit = await Effect.runPromiseExitWith(context)(
               read(null, { currentMissing: await missingOf(root) }),
@@ -3978,10 +4045,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             const stillRoot = await NodeFSP.realpath(normalized)
               .then(async (current) =>
                 current === root
-                  ? sameIdentity(
-                      await directoryIdentity(root, deps.nativePublicationHelper),
-                      identity,
-                    )
+                  ? sameIdentity(await hostDirectoryIdentity(root), identity)
                   : false,
               )
               .catch(() => false);
@@ -4032,6 +4096,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       kind: NonNullable<RetainedMutationInput["kind"]>,
       condition: NonNullable<RetainedMutationInput["condition"]>,
     ): Promise<RetainedMutationResult> => {
+      await sweepTemporaries(resolved.target);
       const directory = await prepareRetainedDirectory(
         input.retentionDirectory,
         input.id,
@@ -4192,7 +4257,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           // The original itself moves in, so a program still holding it writes into the copy.
           advancePlainEpoch();
           await replaceByRename(target, kept).catch(async (cause: unknown) => {
-            if (!isNodeError(cause, "EXDEV")) throw new PlainPublicationUnchangedError(cause);
+            if (!isNodeError(cause, "EXDEV")) throw new PlainPublicationUnchangedError({ cause });
             await NodeFSP.unlink(target);
           });
         } else {
@@ -4223,7 +4288,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       } catch (cause) {
         if (isRevisionConflict(cause) || cause instanceof RetainedMutationError)
           return await settleUntouched();
-        if (!(cause instanceof PlainPublicationUnchangedError)) throw cause;
+        if (!isPlainPublicationUnchangedError(cause)) throw cause;
         await save({ sourceMutation: false });
         return finish("skipped", "unavailable");
       }
@@ -4355,7 +4420,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 throw new WorkspaceFileExistsError(destinationFields);
               if (!(await missing(destination.target))) throw cause;
               // Includes volumes without hard links: plain moves need them, as on main.
-              throw new PlainPublicationUnchangedError(cause);
+              throw new PlainPublicationUnchangedError({ cause });
             }
             // The new name must hold the inspected bytes before the old name goes.
             /** The move may have happened: the outcome is unknown, never "unchanged". */
@@ -4370,7 +4435,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               );
             } catch (cause) {
               if (await undoLink().catch(() => false))
-                throw new PlainPublicationUnchangedError(cause);
+                throw new PlainPublicationUnchangedError({ cause });
               throw unknown(cause);
             }
             if (
@@ -4396,7 +4461,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             } catch (cause) {
               // Undo the new name so the move is either complete or did not happen.
               if (await undoLink().catch(() => false))
-                throw new PlainPublicationUnchangedError(cause);
+                throw new PlainPublicationUnchangedError({ cause });
               throw unknown(cause);
             }
             await syncDirectory(folder);
@@ -4476,7 +4541,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 () => null,
               );
               if (still !== null && sameIdentity(still, snapshot.identity))
-                throw new PlainPublicationUnchangedError(cause);
+                throw new PlainPublicationUnchangedError({ cause });
               throw cause;
             }
             await syncDirectory(NodePath.dirname(resolved.target));
@@ -4644,23 +4709,25 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     };
   };
   // Retained publication needs the host's advertised authority and every ownership primitive.
-  // An unqualified helper leaves ordinary saves on the plain publication path.
-  const capabilities =
-    deps.nativePublicationHelper === undefined
-      ? null
-      : yield* Effect.promise(() =>
-          nativeFilePublicationCapabilities(deps.nativePublicationHelper!).catch(() => null),
-        );
-  if (
-    capabilities === null ||
-    !hasNativeFileAuthority(capabilities) ||
-    !capabilities.publicationLease ||
-    !capabilities.sharedPublicationLease ||
-    !capabilities.exclusiveMove ||
-    !capabilities.exclusiveLink
-  )
-    return withFileHistory(makePlainHostMethods());
-  if (deps.nativeSaves)
+  // An unqualified helper leaves ordinary saves on the plain publication path. A helper that
+  // arrives later, once the host accepts it, is asked then.
+  let qualified = false;
+  let unqualifiedHelper: string | undefined;
+  const qualify = async () => {
+    const helper = deps.nativePublicationHelper;
+    if (qualified || helper === undefined || helper === unqualifiedHelper) return qualified;
+    const capabilities = await nativeFilePublicationCapabilities(helper).catch(() => null);
+    if (capabilities === null) return false;
+    qualified =
+      hasNativeFileAuthority(capabilities) &&
+      capabilities.publicationLease &&
+      capabilities.sharedPublicationLease &&
+      capabilities.exclusiveMove &&
+      capabilities.exclusiveLink;
+    if (!qualified) unqualifiedHelper = helper;
+    return qualified;
+  };
+  if (deps.nativeSaves && (yield* Effect.promise(qualify)))
     return withFileHistory({
       prepareRetainedDirectory: preparePrivateDirectory,
       inspectWriteTarget,
@@ -4694,10 +4761,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     if (known) return known;
     const finished = (async () => {
       const root = await NodeFSP.realpath(cwd);
-      const records = await Promise.race([
-        recordsUnderRoot(root),
-        NodeTimersPromises.setTimeout(OLDER_RECORDS_SCAN_MS, []),
-      ]);
+      const records = await withinDeadline(recordsUnderRoot(root), OLDER_RECORDS_SCAN_MS, []);
       // A discard a crash cut short is unfinished too, or its kept copy would stay for good.
       let unfinished = false;
       for (const { directory, record } of records) {
@@ -4713,12 +4777,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         // Saves are never held for ever by work that may never finish. Work out of time is
         // interrupted, since it could finish over a later save, but not awaited: it retires
         // only once its helper answers.
-        await Promise.race([
+        await withinDeadline(
           runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore), {
             signal: stop.signal,
           }),
-          NodeTimersPromises.setTimeout(OLDER_WORK_LIMIT_MS),
-        ]);
+          OLDER_WORK_LIMIT_MS,
+          undefined,
+        );
         stop.abort();
       }
     })().catch(() => undefined);
@@ -4729,20 +4794,31 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
    * A write never overtakes that work, since it could finish over the write. If it stalls the
    * write is refused and goes again. A read only waits a moment.
    */
+  const whenQualified = <A, E, R>(
+    retained: () => Effect.Effect<A, E, R>,
+    otherwise: () => Effect.Effect<A, E, R>,
+  ) => Effect.promise(qualify).pipe(Effect.flatMap((ready) => (ready ? retained() : otherwise())));
   const afterOlderPublications = <A, E, R>(
     input: { readonly cwd: string; readonly relativePath?: string },
     next: Effect.Effect<A, E, R>,
     { writes = true } = {},
   ) =>
+    whenQualified(
+      () => finishingOlderPublications(input, next, writes),
+      () => next,
+    );
+  const finishingOlderPublications = <A, E, R>(
+    input: { readonly cwd: string; readonly relativePath?: string },
+    next: Effect.Effect<A, E, R>,
+    writes: boolean,
+  ) =>
     Effect.tryPromise({
       try: async () => {
-        const finished = await Promise.race([
+        const finished = await withinDeadline(
           finishOlderPublications(input.cwd).then(() => true),
-          NodeTimersPromises.setTimeout(
-            writes ? OLDER_WORK_WRITE_WAIT_MS : OLDER_WORK_READ_WAIT_MS,
-            false,
-          ),
-        ]);
+          writes ? OLDER_WORK_WRITE_WAIT_MS : OLDER_WORK_READ_WAIT_MS,
+          false,
+        );
         if (!finished && writes)
           throw new RetainedMutationError(
             "unavailable",
@@ -4763,11 +4839,22 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     // No bytes means recovering a step an older build began, which only it can finish.
     replaceFileRetained: (input) =>
       input.bytes === undefined
-        ? replaceFileRetained(input)
+        ? whenQualified(
+            () => replaceFileRetained(input),
+            () => plain.replaceFileRetained(input),
+          )
         : afterOlderPublications(input, plain.replaceFileRetained(input)),
     removeFileRetained: (input) => afterOlderPublications(input, plain.removeFileRetained(input)),
-    prepareRetainedDirectory: preparePrivateDirectory,
-    registerRetainedFileHistory,
+    prepareRetainedDirectory: (input) =>
+      whenQualified(
+        () => preparePrivateDirectory(input),
+        () => plain.prepareRetainedDirectory(input),
+      ),
+    registerRetainedFileHistory: (input) =>
+      whenQualified(
+        () => registerRetainedFileHistory(input),
+        () => plain.registerRetainedFileHistory(input),
+      ),
     withSettledFileRead: (input, read) =>
       afterOlderPublications(input, plain.withSettledFileRead(input, read), { writes: false }),
     withSettledWorkspaceRead: (input, read) =>
@@ -4775,8 +4862,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         writes: false,
       }),
     listFileVersions: (input) =>
-      listFileVersions(input).pipe(Effect.map((listed) => ({ ...listed, attention: null }))),
-    discardFileVersion,
-    resolveFileMutation,
+      whenQualified(
+        () =>
+          listFileVersions(input).pipe(Effect.map((listed) => ({ ...listed, attention: null }))),
+        () => plain.listFileVersions(input),
+      ),
+    discardFileVersion: (input) =>
+      whenQualified(
+        () => discardFileVersion(input),
+        () => plain.discardFileVersion(input),
+      ),
+    resolveFileMutation: (input) =>
+      whenQualified(
+        () => resolveFileMutation(input),
+        () => plain.resolveFileMutation(input),
+      ),
   });
 });

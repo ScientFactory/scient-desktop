@@ -5,7 +5,13 @@ import {
 } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
-import { composerFileDedupKey, composerImageDedupKey } from "../../composerDraftStore";
+import { composerFileDedupKey } from "../../composerDraftStore";
+import {
+  composerImageDedupKey,
+  composerImageSignature,
+  readComposerImageBytes,
+  rememberComposerImageSource,
+} from "./composerAttachmentFiles";
 import {
   inheritComposerImageThumbnail,
   isHeicImageFile,
@@ -20,26 +26,35 @@ interface StagedComposerImage {
 type AttachmentFacts = Pick<ChatAttachment, "type" | "mimeType" | "sizeBytes"> & {
   /** Only the target draft grants deduplication; other question drafts still count. */
   readonly dedupKey?: string;
+  /** An image's name, type and size, for matching before its bytes are read. */
+  readonly signature?: string;
 };
 
 function uniqueBatch(
   existing: ReadonlyArray<AttachmentFacts>,
   images: ReadonlyArray<StagedComposerImage>,
   files: ReadonlyArray<ComposerFileAttachment>,
+  imageMatch: "bytes" | "signature" = "bytes",
 ) {
   const imageKeys = new Set(
-    existing.filter((item) => item.type === "image").map((item) => item.dedupKey),
+    existing
+      .filter((item) => item.type === "image")
+      .map((item) => (imageMatch === "bytes" ? item.dedupKey : item.signature)),
   );
   const fileKeys = new Set(
     existing.filter((item) => item.type === "file").map((item) => item.dedupKey),
   );
   return {
     images: images.filter(({ file }) => {
-      const key = composerImageDedupKey({
-        name: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-      });
+      const key =
+        imageMatch === "bytes"
+          ? composerImageDedupKey({
+              name: file.name,
+              mimeType: file.type,
+              sizeBytes: file.size,
+              file,
+            })
+          : composerImageSignature({ name: file.name, mimeType: file.type, sizeBytes: file.size });
       if (imageKeys.has(key)) return false;
       imageKeys.add(key);
       return true;
@@ -63,6 +78,8 @@ export async function stageComposerAttachmentBatch(input: {
   readonly commit: (input: {
     readonly images: ReadonlyArray<StagedComposerImage>;
     readonly files: ReadonlyArray<ComposerFileAttachment>;
+    /** Another image of this batch failed; it is reported once staging returns. */
+    readonly error: string | null;
   }) => boolean;
 }): Promise<{ readonly inserted: boolean; readonly error: string | null }> {
   // These images take the byte-for-byte passthrough path. HEIC and oversized
@@ -74,7 +91,9 @@ export async function stageComposerAttachmentBatch(input: {
       file.size <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   );
   const initialExisting = input.readExisting();
-  const unchanged = uniqueBatch(initialExisting, unchangedImages, input.files);
+  // Bytes are unread here, so this pass matches images by name, type and size: it may
+  // undercount a batch, never report a false overflow. The pass after conversion is exact.
+  const unchanged = uniqueBatch(initialExisting, unchangedImages, input.files, "signature");
   const earlyError = getProviderAttachmentLimitError([
     ...initialExisting,
     ...unchanged.files,
@@ -104,7 +123,9 @@ export async function stageComposerAttachmentBatch(input: {
       );
       continue;
     }
-    inheritComposerImageThumbnail(file, prepared.file);
+    await inheritComposerImageThumbnail(file, prepared.file);
+    await readComposerImageBytes(prepared.file);
+    rememberComposerImageSource(file, prepared.file);
     images.push({ id, file: prepared.file });
   }
   if (!input.stillWanted()) return { inserted: false, error: null };
@@ -130,5 +151,5 @@ export async function stageComposerAttachmentBatch(input: {
   // No await between the fresh read above and this commit: overlapping pastes
   // see each other's actual stored bytes rather than a stale render snapshot.
   if (batch.images.length === 0 && batch.files.length === 0) return { inserted: false, error };
-  return { inserted: input.commit(batch), error };
+  return { inserted: input.commit({ ...batch, error }), error };
 }

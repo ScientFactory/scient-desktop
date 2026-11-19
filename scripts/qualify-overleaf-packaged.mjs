@@ -4,7 +4,10 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-/** Execute only bundled code and installed resources, from two independent processes. */
+/**
+ * Execute only bundled code and installed resources, one fresh process per phase: connect and
+ * restart, then refuse with the helper held aside when the caller names the installed helper.
+ */
 export function qualifyPackagedOverleaf({ executable, entry, helper, electron = false }) {
   const root = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-overleaf-package-")),
@@ -14,33 +17,49 @@ export function qualifyPackagedOverleaf({ executable, entry, helper, electron = 
     if (/^(T3CODE_|SCIENT_|VITE_|ELECTRON_)/u.test(key) || key === "NODE_OPTIONS") delete env[key];
   if (electron) env.ELECTRON_RUN_AS_NODE = "1";
   const run = (phase) => {
-    const args = electron
-      ? [
-          "--eval",
-          `
+    // A launcher file, not --eval: an eval script defines a global __filename ("[eval]"), which
+    // bundled code that prefers __filename over import.meta.url would resolve from.
+    const launcher = NodePath.join(root, "overleaf-probe-launcher.cjs");
+    if (electron)
+      NodeFS.writeFileSync(
+        launcher,
+        `
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const resources = path.join(path.dirname(process.execPath), 'resources');
 const archive = process.platform === 'win32' ? 'server.asar' : 'app.asar';
 const entry = path.join(resources, archive, 'apps/server/dist/overleaf-packaging-probe.mjs');
 const helper = path.join(resources, 'file-exchange', 'scient-file-publication' + (process.platform === 'win32' ? '.exe' : ''));
-process.argv = [process.execPath, entry, process.argv[1], process.argv[2], helper];
+process.argv = [process.execPath, entry, process.argv[2], process.argv[3], helper];
 import(pathToFileURL(entry).href).catch(error => { console.error(error); process.exitCode = 1; });
 `,
-          root,
-          phase,
-        ]
-      : [entry, root, phase];
+      );
+    const args = electron ? [launcher, root, phase] : [entry, root, phase];
+    const started = performance.now();
     const result = NodeChildProcess.spawnSync(executable, args, {
       cwd: root,
       env,
       encoding: "utf8",
       timeout: 120_000,
     });
+    const outcome = {
+      phase,
+      elapsedMs: Math.round(performance.now() - started),
+      status: result.status,
+      signal: result.signal,
+    };
+    console.log(`Overleaf qualification phase ${JSON.stringify(outcome)}`);
     NodeAssert.equal(
       result.status,
       0,
-      result.error?.message ?? `${result.stdout}\n${result.stderr}`,
+      [
+        `Overleaf qualification phase ${phase} failed (status ${result.status}, signal ${result.signal})`,
+        result.error?.message,
+        result.stdout,
+        result.stderr,
+      ]
+        .filter(Boolean)
+        .join("\n"),
     );
     if (phase !== "refuse") {
       const record = result.stdout

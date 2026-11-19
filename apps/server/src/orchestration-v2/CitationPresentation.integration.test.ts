@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -29,7 +30,6 @@ import { EventSinkV2 } from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -54,6 +54,7 @@ import {
   destination,
   principal,
 } from "../scient/conversationImport/conversationImport.test-fixtures.ts";
+import { forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 const transcriptJson = Schema.fromJsonString(ProviderReplayTranscript);
 const encodeTranscriptJson = Schema.encodeEffect(transcriptJson);
@@ -87,6 +88,25 @@ type ClientPresenters = {
     items: OrchestrationV2ThreadProjection["visibleTurnItems"],
   ) => ReadonlyArray<ClientMessageEntry>;
 };
+// SCIENT-FORK:START — gt-react-native loads react-native, which the server's runner cannot
+// parse; the mobile presenter only needs English, as the mobile test runner provides.
+const englishText = (source: string, variables?: Record<string, unknown>) =>
+  source.replace(/\{(\w+)\}/gu, (whole, name: string) =>
+    variables !== undefined && name in variables ? String(variables[name]) : whole,
+  );
+const mobileGT = vi.hoisted(() =>
+  require("node:module")
+    .createRequire(new URL("../../../mobile/package.json", import.meta.url))
+    .resolve("gt-react-native"),
+);
+vi.mock(mobileGT, () => ({
+  msg: (source: string) => source,
+  decodeOptions: () => undefined,
+  getReactI18nCache: () => ({ lookupTranslation: () => undefined }),
+  gtFallback: (source: string, variables?: Record<string, unknown>) =>
+    englishText(source, variables),
+}));
+// SCIENT-FORK:END
 // Load the actual client presenters under the test runner's client module resolution,
 // without compiling mobile/web sources as part of the server's NodeNext program.
 const loadClients = Effect.promise(async (): Promise<ClientPresenters> => {
@@ -215,7 +235,6 @@ it.live(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
             const sink = yield* EventSinkV2;
-            const forks = yield* ConversationForkService;
             const now = yield* DateTime.now;
             const projectId = ProjectId.make("citation-project");
             const modelSelection = {
@@ -355,7 +374,7 @@ it.live(
                   event.payload.text === display,
               ),
             );
-            yield* forks.dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make("citation-fork"),
               originThreadId: threadId,
@@ -369,7 +388,7 @@ it.live(
             assert.deepEqual(assistant(child).citationPresentation, item.citationPresentation);
             assert.equal(assistant(projectThreadProjectionForWire(child)).text, display);
             assertClients(clients, child);
-            yield* forks.dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make("citation-refork"),
               originThreadId: forkId,

@@ -6,7 +6,7 @@ import * as Electron from "electron";
 import { conversationFileReviewHtml } from "./conversationFileReviewHtml.ts";
 import {
   readLocalConversationPreview,
-  LocalConversationPreviewError,
+  isLocalConversationPreviewError,
 } from "./localConversationPreview.ts";
 
 /** A local-only window. No normal application preload, persistent session, or server connection. */
@@ -151,7 +151,7 @@ export async function reviewOpenedConversation(
       clearTimeout(timeout);
       if (!window.isDestroyed()) {
         if (
-          cause instanceof LocalConversationPreviewError &&
+          isLocalConversationPreviewError(cause) &&
           cause.reason === "unsupported-too-large" &&
           cause.identity
         ) {

@@ -1,4 +1,5 @@
 import {
+  DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
@@ -8,11 +9,11 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -22,6 +23,7 @@ import { cliReleaseChannelOf, crossesReleaseTrack } from "@t3tools/shared/cliRel
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
@@ -30,17 +32,13 @@ import {
   ensurePinnedRuntimeInstalled,
   isPackageInstallFailure,
   mirrorInstallFailureReason,
-  PinnedRuntimeInstallError,
   pinnedRuntimePaths,
-  PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
-import { decodeServicePreflightResult } from "./servicePreflight.ts";
+import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
+import { runStagedServicePreflight } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
-
-// A staged runtime's cold start can take over a minute on a loaded, swapping host.
-const PREFLIGHT_TIMEOUT = Duration.minutes(3);
+import { decodeServiceUnit, isExactServiceVersion } from "./serviceProtocol.ts";
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -92,9 +90,24 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     ) {
       return [];
     }
+    const unitPath = yield* bootServiceUnitPath();
+    // A stopped service's unit still names the launcher runtime it will start.
+    const unit =
+      unitPath === undefined
+        ? Option.none<string>()
+        : yield* fs.readFile(unitPath).pipe(Effect.map(decodeServiceUnit), Effect.option);
+    const program = Option.flatMapNullishOr(unit, bootServiceProgramOf);
+    // The unit may name it through another spelling of a symlinked T3 home.
+    const references = Option.isNone(program)
+      ? []
+      : [
+          program.value,
+          yield* fs.realPath(program.value).pipe(Effect.orElseSucceed(() => program.value)),
+        ];
     const removed = yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [packageJson.version],
+      references,
     });
     if (removed.length > 0) {
       yield* Effect.logInfo("Removed unused Scient runtimes.", { versions: removed });
@@ -180,7 +193,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         "This server is managed by the Scient desktop app on its machine; update the desktop app to update it.",
       );
     }
-    if (capability === null) {
+    // The target must accept the launcher that will run it, which can be older than this server.
+    const launcherProtocol = launcher.protocol;
+    if (capability === null || launcherProtocol === undefined) {
       return yield* failWith(
         "This server cannot update itself. Update it on the server machine with the exact Scient server release.",
       );
@@ -206,74 +221,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         runner,
         releaseBaseUrl: mirror?.feedUrl,
         validate: (runtime) =>
-          runner
-            .run({
-              command: execPath,
-              args: [
-                runtime.entryPath,
-                "__service-preflight",
-                "--database-path",
-                serverConfig.dbPath,
-                "--launcher-protocol",
-                String(SERVICE_LAUNCHER_PROTOCOL),
-              ],
-              timeout: PREFLIGHT_TIMEOUT,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "running the staged service preflight",
-                    cause,
-                  }),
-              ),
-              Effect.flatMap(
-                (
-                  result,
-                ): Effect.Effect<
-                  void,
-                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
-                > => {
-                  if (result.code !== 0) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "running the staged service preflight",
-                        exitCode: Number(result.code),
-                        stdoutLength: result.stdout.length,
-                        stderrLength: result.stderr.length,
-                      }),
-                    );
-                  }
-                  let parsed: unknown;
-                  try {
-                    parsed = JSON.parse(result.stdout.trim());
-                  } catch (cause) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "decoding the staged service preflight",
-                        cause,
-                      }),
-                    );
-                  }
-                  const preflight = decodeServicePreflightResult(parsed);
-                  if (preflight === undefined || preflight.version !== targetVersion) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "verifying the staged service preflight",
-                      }),
-                    );
-                  }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
-                        }),
-                      );
-                },
-              ),
-            ),
+          runStagedServicePreflight({
+            runner,
+            runtime,
+            // SCIENT-FORK: Scient's runtime is a Node entry point run by this executable.
+            nodePath: execPath,
+            targetVersion,
+            databasePath: serverConfig.dbPath,
+            launcherProtocol,
+          }),
       }).pipe(
         Effect.mapError((error) =>
           error._tag === "PinnedRuntimePreflightBlockedError"
@@ -284,6 +240,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         ),
       );
 
+      if (input.stageOnly === true) {
+        yield* Ref.set(inFlight, false);
+        return { targetVersion, method: "boot-service" as const };
+      }
       yield* reportProgress("installing");
       const updateId = yield* Effect.uninterruptible(
         launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
@@ -294,6 +254,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                 : "Could not ask the service launcher to activate the prepared update.",
               error,
             ),
+          ),
+          // The launcher stops this server next; one from before its serving lock holds nothing
+          // until the new server starts, so this marker is what an SSH launch waits on.
+          Effect.tap(() =>
+            DesktopUpdateMarker.publish(
+              path.join(serverConfig.baseDir, "runtime", DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE),
+            ).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.ignore({ log: true })),
           ),
           Effect.tap(() => onHandoffAccepted()),
         ),

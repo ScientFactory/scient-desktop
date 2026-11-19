@@ -33,7 +33,8 @@ function isWindowsHost(): boolean {
 /** Where an install failure goes: a toast by default, or a bulk update's summary. */
 export type ReportDesktopInstallError = (title: string, description: string) => void;
 
-const toastInstallFailure: ReportDesktopInstallError = (title, description) => {
+/** The default report: a corner toast. */
+export const toastInstallFailure: ReportDesktopInstallError = (title, description) => {
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 };
 
@@ -42,12 +43,14 @@ let installInFlight: Promise<boolean> | null = null;
 /**
  * Restart is an explicit user action and needs no second confirmation. Share concurrent calls and
  * report failure through the first caller; only an accepted, error-free install means relaunching.
+ * With `expectedVersion`, only that downloaded build installs, never one that replaced it.
  */
 export function installDesktopUpdateNow(
   shell: UpdateInstallShell,
   reportError: ReportDesktopInstallError = toastInstallFailure,
+  expectedVersion?: string | null,
 ): Promise<boolean> {
-  installInFlight ??= runInstall(shell, reportError).finally(() => {
+  installInFlight ??= runInstall(shell, reportError, expectedVersion ?? undefined).finally(() => {
     installInFlight = null;
   });
   return installInFlight;
@@ -56,15 +59,20 @@ export function installDesktopUpdateNow(
 async function runInstall(
   shell: UpdateInstallShell,
   reportError: ReportDesktopInstallError,
+  expectedVersion: string | undefined,
 ): Promise<boolean> {
   const title = "Could not install update";
   try {
-    const result = await shell.installUpdate();
+    const result = await shell.installUpdate(expectedVersion);
     if (!result.accepted) {
+      const replaced =
+        expectedVersion !== undefined && result.state.downloadedVersion !== expectedVersion;
       reportError(
         title,
-        result.state.message?.trim() ||
-          "Another update step is still running. Try again in a moment.",
+        replaced
+          ? `Update ${expectedVersion} is no longer the one ready to install. Use the update button again.`
+          : result.state.message?.trim() ||
+              "Another update step is still running. Try again in a moment.",
       );
       return false;
     }
@@ -117,21 +125,28 @@ function ReleaseNotesLink({ shell, releaseUrl }: { shell: UpdateNoticeShell; rel
 }
 
 /**
- * Announces a finished download with a direct Restart action. Shown next to the
- * update button when it is visible, otherwise in the corner stack. After the
- * timeout (or when dismissed) the footer's Restart button remains the way in.
+ * Announces a downloaded update with a direct Restart action. Shown next to the
+ * update button when it is visible, otherwise in the corner stack. A finished
+ * download's announcement times out; the card the Update button opens stays
+ * until the user restarts or dismisses it.
  */
 export function showScientUpdateReadyNotice({
   shell,
   state,
   anchor,
-  install = () => installDesktopUpdateNow(shell),
+  install = (version) => installDesktopUpdateNow(shell, undefined, version),
+  persistent = false,
+  onClose,
 }: {
   readonly shell: UpdateNoticeShell;
   readonly state: DesktopUpdateState;
   readonly anchor: Element | null;
-  /** The caller's install, so its own pending state covers Restart now too. */
-  readonly install?: () => Promise<unknown>;
+  /** The caller's install, so its own pending state covers Restart now too. It receives the
+   * version the card names, so Restart installs exactly that build. */
+  readonly install?: (version: string | null) => Promise<unknown>;
+  /** Opened by the user, so it waits for them instead of timing out. */
+  readonly persistent?: boolean;
+  readonly onClose?: () => void;
 }): ScientUpdateReadyNoticeHandle {
   const version = getDesktopUpdateDownloadedVersion(state);
   const releaseUrl = getDesktopUpdateReleaseUrl(version);
@@ -152,19 +167,22 @@ export function showScientUpdateReadyNotice({
     if (toastId !== null) manager.close(toastId);
   };
 
-  const notice = stackedThreadToast({
-    type: "success",
-    title: version ? `Update ${version} is ready` : "Update is ready",
-    ...(description !== undefined ? { description } : {}),
-    timeout: SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS,
-    actionProps: {
-      children: "Restart now",
-      onClick: () => {
-        close();
-        void install();
+  const notice = {
+    ...stackedThreadToast({
+      type: "success",
+      title: version ? `Update ${version} is ready` : "Update is ready",
+      ...(description !== undefined ? { description } : {}),
+      timeout: persistent ? 0 : SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS,
+      actionProps: {
+        children: "Restart now",
+        onClick: () => {
+          close();
+          void install(version);
+        },
       },
-    },
-  });
+    }),
+    ...(onClose !== undefined ? { onClose } : {}),
+  };
 
   toastId = manager.add(
     anchored ? { ...notice, positionerProps: { anchor, side: "top", sideOffset: 8 } } : notice,

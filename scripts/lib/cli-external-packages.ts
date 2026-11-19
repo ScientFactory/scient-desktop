@@ -9,11 +9,21 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",
+  "transcribe-cpp",
+  "@transcribe-cpp/",
+  "koffi",
+  "@koromix/",
   "@napi-rs/keyring",
   // SCIENT-FORK:START — Scient-only disk loaders: PDF.js loads @napi-rs/canvas through
-  // createRequire, and the Accounts 1Password SDK loads WASM and native libraries.
+  // createRequire, the Accounts 1Password SDK loads WASM and native libraries, and Compute's
+  // project watch loads @parcel/watcher's platform package.
   "@napi-rs/canvas",
   "@1password/",
+  "@parcel/watcher",
+  "detect-libc",
+  "is-glob",
+  "is-extglob",
+  "picomatch",
   // SCIENT-FORK:END
   "@clerk/electron-passkeys",
   "node-gyp-build",

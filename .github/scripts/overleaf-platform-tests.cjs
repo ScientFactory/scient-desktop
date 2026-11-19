@@ -18,7 +18,9 @@ const FILES = {
     "src/scient/overleaf/overleafHostPaths.test.ts",
     "src/scient/overleaf/overleafFileAvailability.test.ts",
     "src/scient/overleaf/OverleafSync.folders.test.ts",
+    "src/scient/overleaf/OverleafSync.folderMoves.test.ts",
     "src/scient/overleaf/OverleafCoordinator.platform.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.platform.test.ts",
     "src/scient/workspace/WindowsRetainedFileMutation.test.ts",
     "src/scient/workspace/NativeFilePublication.resource.test.ts",
   ],
@@ -29,6 +31,15 @@ const FILES = {
     "src/scient/overleaf/OverleafCoordinator.privacy.test.ts",
     "src/scient/overleaf/OverleafStateStore.test.ts",
     "src/scient/overleaf/RetainedDiscard.crash.test.ts",
+    "src/scient/overleaf/OverleafSync.folders.test.ts",
+    "src/scient/overleaf/OverleafSync.folderMoves.test.ts",
+    "src/scient/overleaf/OverleafCoordinator.platform.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.resume.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.prepared.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.checked.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.called.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.platform.test.ts",
     "src/scient/workspace/PlatformFileIdentity.test.ts",
     "src/scient/workspace/NativeFilePublication.test.ts",
     "src/scient/workspace/fileExchange.test.ts",
@@ -88,6 +99,28 @@ function platformFiles() {
   return files;
 }
 
+// Enough of each failure to carry a command's own error output, as hdiutil's reason.
+const FAILURE_LINES = 20;
+
+// Three files at a time, each in its own process with its own temporary folders and disk images.
+// The one machine-wide resource, the drive letter WindowsRetainedFileMutation gives its virtual
+// disk, belongs to a single file.
+const WORKERS = 3;
+
+/** Each failed test with the start of its failure message, from a Vitest JSON report. */
+function failures(report) {
+  const lines = [];
+  for (const result of report.testResults ?? [])
+    for (const assertion of result.assertionResults ?? []) {
+      if (assertion.status === "passed") continue;
+      const message = (assertion.failureMessages ?? []).join("\n").trim().split("\n");
+      lines.push(`FAILED ${result.name} > ${assertion.fullName ?? assertion.title}`);
+      if (message[0] === "") lines.push(`  ${assertion.status}`);
+      else lines.push(...message.slice(0, FAILURE_LINES).map((line) => `  ${line}`));
+    }
+  return lines;
+}
+
 function run() {
   const root = path.resolve(__dirname, "../..");
   const cwd = path.join(root, "apps/server");
@@ -101,7 +134,8 @@ function run() {
     const env = { ...process.env, ...buildHelpers(path.join(scratch, "helpers")) };
     const output = path.join(scratch, "results.json");
     try {
-      execFileSync("vp", ["test", "run", ...files, "--reporter=json", `--outputFile=${output}`], {
+      const args = ["test", "run", ...files, "--fileParallelism", `--maxWorkers=${WORKERS}`];
+      execFileSync("vp", [...args, "--reporter=json", `--outputFile=${output}`], {
         cwd,
         env,
         stdio: "inherit",
@@ -109,17 +143,8 @@ function run() {
       });
     } catch (error) {
       // The JSON report is the only record of which tests failed; surface it before cleanup.
-      if (fs.existsSync(output)) {
-        const report = JSON.parse(fs.readFileSync(output, "utf8"));
-        for (const result of report.testResults ?? [])
-          for (const assertion of result.assertionResults ?? [])
-            if (assertion.status !== "passed")
-              console.error(
-                `FAILED ${result.name} > ${assertion.fullName ?? assertion.title}: ${
-                  (assertion.failureMessages ?? []).join("\n").split("\n")[0] ?? assertion.status
-                }`,
-              );
-      }
+      if (fs.existsSync(output))
+        console.error(failures(JSON.parse(fs.readFileSync(output, "utf8"))).join("\n"));
       throw error;
     }
     const report = JSON.parse(fs.readFileSync(output, "utf8"));
@@ -150,7 +175,7 @@ function buildForJob(directory) {
   console.log(lines.join("\n"));
 }
 
-module.exports = { FILES, validateReport };
+module.exports = { FILES, failures, validateReport };
 if (require.main === module) {
   const build = process.argv.find((argument) => /^--build-helpers(=|$)/u.test(argument));
   if (build) buildForJob(build.replace(/^--build-helpers=?/u, ""));

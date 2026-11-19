@@ -599,7 +599,7 @@ Files: `apps/web/src/scient/bidi/`, the ChatMarkdown/composer seams, and
 
 ### Comfortable Scient typography — current
 
-The product defaults to 18px interface text, 16px prompt text, 15px code/source
+The product defaults to 15px interface text, 16px prompt text, 14px code/source
 text, and 14px terminal text, with fixed tokens for workspace names/file
 links/tooltips, diff metadata, and headers. The existing appearance pipeline is
 retained; this is a compact token layer, not a renderer fork. Files:

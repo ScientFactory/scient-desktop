@@ -5,23 +5,31 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   AccountId,
+  BrowserProfileId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
+  type ConnectorSummary,
+  ConnectorId,
   type ProjectId,
 } from "@t3tools/contracts";
 import {
   accountStatusLabel,
   fillableAccounts,
   isBrowserSignIn,
+  renamedSourceLabel,
   signedOutOfGoogle,
   sitesToKeep,
   activityLine,
-  keysInUse,
+  apiKeyRows,
+  onlyIn,
+  keptAgentKeys,
   agentMayUse,
   libraryLinkTemplate,
-  accountListRows,
+  githubIdentities,
   providerManagedAccounts,
+  steadyProviderRows,
+  type ProviderRowsCache,
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
@@ -30,17 +38,22 @@ import {
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
+  fillChoice,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
+  importedLabel,
   matchingAccounts,
   mergeProfiles,
   mergeSourceProfiles,
   secretFields,
   matchExistingProfile,
+  foldedNotice,
+  unlistedProfiles,
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { keptAgentOf } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
@@ -66,7 +79,7 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
   });
 
-  it("fills from saved sign-ins only, never a browser sign-in with nothing to type", () => {
+  it("fills from saved sign-ins, a username saved by hand included, never a browser sign-in", () => {
     const google = {
       ...website("work"),
       details: {
@@ -74,8 +87,18 @@ describe("Accounts decisions", () => {
         sites: ["google.com"],
         username: "a@example.com",
         profileId: "work",
+        origin: "browser-session" as const,
       },
     };
+    const byHand = (profileId?: string) => ({
+      ...website(profileId),
+      details: {
+        kind: "website" as const,
+        sites: ["google.com"],
+        username: "b@example.com",
+        ...(profileId ? { profileId } : {}),
+      },
+    });
     const saved = {
       ...website(),
       details: {
@@ -85,12 +108,16 @@ describe("Accounts decisions", () => {
       },
       secrets: { password: { source: { type: "scient" as const } } },
     };
-    expect(fillableAccounts([google, saved], "https://accounts.google.com/", "work")).toEqual([
-      saved,
-    ]);
+    expect(
+      fillableAccounts(
+        [google, saved, byHand(), byHand("work")],
+        "https://accounts.google.com/",
+        "work",
+      ),
+    ).toEqual([byHand("work"), saved, byHand()]);
   });
 
-  it("groups Google rows with browser sign-ins, and says when a profile lost Google", () => {
+  it("groups rows recorded from sessions with browser sign-ins, and says when a profile lost Google", () => {
     const google = (state: "signed-in" | "signed-out", profileId = "work") => ({
       ...website(profileId),
       details: {
@@ -98,6 +125,7 @@ describe("Accounts decisions", () => {
         sites: ["google.com"],
         username: "a@example.com",
         profileId,
+        origin: "browser-session" as const,
       },
       signIn: { state, at: "2026-10-31T00:00:00.000Z" },
     });
@@ -114,7 +142,7 @@ describe("Accounts decisions", () => {
     expect(signedOutOfGoogle([], "work")).toBe(false);
   });
 
-  it("keeps working sign-ins and any Google session out of a refresh, per profile", () => {
+  it("keeps working sign-ins and a working Google session out of a refresh, per profile", () => {
     const row = (site: string, profileId: string, state?: "signed-in" | "signed-out") => ({
       ...website(profileId),
       details: { kind: "website" as const, sites: [site], profileId },
@@ -126,12 +154,25 @@ describe("Accounts decisions", () => {
           row("github.com", "work", "signed-in"),
           row("overleaf.com", "work", "signed-out"),
           row("nature.com", "work"),
-          row("google.com", "work", "signed-out"),
+          row("google.com", "work"),
           row("arxiv.org", "home", "signed-in"),
         ],
         "work",
       ),
     ).toEqual(["github.com", "google.com"]);
+    // Google signed this profile out: the browser's sign-in replaces it.
+    expect(
+      sitesToKeep(
+        [row("github.com", "work", "signed-in"), row("google.com", "work", "signed-out")],
+        "work",
+      ),
+    ).toEqual(["github.com"]);
+    // What Google says now wins over what Accounts last saw.
+    expect(sitesToKeep([row("google.com", "work")], "work", false)).toEqual([]);
+    expect(sitesToKeep([row("google.com", "work", "signed-in")], "work", false)).toEqual([]);
+    expect(sitesToKeep([row("google.com", "work", "signed-out")], "work", true)).toEqual([
+      "google.com",
+    ]);
   });
 
   it("offers a site's accounts in any profile, the tab's own profile first", () => {
@@ -205,6 +246,12 @@ describe("Accounts decisions", () => {
     expect(importProfileName(" ", [])).toBe("Profile");
   });
 
+  it("says an empty import brought nothing, and counts cookies when sites can't be read", () => {
+    expect(importedLabel(0, 0)).toBe("nothing to import");
+    expect(importedLabel(3, undefined)).toBe("3 cookies");
+    expect(importedLabel(3, 0)).toBe("3 cookies");
+  });
+
   it("derives kind-specific forms and secret fields from catalogue choices", () => {
     const forms = accountCatalogue.map((entry) => catalogueDetails(entry));
     expect(forms.find((form) => form.kind === "database")).toMatchObject({
@@ -215,6 +262,17 @@ describe("Accounts decisions", () => {
       (form) => form.kind === "api-key" && form.envName === "ANTHROPIC_API_KEY",
     );
     expect(anthropic).toMatchObject({ auth: { type: "header", name: "x-api-key" } });
+    const research = Object.fromEntries(
+      forms.flatMap((form) =>
+        form.kind === "api-key" && form.envName ? [[form.envName, form.auth]] : [],
+      ),
+    );
+    expect(research).toMatchObject({
+      NCBI_API_KEY: { type: "query", name: "api_key" },
+      SEMANTIC_SCHOLAR_API_KEY: { type: "header", name: "x-api-key" },
+      OPENALEX_API_KEY: { type: "query", name: "api_key" },
+      UNPAYWALL_EMAIL: { type: "query", name: "email" },
+    });
     expect(secretFields(catalogueDetails(null, "example.com"))).toEqual(["password", "totp"]);
     const gh = forms.find((form) => form.kind === "cli-login" && form.tool === "gh");
     expect(gh && secretFields(gh)).toEqual(["GH_TOKEN"]);
@@ -240,8 +298,11 @@ describe("Accounts decisions", () => {
       tabId: "synthetic-tab",
       profileId: "work",
       url: "https://example.com/login",
+      path: "/login",
+      step: "password" as const,
       username: "synthetic",
       password: "synthetic-password",
+      usernameFrom: "form" as const,
     };
     expect(capturedSignInInput(capture, []).details).toEqual({
       kind: "website",
@@ -297,12 +358,57 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
     userEdited: false,
     hasPassword: true,
     hasValues: false,
+    boxes: [],
   };
   expect(automaticSignIn(form)).toBe(true);
   expect(automaticSignIn({ ...form, userEdited: true })).toBe(false);
   expect(automaticSignIn({ ...form, hasValues: true })).toBe(false);
   expect(automaticSignIn({ ...form, profileId: "incognito" })).toBe(false);
   expect(automaticSignIn({ ...form, url: "http://example.com" })).toBe(false);
+});
+
+it("fills each login box with a saved username that fits it", () => {
+  const signIn = (username: string) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username },
+    secrets: {},
+  });
+  const id = signIn("123456789");
+  const email = signIn("person@example.edu");
+  const emailBox = { email: true, minLength: -1, maxLength: -1, pattern: "" };
+  const idBox = { email: false, minLength: 9, maxLength: 9, pattern: "" };
+  const textBox = { email: false, minLength: -1, maxLength: -1, pattern: "" };
+  // An ID beside an email: both, whichever row comes first.
+  expect(fillChoice([id, email], [emailBox, idBox])).toEqual({
+    account: email,
+    otherUsername: "123456789",
+  });
+  // Only IDs saved: the ID goes to its box, the email box stays empty.
+  expect(fillChoice([id], [emailBox, idBox])).toEqual({ account: id, otherUsername: undefined });
+  // A box for a 9-digit ID takes the ID row even when an email row comes first.
+  expect(fillChoice([email, id], [{ ...textBox, pattern: "[0-9]{9}" }]).account).toBe(id);
+  expect(fillChoice([email, id], [textBox]).account).toBe(email);
+});
+
+it("fills the newest saved password of the username, and never one the site refused", () => {
+  const row = (changedAt?: string, signIn?: AccountSummary["signIn"]) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username: "a@example.edu" },
+    secrets: {
+      password: {
+        source: { type: "scient" as const },
+        ...(changedAt ? { changedAt } : {}),
+      },
+    },
+    ...(signIn ? { signIn } : {}),
+  });
+  const box = [{ email: true, minLength: -1, maxLength: -1, pattern: "" }];
+  const older = row("2023-01-01T00:00:00.000Z");
+  const newer = row("2025-01-01T00:00:00.000Z");
+  expect(fillChoice([older, newer], box).account).toBe(newer);
+  // Imported before dates were kept: the one that last worked, never a refused one.
+  const worked = row(undefined, { state: "signed-in", at: "2025-02-01T00:00:00.000Z" });
+  const refused = row(undefined, { state: "password-rejected", at: "2025-03-01T00:00:00.000Z" });
+  expect(fillChoice([row(), refused, worked], box).account).toBe(worked);
+  expect(fillChoice([refused], box).account).toBeUndefined();
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {
@@ -318,6 +424,31 @@ it("offers connected vaults until a write rejection marks one read-only", () => 
     }).map((vault) => vault.id),
   ).toEqual(["available"]);
   expect(writableOnePasswordVaults({ state: "not-connected" })).toEqual([]);
+});
+
+describe("a profile merged into Main", () => {
+  it("is named for a week for Undo, and listed nowhere, its rows' entry included", () => {
+    const at = "2026-11-07T10:00:00.000Z";
+    const retired = (id: string, name: string) => ({
+      ...defaultBrowserProfileRecord(BrowserProfileId.make(id)),
+      retired: { at, into: "main" as const, name },
+    });
+    const snapshot = {
+      profiles: [retired("personal", "Personal"), retired("research", "Research")],
+      accounts: [website("research")],
+    };
+    const now = Date.parse(at);
+    expect(foldedNotice(snapshot, now)?.text).toBe("Merged into Main: Personal, Research.");
+    expect(foldedNotice(snapshot, now + 8 * 24 * 60 * 60 * 1000)).toBeUndefined();
+    expect(foldedNotice({ profiles: [] }, now)).toBeUndefined();
+    // Still in this client's list while the merge finishes: hidden all the same.
+    const listed = mergeProfiles(
+      [{ id: "personal", name: "Personal", kind: "persistent" }],
+      snapshot.profiles,
+    );
+    expect(listed.map(({ id }) => id)).toEqual(["default"]);
+    expect(unlistedProfiles(snapshot, listed)).toEqual([]);
+  });
 });
 
 describe("matchExistingProfile", () => {
@@ -463,24 +594,139 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
       { id: "second", name: "Second", source: "local" as const, enabled: false, apps },
     ],
   };
-  expect(
-    providerManagedAccounts([base, codex]).map((row) => [row.kind, row.name, row.instanceId]),
-  ).toEqual([
-    ["claude", "Signed in", base.instanceId],
+  const rows = (
+    providers: ReadonlyArray<ServerProvider>,
+    previous = new Map() as Parameters<typeof providerManagedAccounts>[2],
+    inventory = providers,
+  ) => providerManagedAccounts(providers, inventory, previous);
+  const droid = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-droid"),
+    driver: ProviderDriverKind.make("droid"),
+    mcpServers: [
+      { name: "Linear", status: "connected" as const, signedIn: true },
+      { name: "Local tools", status: "connected" as const },
+      { name: "Notion", status: "needs-auth" as const },
+    ],
+  };
+  const first = rows([base, codex]);
+  expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["codex", "Connected app", codex.instanceId],
+    ["claude", "Signed in", base.instanceId],
+  ]);
+  // Droid's own word that it holds the sign-in; a local server or one asking to sign in is not.
+  expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["droid", "Linear", droid.instanceId],
+  ]);
+  // Scient Agent's own ChatGPT sign-in reports the ChatGPT apps it reaches; its MCP settings do not count.
+  const scient = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-scient"),
+    driver: ProviderDriverKind.make("scient"),
+    mcpServers: [
+      { name: "Gmail", status: "connected" as const, scope: "chatgpt", signedIn: true },
+      { name: "local-files", status: "unknown" as const, scope: "user" },
+    ],
+  };
+  expect(rows([scient]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["scient", "Gmail", scient.instanceId],
   ]);
   expect(
-    providerManagedAccounts([
+    rows([
       { ...base, mcpServers: [] },
       { ...codex, plugins: [] },
-    ]),
+    ]).rows,
   ).toEqual([]);
+  // Uninstalling or disabling an instance removes its rows, even from the kept list.
   expect(
-    providerManagedAccounts([
-      { ...base, enabled: false },
-      { ...codex, installed: false },
-    ]),
+    rows(
+      [
+        { ...base, enabled: false },
+        { ...codex, installed: false },
+      ],
+      first.next,
+    ).rows,
   ).toEqual([]);
+  // A reset inventory (scope change) or Codex not yet reporting keeps the last known rows.
+  expect(rows([base, codex], first.next, []).rows).toEqual(first.rows);
+  expect(
+    rows([base, codex], first.next, [base, (({ plugins: _, ...rest }) => rest)(codex)]).rows,
+  ).toEqual(first.rows);
+  // A Claude server still starting keeps its place; one that asks to sign in again leaves.
+  const restarting = (status: "pending" | "needs-auth") => ({
+    ...base,
+    mcpServers: [{ name: "Signed in", status, scope: "claudeai" as const }],
+  });
+  expect(rows([restarting("pending"), codex], first.next).rows).toEqual(first.rows);
+  expect(rows([restarting("pending"), codex]).rows.map((row) => row.kind)).toEqual(["codex"]);
+  expect(rows([restarting("needs-auth"), codex], first.next).rows.map((row) => row.kind)).toEqual([
+    "codex",
+  ]);
+});
+
+it("shows a connector once when agents signed in to one account both report it", () => {
+  const claude = (id: string, email?: string): ServerProvider => ({
+    instanceId: ProviderInstanceId.make(id),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: email ? { status: "authenticated", email } : { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [{ name: "claude.ai Claude Docs", status: "connected", scope: "claudeai" }],
+  });
+  const names = (providers: ReadonlyArray<ServerProvider>) =>
+    providerManagedAccounts(providers, providers, new Map()).rows.map((row) => row.name);
+  expect(names([claude("claude", "a@example.com"), claude("work", "a@example.com")])).toEqual([
+    "Claude Docs",
+  ]);
+  expect(names([claude("claude", "a@example.com"), claude("work", "b@example.com")])).toEqual([
+    "Claude Docs",
+    "Claude Docs",
+  ]);
+  // No account reported: nothing says they are one connection.
+  expect(names([claude("claude"), claude("work")])).toEqual(["Claude Docs", "Claude Docs"]);
+});
+
+it("keeps provider rows only under the connection and permission that read them", () => {
+  const claude: ServerProvider = {
+    instanceId: ProviderInstanceId.make("synthetic-claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [{ name: "Drive", status: "connected", scope: "claudeai" }],
+  };
+  const cache: ProviderRowsCache = new Map();
+  const live = {
+    connection: {} as object | null,
+    canRead: true,
+    permitted: true,
+    providers: [claude],
+  };
+  const read = (change: Partial<typeof live> & { inventory?: ReadonlyArray<ServerProvider> }) =>
+    steadyProviderRows(cache, "env", { ...live, inventory: [], ...change }).map((row) => row.name);
+  expect(read({ inventory: [claude] })).toEqual(["Drive"]);
+  expect(read({})).toEqual(["Drive"]);
+  expect(read({ connection: {} })).toEqual([]);
+  expect(read({ inventory: [claude] })).toEqual(["Drive"]);
+  expect(read({ permitted: false })).toEqual([]);
+  expect(read({})).toEqual([]);
+  read({ inventory: [claude] });
+  expect(read({ canRead: false })).toEqual([]);
+  read({ inventory: [claude] });
+  expect(read({ connection: null })).toEqual([]);
+  expect(read({})).toEqual([]);
 });
 
 it("recognizes key prefixes without retaining values or guessing unknown keys", async () => {
@@ -501,27 +747,6 @@ it("recognizes key prefixes without retaining values or guessing unknown keys", 
   expect(recognizeAccountKey("unknown")).toBeUndefined();
   expect(recognizeAccountKey("sk-")).toBeUndefined();
   expect(recognizeAccountKey("sk-synthetic extra")).toBeUndefined();
-});
-
-it("lists one row per site for sign-ins kept only as profile sessions", () => {
-  const signIn = (id: string, site: string, profileId: string) => ({
-    ...website(profileId),
-    accountId: AccountId.make(`acc_${id}`.padEnd(12, "0")),
-    name: site,
-    details: { kind: "website" as const, sites: [site], profileId },
-  });
-  const docs = signIn("docs1", "https://docs.google.com", "yaacov");
-  const password = { ...website(), secrets: { password: { source: { type: "scient" as const } } } };
-  const rows = accountListRows([
-    docs,
-    password,
-    signIn("docs2", "docs.google.com", "work"),
-    signIn("ovl", "overleaf.com", "work"),
-  ]);
-  expect(rows).toHaveLength(3);
-  expect(rows[0]).toHaveLength(2);
-  expect(rows[1]).toBe(password);
-  expect(rows[2]).toMatchObject({ name: "overleaf.com" });
 });
 
 it("turns a link from the library into its pattern", () => {
@@ -564,7 +789,41 @@ describe("account status", () => {
     expect(accountStatusLabel({ signIn: { state: "signed-in", at } }, relative)).toBe(
       "Signed in · 2h ago",
     );
+    const session = (username?: string) => ({
+      kind: "website" as const,
+      sites: ["github.com"],
+      ...(username ? { username } : {}),
+    });
+    expect(
+      accountStatusLabel(
+        { details: session("octo"), signIn: { state: "signed-in", at } },
+        relative,
+      ),
+    ).toBe("Signed in as octo · 2h ago");
+    // An imported or copied session was never seen working; anything else unknown wasn't read.
+    expect(
+      accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, from: "copy" } },
+        relative,
+      ),
+    ).toBe("Copied");
+    expect(
+      accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, detail: "No answer." } },
+        relative,
+      ),
+    ).toBe("Couldn't check");
+    expect(
+      accountStatusLabel(
+        { signIn: { state: "unknown", at, detail: "Password changed", by: "action" } },
+        relative,
+      ),
+    ).toBe("Password changed");
     expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
+    // A failed attempt holds automatic sign-ins: the row says what the person can do.
+    expect(accountStatusLabel({ signIn: { state: "failed", at } }, relative)).toBe(
+      "Sign in needed",
+    );
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(
       accountStatusLabel(
@@ -592,34 +851,84 @@ describe("account status", () => {
     expect(
       activityLine({ ...entry, action: "sign-in", signInOutcome: "password-rejected" }, undefined),
     ).toBe("Password rejected");
+    expect(activityLine({ ...entry, action: "sign-in", keptTyped: "kept" }, undefined)).toBe(
+      "Kept the password you typed",
+    );
   });
 });
 
-describe("keys used by Scient", () => {
-  it("lists secret variables by name, one row per name, and never ordinary settings", () => {
-    const keys = keysInUse(
+describe("API keys", () => {
+  const key = (id: string, name: string, token: AccountSummary["secrets"][string]["source"]) =>
+    ({
+      accountId: AccountId.make(id),
+      name,
+      details: { kind: "api-key", sites: [], auth: { type: "bearer" }, envName: "OPENAI_API_KEY" },
+      secrets: { token: { source: token } },
+    }) as never as AccountSummary;
+  const rows = apiKeyRows({
+    accounts: [
+      key("acc_openai01", "OpenAI", { type: "scient" }),
+      key("acc_groq0001", "Groq", { type: "custom-model", connectionId: "groq" }),
       {
-        codex: {
-          driver: "codex",
-          environment: [
-            { name: "OPENAI_API_KEY", sensitive: true },
-            { name: "CODEX_HOME", sensitive: false },
-          ],
-        },
-        work: {
-          driver: "omp",
-          displayName: "Work",
-          environment: [{ name: "OPENAI_API_KEY", sensitive: true }],
-        },
+        accountId: AccountId.make("acc_site0001"),
+        details: { kind: "website", sites: [] },
+      } as never,
+    ],
+    keyLinks: [
+      {
+        accountId: AccountId.make("acc_openai01"),
+        instanceId: "codex",
+        variable: "OPENAI_API_KEY",
       },
-      [{ name: "Groq" }],
-      () => "Codex",
-    );
-    expect(keys.map((key) => [key.name, key.usedBy])).toEqual([
-      ["OPENAI_API_KEY", ["Codex", "Work"]],
-      ["Groq", ["Custom models"]],
+      { accountId: AccountId.make("acc_gone0001"), instanceId: "work", variable: "HF_TOKEN" },
+    ],
+    instances: {
+      codex: {
+        driver: "codex",
+        environment: [
+          { name: "OPENAI_API_KEY", sensitive: true },
+          { name: "CODEX_HOME", sensitive: false },
+        ],
+      },
+      work: {
+        driver: "omp",
+        displayName: "Work",
+        environment: [
+          { name: "HF_TOKEN", sensitive: true },
+          { name: "OPENAI_API_KEY", sensitive: true },
+        ],
+      },
+    },
+    customModelKeys: [
+      { connectionId: "groq", name: "Groq" },
+      { connectionId: "local", name: "Local", origin: "https://models.example" },
+    ],
+    plainKeys: [
+      { file: "/p/.env", name: "WANDB_API_KEY", kept: false },
+      { file: "/home/.zshrc", name: "WANDB_API_KEY", kept: false },
+      { file: "/p/.env", name: "OPENAI_API_KEY", kept: true },
+    ],
+    driverName: () => "Codex",
+  });
+
+  it("shows each key once, with what uses it, and where a key not kept here lives", () => {
+    expect(rows.map((row) => [row.name, row.uses.map((use) => use.label), onlyIn(row)])).toEqual([
+      // Custom models keep their keys in Accounts' sealed store: kept, even without an account.
+      ["Groq", ["Custom models"], undefined],
+      ["Local", ["Custom models"], undefined],
+      ["OpenAI", ["Codex"], undefined],
+      // Its account was removed, so the variable's last key is only in the agent.
+      ["HF_TOKEN", ["Work"], "Only in Work settings"],
+      // Linked by agent and variable: Work's variable of the same name is its own key.
+      ["OPENAI_API_KEY", ["Work"], "Only in Work settings"],
+      // Each file's copy is its own row (their values may differ); one already in Accounts has none.
+      ["WANDB_API_KEY", [], "Only in /p/.env"],
+      ["WANDB_API_KEY", [], "Only in /home/.zshrc"],
     ]);
-    expect(keys[0]?.variables).toHaveLength(2);
+    expect(rows.find((row) => row.name === "OpenAI")?.uses[0]?.link).toEqual({
+      instanceId: "codex",
+      variable: "OPENAI_API_KEY",
+    });
   });
 });
 
@@ -679,4 +988,113 @@ describe("a university's status", () => {
     expect(accountStatusLabel(check("signed-out"), when)).toBe("Sign in needed");
     expect(accountStatusLabel(check("signed-in"), when)).toBe("Signed in · 2h ago");
   });
+});
+
+describe("githubIdentities", () => {
+  const connector = (
+    connectorId: string,
+    auth: ConnectorSummary["auth"],
+    status: ConnectorSummary["status"],
+  ): ConnectorSummary => ({
+    connectorId: ConnectorId.make(connectorId),
+    serverName: "github",
+    displayName: "GitHub",
+    url: "https://api.githubcopilot.com/mcp/",
+    source: { type: "url" },
+    auth,
+    status,
+    enabled: true,
+    authRevision: 0,
+    availability: { type: "all-projects" },
+    createdAt: "2026-11-03T00:00:00.000Z",
+    updatedAt: "2026-11-03T00:00:00.000Z",
+  });
+  const borrowed = (account: string) =>
+    ({ type: "source-control", host: "github.com", account }) as const;
+
+  it("joins each observed login's uses, each with its own state, and leaves token rows apart", () => {
+    const missing = connector("con_octo0001", borrowed("octo"), "needs-credential");
+    const orphan = connector("con_gone0001", borrowed("gone"), "needs-credential");
+    const identities = githubIdentities(
+      [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "Octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "app",
+        },
+        {
+          kind: "github",
+          id: "github.com:second",
+          name: "second",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+        { kind: "custom-model", id: "m", name: "Model", href: "/settings/custom-models" },
+      ],
+      [
+        missing,
+        orphan,
+        connector(
+          "con_token001",
+          { type: "credential", strategy: "bearer", storage: "owned" },
+          "connected",
+        ),
+      ],
+    );
+    expect(identities).toEqual([
+      {
+        id: "github.com:octo",
+        host: "github.com",
+        login: "Octo",
+        sourceControl: { via: "app" },
+        connector: missing,
+      },
+      {
+        id: "github.com:second",
+        host: "github.com",
+        login: "second",
+        sourceControl: { via: "gh" },
+      },
+      { id: "github.com:gone", host: "github.com", login: "gone", connector: orphan },
+    ]);
+  });
+});
+
+describe("renamedSourceLabel", () => {
+  it("names the source of an imported profile renamed here, and nothing otherwise", () => {
+    const source = { browser: "chrome" as const, profileName: "Yaacov" };
+    expect(renamedSourceLabel("Lab", source)).toBe("Chrome · Yaacov");
+    expect(renamedSourceLabel("Yaacov", source)).toBeUndefined();
+    expect(renamedSourceLabel("Lab", undefined)).toBeUndefined();
+    expect(renamedSourceLabel("Work", { browser: "edge", profileName: "Profile 1" })).toBe(
+      "Microsoft Edge · Profile 1",
+    );
+  });
+});
+
+it("offers back the latest key kept for each setting of this kind of agent", () => {
+  const kept = (id: string, agent: string, setting: string, createdAt: string): AccountSummary => ({
+    ...website(),
+    accountId: AccountId.make(`acc_kept_${id}`),
+    details: { kind: "api-key", sites: [], auth: { type: "bearer" }, keptFrom: { agent, setting } },
+    createdAt,
+  });
+  const gemini = keptAgentOf({ driver: "acpRegistry", config: { agentId: "gemini" } });
+  const older = kept("older01", gemini, "GEMINI_API_KEY", "2026-01-01T00:00:00.000Z");
+  const newer = kept("newer01", gemini, "GEMINI_API_KEY", "2026-02-01T00:00:00.000Z");
+  const field = kept("field01", gemini, "config.apiKey", "2026-01-01T00:00:00.000Z");
+  const otherAgent = kept(
+    "other01",
+    "acpRegistry:qwen",
+    "GEMINI_API_KEY",
+    "2026-03-01T00:00:00.000Z",
+  );
+  expect(keptAgentKeys([newer, otherAgent, older, field, website()], gemini)).toEqual([
+    newer,
+    field,
+  ]);
 });

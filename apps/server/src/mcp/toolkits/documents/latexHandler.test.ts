@@ -865,6 +865,7 @@ describe("Scient LaTeX build handler", () => {
       const failed = snapshot({
         state: "failed",
         failureSummary: "LaTeX compilation failed.",
+        failureClass: "compile_error",
         diagnostics: [
           { severity: "warning", file: "main.tex", line: null, message: "x".repeat(3_000) },
           ...Array.from({ length: 70 }, (_, index) => ({
@@ -887,6 +888,7 @@ describe("Scient LaTeX build handler", () => {
         expect(compileFailure.failure).toMatchObject({
           _tag: "ScientLatexBuildToolError",
           code: "build-failed",
+          failureClass: "compile_error",
         });
         if (compileFailure.failure._tag !== "ScientLatexBuildToolError") {
           return yield* Effect.die(new Error("Expected a LaTeX build tool error."));

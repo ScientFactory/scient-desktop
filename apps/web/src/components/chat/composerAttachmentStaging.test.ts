@@ -105,6 +105,7 @@ describe("actual composer attachment batch staging", () => {
     expect(commit).toHaveBeenCalledExactlyOnceWith({
       images: [{ id: "kept", file: converted }],
       files: [],
+      error: null,
     });
   });
 

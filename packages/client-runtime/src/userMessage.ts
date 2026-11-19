@@ -7,6 +7,8 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2UserMessageInputIntent,
+  // SCIENT-FORK: thread rooms.
+  type RoomMessageAttribution,
   ScheduledTaskId,
 } from "@t3tools/contracts";
 import {
@@ -16,17 +18,18 @@ import {
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
+import { msg } from "gt-i18n";
 
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
-  beforeCacheExpires: "Compacting before the cache expires…",
-  onReturn: "Compacting…",
+  beforeCacheExpires: msg("Compacting before the cache expires…"),
+  onReturn: msg("Compacting…"),
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 
 /** Leads the finished compaction's token counts, in place of "Context compacted". */
 export const IDLE_COMPACTION_TITLES = {
-  beforeCacheExpires: "Context automatically compacted before cache expiry",
-  onReturn: "Context compacted before sending",
+  beforeCacheExpires: msg("Auto-compacted before cache expiry"),
+  onReturn: msg("Context compacted before sending"),
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
@@ -65,7 +68,13 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
-  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+  readonly context?:
+    | {
+        readonly guest?: GuestMessageAttribution | undefined;
+        // SCIENT-FORK: a message sent from a thread room.
+        readonly room?: RoomMessageAttribution | undefined;
+      }
+    | undefined;
 }): {
   readonly text: string;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
@@ -76,6 +85,12 @@ export function resolveUserMessagePresentation(message: {
   if (message.role !== "user") {
     return { text: message.text, attribution: null, scheduledTaskId: undefined };
   }
+  // SCIENT-FORK:START — the agent got attributed words; people see what was written.
+  const room = message.context?.room;
+  if (room?.text !== undefined && message.context?.guest === undefined) {
+    return { text: room.text, attribution: null, scheduledTaskId: undefined };
+  }
+  // SCIENT-FORK:END
   // The stored text names the guest for the agent; people see the guest's own words.
   const guest = message.context?.guest;
   if (guest !== undefined) {

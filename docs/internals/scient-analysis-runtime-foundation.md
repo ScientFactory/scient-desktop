@@ -171,8 +171,10 @@ viewer. Run outputs use a producer-owned analysis artifact store because they ar
 document revisions; their typed asset references still reuse the shared asset and browser
 surfaces. PNG is the reliable default view and FIG preserves MATLAB-native continuation. Optional
 HTML, SVG, or PDF representations can later be enabled deliberately without changing artifact
-identity. Output-file discovery outside the private runner directory remains later work; this
-slice never infers artifacts by diffing the user's project tree.
+identity. Generic run-table adapters (`RunTableAdapter`) also retain PNG/SVG figures a run wrote in
+the project, through the same Compute project-output observer as interactive sessions: a project
+watch held from `prepareRun` to `releaseRun`, never a diff of the project tree. Its coverage facts
+are persisted on the artifact receipt, so a partial watch is not reported as "nothing written".
 
 [Scient Compute](./scient-compute.md) owns the cross-producer
 presentation direction: typed artifact references in chat, representation selection, Plotly and

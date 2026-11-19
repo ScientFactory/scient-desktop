@@ -62,6 +62,9 @@ const CookieRow = Schema.Struct({
   is_httponly: Schema.Number,
   samesite: Schema.Number,
   top_frame_site_key: Schema.String,
+  // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+  has_cross_site_ancestor: Schema.NullOr(Schema.Number),
+  // SCIENT-FORK:END
 });
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
 const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -181,30 +184,59 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
   function* (snapshotPath: string, keys: ChromiumKeyMaterial, platform: NodeJS.Platform) {
     const result = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      // Chromium razes a damaged jar to a file with no tables and rebuilds it on its next write.
+      const tables =
+        yield* sql`select 1 from sqlite_master where type = 'table' and name = 'cookies'`;
+      if (tables.length === 0) return { rows: [], schemaVersion: 0 };
       const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
+      );
+      // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+      const ancestorColumns = yield* sql<{ readonly found: number }>`select count(*) as found
+          from pragma_table_info('cookies') where name = 'has_cross_site_ancestor'`;
+      const ancestor = sql.literal(
+        ancestorColumns[0]?.found ? "has_cross_site_ancestor" : "null as has_cross_site_ancestor",
       );
       const raw =
         schemaVersion >= 15
           ? yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
-                samesite, top_frame_site_key from cookies`
+                samesite, top_frame_site_key, ${ancestor} from cookies`
           : yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
-                samesite, '' as top_frame_site_key from cookies`;
+                samesite, '' as top_frame_site_key, ${ancestor} from cookies`;
+      // SCIENT-FORK:END
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
     const cookies: ImportedCookie[] = [];
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
+    // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+    const skippedByReason = { appBoundEncryption: 0, decryptFailed: 0, partitionUnsupported: 0 };
+    const skip = (row: (typeof result.rows)[number], reason: keyof typeof skippedByReason) => {
+      undecryptable += 1;
+      skippedByReason[reason] += 1;
+      undecryptableHosts.add(bareHost(row.host_key));
+    };
+    // SCIENT-FORK:END
     for (const row of result.rows) {
-      if (row.top_frame_site_key !== "") {
-        undecryptable += 1;
-        undecryptableHosts.add(bareHost(row.host_key));
+      // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+      // Without the stored bit the key can't be rebuilt; guessing it would make a different cookie.
+      if (row.top_frame_site_key !== "" && row.has_cross_site_ancestor === null) {
+        skip(row, "partitionUnsupported");
         continue;
       }
+      // Windows app-bound rows are counted before any decryption; their key never leaves the browser.
+      if (
+        platform === "win32" &&
+        Buffer.from(row.encrypted_value.subarray(0, 3)).toString("latin1") === "v20"
+      ) {
+        skip(row, "appBoundEncryption");
+        continue;
+      }
+      // SCIENT-FORK:END
       const value =
         row.encrypted_value.length === 0
           ? row.value
@@ -216,8 +248,9 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
               platform,
             );
       if (value === null) {
-        undecryptable += 1;
-        undecryptableHosts.add(bareHost(row.host_key));
+        // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+        skip(row, "decryptFailed");
+        // SCIENT-FORK:END
         continue;
       }
       const secure = row.is_secure === 1;
@@ -232,6 +265,16 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         httpOnly: row.is_httponly === 1,
         expirationDate: toUnixSeconds(row.expires_seconds),
         sameSite: sameSiteFromColumn(row.samesite),
+        // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+        ...(row.top_frame_site_key === "" || row.has_cross_site_ancestor === null
+          ? {}
+          : {
+              partitionKey: {
+                topLevelSite: row.top_frame_site_key,
+                hasCrossSiteAncestor: row.has_cross_site_ancestor === 1,
+              },
+            }),
+        // SCIENT-FORK:END
       });
     }
     if (
@@ -249,6 +292,9 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
       cookies,
       undecryptable,
       undecryptableHosts: [...undecryptableHosts],
+      // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+      skippedByReason,
+      // SCIENT-FORK:END
     } satisfies CookieReadResult;
   },
 );

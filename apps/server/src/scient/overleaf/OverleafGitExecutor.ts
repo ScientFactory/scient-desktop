@@ -17,7 +17,7 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
+import { nativeFilePublicationHelper } from "../workspace/NativeFilePublication.ts";
 import { GIT_SCRATCH_LAYOUT, makeGitScratch } from "./OverleafGitScratch.ts";
 
 const DEFAULT_TIMEOUT: Duration.Input = "2 minutes";
@@ -60,6 +60,8 @@ export class OverleafGitError extends Schema.TaggedError<OverleafGitError>()("Ov
 const isOverleafGitError = Schema.is(OverleafGitError);
 const fail = (reason: OverleafGitFailureReason, detail = "", exitCode: number | null = null) =>
   new OverleafGitError({ reason, detail, exitCode });
+const runtimeFailure = (cause: unknown) =>
+  fail("runtime-failed", cause instanceof Error ? cause.message : String(cause));
 
 /**
  * Overleaf's answer to too many Git requests. It comes before anything is sent, and it
@@ -67,6 +69,22 @@ const fail = (reason: OverleafGitFailureReason, detail = "", exitCode: number | 
  */
 export const isRateLimited = (error: unknown): boolean =>
   isOverleafGitError(error) && /rate.?limit exceeded|returned error: 429\b/iu.test(error.detail);
+
+/**
+ * A push that stopped before any pack went out: Git was missing, or it died on
+ * Overleaf's ref advertisement (exit 128, that step's own message). A failure after
+ * the pack went out exits 1 with no ref status (Git 2.54, LC_ALL=C).
+ */
+export const isRefusedBeforeSending = (error: unknown): boolean =>
+  isOverleafGitError(error) &&
+  (error.reason === "git-not-found" ||
+    error.reason === "git-too-old" ||
+    (error.reason === "non-zero-exit" &&
+      error.exitCode === 128 &&
+      !/RPC failed|hung up/u.test(error.detail) &&
+      /^fatal: (?:unable to access '|Authentication failed for '|repository '[^'\n]*' not found|remote error: )/mu.test(
+        error.detail,
+      )));
 
 /**
  * Waits out that limit for what a person asked for. Overleaf allows about 40 requests a
@@ -373,6 +391,8 @@ export interface OverleafGitExecutorOptions {
   /** Private directory for per-command scratch space; created on demand. */
   readonly runtimeRoot: string;
   readonly publicationHelper?: string | undefined;
+  /** Without `publicationHelper`: the host's configured helper, looked for when first needed. */
+  readonly filePublicationHelperPath?: string | undefined;
   /** Tests only. */
   readonly allowLocalProtocols?: boolean;
 }
@@ -456,23 +476,31 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
     return resolved;
   });
 
-  const scratchReady = yield* Effect.tryPromise(async () => {
-    const helper = windows
-      ? (options.publicationHelper ?? (await resolveNativeFilePublicationHelperPath()))
-      : undefined;
-    return makeGitScratch(options.runtimeRoot, windows, helper);
-  }).pipe(
-    Effect.mapError((cause) =>
+  // Kept once made; a failure, such as a helper not yet accepted, is tried again on next use.
+  let scratch: ReturnType<typeof makeGitScratch> | undefined;
+  const scratchReady = Effect.tryPromise({
+    try: () =>
+      (scratch ??= (async () => {
+        const helper = windows
+          ? (options.publicationHelper ??
+            (await nativeFilePublicationHelper(options.filePublicationHelperPath)))
+          : undefined;
+        return makeGitScratch(options.runtimeRoot, windows, helper);
+      })().catch((cause: unknown) => {
+        scratch = undefined;
+        throw cause;
+      })),
+    catch: (cause) =>
       fail(
         "runtime-failed",
         cause instanceof Error ? cause.message : "Could not prepare private Git scratch space.",
       ),
-    ),
-    Effect.result,
-  );
+  });
+  // Made at startup, which sweeps the scratch a crashed command left behind.
+  yield* Effect.ignore(scratchReady);
 
   const runIn = Effect.fnUntraced(function* (executable: string, input: OverleafGitExecuteInput) {
-    const scratchRoot = yield* Effect.fromResult(scratchReady);
+    const scratchRoot = yield* scratchReady;
     const gitDirectory = path.dirname(executable);
     const gitRoot =
       windows && ["cmd", "bin"].includes(path.basename(gitDirectory).toLowerCase())
@@ -483,9 +511,9 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         // A token lives only in its own command's scratch, removed with it.
         const scratch =
           input.token === undefined
-            ? yield* Effect.tryPromise(() => scratchRoot.shared())
+            ? yield* Effect.tryPromise({ try: () => scratchRoot.shared(), catch: runtimeFailure })
             : yield* Effect.acquireRelease(
-                Effect.tryPromise(() => scratchRoot.create()),
+                Effect.tryPromise({ try: () => scratchRoot.create(), catch: runtimeFailure }),
                 (directory) =>
                   Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
               );
@@ -557,13 +585,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
           windows,
         });
       }),
-    ).pipe(
-      Effect.mapError((cause) =>
-        isOverleafGitError(cause)
-          ? cause
-          : fail("runtime-failed", cause instanceof Error ? cause.message : String(cause)),
-      ),
-    );
+    ).pipe(Effect.mapError((cause) => (isOverleafGitError(cause) ? cause : runtimeFailure(cause))));
   });
 
   // Only a success is remembered: installing Git later must not need a restart.
@@ -574,7 +596,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
       : probe.pipe(Effect.tap((found) => Effect.sync(() => (known = found)))),
   );
   const probe: Effect.Effect<OverleafGitAvailability, OverleafGitError> = Effect.gen(function* () {
-    yield* Effect.fromResult(scratchReady);
+    yield* scratchReady;
     let tooOld: OverleafGitError | undefined;
     for (const executable of yield* candidates) {
       const result = yield* runIn(executable, {

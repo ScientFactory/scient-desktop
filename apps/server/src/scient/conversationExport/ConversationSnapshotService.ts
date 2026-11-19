@@ -43,6 +43,8 @@ import * as Option from "effect/Option";
 import { conversationSnapshotProjection } from "./conversationSnapshotProjection.ts";
 import { turnItemMetadataSql } from "../../orchestration-v2/scient-fork/ContextHistorySql.ts";
 
+const isSnapshotRangeError = Schema.is(SnapshotRangeError);
+
 const isConversationExportError = Schema.is(ScientConversationExportError);
 
 /** A portable snapshot is assembled in memory for its digest and document writers.
@@ -220,7 +222,7 @@ const make = Effect.gen(function* () {
       return yield* new ConversationThreadNotFoundError({ threadId: input.threadId });
     }
     const rangeError = (cause: unknown) =>
-      cause instanceof SnapshotRangeError
+      isSnapshotRangeError(cause)
         ? new ConversationRangeError({ messageId: cause.messageId as MessageId })
         : new ConversationSnapshotReadError({ cause });
     const content = yield* Effect.try({

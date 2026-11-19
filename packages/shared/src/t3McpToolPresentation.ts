@@ -59,6 +59,8 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "theme-read"
+  | "theme-set"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -69,10 +71,19 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "list-issues"
+  | "read-issue"
+  | "create-issue"
+  | "comment-issue"
+  | "set-issue-state"
+  | "link-issue"
+  | "unlink-issue"
+  | "list-thread-issues"
   | "browser"
   | "device"
   | "html-preview"
   | "html-render"
+  | "send-to-user"
   // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   | ScientMcpToolSummaryAction;
 // SCIENT-FORK:END
@@ -157,6 +168,17 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
+  list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
+  read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
+  comment_on_issue: tool(
+    ["Comment on", "Commenting on", "Commented on", "an issue"],
+    "comment-issue",
+  ),
+  set_issue_state: tool(["Change", "Changing", "Changed", "an issue's state"], "set-issue-state"),
+  link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
+  unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
+  list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",
@@ -380,6 +402,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
   ),
+  t3_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
+  t3_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
@@ -401,6 +425,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   // SCIENT-FORK:END
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
 };
 
 // SCIENT-FORK:START — Scient adapter: agents call `scient_*`; the table keeps upstream's `t3_*` keys.

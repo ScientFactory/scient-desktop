@@ -192,6 +192,19 @@ it("saves the painted PDF while a newer source stages, is held, or fails", async
     expiresAt: assetB.expiresAt,
     refresh: refreshB,
   });
+
+  // While the host's Save dialog is open, the action shows its progress and cannot start twice.
+  const held = Promise.withResolvers<Awaited<ReturnType<PdfSourceActions["saveCopy"]>>>();
+  saveCopy.mockReturnValueOnce(held.promise);
+  await savePaintedCopy(_fixture);
+  await _fixture.root0.getByRole("button", { name: "More PDF actions" }).click();
+  await expect.element(page.getByRole("menuitem", { name: "Saving copy…" })).toBeDisabled();
+  await act(async () => {
+    held.resolve({ _tag: "cancelled" });
+    await held.promise;
+  });
+  await expect.element(page.getByRole("menuitem", { name: "Save a copy" })).toBeEnabled();
+  expect(saveCopy).toHaveBeenCalledTimes(5);
 });
 
 it("keeps a stale notice for generated PDFs outside the LaTeX header", async () => {

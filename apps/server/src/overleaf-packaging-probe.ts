@@ -4,6 +4,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as ServerConfig from "./config.ts";
@@ -24,7 +25,14 @@ import { makeOverleafConnections } from "./scient/overleaf/OverleafConnections.t
 const [profile, phase, installedHelper] = process.argv.slice(2);
 NodeAssert.ok(profile && ["connect", "restart", "refuse"].includes(phase!));
 const root = await NodeFSP.realpath(profile);
-const helper = await resolveNativeFilePublicationHelperPath(installedHelper);
+const failures: string[] = [];
+const helper = await resolveNativeFilePublicationHelperPath(installedHelper, (failure) =>
+  failures.push(
+    `attempt ${failure.attempt}, ${failure.stage}, ${Math.round(failure.elapsedMs)} ms: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
+  ),
+);
+if (helper && failures.length > 0)
+  console.log(`Publication helper passed on a later attempt (${failures.join("; ")}).`);
 if (phase === "refuse") {
   NodeAssert.equal(
     helper,
@@ -33,7 +41,7 @@ if (phase === "refuse") {
   );
   console.log("Overleaf helper-unavailable refusal passed.");
 } else {
-  NodeAssert.ok(helper, "Installed publication helper unavailable");
+  NodeAssert.ok(helper, `Installed publication helper unavailable (${failures.join("; ")})`);
   if (installedHelper !== undefined)
     NodeAssert.equal(
       await resolveNativeFilePublicationHelperPath(),
@@ -221,8 +229,21 @@ if (phase === "refuse") {
       for (const [name, content] of Object.entries(expected))
         NodeAssert.equal(await NodeFSP.readFile(NodePath.join(folder, name), "utf8"), content);
     });
+    const platform = yield* HostProcess.Platform,
+      arch = yield* HostProcess.Architecture;
     console.log(
-      JSON.stringify({ overleaf: phase, helper, executable: process.execPath, passed: true }),
+      JSON.stringify({
+        overleaf: phase,
+        helper,
+        executable: process.execPath,
+        runtime: {
+          node: process.version,
+          electron: process.versions.electron ?? null,
+          platform,
+          arch,
+        },
+        passed: true,
+      }),
     );
   });
   await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));

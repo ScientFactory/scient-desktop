@@ -30,13 +30,19 @@ export class ScientComputeToolError extends Schema.TaggedError<ScientComputeTool
 ) {}
 
 const SessionId = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)).annotate({
-  description: "A session id from scient_compute_sessions or an earlier run.",
+  description: "From scient_compute_sessions or an earlier run.",
 });
 const WaitSeconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1800 })).annotate({
-  description: "How long to wait for the run to finish before returning (default 120).",
+  description: "Seconds to wait for the run to finish before returning (default 120).",
+});
+const OutputWaitSeconds = WaitSeconds.annotate({
+  description: "Seconds to wait for a run still going before returning (default 0).",
+});
+const SetupWaitSeconds = WaitSeconds.annotate({
+  description: "Seconds to wait for the install before returning (default 120).",
 });
 const IncludeImages = Schema.Boolean.annotate({
-  description: "Attach the run's figures as images (default true).",
+  description: "Attach figures as images (default true).",
 });
 
 export const ComputeToolSession = Schema.Struct({
@@ -82,7 +88,7 @@ const operation = (id: string): OperationDefinition => ({
 
 const ScientComputeRunTool = Tool.make("scient_compute_run", {
   description:
-    "Run code in a Scient Compute session and return its output, errors and figures. Without `session`, the code runs in your own session for this chat and language, started on first use; variables persist between runs. With `session` (from scient_compute_sessions), it runs in that session, such as the user's open file, where the user sees it live. The working directory is the project folder. Long runs keep going after the wait; read them later with scient_compute_output.",
+    "Run code in a Scient Compute session and return its output, errors and figures. Without `session`, it runs in your own session for this chat and language, which keeps its variables between runs. With `session`, it runs there, such as the user's open file, where the user sees it live. The working directory is the project folder. A run still going after the wait keeps going; read it with scient_compute_output instead of running it again.",
   parameters: Schema.Struct({
     code: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024 * 1024)),
     language: Schema.optional(
@@ -161,12 +167,11 @@ const ScientComputeSessionsTool = Tool.make("scient_compute_sessions", {
   .annotate(ScientOperation, operation("compute.sessions"));
 
 const ScientComputeOutputTool = Tool.make("scient_compute_output", {
-  description:
-    "Read a run's output, errors and figures, by default the latest run in the session. Waits for a running run up to `waitSeconds` (default 0).",
+  description: "Read a run's output, errors and figures, by default the latest run in the session.",
   parameters: Schema.Struct({
     session: SessionId,
     run: Schema.optional(Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128))),
-    waitSeconds: Schema.optional(WaitSeconds),
+    waitSeconds: Schema.optional(OutputWaitSeconds),
     includeImages: Schema.optional(IncludeImages),
   }),
   success: RunResult,
@@ -226,12 +231,17 @@ const ScientComputeControlTool = Tool.make("scient_compute_control", {
 
 const ScientComputeSetupTool = Tool.make("scient_compute_setup", {
   description:
-    "Install Scient-managed Python, a private scientific Python (NumPy, pandas, SciPy, Matplotlib, seaborn, statsmodels, scikit-learn, SymPy, Plotly and more), or add its Toolkits: python-large-data (Arrow/Parquet, HDF5, NetCDF, Zarr, Dask, xarray), python-image-analysis, python-bioinformatics. Use it when a package is missing instead of installing into the user's own Python. The first install takes a few minutes; call again to check progress.",
+    "Install Scient-managed scientific Python (NumPy, pandas, SciPy, Matplotlib, scikit-learn and more), or add Toolkits to it. Use it when a package is missing instead of installing into the user's own Python. The first install takes a few minutes; call again to check progress.",
   parameters: Schema.Struct({
     toolkits: Schema.optional(
-      Schema.Array(Schema.String.check(Schema.isMaxLength(64))).check(Schema.isMaxLength(16)),
+      Schema.Array(Schema.String.check(Schema.isMaxLength(64)))
+        .check(Schema.isMaxLength(16))
+        .annotate({
+          description:
+            "Toolkit ids to add: python-large-data (xarray, Arrow, HDF5, NetCDF, Zarr, Dask), python-image-analysis (scikit-image, TIFF), python-bioinformatics (Biopython).",
+        }),
     ),
-    waitSeconds: Schema.optional(WaitSeconds),
+    waitSeconds: Schema.optional(SetupWaitSeconds),
   }),
   success: Schema.Struct({
     installed: Schema.Boolean,
@@ -283,7 +293,7 @@ export type ComputeToolInventory = typeof ComputeToolInventory.Type;
 
 const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
   description:
-    "List what this computer has for each language, including this project's environments and tools Scient Compute cannot run yet: the default runtime, every program found, and how to use it. Reading it starts nothing.",
+    "List what this computer has for each language: the default runtime, every program found, this project's environments, and how to use each, including tools Scient Compute cannot run yet. Starts nothing.",
   parameters: EmptyToolInput,
   success: ComputeToolInventory,
   failure: ScientComputeToolError,
@@ -302,7 +312,7 @@ const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
   });
 
 const NotebookPath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024)).annotate({
-  description: "The .ipynb file, relative to the project root.",
+  description: "The .ipynb file, project-relative.",
 });
 const NotebookCellId = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)).annotate({
   description: "A cell id from scient_notebook_read.",
@@ -356,7 +366,7 @@ const NotebookEditOperation = Schema.Union([
 
 const ScientNotebookReadTool = Tool.make("scient_notebook_read", {
   description:
-    "Read a Jupyter notebook as cells: an outline of every cell, or the listed cells in full, with whether each is current and its output as text. Use this instead of reading the .ipynb file, which is JSON with embedded figures.",
+    "Read a Jupyter notebook as cells: an outline of every cell, or the listed cells in full, with each cell's version, whether it is current, and its output as text. Use this instead of reading the .ipynb file.",
   parameters: Schema.Struct({
     path: NotebookPath,
     cells: Schema.optional(Schema.Array(NotebookCellId)),
@@ -374,7 +384,7 @@ const ScientNotebookReadTool = Tool.make("scient_notebook_read", {
 
 const ScientNotebookEditTool = Tool.make("scient_notebook_edit", {
   description:
-    "Change a notebook by cell: replace a cell's source, insert, delete or move cells, or clear outputs. The change shows at once in the notebook the user has open. A cell changed since your last read is listed under refused and left as it is, returned here with its current source and version. Use this instead of editing the .ipynb file.",
+    "Change a notebook by cell; the change shows at once in the notebook the user has open. replace needs cell, source and the version from your last read; insert needs after, type and source; delete needs cell; move needs cell and offset. A replace of a cell changed since your read is refused and returned with its current source and version: decide again before retrying. Use this instead of editing the .ipynb file.",
   parameters: Schema.Struct({
     path: NotebookPath,
     edits: Schema.Array(NotebookEditOperation).check(Schema.isMaxLength(256)),
@@ -392,7 +402,7 @@ const ScientNotebookEditTool = Tool.make("scient_notebook_edit", {
 
 const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
   description:
-    "Run notebook cells in the notebook's own session, the one the user sees, and save the results into the file. Runs every code cell by default, in order, and stops at the first failure. Returns each cell's output and figures.",
+    "Run notebook cells in the notebook's own session, the one the user sees, and save the results into the file. By default every code cell, in order, stopping at the first failure. Returns each cell's output and figures.",
   parameters: Schema.Struct({
     path: NotebookPath,
     cells: Schema.optional(Schema.Array(NotebookCellId)),
@@ -410,6 +420,136 @@ const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, operation("notebook.run"));
 
+const ResultPath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096));
+
+export const ComputeToolResultSummary = Schema.Struct({
+  revision: Schema.String,
+  script: Schema.String,
+  finishedAt: Schema.String,
+  /** `observed` (Python) lists the project files the script was seen reading. */
+  inputTracking: Schema.String,
+  inputs: Schema.Array(Schema.String),
+  /** What changed since this revision ran, e.g. `input changed: data/cohort.csv`. Empty if nothing Scient checks has. */
+  outOfDate: Schema.Array(Schema.String),
+});
+
+export const ComputeToolResultValue = Schema.Struct({
+  output: Schema.String,
+  pointer: Schema.String,
+  value: Schema.String,
+  /** Paste this into a Markdown manuscript as is. */
+  markdown: Schema.String,
+});
+
+const ScientResultsRunTool = Tool.make("scient_results_run", {
+  description:
+    'Run a saved script from scratch and publish what it writes to $SCIENT_RESULTS_DIR as a result revision: a JSON file of values formatted as they should read (e.g. {"hr": "0.72"}) and .png/.jpg/.svg figures. Returns the values with the Markdown that cites each.',
+  parameters: Schema.Struct({
+    path: ResultPath.annotate({ description: "The script, relative to the project root." }),
+    waitSeconds: Schema.optional(WaitSeconds),
+  }),
+  success: Schema.Struct({
+    status: Schema.Literals(["published", "failed", "running"]),
+    message: Schema.optional(Schema.String),
+    revision: Schema.optional(ComputeToolResultSummary),
+    values: Schema.optional(Schema.Array(ComputeToolResultValue)),
+    figures: Schema.optional(Schema.Array(Schema.String)),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Run a script and publish its results")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, operation("compute.results.run"));
+
+const ScientResultsListTool = Tool.make("scient_results_list", {
+  description:
+    "Linked results in this project: each script's newest revision, what changed since it ran, and its values with their Markdown.",
+  parameters: EmptyToolInput,
+  success: Schema.Struct({
+    scripts: Schema.Array(
+      Schema.Struct({
+        latest: ComputeToolResultSummary,
+        revisions: Schema.Int,
+        values: Schema.Array(ComputeToolResultValue),
+        figures: Schema.Array(Schema.String),
+        tables: Schema.Array(Schema.String),
+      }),
+    ),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List linked results")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.results.list"));
+
+const ScientResultsMarkdownTool = Tool.make("scient_results_markdown", {
+  description:
+    "Text that cites one result: a value by JSON Pointer, a figure or a CSV table. For a .tex paper Scient writes results/<script>/ files and also returns preamble lines. Insert it with your file tools.",
+  parameters: Schema.Struct({
+    document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
+    revision: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(64)),
+    output: ResultPath.annotate({ description: "The file in the revision, e.g. values.json." }),
+    pointer: Schema.optional(
+      Schema.String.check(Schema.isMaxLength(4096)).annotate({
+        description: "JSON Pointer of a value, e.g. /cohort/n. Omit for a figure.",
+      }),
+    ),
+    alt: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+  }),
+  success: Schema.Struct({
+    markdown: Schema.String,
+    preamble: Schema.optional(Schema.Array(Schema.String)),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Markdown for a linked result")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.results.markdown"));
+
+const ScientResultsCheckTool = Tool.make("scient_results_check", {
+  description:
+    "Check the linked results in a manuscript, or the result files a .tex paper includes: out of date, a newer run, or edited.",
+  parameters: Schema.Struct({
+    document: ResultPath.annotate({ description: "The manuscript, relative to the project root." }),
+  }),
+  success: Schema.Struct({
+    results: Schema.Array(
+      Schema.Struct({
+        line: Schema.Int,
+        kind: Schema.Literals(["value", "figure", "table", "file"]),
+        shown: Schema.String,
+        /** current, newer-run, out-of-date, edited, missing or no-record. */
+        state: Schema.String,
+        revision: Schema.String,
+        value: Schema.NullOr(Schema.String),
+        newerRevision: Schema.NullOr(Schema.String),
+        newerValue: Schema.NullOr(Schema.String),
+        outOfDate: Schema.Array(Schema.String),
+      }),
+    ),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check linked results in a manuscript")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("compute.results.check"));
+
 export const ScientComputeToolkit = Toolkit.make(
   ScientComputeRunTool,
   ScientComputeOutputTool,
@@ -422,4 +562,8 @@ export const ScientComputeToolkit = Toolkit.make(
   ScientNotebookReadTool,
   ScientNotebookEditTool,
   ScientNotebookRunTool,
+  ScientResultsRunTool,
+  ScientResultsListTool,
+  ScientResultsMarkdownTool,
+  ScientResultsCheckTool,
 );

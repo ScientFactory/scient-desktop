@@ -77,9 +77,9 @@ describe("importFailureMessage", () => {
         "This file couldn't be checked. Try again.",
       ),
     ).toBe("This file couldn't be checked. Try again.");
-    expect(importFailureMessage(new ConversationImportNotice("Plain words."), "fallback")).toBe(
-      "Plain words.",
-    );
+    expect(
+      importFailureMessage(new ConversationImportNotice({ message: "Plain words." }), "fallback"),
+    ).toBe("Plain words.");
   });
 });
 

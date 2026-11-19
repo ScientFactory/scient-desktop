@@ -913,6 +913,102 @@ describe("Oh My Pi session runtime outcomes", () => {
     );
   }
 
+  it.effect("a later run that recovers in the same turn outweighs the prompt's failed run", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("recovered");
+      yield* h.runtime.accepted("prompt-recovered", true);
+      // The prompt's run gives up; a background result wakes the agent before the turn settles.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "error", errorMessage: "Couldn't reach chatgpt.com" }),
+        { type: "auto_retry_end", success: false, attempt: 10, finalError: "Retry budget spent" },
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        {
+          type: "prompt_result",
+          id: "prompt-recovered",
+          agentInvoked: true,
+          status: "error",
+          error: { message: "Couldn't reach chatgpt.com", retryable: true, kinds: ["transient"] },
+          sessionSettled: false,
+        },
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "done" }] }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+      );
+      const outcome = yield* h.outcome;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(outcome).toEqual({
+        type: "turn-outcome",
+        outcome: "completed",
+        requestId: "prompt-recovered",
+      });
+    }),
+  );
+
+  it.effect("a later run that fails too keeps the prompt's usage limit and reset time", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("limited");
+      yield* h.runtime.accepted("prompt-limited", true);
+      const limited = assistantEnd({ stopReason: "error", errorMessage: "429 rate limited" });
+      yield* h.wire.send(
+        { type: "agent_start" },
+        limited,
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        {
+          type: "prompt_result",
+          id: "prompt-limited",
+          agentInvoked: true,
+          status: "error",
+          error: {
+            message: "429 rate limited",
+            retryable: false,
+            httpStatus: 429,
+            resetAt: Date.UTC(2026, 10, 17),
+          },
+          sessionSettled: false,
+        },
+        { type: "agent_start" },
+        limited,
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+      );
+      const outcome = yield* h.outcome;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(outcome).toMatchObject({
+        outcome: "failed",
+        failureClass: "usage_limit",
+        resetAt: "2026-11-17T00:00:00.000Z",
+      });
+    }),
+  );
+
+  it.effect("a later run that fails after the prompt's run succeeded fails the turn", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("woken");
+      yield* h.runtime.accepted("prompt-woken", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "started a job" }] }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        {
+          type: "prompt_result",
+          id: "prompt-woken",
+          agentInvoked: true,
+          status: "completed",
+          sessionSettled: false,
+        },
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "error", errorMessage: "Couldn't reach chatgpt.com" }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+      );
+      const outcome = yield* h.outcome;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(outcome).toMatchObject({ outcome: "failed", detail: "Couldn't reach chatgpt.com" });
+    }),
+  );
+
   it.effect("a late prompt_result of a settled turn does not decide the next one", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
@@ -1804,6 +1900,50 @@ describe("Oh My Pi autonomous continuation ownership", () => {
     }),
   );
 
+  it.effect("a paused run's final agent_end stays out of the next turn (OMP 18.21)", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      const first = { role: "assistant", content: [{ type: "text", text: "First answer" }] };
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("first-prompt", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd(first),
+        // The run pauses on a background job, which can still resume it.
+        {
+          type: "agent_end",
+          messages: [first],
+          isTerminal: false,
+          yielded: true,
+          awaitingAsyncWork: true,
+        },
+        { type: "prompt_result", id: "first-prompt", agentInvoked: true, status: "completed" },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "first-prompt" });
+      expect(yield* h.runtime.begin("second")).toEqual({ turnId: "second", steering: false });
+      // The job went away without waking the run, which now ends with no loop of its own.
+      yield* h.wire.send({ type: "agent_end", messages: [first], isTerminal: true, yielded: true });
+      const ended = yield* h.settleFrames;
+      expect(ended).not.toContainEqual(
+        expect.objectContaining({ type: "assistant-delta", delta: "First answer" }),
+      );
+      yield* h.runtime.accepted("second-prompt", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ content: [{ type: "text", text: "Second answer" }] }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        { type: "prompt_result", id: "second-prompt", agentInvoked: true, status: "completed" },
+      );
+      const updates = yield* h.settleFrames;
+      expect(updates).toContainEqual(
+        expect.objectContaining({ type: "assistant-delta", delta: "Second answer" }),
+      );
+      expect(updates.filter((update) => update.type === "turn-started")).toEqual([]);
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "second-prompt" });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
   it.effect("a message racing a native wake-up owns its turn until its own prompt_result", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
@@ -2040,7 +2180,10 @@ it.effect("a background wake-up after an uncertain outcome opens a continuation"
       _tag: "Event",
       event: { type: "agent_end", messages: [], isTerminal: true },
     });
-    expect(yield* h.next("turn-outcome")).toMatchObject({ outcome: "unknown" });
+    expect(yield* h.next("turn-outcome")).toMatchObject({
+      outcome: "unknown",
+      failureCode: "idle_confirmation_failed",
+    });
     // The process is still alive, so its background work can wake it.
     yield* Queue.offer(h.events, { _tag: "Event", event: { type: "agent_start" } });
     expect(yield* h.next("turn-started")).toEqual({
@@ -2069,7 +2212,10 @@ it.effect("a message whose prompt_result never arrives settles as uncertain", ()
       yield* TestClock.adjust("250 millis");
       for (let hop = 0; hop < 20; hop++) yield* Effect.yieldNow;
     }
-    expect(yield* Fiber.join(fiber)).toMatchObject({ outcome: "unknown" });
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      outcome: "unknown",
+      failureCode: "prompt_result_timeout",
+    });
     yield* Scope.close(h.scope, Exit.void);
   }).pipe(Effect.scoped),
 );

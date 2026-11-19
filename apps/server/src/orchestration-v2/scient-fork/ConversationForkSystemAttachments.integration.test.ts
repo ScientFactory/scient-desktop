@@ -43,7 +43,7 @@ import {
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { ConversationForkService } from "./ConversationForkService.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -162,7 +162,6 @@ it.live(
         const importer = yield* LegacyImporter.LegacyV1ThreadImporter;
         yield* importer.reconcileShells;
         yield* importer.ensureTranscript(source);
-        const forks = yield* ConversationForkService;
         const command = {
           type: "thread.fork" as const,
           commandId: CommandId.make("system-file-fork"),
@@ -171,7 +170,7 @@ it.live(
           sourceAssistantMessageId: MessageId.make("system-file-answer"),
           workspaceMode: "local" as const,
         };
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         yield* (yield* OrchestratorV2).dispatch({
           type: "thread.delete",
           commandId: CommandId.make("system-file-source-delete"),

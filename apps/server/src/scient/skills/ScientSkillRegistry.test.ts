@@ -1,5 +1,6 @@
 import {
   loadEmbeddedSkillRelease,
+  personalSkillReleaseFromFiles,
   type SkillCatalog,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
@@ -146,6 +147,56 @@ describe("Scient skill registry add-on releases", () => {
     }).pipe(
       Effect.provide(
         ScientSkillRegistry.layerFromCatalog({ releases: [builtIn], diagnostics: [] }),
+      ),
+    ),
+  );
+});
+
+describe("Scient skill registry personal skills", () => {
+  const personal = (name: string) =>
+    personalSkillReleaseFromFiles(name, {
+      "SKILL.md": new TextEncoder().encode(
+        `---\nname: ${name}\ndescription: The user's own ${name}.\n---\n\nDo it their way.\n`,
+      ),
+    });
+
+  it.effect("gives way to a plugin with the same name and comes back when it goes", () =>
+    Effect.gen(function* () {
+      const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
+      const mine = personal("lab-notes");
+      expect(yield* registry.replacePersonalReleases([mine])).toEqual([]);
+      expect((yield* registry.current).defaultActive(mine)).toBe(true);
+
+      const plugin = addonSkill({
+        name: "lab-notes",
+        id: "acme.lab-notes",
+        addonId: "acme.lab",
+        addonVersion: "1.0.0",
+      });
+      yield* registry.replaceAddonReleases([
+        { addonId: "acme.lab", addonVersion: "1.0.0", releases: [plugin] },
+      ]);
+      const withPlugin = (yield* registry.current).catalog.releases.filter(
+        (release) => release.name === "lab-notes",
+      );
+      expect(withPlugin.map((release) => release.origin)).toEqual(["addon:acme.lab@1.0.0"]);
+      expect((yield* registry.personalRejections).map((rejection) => rejection.name)).toEqual([
+        "lab-notes",
+      ]);
+
+      yield* registry.replaceAddonReleases([]);
+      expect(
+        (yield* registry.current).catalog.releases
+          .filter((release) => release.name === "lab-notes")
+          .map((release) => release.origin),
+      ).toEqual(["personal"]);
+      expect(yield* registry.personalRejections).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        ScientSkillRegistry.layerFromCatalog({
+          releases: [],
+          diagnostics: [],
+        } satisfies SkillCatalog),
       ),
     ),
   );

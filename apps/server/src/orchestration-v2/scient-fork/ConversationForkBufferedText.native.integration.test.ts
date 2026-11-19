@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -59,7 +60,6 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { checkpointRefForThreadTurn } from "./ForkCheckpointBaseline.ts";
 import { observeCheckpointOwnership } from "./checkpointOwnershipCompletion.testkit.ts";
 import {
@@ -68,6 +68,8 @@ import {
 } from "../testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as PortScanner from "../../preview/PortScanner.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 const isThreadPayload = Schema.is(Schema.Struct({ threadId: Schema.String }));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -97,6 +99,7 @@ function codexReplayPreamble(input: {
   /** Text the adapter should send, when it differs from what the user typed. */
   readonly sentPrompt?: string;
   readonly startRequestId?: number;
+  readonly configRequestId?: number;
   readonly turnRequestId?: number;
   readonly cwd?: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
@@ -191,11 +194,26 @@ function codexReplayPreamble(input: {
         },
       },
     },
+    // Codex reads its configured reasoning summary before every turn/start.
+    {
+      type: "expect_outbound",
+      label: "config/read",
+      frame: {
+        id: input.configRequestId ?? 3,
+        method: "config/read",
+        params: { cwd: input.cwd ?? "/workspace", includeLayers: false },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "config/read",
+      frame: { id: input.configRequestId ?? 3, result: { config: {}, origins: {} } },
+    },
     {
       type: "expect_outbound",
       label: "turn/start",
       frame: {
-        id: input.turnRequestId ?? 3,
+        id: input.turnRequestId ?? 4,
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
@@ -205,7 +223,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
           collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
@@ -225,7 +243,7 @@ function codexReplayPreamble(input: {
       type: "emit_inbound",
       label: "turn/start",
       frame: {
-        id: input.turnRequestId ?? 3,
+        id: input.turnRequestId ?? 4,
         result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
       },
     },
@@ -573,12 +591,12 @@ it.live.each(
         {
           type: "expect_outbound",
           frame: {
-            id: 4,
+            id: 5,
             method: "turn/interrupt",
             params: { threadId: nativeThreadId, turnId: nativeTurnId },
           },
         },
-        { type: "emit_inbound", frame: { id: 4, result: {} } },
+        { type: "emit_inbound", frame: { id: 5, result: {} } },
         {
           type: "emit_inbound",
           frame: {
@@ -591,9 +609,13 @@ it.live.each(
         },
         {
           type: "expect_outbound",
-          frame: { id: 5, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          frame: { id: 6, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
         },
-        { type: "emit_inbound", frame: { id: 5, result: { status: "unsubscribed" } } },
+        { type: "emit_inbound", frame: { id: 6, result: { status: "unsubscribed" } } },
+        {
+          type: "emit_inbound",
+          frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
+        },
       ];
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         makeCodexReplayTranscript({
@@ -620,8 +642,9 @@ it.live.each(
                         nativeTurnId: peerNativeTurnId,
                         prompt: peerPrompt,
                         cwd,
-                        startRequestId: 4,
-                        turnRequestId: 5,
+                        startRequestId: 5,
+                        configRequestId: 6,
+                        turnRequestId: 7,
                       }).slice(3),
                       peerDelta(peerPrefix),
                       {
@@ -898,6 +921,7 @@ it.live.each(
       ).pipe(
         Layer.provide(
           Layer.mergeAll(
+            PortScanner.layerTest,
             factoryLayer,
             Layer.succeed(ServerConfig.ServerConfig, config),
             allocatorLayer,
@@ -1013,7 +1037,7 @@ it.live.each(
         requests,
         privateHome: home,
       };
-      const evidenceDirectory = process.env.SCIENT_NATIVE_FORK_EVIDENCE_DIR;
+      const evidenceDirectory = (yield* HostProcess.Environment).SCIENT_NATIVE_FORK_EVIDENCE_DIR;
       const capture = Effect.fnUntraced(function* (phase: string, value: unknown) {
         evidence[phase] = value;
         if (evidenceDirectory !== undefined) {
@@ -1096,11 +1120,19 @@ it.live.each(
             yield* Deferred.succeed(releaseEmission, undefined);
             yield* Deferred.await(filteredItemCommitted).pipe(Effect.timeout("15 seconds"));
           }
+          // A write inside a provider batch returns before the batch commits, and the writer
+          // commits off the event loop, so wait for the filtered item's publication.
           const source = yield* waitFor(
             threadId,
             (p) =>
               p.runs[0]?.status === "running" &&
-              p.providerTurns.some((turn) => turn.nativeAcceptance === "accepted"),
+              p.providerTurns.some((turn) => turn.nativeAcceptance === "accepted") &&
+              (!scenario.clean ||
+                p.turnItems.some(
+                  (item) =>
+                    item.type === "assistant_message" &&
+                    item.nativeItemRef?.nativeId === nativeItemId,
+                )),
           );
           const sourceItem = source.turnItems.find(
             (item) =>
@@ -1118,7 +1150,6 @@ it.live.each(
           const forkEvents = yield* Stream.toPull(
             orchestrator.streamStoredEventsFrom({ threadId: forkId, afterSequence: 0 }),
           );
-          const forks = yield* ConversationForkService;
           const command = {
             type: "thread.fork",
             commandId: forkCommandId,
@@ -1138,7 +1169,7 @@ it.live.each(
           ) {
             assert.equal(exit._tag, "Success");
             const child = yield* orchestrator.getThreadProjection(forkId);
-            assert.equal(child.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(child.thread.id))?.status, "ready");
             assert.equal(child.thread.lineage.parentThreadId, threadId);
             assert.isEmpty(child.runs);
             assert.isTrue(
@@ -1204,15 +1235,13 @@ it.live.each(
                 ? Deferred.await(expireCapture)
                 : realClock.sleep(duration),
           };
-          let forking = yield* forks
-            .dispatch(command)
-            .pipe(
-              Effect.provideService(
-                Clock.Clock,
-                scenario.control === "timeout" ? timeoutClock : realClock,
-              ),
-              Effect.forkScoped,
-            );
+          let forking = yield* forkConversation(command).pipe(
+            Effect.provideService(
+              Clock.Clock,
+              scenario.control === "timeout" ? timeoutClock : realClock,
+            ),
+            Effect.forkScoped,
+          );
           yield* Effect.raceFirst(
             Deferred.await(
               ["eof", "pre-delta", "detach", "cancel-ordinary"].includes(scenario.control)
@@ -1590,7 +1619,7 @@ it.live.each(
               (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
               "Failure",
             );
-            forking = yield* forks.dispatch(command).pipe(Effect.forkScoped);
+            forking = yield* forkConversation(command).pipe(Effect.forkScoped);
           }
           yield* Deferred.await(captureCommitted).pipe(Effect.timeout("15 seconds"));
           if (cutoffRace) {
@@ -1683,9 +1712,9 @@ it.live.each(
                 yield* Deferred.await(normalFrame).pipe(Effect.timeout("15 seconds"));
                 gate.release("after-normal-frame");
                 yield* Deferred.await(planCommitted).pipe(Effect.timeout("15 seconds"));
-                const advanced = yield* orchestrator.getThreadProjection(threadId);
-                assert.isTrue(
-                  advanced.turnItems.some(
+                // The plan's write returns inside its provider batch, before the batch commits.
+                yield* waitFor(threadId, (p) =>
+                  p.turnItems.some(
                     (item) =>
                       item.type === "assistant_message" &&
                       item.nativeItemRef?.nativeId === nativeItemId &&
@@ -1707,8 +1736,8 @@ it.live.each(
                   Effect.timeout("15 seconds"),
                 ),
                 yield* orchestrator.getThreadProjection(forkId));
-              const accepted = pending.thread.conversationFork?.checkpointRef;
-              assert.equal(pending.thread.conversationFork?.status, "pending");
+              const accepted = (yield* conversationForkOf(pending.thread.id))?.checkpointRef;
+              assert.equal((yield* conversationForkOf(pending.thread.id))?.status, "pending");
               assert.ok(accepted);
               const snapshots = () =>
                 VcsProcess.VcsProcess.use((vcs) =>
@@ -1837,9 +1866,9 @@ it.live.each(
           );
           yield* Fiber.join(forking);
           const frozen = yield* orchestrator.getThreadProjection(forkId);
-          assert.equal(frozen.thread.conversationFork?.status, "ready");
+          assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
           const capturesBeforeReplay = rawCaptureCount;
-          const accepted = yield* forks.dispatch(command);
+          const accepted = yield* forkConversation(command);
           const acceptedReceipt = yield* (yield* CommandReceiptStoreV2).getByCommandId(
             forkCommandId,
           );
@@ -1951,7 +1980,7 @@ it.live.each(
             const peerEvents = yield* Stream.toPull(
               orchestrator.streamStoredEventsFrom({ threadId: peerForkId, afterSequence: 0 }),
             );
-            const peerForking = yield* forks.dispatch(peerCommand).pipe(Effect.forkScoped);
+            const peerForking = yield* forkConversation(peerCommand).pipe(Effect.forkScoped);
             yield* Stream.fromPull(Effect.succeed(peerEvents)).pipe(
               Stream.filter((event) => event.event.type === "thread.created"),
               Stream.runHead,
@@ -1997,7 +2026,8 @@ it.live.each(
             // coalescer frame. It cannot acknowledge raw snapshot ingestion.
             gate.release("after-normal-frame");
             yield* Deferred.await(planCommitted).pipe(Effect.timeout("15 seconds"));
-            const beforeFinal = yield* orchestrator.getThreadProjection(threadId);
+            // Read only once the plan is committed; its write returns inside the provider batch.
+            const beforeFinal = yield* waitFor(threadId, (p) => p.plans.length > 0);
             assert.equal(
               beforeFinal.turnItems.find((item) => item.id === capturedItem.id)?.type,
               "assistant_message",

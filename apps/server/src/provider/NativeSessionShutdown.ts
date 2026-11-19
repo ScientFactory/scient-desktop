@@ -118,12 +118,17 @@ export const makeNativeSessionShutdown = Effect.fn("makeNativeSessionShutdown")(
       }),
     );
     yield* Effect.gen(function* () {
-      // Collect every close result: one failed finalizer must not skip siblings.
-      const results = yield* Effect.forEach(owned, (lifetime) =>
-        lifetime.close.pipe(
-          Effect.andThen(Scope.close(lifetime.callerLink, Exit.void)),
-          Effect.exit,
-        ),
+      // Collect every close result: one failed finalizer must not skip siblings. Sessions close
+      // together: quitting allows the server a few seconds before it is force-killed, and a
+      // force-killed server stops none of the processes its sessions started.
+      const results = yield* Effect.forEach(
+        owned,
+        (lifetime) =>
+          lifetime.close.pipe(
+            Effect.andThen(Scope.close(lifetime.callerLink, Exit.void)),
+            Effect.exit,
+          ),
+        { concurrency: "unbounded" },
       );
       for (const result of results) if (Exit.isFailure(result)) return yield* result;
     }).pipe(

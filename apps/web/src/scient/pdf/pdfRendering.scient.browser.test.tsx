@@ -2,7 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
-import { act, render } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 import { ScientPdfReader } from "./ScientPdfReader";
 import { workspacePdfSource } from "./pdfSource";
 import "~/index.css";
@@ -40,6 +40,66 @@ function planningPdf(): Blob {
 
   return new Blob([source], { type: "application/pdf" });
 }
+
+function pdfFromObjects(objects: readonly string[]): Blob {
+  let source = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(source.length);
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = source.length;
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([source], { type: "application/pdf" });
+}
+
+it("saves a copy with what was typed into the PDF's form fields", async () => {
+  const url = URL.createObjectURL(
+    pdfFromObjects([
+      "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+      "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Annots [4 0 R] >>",
+      "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /F 4 /P 3 0 R /Rect [20 120 280 150] /DA (/Helv 12 Tf 0 g) >>",
+    ]),
+  );
+  const saved = vi.fn(async (_request: { bytes: Uint8Array }) => ({
+    _tag: "saved" as const,
+    path: "/synthetic/form copy.pdf",
+  }));
+  using _bridge = stubGlobal("desktopBridge", { savePdfBytesCopy: saved });
+  try {
+    const source = workspacePdfSource({
+      environmentId: EnvironmentId.make("synthetic-pdf-form"),
+      workspaceRoot: "/synthetic",
+      relativePath: "form.pdf",
+      fileName: "form.pdf",
+    });
+    const resolver: PdfSourceResolver = {
+      useResolve: () => ({
+        _tag: "Success",
+        url,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        refresh: () => {},
+      }),
+    };
+    await using screen = await render(
+      <div style={{ display: "flex", height: 500, width: 600 }}>
+        <ScientPdfReader source={source} resolver={resolver} readerScope="form-save-copy" />
+      </div>,
+    );
+    const field = screen.container.querySelector.bind(screen.container, ".annotationLayer input");
+    await vi.waitFor(() => expect(field()).not.toBeNull(), { timeout: 15_000 });
+    await page.elementLocator(field()!).fill("Ada Lovelace");
+    await screen.getByRole("button", { name: "More PDF actions" }).click();
+    await page.getByRole("menuitem", { name: "Save a copy" }).click();
+    await vi.waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    expect(new TextDecoder().decode(saved.mock.calls[0]![0].bytes)).toContain("Ada Lovelace");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
 
 it("renders, resizes, searches and selects the incoming mixed-page document in Scient's real reader", async () => {
   await page.viewport(1200, 850);

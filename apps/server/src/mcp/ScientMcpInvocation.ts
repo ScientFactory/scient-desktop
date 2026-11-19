@@ -13,6 +13,7 @@ const scientGrants: Record<OperationCapability, McpCapability> = {
   "documents:build": "documents:build",
   compute: "compute",
   "skills:read": "skills:read",
+  "skills:write": "skills:write",
   "sources:read": "sources:read",
   "sources:write": "sources:write",
   "threads:read": "threads:read",

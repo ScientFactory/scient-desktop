@@ -1,11 +1,16 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as DateTime from "effect/DateTime";
+import { Atom } from "effect/reactivity";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { latestCompletedAnswerFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { useEffect, useRef } from "react";
+import { environmentCatalog } from "../../connection/catalog";
 import { useUiStateStore } from "../../uiStateStore";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+
+const NO_SESSION_GENERATION = Atom.make(0);
 
 /** Only loaded completed answers in a visible, focused conversation are read. */
 export function useAcknowledgeAnswer(thread: EnvironmentThread | null | undefined): void {
@@ -28,6 +33,12 @@ export function useAcknowledgeAnswer(thread: EnvironmentThread | null | undefine
   const key =
     threadId && environmentId ? scopedThreadKey(scopeThreadRef(environmentId, threadId)) : null;
   const visit = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  // A failed visit also retries once the environment reconnects.
+  const sessionGeneration = useAtomValue(
+    environmentId === undefined
+      ? NO_SESSION_GENERATION
+      : environmentCatalog.sessionGenerationAtom(environmentId),
+  );
   const dispatched = useRef<{ readonly key: string } | null>(null);
   const selectedKey = useRef<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the visit-acknowledgement RPC in step with window focus and document visibilitychange listeners until unmount
@@ -63,5 +74,15 @@ export function useAcknowledgeAnswer(thread: EnvironmentThread | null | undefine
       window.removeEventListener("focus", acknowledge);
       document.removeEventListener("visibilitychange", acknowledge);
     };
-  }, [key, threadId, environmentId, watermark, answer?.messageId, visitedAt, visit]);
+  }, [
+    key,
+    threadId,
+    environmentId,
+    watermark,
+    answer?.messageId,
+    visitedAt,
+    visit,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a new session retries a visit the last one refused.
+    sessionGeneration,
+  ]);
 }

@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
 import type {
+  ActiveThreadListEntry,
   ProjectionRecordField,
   ProjectionRecordFilter,
   ProjectionRecords,
@@ -11,6 +12,7 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isDelegatedAppThread,
   isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
@@ -25,11 +27,11 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2LinkedSender,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
-  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -42,6 +44,9 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+// SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
+import { runningBackgroundTasksHint } from "@t3tools/provider-core/server/scientBackgroundWait";
+// SCIENT-FORK:END
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -54,12 +59,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -68,6 +75,7 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { withProjectCloneGuard } from "./scient-fork/ThreadDispatchCloneGuard.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -82,8 +90,13 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create": {
-      // Only the server stamps a link's origin, so a client cannot set one.
-      const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
+      // Only the server stamps a link's origin or folds in a first message, so a client cannot.
+      const {
+        linkOrigin: _linkOrigin,
+        delegatedFrom: _delegatedFrom,
+        initialMessage: _initialMessage,
+        ...rest
+      } = command;
       return { ...rest, ...provenance };
     }
     case "message.dispatch":
@@ -144,10 +157,13 @@ export interface ThreadManagementSendInput {
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly linkedSender?: OrchestrationV2LinkedSender;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  /** Start a new provider session; the orchestrator queues it instead of steering. */
+  readonly freshContext?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -312,6 +328,19 @@ export class ThreadManagementDurableRunProjectionError extends Schema.TaggedErro
   }
 }
 
+export class ThreadManagementWorktreeRestoreError extends Schema.TaggedError<ThreadManagementWorktreeRestoreError>()(
+  "ThreadManagementWorktreeRestoreError",
+  {
+    threadId: ThreadId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const detail = this.cause instanceof Error ? ` ${this.cause.message}` : "";
+    return `Couldn't recreate the missing workspace of thread ${this.threadId}, so the message was not sent.${detail}`;
+  }
+}
+
 export class ThreadManagementProviderInstanceDisabledError extends Schema.TaggedError<ThreadManagementProviderInstanceDisabledError>()(
   "ThreadManagementProviderInstanceDisabledError",
   {
@@ -328,8 +357,15 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   "ThreadManagementBackgroundWaitError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
+    reason: Schema.Literals(["unsupported", "unavailable", "failed", "unmatched"]),
     cause: Schema.optional(Schema.Defect()),
+    // SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
+    running: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ taskId: Schema.String, description: Schema.optional(Schema.String) }),
+      ),
+    ),
+    // SCIENT-FORK:END
   },
 ) {
   override get message(): string {
@@ -340,6 +376,13 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
         return "This thread has no live provider session.";
       case "failed":
         return "Failed to update the awaited background work.";
+      case "unmatched":
+        // SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
+        return (
+          "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here." +
+          runningBackgroundTasksHint(this.running ?? [])
+        );
+      // SCIENT-FORK:END
     }
   }
 }
@@ -354,6 +397,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementProjectThreadsListError,
   ThreadManagementDurableRunProjectionError,
   ThreadManagementProviderInstanceDisabledError,
+  ThreadManagementWorktreeRestoreError,
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
 
@@ -378,6 +422,8 @@ export interface ThreadManagementServiceShape {
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
+  readonly getRunCount: Orchestrator.OrchestratorV2["Service"]["getRunCount"];
+  readonly getMessagesById: Orchestrator.OrchestratorV2["Service"]["getMessagesById"];
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -423,11 +469,13 @@ export interface ThreadManagementServiceShape {
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
+  readonly getThreadLinkMetadata: Orchestrator.OrchestratorV2["Service"]["getThreadLinkMetadata"];
+  readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
+  }) => Effect.Effect<ReadonlyArray<ActiveThreadListEntry>, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
@@ -445,8 +493,8 @@ export interface ThreadManagementServiceShape {
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
-  /** Waits for the agent's run to end before settling its thread and stopping the session.
-   * Other endings or settle refusals leave the thread active. */
+  /** Waits for the agent's run and automatic follow-ups before settling.
+   * A new user turn or an unsuccessful ending leaves the thread active. */
   readonly settleAfterRun: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
@@ -478,10 +526,17 @@ export interface ThreadManagementServiceShape {
     readonly taskIds: ReadonlyArray<string>;
     readonly awaited: boolean;
   }) => Effect.Effect<
-    { readonly matched: ReadonlyArray<string>; readonly unmatched: ReadonlyArray<string> },
+    {
+      readonly matched: ReadonlyArray<string>;
+      readonly unmatched: ReadonlyArray<string>;
+      // SCIENT-FORK:START — background-wait recovery: finished ids need no wait.
+      readonly settled?: ReadonlyArray<string>;
+      // SCIENT-FORK:END
+    },
     ThreadManagementBackgroundWaitError
   >;
   readonly stopDelegatedTasks: (input: {
+    readonly remoteDispatch?: Orchestrator.OrchestratorV2["Service"]["dispatch"];
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly reason?: string | undefined;
@@ -491,6 +546,7 @@ export interface ThreadManagementServiceShape {
   >;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
+  readonly cancelDelegatedTask: Orchestrator.OrchestratorV2["Service"]["cancelDelegatedTask"];
   readonly delegatedTaskResultPending: Orchestrator.OrchestratorV2["Service"]["delegatedTaskResultPending"];
   readonly streamStoredEvents: Orchestrator.OrchestratorV2["Service"]["streamStoredEvents"];
   readonly streamStoredEventsFrom: Orchestrator.OrchestratorV2["Service"]["streamStoredEventsFrom"];
@@ -502,13 +558,15 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
 
+export const ACTIVE_RUN_STATUSES = [
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+] as const satisfies ReadonlyArray<OrchestrationV2Run["status"]>;
+
 export function isActiveRun(run: OrchestrationV2Run): boolean {
-  return (
-    run.status === "preparing" ||
-    run.status === "starting" ||
-    run.status === "running" ||
-    run.status === "waiting"
-  );
+  return (ACTIVE_RUN_STATUSES as ReadonlyArray<OrchestrationV2Run["status"]>).includes(run.status);
 }
 
 export function isTerminalRunStatus(
@@ -579,6 +637,7 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const worktreeRestore = yield* ThreadWorktreeRestore;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -673,15 +732,26 @@ const make = Effect.gen(function* () {
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
     );
+  // Full-thread exports can otherwise hold every SQLite reader and stall ordinary thread opens.
+  const transcriptExportPermits = yield* Semaphore.make(2);
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
-      const { projection } = yield* getThreadSnapshot(threadId);
+      yield* ensureProjectionTranscript(threadId);
+      const byteFloor = yield* orchestrator.getTranscriptByteFloor(
+        threadId,
+        PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+      );
+      if (byteFloor > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+        return yield* new ThreadTranscriptTooLargeError({ threadId });
+      }
+      const { projection } = yield* orchestrator.getThreadSnapshot(threadId);
       const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
       const transcript = {
         threadId: projection.thread.id,
         title: projection.thread.title,
         updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
+        // SCIENT-FORK: what people said to each other in a room never reaches an agent.
+        items: projection.visibleTurnItems.filter((row) => row.item.type !== "room_message"),
       };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
@@ -698,6 +768,7 @@ const make = Effect.gen(function* () {
       }
       return transcript;
     },
+    transcriptExportPermits.withPermits(1),
   );
   const getThreadSnapshotWindow: ThreadManagementServiceShape["getThreadSnapshotWindow"] = (
     threadId,
@@ -709,6 +780,18 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "thread.metadata.update":
+        return command.continuation === undefined
+          ? Effect.void
+          : orchestrator.getThreadRecords(command.threadId, []).pipe(
+              Effect.flatMap((projection) =>
+                assertProviderInstanceEnabled({
+                  projectId: projection.thread.projectId,
+                  commandId: command.commandId,
+                  instanceId: projection.thread.modelSelection.instanceId,
+                }),
+              ),
+            );
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
@@ -716,6 +799,18 @@ const make = Effect.gen(function* () {
               projectId: projection.thread.projectId,
               commandId: command.commandId,
               instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+            }),
+          ),
+        );
+      // SCIENT-FORK: a guest's send to the agent starts a turn on the thread's provider.
+      case "thread.room.guest-dispatch":
+        if (command.send.type === "stop") return Effect.void;
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((projection) =>
+            assertProviderInstanceEnabled({
+              projectId: projection.thread.projectId,
+              commandId: command.commandId,
+              instanceId: projection.thread.modelSelection.instanceId,
             }),
           ),
         );
@@ -795,33 +890,28 @@ const make = Effect.gen(function* () {
     );
 
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
-    orchestrator
-      .getShellSnapshot({
-        location: "active",
-        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadManagementProjectThreadsListError({
-              projectId: input.projectId,
-              cause,
-            }),
-        ),
-        Effect.map((snapshot) =>
-          snapshot.threads
-            .filter((thread) =>
-              input.includeSubagents
-                ? thread.lineage.sideChat !== true
-                : isListedThreadLineage(thread.lineage),
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-                right.id.localeCompare(left.id),
-            ),
-        ),
-      );
+    orchestrator.listActiveThreads(input.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadManagementProjectThreadsListError({
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+      Effect.map((threads) =>
+        threads
+          .filter((thread) =>
+            input.includeSubagents
+              ? thread.lineage.sideChat !== true
+              : isListedThreadLineage(thread.lineage) && !isDelegatedAppThread(thread),
+          )
+          .toSorted(
+            (left, right) =>
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+              right.id.localeCompare(left.id),
+          ),
+      ),
+    );
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
@@ -833,27 +923,52 @@ const make = Effect.gen(function* () {
       });
     }
     const steerableRun = latestSteerableRun(target);
+    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    const mode =
+      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+        ? "queue"
+        : input.mode;
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (input.mode === "steer" || input.mode === "restart") {
+    if (mode === "steer" || mode === "restart") {
       if (steerableRun === undefined) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
-          mode: input.mode,
+          mode,
         });
       }
       dispatchMode = {
-        type: input.mode === "steer" ? "steer_active" : "restart_active",
+        type: mode === "steer" ? "steer_active" : "restart_active",
         targetRunId: steerableRun.id,
       };
-    } else if (input.mode === "auto" && steerableRun !== undefined) {
+    } else if (mode === "auto" && steerableRun !== undefined) {
       dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
-        type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
+        type: mode === "queue" ? "queue_after_active" : "start_immediately",
       };
+    }
+
+    // Turn start would fail on its own after the send reported success; a replay keeps its answer.
+    // A live steer starts no turn, so it needs no workspace.
+    if (dispatchMode.type !== "steer_active") {
+      yield* worktreeRestore
+        .restore(target.thread)
+        .pipe(
+          Effect.catch((cause) =>
+            hasReceipt(input.commandId).pipe(
+              Effect.flatMap((replay) =>
+                replay
+                  ? Effect.void
+                  : Effect.fail(
+                      new ThreadManagementWorktreeRestoreError({ threadId: input.threadId, cause }),
+                    ),
+              ),
+            ),
+          ),
+        );
     }
 
     const dispatched = yield* dispatch({
@@ -863,10 +978,13 @@ const make = Effect.gen(function* () {
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...(input.linkedSender === undefined ? {} : { linkedSender: input.linkedSender }),
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,
+      ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
@@ -896,12 +1014,23 @@ const make = Effect.gen(function* () {
         messageId: input.messageId,
       });
     }
-    const delivery: ThreadManagementSendResult["delivery"] =
-      turnItem === null || turnItem.inputIntent === "queued_turn"
+    // A provider without interrupt-and-restart stops the turn and runs the
+    // restart as the next turn. Read from this command's own events, so a replay agrees.
+    const restartedAsNextTurn =
+      mode === "restart" &&
+      dispatched.storedEvents.some(
+        ({ event }) =>
+          event.type === "turn-item.updated" &&
+          event.payload.type === "run_interrupt_request" &&
+          event.payload.runId !== run.id,
+      );
+    const delivery: ThreadManagementSendResult["delivery"] = restartedAsNextTurn
+      ? "restarted"
+      : turnItem === null || turnItem.inputIntent === "queued_turn"
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"
-          : input.mode === "restart"
+          : mode === "restart"
             ? "restarted"
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
@@ -1047,13 +1176,104 @@ const make = Effect.gen(function* () {
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.settleAfterRun",
   )(function* (input) {
+    const requestedAt = yield* DateTime.now;
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
-    yield* dispatch({
-      type: "thread.settle",
-      commandId: CommandId.make(`server:settle-after-run:${input.runId}`),
-      threadId: input.threadId,
+    const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+    const trySettle = Effect.gen(function* () {
+      const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+      const records = yield* getProjectThreadRecords(input, ["runs"]);
+      // Settling ends every watch; one the agent started after asking to settle must outlive it.
+      if (
+        threadPullRequestsOf(records.thread).some(
+          (link) =>
+            link.watch !== undefined &&
+            !DateTime.isLessThan(DateTime.makeUnsafe(link.watch.startedAt), requestedAt),
+        )
+      )
+        return true;
+      const later = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      const cancelledMessageIds = later
+        .filter((candidate) => candidate.status === "cancelled")
+        .map((candidate) => candidate.userMessageId);
+      // Send now cancels a queued run and moves its message into the running turn.
+      const steeredMessageIds =
+        cancelledMessageIds.length === 0
+          ? new Set()
+          : new Set(
+              (yield* getProjectThreadRecords(input, ["messages"], {
+                messageIds: cancelledMessageIds,
+              })).messages
+                .filter((message) => message.runId === run.id)
+                .map((message) => message.id),
+            );
+      const following = later.filter(
+        (candidate) =>
+          candidate.status !== "cancelled" || !steeredMessageIds.has(candidate.userMessageId),
+      );
+      if (following.length > 0) {
+        const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
+          messageRunIds: following.map((candidate) => candidate.id),
+          messageRoles: ["user"],
+        });
+        const automaticMessageIds = new Set(
+          messages
+            .filter(
+              (message) =>
+                message.role === "user" &&
+                (message.notification !== undefined || message.delegatedCompletion !== undefined),
+            )
+            .map((message) => message.id),
+        );
+        if (
+          messages.some((message) => !automaticMessageIds.has(message.id)) ||
+          following.some((candidate) => !automaticMessageIds.has(candidate.userMessageId))
+        ) {
+          return true;
+        }
+        if (
+          following.some(
+            (candidate) => candidate.status !== "queued" && !isTerminalRunStatus(candidate.status),
+          )
+        )
+          return false;
+        if (
+          following.some(
+            (candidate) => candidate.status !== "queued" && candidate.status !== "completed",
+          )
+        )
+          return true;
+      }
+      const latest = latestRun(records);
+      if (latest === undefined) return true;
+      return yield* dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`server:settle-after-run:${input.runId}:${sequence}`),
+        threadId: input.threadId,
+        expectedLatestRunId: latest.id,
+      }).pipe(
+        Effect.as(true),
+        // A notification can start between the projection read and the guarded dispatch.
+        Effect.catchTags({
+          OrchestratorDispatchError: () => Effect.succeed(false),
+          OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed(false),
+        }),
+      );
     });
+    yield* Stream.fromEffect(trySettle).pipe(
+      Stream.concat(
+        orchestrator
+          .streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "run.updated",
+          })
+          .pipe(Stream.mapEffect(() => trySettle)),
+      ),
+      Stream.filter((done) => done),
+      Stream.runHead,
+      Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
+    );
   });
 
   const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
@@ -1200,6 +1420,28 @@ const make = Effect.gen(function* () {
       const ownProviderThreadIds = records.providerThreads.flatMap((providerThread) =>
         providerThread.appThreadId === input.threadId ? [providerThread.id] : [],
       );
+      // Settling the target can promote a queued follow-up onto the same session; that run is
+      // not Force stop's to end. Only a newer run bound to a provider thread on this session
+      // counts. An unreadable thread counts as one, so its sessions are kept.
+      const throughRunOrdinal = target?.ordinal ?? 0;
+      const laterRunActive = (providerSessionId: ProviderSessionId) =>
+        orchestrator.getThreadRecords(input.threadId, ["runs", "providerThreads"]).pipe(
+          Effect.map(({ runs, providerThreads }) => {
+            const onSession = new Set(
+              providerThreads.flatMap((providerThread) =>
+                providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
+              ),
+            );
+            return runs.some(
+              (run) =>
+                run.ordinal > throughRunOrdinal &&
+                isActiveRun(run) &&
+                run.providerThreadId !== null &&
+                onSession.has(run.providerThreadId),
+            );
+          }),
+          Effect.orElseSucceed(() => true),
+        );
       const detach = (providerSessionId: ProviderSessionId) =>
         sessions
           .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })
@@ -1237,6 +1479,9 @@ const make = Effect.gen(function* () {
           .releaseUnlessBusy({
             providerSessionId,
             ownProviderThreadIds,
+            throughRunOrdinal,
+            // A promoted follow-up may not have marked its turn busy yet.
+            keepIf: laterRunActive(providerSessionId),
             reason: "manual_shutdown",
             detail: FORCE_STOP_REASON,
           })
@@ -1251,7 +1496,7 @@ const make = Effect.gen(function* () {
         );
         if (Option.isNone(released)) {
           releasing = true;
-        } else if (!released.value) {
+        } else if (!released.value && !(yield* laterRunActive(release.providerSessionId))) {
           shared = true;
           yield* detach(release.providerSessionId);
         }
@@ -1438,7 +1683,13 @@ const make = Effect.gen(function* () {
         reason: "unsupported",
       });
     }
-    const { matched } = yield* runtime.value
+    const {
+      matched,
+      // SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+      settled = [],
+      running = [],
+      // SCIENT-FORK:END
+    } = yield* runtime.value
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(
         Effect.timeout("15 seconds"),
@@ -1451,8 +1702,21 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    const matchedIds = new Set(matched);
-    return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
+    // SCIENT-FORK:START — background-wait recovery: finished ids succeed, a miss names the roster.
+    if (input.awaited && matched.length === 0 && settled.length === 0) {
+      return yield* new ThreadManagementBackgroundWaitError({
+        threadId: input.threadId,
+        reason: "unmatched",
+        ...(running.length === 0 ? {} : { running }),
+      });
+    }
+    const known = new Set([...matched, ...settled]);
+    return {
+      matched,
+      unmatched: input.taskIds.filter((taskId) => !known.has(taskId)),
+      ...(settled.length === 0 ? {} : { settled }),
+    };
+    // SCIENT-FORK:END
   });
 
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
@@ -1470,7 +1734,7 @@ const make = Effect.gen(function* () {
         // One with its result keeps it, but its thread there may run follow-up work.
         if (task.remoteChild === undefined) continue;
         const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
-        yield* dispatch(
+        yield* (input.remoteDispatch ?? dispatch)(
           task.result === null
             ? {
                 type: "delegated_task.remote.complete",
@@ -1511,7 +1775,9 @@ const make = Effect.gen(function* () {
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       }).pipe(
         Effect.provideService(Orchestrator.DelegatedStopHandledByCaller, threadId),
-        Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
+        Effect.andThen(
+          stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason }),
+        ),
         Effect.catch((error) =>
           Effect.logWarning("Unable to stop a delegated task", {
             parentThreadId: input.threadId,
@@ -1565,6 +1831,18 @@ const make = Effect.gen(function* () {
         Effect.andThen(orchestrator.getMessageCount(threadId)),
       );
     }),
+    getRunCount: Effect.fn("ThreadManagementService.getRunCount")(function (threadId) {
+      return ensureProjectionTranscript(threadId).pipe(
+        Effect.andThen(orchestrator.getRunCount(threadId)),
+      );
+    }),
+    getMessagesById: Effect.fn("ThreadManagementService.getMessagesById")(
+      function (threadId, messageIds) {
+        return ensureProjectionTranscript(threadId).pipe(
+          Effect.andThen(orchestrator.getMessagesById(threadId, messageIds)),
+        );
+      },
+    ),
     getTurnItem: Effect.fn("ThreadManagementService.getTurnItem")(function (input) {
       return ensureProjectionTranscript(input.threadId).pipe(
         Effect.andThen(orchestrator.getTurnItem(input)),
@@ -1599,6 +1877,8 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+    getThreadTitles: orchestrator.getThreadTitles,
+    getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,
@@ -1614,11 +1894,18 @@ const make = Effect.gen(function* () {
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,
+    cancelDelegatedTask: orchestrator.cancelDelegatedTask,
     delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
     streamStoredEvents: orchestrator.streamStoredEvents,
     streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
     streamDomainEvents: orchestrator.streamDomainEvents,
   });
+});
+
+const layerThreadWorktreeRestoreNoop = Layer.succeed(ThreadWorktreeRestore, {
+  restore: Effect.fn("ThreadWorktreeRestore.restore")(function () {
+    return Effect.void;
+  }),
 });
 
 const layerLegacyV1ThreadImporterNoop = Layer.succeed(
@@ -1643,6 +1930,7 @@ export const layer: Layer.Layer<
   | CommandReceiptStore.CommandReceiptStoreV2
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
+  Layer.provide(layerThreadWorktreeRestoreNoop),
   Layer.provide(ThreadCommandExecutor.layer),
 );
 
@@ -1650,6 +1938,7 @@ export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
+  | ThreadWorktreeRestore
   | Orchestrator.OrchestratorV2
   // SCIENT-FORK:START — reject dispatches while a project clone is unfinished
   | ProjectCloneTracker.ProjectCloneTracker

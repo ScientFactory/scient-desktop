@@ -26,11 +26,12 @@ describe("Scient desktop identity", () => {
     );
   });
 
-  it("keeps cloud and telemetry closed while enabling the owned updater", () => {
+  it("turns on Scient Connect and the owned updater, keeping telemetry and the phone app off", () => {
     assert.isFalse(SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled);
     assert.isTrue(SCIENT_DESKTOP_IDENTITY.autoUpdateEnabled);
     assert.equal(SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy, "user-selectable");
     assert.isTrue(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled);
-    assert.isFalse(SCIENT_DESKTOP_IDENTITY.cloudEnabled);
+    assert.isTrue(SCIENT_DESKTOP_IDENTITY.cloudEnabled);
+    assert.isFalse(SCIENT_DESKTOP_IDENTITY.mobileAppEnabled);
   });
 });

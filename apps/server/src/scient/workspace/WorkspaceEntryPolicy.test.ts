@@ -60,6 +60,10 @@ describe("workspaceEntryDisposition", () => {
     [".scient/sources/operations/import.json", internalOwner("scient.sources-runtime")],
     [".scient/sources/staging/source.pdf", internalOwner("scient.sources-runtime")],
     [".scient/sources/future/index.json", internalOwner("scient.sources-managed")],
+    [
+      `.scient/annotations/v1/${"a".repeat(64)}.json`,
+      ordinaryOwner("scient.annotations-durable-data"),
+    ],
   ] satisfies ReadonlyArray<readonly [string, WorkspaceEntryDisposition]>)(
     "classifies %s without broad name heuristics",
     (relativePath, expected) => {

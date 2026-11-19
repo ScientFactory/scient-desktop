@@ -14,7 +14,10 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { dismissContextMenu, showContextMenuFallback } from "~/contextMenuFallback";
 import { act, render } from "../../../test/render";
 
+import { isMacPlatform } from "~/lib/utils";
 import FileBrowserPanel from "./FileBrowserPanel";
+import { dispatchPreviewAction } from "../preview/previewActionBus";
+import { refreshProjectFiles } from "./projectFilesQueryState";
 // SCIENT-FORK:START
 import { resetOverleafStoreForTests } from "~/scient/overleaf/overleafStore";
 // SCIENT-FORK:END
@@ -55,7 +58,6 @@ vi.mock("~/fileContextMenu", () => ({
 }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => files.localApi }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
-vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
 // SCIENT-FORK:START — Overleaf links of the workspace, for the Connect dialog and the marks
 const overleaf = vi.hoisted(() => ({ folders: [] as string[] }));
 vi.mock("~/scient/overleaf/client", async (importOriginal) => ({
@@ -119,13 +121,15 @@ describe("Files panel search", () => {
     workspaceMutationId: null,
   };
 
-  async function renderPanel() {
+  async function renderPanel({ cwd = props.cwd }: { readonly cwd?: string } = {}) {
     const container = document.createElement("div");
     // The tree virtualizes its rows, so it needs a real viewport to render any.
     container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px;";
     await using stack = new AsyncDisposableStack();
-    const screen = stack.use(await render(<FileBrowserPanel {...props} />, { container }));
-    const rerender = () => screen.rerender(<FileBrowserPanel {...props} />);
+    const screen = stack.use(
+      await render(<FileBrowserPanel {...props} cwd={cwd} />, { container }),
+    );
+    const rerender = () => screen.rerender(<FileBrowserPanel {...props} cwd={cwd} />);
     function searchInput() {
       const input = container!.querySelector<HTMLInputElement>('input[type="search"]');
       expect(input).not.toBeNull();
@@ -352,6 +356,159 @@ describe("Files panel search", () => {
     await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
   });
+  describe("a very large folder", () => {
+    const LARGE_FOLDER_SIZE = 50_000;
+    // Out of sort order, because inserting in order hides the cost of each insert.
+    const largeFolder = () =>
+      Array.from({ length: LARGE_FOLDER_SIZE }, (_, index) =>
+        entry(`big/f${String((index * 7_919) % LARGE_FOLDER_SIZE).padStart(5, "0")}.txt`),
+      );
+    const treeRow = (container: HTMLElement, path: string) =>
+      container
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${CSS.escape(path)}"]`) ?? null;
+
+    it("opens without freezing and keeps the folder that was open", async () => {
+      setup();
+      files.directories[""] = [entry("big", "directory"), ...files.directories[""]!];
+      files.directories.big = largeFolder();
+      // Its own folder, so the folders it opens are not remembered for the other tests.
+      await using screen = await renderPanel({ cwd: "/large-folder-open" });
+      await expect.poll(screen.visiblePaths).toEqual(["big/", "src/", "package.json"]);
+      treeRow(screen.container, "src/")!.click();
+      await expect.poll(screen.visiblePaths).toContain("src/app.ts");
+
+      treeRow(screen.container, "big/")!.click();
+      // Batching every row blocked the panel past this wait; the rebuild takes about 170 ms.
+      await expect.poll(screen.visiblePaths).toContain("big/f00000.txt");
+      expect(treeRow(screen.container, "big/")!.getAttribute("aria-expanded")).toBe("true");
+      const src = treeRow(screen.container, "src/");
+      if (src) expect(src.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("keeps an open search accurate when the folder's listing arrives", async () => {
+      setup();
+      files.directories[""] = [entry("big", "directory"), ...files.directories[""]!];
+      files.directories.big = largeFolder();
+      await using screen = await renderPanel({ cwd: "/large-folder-search" });
+      await expect.poll(screen.visiblePaths).toContain("big/");
+      files.searchEntries = [{ path: "big/f49999.txt", kind: "file" }];
+      await screen.search("f49999");
+      await expect.poll(screen.visiblePaths).toEqual(["big/", "big/f49999.txt"]);
+      expect(screen.searchInput().value).toBe("f49999");
+      await screen.search("");
+      await expect.poll(screen.visiblePaths).toEqual(["big/", "src/", "package.json"]);
+    });
+  });
+
+  it.each(["a folder listing", "coming back to the window"] as const)(
+    "keeps naming a new file while %s refreshes the tree",
+    async (refresh) => {
+      setup();
+      files.localApi = { contextMenu: { show: showContextMenuFallback } };
+      const cwd = `/naming-${refresh.replaceAll(" ", "-")}`;
+      await using screen = await renderPanel({ cwd });
+      using _menu = {
+        [Symbol.dispose]: () => {
+          dismissContextMenu();
+          files.localApi = undefined;
+        },
+      };
+      await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+      const tree = () => screen.container.querySelector("file-tree-container")!.shadowRoot!;
+      tree()
+        .querySelector<HTMLElement>('[data-item-path="src/"]')!
+        .dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 2,
+          }),
+        );
+      const newFile = page.getByRole("menuitem", { name: "New File", exact: true });
+      await expect.element(newFile).toBeVisible();
+      await userEvent.click(newFile);
+      const field = () => tree().querySelector("input");
+      await expect.poll(() => field() !== null && tree().activeElement === field()).toBe(true);
+      await userEvent.keyboard("draft");
+      expect(field()!.value).toBe("draft");
+      const listings = files.listDirectory.mock.calls.length;
+      // Another app adds a file meanwhile, so the listing changes the tree.
+      files.directories["src"]!.push(entry("src/from-elsewhere.tex"));
+      if (refresh === "a folder listing") {
+        await act(() => refreshProjectFiles(props.environmentId, cwd));
+      } else {
+        window.dispatchEvent(new Event("blur"));
+        window.dispatchEvent(new Event("focus"));
+      }
+      await expect.poll(() => files.listDirectory.mock.calls.length).toBeGreaterThan(listings);
+      await expect.poll(screen.visiblePaths).toContain("src/from-elsewhere.tex");
+      const changes = () =>
+        files.listDirectory.mock.calls.flatMap(([request]) =>
+          "change" in request.input ? [request.input.change] : [],
+        );
+      expect(changes()).toEqual([]);
+      expect(field()?.value).toBe("draft");
+      expect(tree().activeElement).toBe(field());
+      await userEvent.keyboard("{Enter}");
+      await expect
+        .poll(changes)
+        .toEqual([expect.objectContaining({ _tag: "create-file", relativePath: "src/draft" })]);
+    },
+  );
+
+  it("keeps renaming a file while a listing moves its row", async () => {
+    setup();
+    files.directories.src = [entry("src/app.ts"), entry("src/zeta.ts")];
+    files.localApi = { contextMenu: { show: showContextMenuFallback } };
+    await using screen = await renderPanel({ cwd: "/renaming-moved-row" });
+    using _menu = {
+      [Symbol.dispose]: () => {
+        dismissContextMenu();
+        files.localApi = undefined;
+      },
+    };
+    await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+    const tree = () => screen.container.querySelector("file-tree-container")!.shadowRoot!;
+    await act(() => tree().querySelector<HTMLElement>('[data-item-path="src/"]')!.click());
+    await expect.poll(screen.visiblePaths).toContain("src/zeta.ts");
+    tree()
+      .querySelector<HTMLElement>('[data-item-path="src/zeta.ts"]')!
+      .dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+    const rename = page.getByRole("menuitem", { name: "Rename…", exact: true });
+    await expect.element(rename).toBeVisible();
+    await userEvent.click(rename);
+    const field = () => tree().querySelector("input");
+    await expect.poll(() => field() !== null && tree().activeElement === field()).toBe(true);
+    await userEvent.keyboard("omega.ts");
+    // A file another app adds above the row moves it while it is being renamed.
+    files.directories.src.push(entry("src/beta.ts"));
+    await act(() => refreshProjectFiles(props.environmentId, "/renaming-moved-row"));
+    await expect.poll(screen.visiblePaths).toContain("src/beta.ts");
+    const moves = () =>
+      files.listDirectory.mock.calls.flatMap(([request]) =>
+        "change" in request.input ? [request.input.change] : [],
+      );
+    expect(moves()).toEqual([]);
+    expect(field()?.value).toBe("omega.ts");
+    expect(tree().activeElement).toBe(field());
+    await userEvent.keyboard("{Enter}");
+    await expect.poll(moves).toEqual([
+      expect.objectContaining({
+        _tag: "move",
+        items: [{ from: "src/zeta.ts", to: "src/omega.ts" }],
+      }),
+    ]);
+  });
+
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
     setup();
     files.directories = { "": [entry("README.md")] };
@@ -459,4 +616,60 @@ describe("Files panel search", () => {
     overleaf.folders = [];
   });
   // SCIENT-FORK:END
+
+  it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {
+    setup();
+    files.directories = { "": [entry("README.md")] };
+    const container = document.createElement("div");
+    // The tree virtualizes its rows, so it needs a real viewport to render any.
+    container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px;";
+    await using _screen = await render(<FileBrowserPanel {...props} answersPanelFind />, {
+      container,
+    });
+    const row = () =>
+      container
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>('[data-item-path="README.md"]') ?? null;
+    await vi.waitFor(() => expect(row()).not.toBeNull());
+    row()!.focus();
+
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}f{/${modifier}}`);
+
+    const search = page.getByRole("searchbox", { name: "Search Test project files" });
+    await expect.element(search).toHaveFocus();
+
+    (search.element() as HTMLElement).blur();
+    dispatchPreviewAction("find");
+    await expect.element(search).toHaveFocus();
+  });
+
+  it("keeps expanded folders when the panel remounts", async () => {
+    // SCIENT-FORK:START — Scient's lazy tree lists each folder through the mocked command.
+    setup();
+    const findTreeRow = (path: string) =>
+      document
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`) ?? null;
+    const panel = () => {
+      // The tree virtualizes its rows, so it needs a real viewport to render any.
+      const container = document.createElement("div");
+      container.style.cssText =
+        "display: flex; flex-direction: column; width: 320px; height: 480px;";
+      return render(<FileBrowserPanel {...props} cwd="/remount" />, { container });
+    };
+    // SCIENT-FORK:END
+    {
+      await using _first = await panel();
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+    }
+
+    await using _second = await panel();
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+  });
 });

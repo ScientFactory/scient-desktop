@@ -45,6 +45,10 @@ FRAME_HEADER = struct.Struct(">I")
 
 MAX_FRAME = 16 * 1024 * 1024
 MAX_CODE = 1024 * 1024
+MAX_WRITE_RECORD_PATHS = 256
+MAX_READ_RECORD_PATHS = 1024
+MAX_WRITE_RECORD_PATH = 4096
+WRITE_RECORD_TIMEOUT = 2.0
 MAX_STREAM_TEXT = 256 * 1024
 MAX_TRACEBACK_LINES = 200
 MAX_TRACEBACK_LINE = 4096
@@ -258,7 +262,139 @@ _scient_shell.events.register("post_run_cell", lambda _result: _scient_restore_s
 
 # Inline figures also carry a PDF, so a shown figure can be saved as vector graphics.
 _scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
+
+# Note which figure and table files each cell writes, at any depth and through any library. The
+# paths are extra candidates for the server, which still watches the project: writes through an
+# already-open handle or a dir_fd are not seen here. Project files opened for reading are noted
+# too, with their size and modification time when opened, so a result can name its inputs; reads by
+# native code that bypasses Python's open are not seen. The hook never raises.
+def _scient_install_write_recorder():
+    import types
+    if not hasattr(sys, "addaudithook"):
+        return
+    extensions = frozenset({".png", ".svg", ".csv", ".tsv", ".parquet", ".xlsx"})
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+    destination_events = frozenset({"os.rename", "shutil.copyfile", "os.link"})
+    # Cells being run, outermost first; nested run_cell calls stack up.
+    record = {"cells": [], "paths": {}, "reads": {}, "reads_truncated": False, "invalid": False}
+    fspath, fsdecode, abspath, splitext = os.fspath, os.fsdecode, os.path.abspath, os.path.splitext
+    stat = os.stat
+    project = os.path.join(os.path.realpath(os.getcwd()), "")
+    ignored_parts = (os.sep + "__pycache__" + os.sep, os.sep + ".git" + os.sep)
+
+    def note_read(path):
+        if isinstance(path, int):
+            return
+        path = abspath(fsdecode(fspath(path)))
+        reads = record["reads"]
+        if path in reads or not path.startswith(project) or any(p in path for p in ignored_parts):
+            return
+        if len(reads) >= 1024:
+            record["reads_truncated"] = True
+            return
+        try:
+            status = stat(path)
+        except OSError:
+            return
+        reads[path] = [status.st_size, status.st_mtime_ns, status.st_ctime_ns]
+
+    def note(path):
+        if isinstance(path, int):
+            return
+        path = fsdecode(fspath(path))
+        if splitext(path)[1].lower() not in extensions:
+            return
+        path = abspath(path)
+        paths = record["paths"]
+        if path not in paths and len(paths) < 256:
+            paths[path] = None
+
+    def hook(event, args):
+        if not record["cells"]:
+            return
+        try:
+            if event == "open":
+                mode, flags = args[1], args[2]
+                writes = (isinstance(flags, int) and flags & write_flags) or (
+                    isinstance(mode, str) and any(c in mode for c in "wax+")
+                )
+                if writes:
+                    note(args[0])
+                # r+ (and O_RDWR without truncation) reads what was there before writing.
+                if (
+                    not writes
+                    or (isinstance(mode, str) and "r" in mode and "+" in mode)
+                    or (
+                        not isinstance(mode, str)
+                        and isinstance(flags, int)
+                        and flags & os.O_RDWR
+                        and not flags & os.O_TRUNC
+                    )
+                ):
+                    note_read(args[0])
+            elif event in destination_events:
+                note(args[1])
+        except Exception:
+            pass
+
+    def pre_run(info):
+        record["cells"].append(info)
+
+    # post_run_cell carries the ExecutionResult whose info pre_run_cell received. With no cell
+    # open nothing was recorded, as after the startup line that installed this recorder.
+    def post_run(result):
+        cells = record["cells"]
+        if not cells:
+            return
+        info = getattr(result, "info", None)
+        for depth in range(len(cells) - 1, -1, -1):
+            if cells[depth] is info:
+                if depth != len(cells) - 1:
+                    record["invalid"] = True
+                del cells[depth:]
+                return
+        raw_cell = getattr(info, "raw_cell", None)
+        # IPython skips pre_run_cell for a blank cell but still sends post_run_cell.
+        if info is None or (raw_cell and not (isinstance(raw_cell, str) and raw_cell.isspace())):
+            record["invalid"] = True
+
+    # Read between cells, so a cell still open means its lifecycle was lost.
+    def take():
+        invalid = record["invalid"] or bool(record["cells"])
+        taken = json.dumps(
+            None
+            if invalid
+            else {
+                "paths": list(record["paths"]),
+                "reads": [
+                    [path, size, str(mtime), str(ctime)]
+                    for path, (size, mtime, ctime) in record["reads"].items()
+                ],
+                "readsTruncated": record["reads_truncated"],
+            }
+        )
+        record["cells"] = []
+        record["paths"] = {}
+        record["reads"] = {}
+        record["reads_truncated"] = False
+        record["invalid"] = False
+        return taken
+
+    module = types.ModuleType("_scient_compute_writes")
+    module.take = take
+    sys.modules["_scient_compute_writes"] = module
+    sys.addaudithook(hook)
+    _scient_shell.events.register("pre_run_cell", pre_run)
+    _scient_shell.events.register("post_run_cell", post_run)
+
+try:
+    _scient_install_write_recorder()
+except Exception:
+    pass
 """
+
+# Read after each Python cell; the module is absent when the recorder could not be installed.
+WRITE_RECORD_EXPRESSION = '__import__("sys").modules["_scient_compute_writes"].take()'
 
 
 # A single expression keeps inspection out of the user's history and namespace.
@@ -955,6 +1091,7 @@ class ScientBridge:
         self._variables_expression: Optional[str] = VARIABLE_INSPECTION_EXPRESSION
         # Table pages are read by Python source, so only the default ipykernel serves them.
         self._serves_tables = True
+        self._records_writes = False
         self._startup_timeout: int = STARTUP_TIMEOUT
         self._working_directory = os.path.realpath(os.getcwd())
         self._execution_task: Optional[asyncio.Task[None]] = None
@@ -1365,6 +1502,7 @@ class ScientBridge:
             VARIABLE_INSPECTION_EXPRESSION if python_features else kernel["variablesExpression"]
         )
         self._serves_tables = python_features
+        self._records_writes = python_features
         self._mapping.interrupted_reply_is_ok = bool((kernel or {}).get("interruptedReplyIsOk"))
         # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
         self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
@@ -1841,14 +1979,14 @@ class ScientBridge:
                         return
                 await asyncio.sleep(IDLE_POLL_INTERVAL)
 
-            self._send(
-                "execution-complete",
-                {
-                    "outcome": self._mapping.outcome(),
-                    "executionCount": self._mapping.execution_count(),
-                },
-                request_id,
-            )
+            completion: dict[str, Any] = {
+                "outcome": self._mapping.outcome(),
+                "executionCount": self._mapping.execution_count(),
+            }
+            writes = await self._read_write_record()
+            if writes is not None:
+                completion["writes"] = writes
+            self._send("execution-complete", completion, request_id)
             self._mapping.reset()
             self._execution_task = None
             await self._flush()
@@ -1856,6 +1994,45 @@ class ScientBridge:
             raise
         except Exception as error:  # noqa: BLE001 - reported as session loss
             await self._fail_fatal(f"Kernel communication failed: {error}")
+
+    async def _read_write_record(self) -> Optional[dict[str, Any]]:
+        """Files the finished cell was seen writing, or None when there is no usable record."""
+        if not self._records_writes:
+            return None
+        try:
+            result = await self._evaluate_silently(
+                "writes", WRITE_RECORD_EXPRESSION, WRITE_RECORD_TIMEOUT
+            )
+            record = self._expression_value(result) if result.get("status") == "ok" else None
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        except Exception:  # noqa: BLE001 - the server watches the project either way
+            return None
+        if not isinstance(record, dict):
+            return None
+        paths = record.get("paths")
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            return None
+        kept = [path for path in paths if len(path) <= MAX_WRITE_RECORD_PATH]
+        report: dict[str, Any] = {"paths": kept[:MAX_WRITE_RECORD_PATHS]}
+        reads = record.get("reads")
+        if isinstance(reads, list):
+            usable = [
+                {"path": read[0], "size": read[1], "modifiedAtNs": read[2], "changedAtNs": read[3]}
+                for read in reads
+                if isinstance(read, list)
+                and len(read) == 4
+                and isinstance(read[0], str)
+                and len(read[0]) <= MAX_WRITE_RECORD_PATH
+                and isinstance(read[1], int)
+                and isinstance(read[2], str)
+                and isinstance(read[3], str)
+            ]
+            report["reads"] = usable[:MAX_READ_RECORD_PATHS]
+            report["readsTruncated"] = (
+                record.get("readsTruncated") is True or len(usable) > MAX_READ_RECORD_PATHS
+            )
+        return report
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
         drained = 0

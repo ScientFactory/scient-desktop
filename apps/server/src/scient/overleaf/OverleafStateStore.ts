@@ -47,9 +47,10 @@ import {
 } from "./OverleafConnectionState.ts";
 
 import { overleafCloudRoot } from "./overleafCloudRoots.ts";
+import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
   ensureNativePrivateRetentionDirectory,
-  resolveNativeFilePublicationHelperPath,
+  nativeFilePublicationHelper,
 } from "../workspace/NativeFilePublication.ts";
 
 export class OverleafStateLockedError extends Schema.TaggedError<OverleafStateLockedError>()(
@@ -107,13 +108,15 @@ export class OverleafConnectionUnavailableError extends Schema.TaggedError<Overl
   "OverleafConnectionUnavailableError",
   {
     connectionId: Schema.String,
-    condition: Schema.Literals(["missing", "corrupt", "unsupported", "valid"]),
+    condition: Schema.Literals(["missing", "corrupt", "unsupported", "valid", "unfinished"]),
   },
 ) {
   override get message(): string {
     return this.condition === "valid"
       ? "A readable Overleaf connection is never quarantined."
-      : `The Overleaf connection is ${this.condition}.`;
+      : this.condition === "unfinished"
+        ? "The Overleaf connection records an unfinished sync, so it stays where it is."
+        : `The Overleaf connection is ${this.condition}.`;
   }
 }
 
@@ -143,6 +146,12 @@ export class OverleafRecordInvalidError extends Schema.TaggedError<OverleafRecor
     return `Refused to write an invalid Overleaf ${this.record} record.`;
   }
 }
+
+/** The disks retention accepts on this host. */
+const supportedFilesystems = () => {
+  const platform = HostProcess.Platform.defaultValue();
+  return platform === "win32" ? "NTFS" : platform === "linux" ? "ext4, XFS or Btrfs" : "APFS";
+};
 
 export class OverleafRetentionUnavailableError extends Schema.TaggedError<OverleafRetentionUnavailableError>()(
   "OverleafRetentionUnavailableError",
@@ -174,9 +183,9 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
       case "volatile-filesystem":
         return "Scient cannot keep recovery files on temporary memory storage.";
       case "sync-managed-folder":
-        return "Scient's state and kept files must be outside cloud-managed folders.";
+        return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Move the project out of the cloud folder, then link it again.";
       case "unsupported-filesystem":
-        return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS.";
+        return `This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as ${supportedFilesystems()}.`;
       case "read-only-parent":
         return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
       case "shared-parent":
@@ -193,12 +202,89 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
   }
 }
 
+/** What an unreadable document still shows, read as this release's field names. */
+export interface OverleafUnreadableShows {
+  /** The linked folder, when the document names its checkout and folder. */
+  readonly folder: string | null;
+  /** A sync stopped part-way: an apply in progress or staged source copies. Null when it doesn't say. */
+  readonly unfinished: boolean | null;
+}
+
 /** What is on disk for one connection. Unreadable documents are reported, never reset. */
 export type OverleafConnectionRead =
   | { readonly _tag: "missing" }
   | { readonly _tag: "ready"; readonly document: OverleafConnectionDocument }
-  | { readonly _tag: "corrupt" }
-  | { readonly _tag: "unsupported" };
+  | { readonly _tag: "corrupt"; readonly shows: OverleafUnreadableShows }
+  | { readonly _tag: "unsupported"; readonly shows: OverleafUnreadableShows };
+
+export type OverleafUnreadableRead = Extract<
+  OverleafConnectionRead,
+  { readonly _tag: "corrupt" | "unsupported" }
+>;
+
+const objectField = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+
+const unreadableShows = (value: unknown): OverleafUnreadableShows => {
+  const root = objectField(objectField(value, "checkout"), "canonicalRoot");
+  const relative = objectField(objectField(value, "folder"), "relativePath");
+  // Held to the rules a readable document's paths meet, so the folder stays inside its checkout.
+  const folder =
+    typeof root === "string" &&
+    NodePath.isAbsolute(root) &&
+    NodePath.resolve(root) === root &&
+    typeof relative === "string" &&
+    (relative === "" || manuscriptPathProblem(relative) === null)
+      ? relative === ""
+        ? root
+        : NodePath.join(root, ...relative.split("/"))
+      : null;
+  const apply = objectField(value, "activeApply");
+  const staging = objectField(value, "stagingPaths");
+  const applying = apply === undefined ? null : apply !== null;
+  const staged = Array.isArray(staging) ? staging.length > 0 : null;
+  // Without a version number the record may be any release's, which may keep pending work
+  // in fields this release has never seen. A newer number still holds its checkout back.
+  const version = objectField(value, "schemaVersion");
+  const versioned = Number.isInteger(version) && (version as number) >= 1;
+  const unfinished =
+    applying === true || staged === true
+      ? true
+      : versioned && applying === false && staged === false
+        ? false
+        : null;
+  return { folder, unfinished };
+};
+
+/**
+ * What an unreadable document holds back besides linking. It might record an unfinished
+ * sync, so bulk changes wait at its checkout, or at every checkout when it names none. A
+ * newer release's fields can't prove it settled, but a damaged one that shows no unfinished
+ * sync holds nothing back.
+ */
+export const unreadableHolds = (
+  read: OverleafUnreadableRead,
+): "linking" | "checkout" | "every-checkout" =>
+  read._tag === "corrupt" && read.shows.unfinished === false
+    ? "linking"
+    : read.shows.folder === null
+      ? "every-checkout"
+      : "checkout";
+
+/**
+ * Whether an unreadable document may be moved aside. A newer release's document stays
+ * unless it plainly records no unfinished sync: that release can still settle it. A
+ * damaged one that shows unfinished work goes only once the user accepts that its staged
+ * files lose their protection, since no release can settle it.
+ */
+export const unreadableSetAside = (read: OverleafUnreadableRead): "allowed" | "confirm" | "held" =>
+  read._tag === "unsupported"
+    ? read.shows.unfinished === false
+      ? "allowed"
+      : "held"
+    : read.shows.unfinished === true
+      ? "confirm"
+      : "allowed";
 
 type WriteError =
   | OverleafStateLockedError
@@ -237,9 +323,14 @@ export class OverleafStateStore extends Context.Service<
       | OverleafTransitionRejectedError
       | OverleafRecordInvalidError
     >;
-    /** Moves an unreadable document aside, bytes intact; returns its quarantine name. */
+    /**
+     * Moves an unreadable document aside, bytes intact; returns its quarantine name. Once
+     * aside, it no longer holds bulk checkout changes back from a sync's staged files, so
+     * `unreadableSetAside` decides, and `acceptUnfinished` admits a damaged unfinished one.
+     */
     readonly quarantineConnection: (
       connectionId: string,
+      options?: { readonly acceptUnfinished?: boolean },
     ) => Effect.Effect<string, WriteError | OverleafConnectionUnavailableError>;
     /**
      * Records a request before its operation runs. A repeated request with the
@@ -276,6 +367,20 @@ export class OverleafStateStore extends Context.Service<
       { readonly directory: string; readonly identity: OverleafVolumeFileIdentity },
       WriteError | OverleafRetentionUnavailableError
     >;
+    /**
+     * Finds a recorded retention folder for reading, as `prepareRetention` does, without
+     * the write lease: it never creates one and writes nothing the lease protects.
+     */
+    readonly findRetention: (input: {
+      readonly environmentId: string;
+      readonly connectionId: string;
+      readonly checkoutRoot: string;
+      readonly publicationHelper: string | null;
+      readonly expected: OverleafVolumeFileIdentity;
+    }) => Effect.Effect<
+      { readonly directory: string; readonly identity: OverleafVolumeFileIdentity },
+      OverleafStateIoError | OverleafRetentionUnavailableError
+    >;
   }
 >()("t3/scient/overleaf/OverleafStateStore") {}
 
@@ -301,13 +406,13 @@ const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefine
 async function privateDirectory(
   directory: string,
   userId: number | undefined,
-  configuredHelper?: string,
+  publicationHelper: () => Promise<string | undefined>,
 ): Promise<boolean> {
   if (await overleafCloudRoot(directory))
     throw new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" });
   const platform = HostProcess.Platform.defaultValue();
   if (platform === "linux" || platform === "win32") {
-    const helper = configuredHelper ?? (await resolveNativeFilePublicationHelperPath());
+    const helper = await publicationHelper();
     if (!helper) return false;
     if (platform === "win32") await windowsPrivateDirectory(directory, true, helper);
     else await ensureNativePrivateRetentionDirectory(helper, directory);
@@ -334,6 +439,8 @@ async function privateDirectory(
 export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   readonly root: string;
   readonly publicationHelper?: string | undefined;
+  /** Without `publicationHelper`: the host's configured helper, looked for when first needed. */
+  readonly filePublicationHelperPath?: string | undefined;
   readonly hooks?: OverleafStateStoreHooks;
   /** Test seam for macOS volume discovery; Linux uses the held native object. */
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
@@ -344,6 +451,9 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   const receipts = NodePath.join(root, "receipts");
   const quarantine = NodePath.join(root, "quarantine");
   const retained = NodePath.join(root, "retained");
+  const publicationHelper = async () =>
+    options.publicationHelper ??
+    (await nativeFilePublicationHelper(options.filePublicationHelperPath));
   const hook = (point: Parameters<NonNullable<OverleafStateStoreHooks["at"]>>[0], file: string) =>
     options.hooks?.at?.(point, file) ?? Promise.resolve();
 
@@ -374,7 +484,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   const acquireLease = Effect.gen(function* () {
     yield* io("prepare-directory", async () => {
       for (const directory of [root, connections, receipts, quarantine])
-        if (!(await privateDirectory(directory, userId, options.publicationHelper)))
+        if (!(await privateDirectory(directory, userId, publicationHelper)))
           throw new Error("Overleaf state directory is not private.");
     });
     // Record which file SQLite is about to open. Create it first (never
@@ -466,15 +576,6 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     }
     yield* acquireLease;
   });
-  let publicationHelper: Promise<string | undefined> | undefined;
-  const resolvePublicationHelper = () => {
-    if (publicationHelper === undefined)
-      publicationHelper =
-        options.publicationHelper !== undefined
-          ? Promise.resolve(options.publicationHelper)
-          : resolveNativeFilePublicationHelperPath();
-    return publicationHelper;
-  };
   /**
    * Re-check on every write: a folder can become sync-managed after the lease
    * was taken. Windows registrations are not in config files, so the helper
@@ -484,7 +585,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     try: async () => {
       if (await overleafCloudRoot(root)) return true;
       if (HostProcess.Platform.defaultValue() !== "win32") return false;
-      const helper = await resolvePublicationHelper();
+      const helper = await publicationHelper();
       if (!helper) return false;
       return (await windowsNativeFile(root, "private", helper)).syncManaged === true;
     },
@@ -572,19 +673,25 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
       const decoded = decodeOverleafConnectionDocument(text);
       if (decoded !== null) {
         // A document filed under another name is not this connection's state.
-        if (decoded.connectionId !== connectionId) return { _tag: "corrupt" };
+        if (decoded.connectionId !== connectionId)
+          return { _tag: "corrupt", shows: unreadableShows(decoded) };
         return { _tag: "ready", document: decoded };
       }
-      let version: unknown;
+      let value: unknown;
       try {
-        version = (JSON.parse(text) as { schemaVersion?: unknown } | null)?.schemaVersion;
+        value = JSON.parse(text);
       } catch {
-        return { _tag: "corrupt" };
+        return { _tag: "corrupt", shows: unreadableShows(undefined) };
       }
+      const version = objectField(value, "schemaVersion");
       // A newer version is another release's; an older one that does not upgrade is damaged.
-      return typeof version === "number" && version > OVERLEAF_CONNECTION_SCHEMA_VERSION
-        ? { _tag: "unsupported" }
-        : { _tag: "corrupt" };
+      return {
+        _tag:
+          typeof version === "number" && version > OVERLEAF_CONNECTION_SCHEMA_VERSION
+            ? "unsupported"
+            : "corrupt",
+        shows: unreadableShows(value),
+      };
     });
 
   const listConnections: OverleafStateStore["Service"]["listConnections"] = io("list", async () => {
@@ -651,6 +758,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
 
   const quarantineConnection: OverleafStateStore["Service"]["quarantineConnection"] = (
     connectionId,
+    options,
   ) =>
     withLease(
       Effect.gen(function* () {
@@ -659,6 +767,12 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
           return yield* new OverleafConnectionUnavailableError({
             connectionId,
             condition: current._tag === "ready" ? "valid" : "missing",
+          });
+        const rule = unreadableSetAside(current);
+        if (rule === "held" || (rule === "confirm" && options?.acceptUnfinished !== true))
+          return yield* new OverleafConnectionUnavailableError({
+            connectionId,
+            condition: "unfinished",
           });
         const now = yield* Clock.currentTimeMillis;
         return yield* io("quarantine", async () => {
@@ -690,7 +804,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
         yield* requireValid("receipt", receipt);
         const file = yield* io("write", async () => {
           const file = receiptFile(receipt.connectionId, receipt.requestId);
-          if (!(await privateDirectory(NodePath.dirname(file), userId, options.publicationHelper)))
+          if (!(await privateDirectory(NodePath.dirname(file), userId, publicationHelper)))
             throw new Error("Overleaf receipt directory is not private.");
           return file;
         });
@@ -733,28 +847,29 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
       }),
     );
 
+  const locateRetention = Effect.fnUntraced(function* (
+    input: Parameters<OverleafStateStore["Service"]["prepareRetention"]>[0],
+  ) {
+    const located = yield* io("prepare-retention", () => {
+      if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
+        throw new Error("Invalid connection or environment id.");
+      return locateOverleafRetention({
+        stateRetained: retained,
+        environmentId: input.environmentId,
+        connectionId: input.connectionId,
+        checkoutRoot: input.checkoutRoot,
+        userId,
+        publicationHelper: input.publicationHelper,
+        expected: input.expected,
+        volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
+      });
+    });
+    if (located._tag === "refused")
+      return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
+    return { directory: located.directory, identity: located.identity };
+  });
   const prepareRetention: OverleafStateStore["Service"]["prepareRetention"] = (input) =>
-    withLease(
-      Effect.gen(function* () {
-        const located = yield* io("prepare-retention", () => {
-          if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
-            throw new Error("Invalid connection or environment id.");
-          return locateOverleafRetention({
-            stateRetained: retained,
-            environmentId: input.environmentId,
-            connectionId: input.connectionId,
-            checkoutRoot: input.checkoutRoot,
-            userId,
-            publicationHelper: input.publicationHelper,
-            expected: input.expected,
-            volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
-          });
-        });
-        if (located._tag === "refused")
-          return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
-        return { directory: located.directory, identity: located.identity };
-      }),
-    );
+    withLease(locateRetention(input));
 
   return OverleafStateStore.of({
     readConnection,
@@ -766,6 +881,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     beginReceipt,
     finishReceipt,
     prepareRetention,
+    findRetention: locateRetention,
   });
 });
 
@@ -776,9 +892,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     return yield* make({
       root: NodePath.join(config.stateDir, "overleaf"),
-      publicationHelper: yield* Effect.promise(() =>
-        resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-      ),
+      filePublicationHelperPath: config.filePublicationHelperPath,
     });
   }),
 );

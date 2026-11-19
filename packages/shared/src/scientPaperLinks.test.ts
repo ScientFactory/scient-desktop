@@ -1,8 +1,10 @@
 import type { AccountDetails } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  institutionLink,
   institutionLinkFromButton,
   openAthensLink,
+  publisherOf,
   signInReturn,
   universityLinks,
   universitySignInLink,
@@ -82,5 +84,27 @@ describe("university links", () => {
     expect(
       institutionLinkFromButton("http://example.org/action/ssostart", article, SHIBBOLETH),
     ).toBeUndefined();
+  });
+});
+
+// Client code ships unpolyfilled; URL.parse and URL.canParse are missing before Safari 17/18.
+describe("without URL.canParse or URL.parse", () => {
+  it("still reads publishers, sign-in links and sign-in returns", () => {
+    const { canParse, parse } = URL;
+    Reflect.deleteProperty(URL, "canParse");
+    Reflect.deleteProperty(URL, "parse");
+    try {
+      expect(publisherOf("https://www.nature.com/articles/x")).toBe("nature.com");
+      expect(publisherOf("not a url")).toBe("not a url");
+      expect(institutionLink("https://ieeexplore.ieee.org/document/1", OPEN_ATHENS)).toContain(
+        "https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=",
+      );
+      expect(institutionLink("not a url", OPEN_ATHENS)).toBeUndefined();
+      expect(signInReturn("https://my.openathens.net/app/research")).toBe("openathens");
+      expect(signInReturn("not a url")).toBeUndefined();
+    } finally {
+      URL.canParse = canParse;
+      URL.parse = parse;
+    }
   });
 });

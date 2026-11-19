@@ -1,8 +1,10 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
+import type { VectorBitmap, VectorRequest } from "./vector-pictures";
 import type { Method } from "./worker-rpc";
-
-/** The longest side a decoded picture keeps: enough for a full-width slide on a high-density screen. */
-export const maxImageSide = 2560;
+// SCIENT-FORK:START
+import type { WordSpan } from "./word-protocol";
+import type { OfficeFindHit } from "~/scient/office/wordFind";
+// SCIENT-FORK:END
 
 /** What the window shows of one slide besides its bitmap. */
 export type SlideSummary = {
@@ -12,16 +14,6 @@ export type SlideSummary = {
   readonly hidden: boolean;
   readonly notes: string | undefined;
 };
-
-/** An SVG picture the worker cannot decode, which the window rasterizes at `size`, or at its own size when absent. */
-export type VectorRequest = {
-  readonly asset: string;
-  readonly blob: Blob;
-  readonly size: { readonly width: number; readonly height: number } | undefined;
-};
-
-/** A rasterized SVG picture, or none when the window could not decode it either. */
-export type VectorBitmap = { readonly asset: string; readonly bitmap: ImageBitmap | undefined };
 
 export type SlidePainted =
   | {
@@ -44,4 +36,8 @@ export type SlideMethods = {
   readonly paint: Method<{ readonly index: number; readonly density: number }, SlidePainted>;
   /** Hands over SVG pictures rasterized for `VectorRequest`s. */
   readonly vectors: Method<readonly VectorBitmap[], void>;
+  // SCIENT-FORK:START — the reader's text layer and find, in the Word layer's units.
+  readonly text: Method<{ readonly index: number }, readonly WordSpan[]>;
+  readonly find: Method<{ readonly query: string }, readonly OfficeFindHit[]>;
+  // SCIENT-FORK:END
 };

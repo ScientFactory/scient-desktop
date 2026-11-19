@@ -2,6 +2,7 @@
 export const KEEP_AWAKE_CHANNEL = "scient:keep-awake";
 // SCIENT-FORK:END
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+export const TO_LOCAL_BACKEND_PATH_CHANNEL = "desktop:to-local-backend-path";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const SAVE_ASSET_COPY_CHANNEL = "desktop:save-asset-copy";
@@ -27,6 +28,7 @@ export const TRACKPAD_SCROLL_BEGIN_CHANNEL = "desktop:trackpad-scroll-begin";
 export const TRACKPAD_SCROLL_END_CHANNEL = "desktop:trackpad-scroll-end";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";
+export const SYNC_HTML_FULLSCREEN_CHANNEL = "desktop:sync-html-fullscreen";
 export const DESKTOP_APP_ACTIVATION_READY_CHANNEL = "desktop:app-activation-ready";
 export const DESKTOP_APP_ACTIVATION_COMPLETE_CHANNEL = "desktop:app-activation-complete";
 export const DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL = "desktop:app-activation-request";
@@ -39,12 +41,16 @@ export const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 export const CLI_COMMAND_GET_STATE_CHANNEL = "desktop:cli-command-get-state";
 export const CLI_COMMAND_INSTALL_CHANNEL = "desktop:cli-command-install";
 export const CLI_COMMAND_UNINSTALL_CHANNEL = "desktop:cli-command-uninstall";
+export const CLI_COMMAND_ADD_TO_PATH_CHANNEL = "desktop:cli-command-add-to-path";
 export const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 export const GET_RELAY_TELEMETRY_ENABLED_CHANNEL = "desktop:get-relay-telemetry-enabled";
 export const GET_SYSTEM_LOCALE_CHANNEL = "desktop:get-system-locale";
+export const GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL = "desktop:get-preferred-system-languages";
+export const GET_PRIMARY_PASTE_ENABLED_CHANNEL = "desktop:get-primary-paste-enabled";
 export const GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL = "desktop:get-local-environment-bootstraps";
 export const GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:get-local-environment-enabled";
 export const SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:set-local-environment-enabled";
+export const GET_HOST_ENVIRONMENT_ID_CHANNEL = "desktop:get-host-environment-id";
 export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
   "desktop:get-local-environment-bearer-token";
 export const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
@@ -74,6 +80,7 @@ export const BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL = "desktop:bootstrap-ssh-beare
 export const FETCH_SSH_SESSION_STATE_CHANNEL = "desktop:fetch-ssh-session-state";
 export const SSH_PASSWORD_PROMPT_CHANNEL = "desktop:ssh-password-prompt";
 export const RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL = "desktop:resolve-ssh-password-prompt";
+export const SSH_PASSWORD_PROMPT_SETTLED_CHANNEL = "desktop:ssh-password-prompt-settled";
 export const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 export const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 export const SET_TAILSCALE_SERVE_ENABLED_CHANNEL = "desktop:set-tailscale-serve-enabled";
@@ -90,6 +97,7 @@ export const PREVIEW_REGISTER_WEBVIEW_CHANNEL = "desktop:preview-register-webvie
 export const PREVIEW_NAVIGATE_CHANNEL = "desktop:preview-navigate";
 export const PREVIEW_GO_BACK_CHANNEL = "desktop:preview-go-back";
 export const PREVIEW_GO_FORWARD_CHANNEL = "desktop:preview-go-forward";
+export const PREVIEW_STOP_LOADING_CHANNEL = "desktop:preview-stop-loading";
 export const PREVIEW_REFRESH_CHANNEL = "desktop:preview-refresh";
 export const PREVIEW_ZOOM_IN_CHANNEL = "desktop:preview-zoom-in";
 export const PREVIEW_ZOOM_OUT_CHANNEL = "desktop:preview-zoom-out";
@@ -98,6 +106,10 @@ export const PREVIEW_SET_ZOOM_FACTOR_CHANNEL = "desktop:preview-set-zoom-factor"
 export const PREVIEW_HARD_RELOAD_CHANNEL = "desktop:preview-hard-reload";
 export const PREVIEW_SET_COLOR_SCHEME_CHANNEL = "desktop:preview-set-color-scheme";
 export const PREVIEW_SET_AUDIO_MUTED_CHANNEL = "desktop:preview-set-audio-muted";
+export const PREVIEW_FIND_IN_PAGE_CHANNEL = "desktop:preview-find-in-page";
+export const PREVIEW_STOP_FIND_IN_PAGE_CHANNEL = "desktop:preview-stop-find-in-page";
+export const PREVIEW_SET_SHOWN_CHANNEL = "desktop:preview-set-shown";
+export const PREVIEW_SET_CAPTURE_DRAWN_CHANNEL = "desktop:preview-set-capture-drawn";
 export const PREVIEW_OPEN_DEVTOOLS_CHANNEL = "desktop:preview-open-devtools";
 export const PREVIEW_CLEAR_COOKIES_CHANNEL = "desktop:preview-clear-cookies";
 export const PREVIEW_CLEAR_CACHE_CHANNEL = "desktop:preview-clear-cache";
@@ -123,6 +135,11 @@ export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
+export const PREVIEW_FIND_RESULT_CHANNEL = "desktop:preview-find-result";
+// SCIENT-FORK: Scient Browser — Google sign-in is stopped and explained.
+export const PREVIEW_SIGN_IN_BLOCKED_CHANNEL = "desktop:preview-sign-in-blocked";
+export const PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL = "desktop:preview-tunnel-access-request";
+export const PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL = "desktop:preview-tunnel-access-resolve";
 
 // Scient local voice transcription (desktop-only).
 export const VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL = "desktop:voice-request-microphone-access";
@@ -134,6 +151,9 @@ export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
+// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
+export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
 // SCIENT-FORK:END
@@ -165,5 +185,28 @@ export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input"
 export const RENDER_DOCUMENT_PAGE_PDF_CHANNEL = "desktop:render-document-page-pdf";
 export const SAVE_PDF_BYTES_COPY_CHANNEL = "scient:pdf:save-bytes-copy";
 
+export const PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL = "desktop:preview-annotation-voice-event";
+export const PREVIEW_ANNOTATION_VOICE_STATE_CHANNEL = "desktop:preview-annotation-voice-state";
+
 export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-auth-callback";
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
+
+export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+export const GET_RESTART_READINESS_TOKEN_CHANNEL = "scient:restart:readiness-token";
+export const REPORT_WORKSPACE_READY_CHANNEL = "scient:restart:workspace-ready";
+export const PREPARE_UPDATE_SAVE_CHANNEL = "scient:update:prepare-save";
+export const COMPLETE_UPDATE_SAVE_CHANNEL = "scient:update:complete-save";
+export const RELEASE_UPDATE_SAVE_CHANNEL = "scient:update:release-save";
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — feedback reports to the Scient team (scient/feedback).
+export const FEEDBACK_PREPARE_CHANNEL = "scient:feedback:prepare";
+export const FEEDBACK_CAPTURE_SCREENSHOT_CHANNEL = "scient:feedback:capture-screenshot";
+export const FEEDBACK_READ_RECENT_LOGS_CHANNEL = "scient:feedback:read-recent-logs";
+export const FEEDBACK_SUBMIT_CHANNEL = "scient:feedback:submit";
+export const FEEDBACK_TAKE_FIXED_NOTICES_CHANNEL = "scient:feedback:take-fixed-notices";
+// SCIENT-FORK:END
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

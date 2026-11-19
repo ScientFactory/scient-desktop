@@ -12,9 +12,14 @@ import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   listScientSkillsForInvocation,
+  loadedSkillFacts,
   loadScientSkillForInvocation,
+  readPersonalSkillForInvocation,
   readScientSkillResourceForInvocation,
+  savePersonalSkillForInvocation,
 } from "./handlers.ts";
+import { type PersonalSkillFailure, ScientSkillManagementError } from "@t3tools/contracts";
+import type * as PersonalSkills from "../../../scient/skills/PersonalSkills.ts";
 
 const fixtures: string[] = [];
 
@@ -239,6 +244,22 @@ describe("Scient skills MCP handlers", () => {
       });
       expect(incomplete.hint).toContain("discovery was incomplete");
       expect(incomplete.hint).not.toContain("No Scient skills are available");
+
+      const incompleteMiss = yield* provideContext(
+        listScientSkillsForInvocation({ query: "nonexistent" }),
+        {
+          catalog,
+          invocation: makeInvocation(
+            [catalog.releases[0]!],
+            new Set(["skills:read"]),
+            "automatic",
+            "incomplete",
+          ),
+        },
+      );
+      expect(incompleteMiss.skills).toHaveLength(1);
+      expect(incompleteMiss.hint).toContain("discovery was incomplete");
+      expect(incompleteMiss.hint).toContain("No keyword matches");
     }),
   );
 
@@ -320,4 +341,77 @@ describe("Scient skills MCP handlers", () => {
       expect(hidden.code).toBe("not-found");
     }),
   );
+});
+
+describe("the user's own skills", () => {
+  const failing = (reason: PersonalSkillFailure, operation: string) =>
+    ({
+      save: () =>
+        Effect.fail(new ScientSkillManagementError({ operation, message: "No.", reason })),
+      read: () =>
+        Effect.fail(
+          new ScientSkillManagementError({
+            operation,
+            message: "You have no skill named 'evidence-review'.",
+            reason,
+          }),
+        ),
+    }) as unknown as PersonalSkills.PersonalSkillsShape;
+
+  it.effect.each([
+    ["write-failed", "storage-failed"],
+    ["name-taken", "name-taken"],
+    ["unsafe", "invalid-skill"],
+  ] as const)("a save that fails with %s reports %s", ([reason, code]) =>
+    Effect.gen(function* () {
+      const error = yield* savePersonalSkillForInvocation(failing(reason, "save"), {
+        name: "evidence-review",
+        files: [{ path: "SKILL.md", content: "---\nname: evidence-review\n---\n" }],
+      }).pipe(Effect.flip);
+      expect(error.code).toBe(code);
+    }),
+  );
+
+  it.effect.each([
+    ["project:project-1", ".scient/skills/evidence-review/ in the project"],
+    ["scient", "can't be edited"],
+  ] as const)("a read miss on a %s skill says how it can change", ([origin, guidance]) =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.promise(makeCatalogFixture);
+      const release = { ...catalog.releases[0]!, origin } as SkillRelease;
+      const error = yield* readPersonalSkillForInvocation(failing("not-found", "read"), {
+        name: release.name,
+      }).pipe(
+        Effect.provideService(
+          AgentInvocationContext.AgentInvocationContext,
+          makeInvocation([release]),
+        ),
+        Effect.flip,
+      );
+      expect(error.code).toBe("not-found");
+      expect(error.message).toContain(guidance);
+    }),
+  );
+});
+
+describe("loadedSkillFacts", () => {
+  it("names only skills built into Scient", () => {
+    expect(loadedSkillFacts({ name: "latex-paper", origin: "scient" })).toEqual({
+      feature: "skills.load",
+      variant: "scient",
+      skill: "latex-paper",
+    });
+    expect(loadedSkillFacts({ name: "my-lab", origin: "personal" })).toEqual({
+      feature: "skills.load",
+      variant: "personal",
+    });
+    expect(loadedSkillFacts({ name: "x", origin: "addon:acme@1.0.0" })).toEqual({
+      feature: "skills.load",
+      variant: "addon",
+    });
+    expect(loadedSkillFacts({ name: "x", origin: "project:p1" })).toEqual({
+      feature: "skills.load",
+      variant: "project",
+    });
+  });
 });

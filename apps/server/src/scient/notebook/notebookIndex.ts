@@ -1,4 +1,5 @@
 import { computeLanguageIdFromName } from "@scientfactory/compute";
+import * as Schema from "effect/Schema";
 
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
@@ -12,7 +13,9 @@ const COLON = 0x3a;
 /** Outputs this small travel with the notebook; larger ones load when their cell is on screen. */
 const INLINE_OUTPUT_BYTES = 64 * 1024;
 
-class NotebookFormatError extends Error {}
+class NotebookFormatError extends Schema.TaggedError<NotebookFormatError>()("NotebookFormatError", {
+  message: Schema.String,
+}) {}
 
 interface Range {
   readonly start: number;
@@ -24,7 +27,7 @@ function stringEnd(buffer: Buffer, start: number): number {
   for (;;) {
     // Base64 holds no quotes, so a figure of any size is one native search.
     const quote = buffer.indexOf(QUOTE, cursor);
-    if (quote < 0) throw new NotebookFormatError("Unterminated string");
+    if (quote < 0) throw new NotebookFormatError({ message: "Unterminated string" });
     let backslashes = 0;
     while (buffer[quote - 1 - backslashes] === BACKSLASH) backslashes += 1;
     if (backslashes % 2 === 0) return quote + 1;
@@ -43,10 +46,10 @@ function skipSpace(buffer: Buffer, start: number): number {
 
 function valueEnd(buffer: Buffer, start: number): number {
   const first = buffer[start];
-  if (first === undefined) throw new NotebookFormatError("Unexpected end of file");
+  if (first === undefined) throw new NotebookFormatError({ message: "Unexpected end of file" });
   if (first === QUOTE) return stringEnd(buffer, start);
   if (first === COMMA || first === CLOSE_BRACE || first === CLOSE_BRACKET) {
-    throw new NotebookFormatError("Expected a value");
+    throw new NotebookFormatError({ message: "Expected a value" });
   }
   if (first !== OPEN_BRACE && first !== OPEN_BRACKET) {
     let cursor = start;
@@ -71,7 +74,7 @@ function valueEnd(buffer: Buffer, start: number): number {
   let cursor = start;
   for (;;) {
     const byte = buffer[cursor];
-    if (byte === undefined) throw new NotebookFormatError("Unexpected end of file");
+    if (byte === undefined) throw new NotebookFormatError({ message: "Unexpected end of file" });
     if (byte === QUOTE) {
       cursor = stringEnd(buffer, cursor);
       continue;
@@ -79,7 +82,7 @@ function valueEnd(buffer: Buffer, start: number): number {
     if (byte === OPEN_BRACE) closers.push(CLOSE_BRACE);
     else if (byte === OPEN_BRACKET) closers.push(CLOSE_BRACKET);
     else if (byte === CLOSE_BRACE || byte === CLOSE_BRACKET) {
-      if (closers.pop() !== byte) throw new NotebookFormatError("Mismatched brackets");
+      if (closers.pop() !== byte) throw new NotebookFormatError({ message: "Mismatched brackets" });
       if (closers.length === 0) return cursor + 1;
     }
     cursor += 1;
@@ -90,21 +93,23 @@ function valueEnd(buffer: Buffer, start: number): number {
 function nextItem(buffer: Buffer, afterValue: number, closer: number): number {
   const cursor = skipSpace(buffer, afterValue);
   if (buffer[cursor] === closer) return cursor;
-  if (buffer[cursor] !== COMMA) throw new NotebookFormatError("Expected a comma");
+  if (buffer[cursor] !== COMMA) throw new NotebookFormatError({ message: "Expected a comma" });
   const next = skipSpace(buffer, cursor + 1);
-  if (buffer[next] === closer) throw new NotebookFormatError("Unexpected trailing comma");
+  if (buffer[next] === closer)
+    throw new NotebookFormatError({ message: "Unexpected trailing comma" });
   return next;
 }
 
 function objectMembers(buffer: Buffer, range: Range): ReadonlyArray<readonly [string, Range]> {
-  if (buffer[range.start] !== OPEN_BRACE) throw new NotebookFormatError("Expected an object");
+  if (buffer[range.start] !== OPEN_BRACE)
+    throw new NotebookFormatError({ message: "Expected an object" });
   const members: Array<readonly [string, Range]> = [];
   let cursor = skipSpace(buffer, range.start + 1);
   while (cursor < range.end && buffer[cursor] !== CLOSE_BRACE) {
     const keyEnd = stringEnd(buffer, cursor);
     const key = JSON.parse(buffer.toString("utf8", cursor, keyEnd)) as string;
     const colon = skipSpace(buffer, keyEnd);
-    if (buffer[colon] !== COLON) throw new NotebookFormatError("Expected a colon");
+    if (buffer[colon] !== COLON) throw new NotebookFormatError({ message: "Expected a colon" });
     const start = skipSpace(buffer, colon + 1);
     const end = valueEnd(buffer, start);
     members.push([key, { start, end }]);
@@ -114,7 +119,8 @@ function objectMembers(buffer: Buffer, range: Range): ReadonlyArray<readonly [st
 }
 
 function arrayItems(buffer: Buffer, range: Range): ReadonlyArray<Range> {
-  if (buffer[range.start] !== OPEN_BRACKET) throw new NotebookFormatError("Expected an array");
+  if (buffer[range.start] !== OPEN_BRACKET)
+    throw new NotebookFormatError({ message: "Expected an array" });
   const items: Range[] = [];
   let cursor = skipSpace(buffer, range.start + 1);
   while (cursor < range.end && buffer[cursor] !== CLOSE_BRACKET) {
@@ -244,7 +250,7 @@ export function indexNotebook(buffer: Buffer): NotebookIndex {
   const root = skipSpace(buffer, 0);
   const members = objectMembers(buffer, { start: root, end: valueEnd(buffer, root) });
   const cells = members.find(([key]) => key === "cells")?.[1];
-  if (cells === undefined) throw new NotebookFormatError("This file has no cells");
+  if (cells === undefined) throw new NotebookFormatError({ message: "This file has no cells" });
   const metadata = members.find(([key]) => key === "metadata")?.[1];
   const cellRanges = arrayItems(buffer, cells);
   const ids: CellIds = { saved: savedCellIds(buffer, cellRanges), seen: new Set() };

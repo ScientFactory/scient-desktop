@@ -58,6 +58,14 @@ conversations, and `/trace` shows this conversation in it. Both open in the conv
 The dashboard runs inside the conversation's agent, so it stops when that agent does; run `/stats`
 again to bring it back.
 
+Send `/plan` followed by what you want done to have Scient Agent plan first. It reads what it
+needs and drafts a plan, but changes nothing. The plan appears as a plan card, and a question asks
+you to **Approve and carry out** or **Refine plan**. Approve, and the agent leaves plan mode and
+carries out the plan in the same turn. Refine, and it asks what to change; answer in your next
+message. `/plan` alone turns plan mode on, and `/plan off` turns it off. Plan mode and a
+[goal](./composer.md#goals) cannot be on together. This needs a Scient Agent that supports plan
+mode; an older one says so.
+
 **Compact** shows its progress in the conversation. If a turn stops because the session reached a
 spending cap or the account hit a usage limit, the conversation says so, and the next message is
 refused until the cap is raised or the limit resets. When an account is past its usage limit but is
@@ -129,14 +137,69 @@ while the parent conversation and other subagents continue. This requires a runt
 subagent stopping is unsupported. The child's reported lifecycle determines its final state. If
 the agent's process has already ended, Stop marks the child interrupted.
 
+Shell commands show as command rows with their output and exit code, file edits and writes as
+file changes you can open as a diff, and web searches with their query and sources. Pictures any
+tool returns show in its row.
+
 Scient shows the agent's reported context usage, model capacity and session cost. The cost
 includes billed cache refreshes, with cache warming left at the agent's default. `/compact`
 uses the agent's native compaction and shows its summary when available. The agent's task
 list appears above the composer as a read-only list.
 
+**Compact idle threads** works for Scient Agent as it does for
+[Claude](./providers-claude.md#compact-long-conversations), with the same setting and the same
+per-provider override, except that Scient Agent uses **Before the cache expires** unless you
+choose another mode for it (**Use default** follows the setting in Providers > Advanced). Scient
+compacts an idle thread over 200,000 tokens while the agent still holds the conversation and a warm
+prompt cache. With an hour-long cache, as with a Claude sign-in, that is about 25 minutes after the
+last reply, before Scient stops an idle agent after 30 minutes. With a five-minute cache, the agent
+keeps the cache warm while it is worth it, and Scient compacts when that warming stops after at least
+20 minutes idle, measured at the agent rather than when its report arrives, while the last refresh
+still holds; if warming stopped sooner, or never ran, the thread is not compacted. A model whose cache
+never expires is never compacted for being idle, nor is a thread whose model you changed since its
+last reply. **When you return** offers the **Compact** chip after an hour idle. Compaction before the
+cache expires needs a Scient Agent that reports its prompt cache, and for a five-minute cache one
+that also reports the warming-stop time; with an older one, those threads only get the chip.
+
 Agent notices, retry progress and save failures appear in the conversation. Questions retain
 the agent's offered choices, editor text and timeout information; an expired question closes
 when the agent cancels it. Plain confirmation questions offer Yes and No.
+
+## Using your computer
+
+Scient Agent can see and use the other apps on the computer it runs on: it lists windows, takes
+screenshots, reads windows through accessibility, clicks and types, and uses the clipboard. It
+works in the background where it can, without moving your pointer or taking your focus. It follows
+the conversation's access setting like any other tool: with full access (the only mode Scient
+Agent has) it asks nothing extra. **Computer control** in the provider's settings turns it off;
+it is on by default.
+
+Each call shows in the conversation under the app it used, with the agent's screenshots.
+
+What the operating system asks for:
+
+- **macOS:** Scient needs **Screen & System Audio Recording** (to see windows) and
+  **Accessibility** (to read windows and act in them). macOS asks on behalf of Scient, not the
+  agent. The provider's settings, and any step macOS refused, show both with an **Allow** button:
+  it asks macOS, which lists Scient in the pane, then opens the pane so you only turn Scient on.
+  In Screen & System Audio Recording, use the top list; **System Audio Recording Only** does not
+  let the agent see windows. When you turn on screen recording, macOS offers to quit and reopen
+  Scient: choose **Later**. Scient and the agent see the permission at once, with no restart.
+- **Windows:** nothing to allow. The agent cannot act in windows of apps running as administrator
+  unless Scient does too.
+- **Linux (X11):** nothing to allow. Background input needs write access to `/dev/uinput`;
+  without it the agent briefly brings a window forward instead. Apps expose their controls when
+  the desktop's accessibility support (AT-SPI) is on.
+- **Linux (Wayland):** the first input shows your desktop's remote-control prompt. Released
+  agent builds cannot take screenshots on Wayland.
+
+## Making pictures
+
+Scient Agent can make and edit pictures, such as figures and diagrams, when it has a ChatGPT or
+Google Antigravity account signed in. Scient turns the agent's image tool on while such an account
+is connected and off when it is not; no restart is needed. The pictures show in the conversation
+and are saved as files. They use that account's quota. **Image generation** in the provider's
+settings turns it off; it is on by default.
 
 ## Where it keeps things
 

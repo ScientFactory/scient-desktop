@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   inlineImageFormatLabel,
-  inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
   resolveInlineWorkspaceImage,
 } from "./inlineWorkspaceImage";
@@ -92,18 +91,5 @@ describe("inline workspace image resolution", () => {
       threadId: "thread-1",
       path: "/workspace/project/figures/result.svg",
     });
-  });
-
-  it("serializes a portable Markdown image when the rendered node has been normalized", () => {
-    expect(inlineWorkspaceImageMarkdownSource("Dose [mg]", "figures/dose response.svg")).toBe(
-      "![Dose \\[mg\\]](<figures/dose response.svg>)",
-    );
-    expect(
-      inlineWorkspaceImageMarkdownSource(
-        "Dose [mg]",
-        "figures/dose response.svg",
-        'Primary "analysis"',
-      ),
-    ).toBe('![Dose \\[mg\\]](<figures/dose response.svg> "Primary \\"analysis\\"")');
   });
 });

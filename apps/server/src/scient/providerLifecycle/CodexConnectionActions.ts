@@ -1,4 +1,8 @@
-import type { CodexSettings, ProviderConnectionMethod } from "@t3tools/contracts";
+import type {
+  CodexSettings,
+  ProviderConnectionFailureReason,
+  ProviderConnectionMethod,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -18,10 +22,15 @@ const LOGIN_ACCOUNT_VERIFY_TIMEOUT = Duration.seconds(20);
 const LOGIN_ACCOUNT_POLL_INTERVAL = Duration.millis(500);
 const FRESH_PROCESS_VERIFY_TIMEOUT = Duration.seconds(20);
 
-const connectionError = (message: string, cause?: unknown) =>
+const connectionError = (
+  message: string,
+  cause?: unknown,
+  reason?: ProviderConnectionFailureReason,
+) =>
   new ProviderConnectionActionError({
     message,
     ...(cause === undefined ? {} : { cause }),
+    ...(reason === undefined ? {} : { failureReason: reason }),
   });
 
 function methodParams(
@@ -71,7 +80,11 @@ const waitForAuthenticatedAccount = Effect.fn("CodexConnectionActions.waitForAut
       .request("account/read", { refreshToken: true })
       .pipe(
         Effect.mapError((cause) =>
-          connectionError("Codex signed in, but Scient could not verify the account.", cause),
+          connectionError(
+            "Codex signed in, but Scient could not verify the account.",
+            cause,
+            "verification",
+          ),
         ),
       );
 
@@ -95,6 +108,8 @@ const waitForAuthenticatedAccount = Effect.fn("CodexConnectionActions.waitForAut
           Effect.fail(
             connectionError(
               "Codex reported sign-in completion, but the account was not ready in time.",
+              undefined,
+              "verification",
             ),
           ),
       }),
@@ -113,7 +128,11 @@ export function makeCodexConnectionActionsFromOpen(
     methods: ["codex_browser", "codex_device_code"],
     start: Effect.fn("CodexConnectionActions.start")(function* (method) {
       if (method !== "codex_browser" && method !== "codex_device_code") {
-        return yield* connectionError("Codex does not support this sign-in method.");
+        return yield* connectionError(
+          "Codex does not support this sign-in method.",
+          undefined,
+          "start_failed",
+        );
       }
       const { client } = yield* open;
       const completedNotifications =
@@ -129,20 +148,28 @@ export function makeCodexConnectionActionsFromOpen(
         .request("account/login/start", methodParams(method))
         .pipe(
           Effect.mapError((cause) =>
-            connectionError("Codex did not start its secure sign-in flow.", cause),
+            connectionError("Codex did not start its secure sign-in flow.", cause, "start_failed"),
           ),
         );
 
       const expectedType = method === "codex_browser" ? "chatgpt" : "chatgptDeviceCode";
       if (response.type !== expectedType) {
-        return yield* connectionError("Codex returned an unexpected sign-in response.");
+        return yield* connectionError(
+          "Codex returned an unexpected sign-in response.",
+          undefined,
+          "invalid_response",
+        );
       }
 
       const loginId = response.loginId;
       const waitForCompletion = Effect.gen(function* () {
         const completed = yield* waitForLogin(completedNotifications, loginId);
         if (!completed.success) {
-          return yield* connectionError(completed.error ?? "Codex sign in was not completed.");
+          return yield* connectionError(
+            completed.error ?? "Codex sign in was not completed.",
+            undefined,
+            "provider_failed",
+          );
         }
         yield* waitForAuthenticatedAccount(client, accountUpdated);
         // Fresh-process verification: notifications and the login process are
@@ -154,6 +181,7 @@ export function makeCodexConnectionActionsFromOpen(
               connectionError(
                 "Codex signed in, but Scient could not start a fresh Codex process to confirm the account.",
                 cause,
+                "verification",
               ),
             ),
             Effect.flatMap(({ client: freshClient }) => {
@@ -164,6 +192,7 @@ export function makeCodexConnectionActionsFromOpen(
                     connectionError(
                       "Codex signed in, but Scient could not confirm the account in a fresh Codex process.",
                       cause,
+                      "verification",
                     ),
                   ),
                 );
@@ -187,6 +216,8 @@ export function makeCodexConnectionActionsFromOpen(
               Effect.fail(
                 connectionError(
                   "Codex signed in, but a fresh Codex process did not observe the account in time.",
+                  undefined,
+                  "verification",
                 ),
               ),
           }),
@@ -251,7 +282,9 @@ export function makeCodexConnectionActions(
   }).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.timeout("30 seconds"),
-    Effect.mapError((cause) => connectionError("Scient could not start Codex sign in.", cause)),
+    Effect.mapError((cause) =>
+      connectionError("Scient could not start Codex sign in.", cause, "start_failed"),
+    ),
   );
   return makeCodexConnectionActionsFromOpen(open);
 }

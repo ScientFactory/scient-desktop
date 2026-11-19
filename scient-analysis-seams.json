@@ -5,6 +5,8 @@
     "apps/server/src/mcp/toolkits/compute",
     "apps/server/src/scient/analysis",
     "apps/server/src/scient/compute",
+    "apps/server/src/scient/results",
+    "apps/web/src/scient/results",
     "apps/server/src/scient/execution",
     "apps/server/src/scient/latex",
     "apps/web/src/scient/analysis",
@@ -30,6 +32,7 @@
     "apps/server/src/assets/ScientAssetAccess.ts",
     "apps/server/src/assets/ScientAssetClaims.ts",
     "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
+    "apps/server/src/telemetry/FailureAttribution.ts",
     "apps/server/src/orchestration-v2/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration-v2/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
     "apps/server/src/orchestration-v2/scient-fork/migrations/007_AnalysisRunStorageStatus.ts",
@@ -77,7 +80,7 @@
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
-    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces|layout|previewPresentation)",
+    "(/|~)scient/(analysis|artifacts|compute(?!r)|execution|fileSurfaces|layout|previewPresentation)",
     "Compute(Session|Execution|Transport|Output)",
     "DuplexProcess",
     "analysis-artifact",
@@ -321,7 +324,12 @@
     {
       "path": "apps/web/src/components/files/PreviewImageContent.tsx",
       "anchor": "MEDIA_FAILURE_COPY.image",
-      "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner."
+      "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner. A TIFF draws the plane Scient's TIFF preview decoded and shows its value range and plane stepper."
+    },
+    {
+      "path": "apps/web/src/components/files/decodeImagePreview.ts",
+      "anchor": "decodeScientTiffPreview",
+      "purpose": "TIFF previews decode in Scient's range-reading TIFF worker (bounded codecs and memory, automatic contrast); HEIF keeps the inherited worker. scientFileAuxiliarySeam.test.ts guards the routing."
     },
     {
       "path": "apps/web/src/components/files/filePreviewMode.ts",
@@ -337,9 +345,19 @@
       "path": "apps/web/src/routes/__root.tsx",
       "anchor": "ComputeQuitGuardReport",
       "purpose": "Keep the desktop app told how many runs Quit would stop, so Quit can ask first."
+    },
+    {
+      "path": "vite.config.ts",
+      "anchor": "const SCIENT_ENGLISH_ONLY_FILES = [",
+      "purpose": "Scient-owned screens, including the static asset image surface, stay outside T3's untranslated-copy lint until they are translated."
     }
   ],
   "scientMounts": [
+    {
+      "path": "apps/server/src/telemetry/OperationAnalytics.ts",
+      "anchor": "readonly capture?: ComputeCaptureSummary",
+      "purpose": "Carry bounded Run File capture receipts through the shared Scient operation observer while preserving its consent fence and terminal deduplication."
+    },
     {
       "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
       "anchor": "[WS_METHODS.computeStartSession]",
@@ -354,6 +372,21 @@
       "path": "apps/web/src/scient/files/useScientFileActions.tsx",
       "anchor": "applyScientFileRename({",
       "purpose": "The Files panel's moves and renames make open tabs follow their files through the file surfaces' rename handoff."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorRuntime.ts",
+      "anchor": "Layer.provide(LocalDuplexProcess.layer)",
+      "purpose": "Run local connectors through the owned duplex process port shared with Compute."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/LocalConnectorProcesses.ts",
+      "anchor": "import { DuplexProcess } from \"../../execution/LocalDuplexProcess.ts\";",
+      "purpose": "Start each local connector session as an owned process tree, stopped with it."
+    },
+    {
+      "path": "apps/server/src/server.testkit.ts",
+      "anchor": "export type ScientRpcServerTestHarness = {",
+      "purpose": "Give the registered analysis, compute and Markdown RPC tests the shared server router harness."
     }
   ]
 }

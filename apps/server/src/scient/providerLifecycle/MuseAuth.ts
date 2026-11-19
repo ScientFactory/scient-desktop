@@ -347,5 +347,10 @@ export function guardMuseTextGeneration(
       guard("generateThreadTitle", generation.generateThreadTitle(input)),
     generateReviewGuide: (input) =>
       guard("generateReviewGuide", generation.generateReviewGuide(input)),
+    generateTranscriptionPostProcessing: (input) =>
+      guard(
+        "generateTranscriptionPostProcessing",
+        generation.generateTranscriptionPostProcessing(input),
+      ),
   };
 }

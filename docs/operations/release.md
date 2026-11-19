@@ -31,10 +31,26 @@ the stable scheduler and production gate.
 - Never rerun the full source test suite merely to reproduce evidence already
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
-- Desktop builds cache the Windows dependency store and compiled resource
-  monitor, omit unused Claude SDK platform executables, and package only the
-  target Windows `node-pty` architecture. These optimizations do not relax the
-  exact-source CI, signing, assembly, or publication gates.
+- Desktop builds cache the Windows dependency store, compiled resource
+  monitor and, on macOS, the pinned whisper.cpp and SyncTeX runtimes. They omit
+  unused Claude SDK platform executables and package only the target Windows
+  `node-pty` architecture. These optimizations do not relax the exact-source CI,
+  signing, assembly, or publication gates. The macOS runtime cache is keyed by the
+  pinning scripts and the runner's toolchain, written only by `main`, and the
+  packer verifies each receipt and every file before staging it.
+- Jobs wait only for the inputs they use. Each macOS package builds its own native
+  runtimes, so a release holds two macOS runners, not four. Linux and Windows
+  packages set up while their prerequisites build, then wait for their own
+  target's. The remote server asset starts once every target's SyncTeX runtime
+  and resource monitor exist, and fails if any is missing; Windows payload
+  verification starts once the Windows package exists. Assembly still requires
+  every job to succeed.
+- The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
+  default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
+  updater manifests are generated from the archive as before.
+- macOS packages run on matching host architectures: Intel uses `macos-26-intel`
+  and Apple Silicon uses `macos-26`. Intel's prepared server bytecode is generated
+  natively, without Rosetta, under the same cache-generation timeout and checks.
 - Windows packaging runs on Ubuntu 24.04 with pinned `cargo-xwin` and `jsign`.
   Both Linux-hosted packaging targets install `libsecret-1-dev` and `pkg-config`:
   the desktop build task compiles the Linux browser helper on its host, including
@@ -53,7 +69,8 @@ the stable scheduler and production gate.
   a failed detector or an unqualified skip fails the gate. It runs the release
   payload validator, packaged terminal/Cursor native probes, and an install/upgrade
   from the checksum-pinned 0.6.21 installer without signing
-  secrets or publication authority. Release Smoke uses synthetic artifacts and
+  secrets or publication authority. 0.6.21 downloads, verifies and installs in the
+  background while the candidate builds; the candidate then installs over it. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
 - Linux Packaging builds an unsigned x64 AppImage on Ubuntu for desktop,
   native, assembly, or dependency changes. Ordinary renderer/server source
@@ -71,6 +88,9 @@ the stable scheduler and production gate.
   duplicate ASAR trees for a controlled compressed-size comparison; retained
   archive bytes and external resource bytes/modes must match. This measures
   the cleanup on identical inputs, not a download comparison between releases.
+  The resource monitor and capture helpers reuse release.yml's caches by their
+  sources, the receipt-verified SyncTeX input is cached by its staging script
+  and runner image; a miss builds as before, and the packaged binaries are executed either way.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
   WSL installation restores execute permissions for Cursor's Linux `rg` and
@@ -181,8 +201,70 @@ tag or release already exists.
    `publish_release=true`; this builds and assembles the candidate but does not
    publish it until the protected `production` job is separately approved. Use
    `publish_release=false` only for a non-publishing machinery rehearsal, not as
-   the candidate for a later rebuilt publication. Keep `allow_note_free=false`
+   the candidate for a later rebuilt publication. To try release-workflow changes
+   before they reach `main`, push them to a `release-rehearsal/*` branch and run the
+   workflow there with `rehearsal=true`: it signs, notarizes and assembles a
+   `0.0.<run number>` Stable-shaped candidate from that commit, skips the exact-main
+   CI and release-note checks, and never reaches the publication job. Keep `allow_note_free=false`
    unless Yaacov explicitly accepts a note-free release.
+   For native restart qualification, complete one signed rehearsal first, then
+   run a second rehearsal of the candidate with `upgrade_from_run` set to the
+   first run's ID. Both versions must contain the restart-readiness protocol.
+   On the first pre-merge run, leave `upgrade_linux_only=false` to qualify the
+   full matrix inline through the existing release workflow. Once the new
+   qualification workflow is on the default branch, `upgrade_linux_only=true`
+   permits an initial Linux trial, followed by a manual dispatch with the same
+   run IDs and `linux_only=false` for the mandatory full matrix.
+   The second run calls `desktop-update-qualification.yml` after assembly;
+   publication remains disabled. Each macOS arm64/x64, Windows x64 and Linux
+   x64 target runs three installed upgrades, an ordinary-quit-without-consent
+   check, and a corrupt-download/retry upgrade on separate disposable runners.
+   The harness checks candidate hashes and source commits, uses a loopback
+   managed feed and synthetic project, drives the real restart controls, and
+   temporarily freezes autosave to type and confirm an actual unsaved file edit,
+   then resumes the renderer's timers before consent so save RPCs can run normally.
+   After native relaunch, the harness checks the edit on disk and attaches with Node's PID inspector
+   to verify the real restored project's visible controls and unlocked input.
+   Attachment happens after the measured workspace-ready receipt; no debug hook
+   or launch switch is added to production. The disposable Linux runner permits
+   unprivileged user namespaces so Chromium's sandbox can start under AppArmor.
+   macOS additionally requires signature, Gatekeeper and stapling checks. Windows
+   requires valid Authenticode signatures, except that the workflow passes
+   `--windows-signature optional` until Trusted Signing has a certificate profile:
+   an unsigned installer is then accepted (such a build pins no publisher, so its
+   updates are not signature-checked, as for users today) and the receipt records
+   `signatures: "unsigned"`; a damaged signature still fails. Scient accepts a
+   managed feed only over HTTPS, so each job creates a certificate for this run,
+   trusts it only on that disposable runner (macOS System keychain, Linux NSS
+   database, Windows Root store), deletes its signing key, and serves the
+   loopback feed with it. Every platform, Windows included, checks that an unsaved
+   file edit typed before consent is on disk after the restart. The Windows jobs
+   install directly under the system drive, whose new folders other users may
+   change: the installer must protect the install folder (see
+   [native publication](../internals/scient-overleaf-engine.md)) or the app cannot
+   save there. The drive root is one they cannot replace; a runner's `D:\` root
+   has an owner the app does not trust, so no install below it can save.
+   The two rehearsals must build the same product code (only the harness and docs
+   may differ), because the installed source runs consent, saving and handoff. The
+   harness drops only the editor's 500 ms autosave timer while typing the edit, so
+   the restart's save barrier is the only thing that can save it, and requires the
+   saved file to be newer than the consent receipt. On macOS, once the consent save
+   has written that edit while the app still prepares, it types a second edit that
+   only the final save before shutdown can save. It requires the old app to
+   exit, and the recovery cases accept only their injected fault (a checksum
+   mismatch; Squirrel rejecting the damaged signature).
+   macOS also rejects a synthetically damaged code signature after a valid
+   download checksum, verifies that preparation did not shut down the app,
+   then downloads the genuine target and completes a fresh consented restart.
+
+   Retain the per-target `native-update-*` artifacts: the JSON receipt, before/after
+   screenshots, and recorded restart interaction. Compare repeated
+   `confirmToReadyMs`, `preparationAndSaveMs`, `shutdownMs`, `handoffToLaunchMs`
+   and `launchToReadyMs` rather than treating process launch as usability.
+   These receipts do not establish physical low-end-machine performance,
+   interactive UAC behavior, WSL session restoration, or every interrupted
+   installer recovery case; qualify those separately before making those claims.
+
 4. Wait for assembly, then inspect the `scient-release-v<version>` artifact from
    that same pending workflow run. It contains macOS arm64/x64, Linux x64,
    Windows x64, updater manifests, the exact server tarball,
@@ -203,6 +285,10 @@ tag or release already exists.
    summary, not the release body, because the app shows the release body as
    release notes. Unsigned installers may trigger an Unknown Publisher or
    SmartScreen warning, which `docs/user/install.md` explains. The workflow
+   rechecks public Windows publisher pins after approval; a candidate that passed
+   assembly can still be refused if either channel has since shipped a signed app.
+   A failed final check leaves a draft; keep it private and build and accept a
+   signed replacement with a new release identity. The workflow
    publishes the already accepted assembled artifact, downloads the draft again,
    verifies every uploaded byte, and only then makes the release public and
    Latest. Existing tags or releases are never rebuilt, overwritten, or
@@ -215,11 +301,39 @@ tag or release already exists.
 ## Signing configuration
 
 macOS publication requires secrets `CSC_LINK`, `CSC_KEY_PASSWORD`,
-`APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. The current
-cloud-disabled product does not request T3's passkey Associated Domains
-entitlement or require its provisioning profile. If Scient later enables that
-cloud capability, the profile and relying-party domains become a separate
-explicit release requirement.
+`APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. Scient Connect also
+requires a Developer ID distribution provisioning profile for the explicit macOS
+App ID `com.scientfactory.scient`, with Associated Domains enabled. An iOS,
+development, or App Store profile cannot replace this profile.
+
+Configure repository variable `SCIENT_APPLE_TEAM_ID` and repository secret
+`SCIENT_MACOS_PROVISIONING_PROFILE_BASE64` (the base64-encoded, Apple-signed
+profile). The Team ID must match the distribution certificate. Keep the profile
+out of the source repository and logs. For example, pipe it directly into GitHub:
+
+```sh
+gh variable set SCIENT_APPLE_TEAM_ID --repo ScientFactory/scient-desktop --body '<Apple Team ID>'
+base64 < /path/to/Scient.provisionprofile | gh secret set SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 --repo ScientFactory/scient-desktop
+```
+
+Signed or publishing builds in both channels validate the profile's team, application identifier, macOS
+platform, expiry, Developer ID distribution and Associated Domains authority
+before packaging. The decoded profile stays in a private runner temporary file.
+The passkey domain defaults to the Clerk Frontend API hostname from the configured
+public key; repository variable `T3CODE_CLERK_PASSKEY_RP_DOMAINS` overrides it only
+when required by the Clerk deployment. Clerk's Native API application and its
+Apple App Site Association must authorize the same Team ID, application ID and
+domains; see [Connect setup](./connect-setup.md#desktop-passkeys).
+
+Stable build-only rehearsals without complete macOS signing credentials remain
+unsigned and do not require a provisioning profile. A build that has complete
+signing credentials still signs and therefore requires the profile, even when
+publication is off. Beta always publishes and always requires it.
+
+Retrying a failed job uses the workflow revision of its original run. A correction
+to profile secrets can reuse failed macOS jobs, but a workflow-wiring correction
+requires a new qualified workflow revision and release run. Never mix artifacts
+from different release candidates to avoid that requirement.
 
 Normal Windows publication requires Azure Trusted Signing secrets
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
@@ -232,6 +346,39 @@ It labels them unsigned and cannot publish them unless the explicit
 `allow_unsigned_windows=true` publication exception is selected. Beta applies
 the same owner-approved Windows exception automatically. That exception applies
 only to Windows; macOS signing and notarization remain mandatory.
+
+A signed Windows app pins its publisher: electron-updater installs a later update
+only if its installer's signer CN matches the `publisherName` in the installed
+`app-update.yml`. So the exception ends once a signed build ships:
+
+- The native Windows verifier requires a signed installer's Authenticode status to
+  be Valid, its signer CN to equal `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`, and the
+  packaged `app-update.yml` to pin exactly that name. An unsigned build must pin none.
+- Each release handoff records `windows: { signed, publisherName }`.
+- Assembly checks the newest published Stable and Beta handoffs. After environment
+  approval and draft-byte verification, publication reads them again just before
+  making the release public and checks the Windows record in the exact downloaded,
+  identity-verified candidate handoff. It never rebuilds the installer
+  or substitutes a new signing attestation. Failed lookups, missing handoff assets
+  and invalid signing records stop publication; only a successful Beta inventory
+  with no published Beta means that channel pins nothing.
+- Stable and Beta publication jobs share concurrency group
+  `scient-desktop-stable-beta-publication`, covering the fresh pin check, draft
+  staging, uploaded-byte verification and public promotion. Builds retain their
+  separate channel concurrency, and `production`/`beta` protections still apply.
+  Scheduled Stable candidates, manual releases and Stable releases promoted from
+  accepted Beta source all use this same publication job.
+- If either channel pins a publisher, the candidate must be signed by
+  that publisher, whatever `allow_unsigned_windows` says: users switch between
+  Stable and Beta, so a pin on one binds both. Handoffs from before this record
+  pin nothing, so today's unsigned releases are unaffected until the first signed
+  one ships. Changing the publisher later needs a planned transition, not a
+  release that installed clients would reject.
+
+The local publisher rehearsal runs the production signing helper against synthetic
+candidate/public handoffs, including a publisher pin that appears before promotion.
+It must withhold public promotion on either a changed upload or an incompatible pin;
+the helper is not replaced with a successful stub.
 
 Release jobs expose Apple credentials only to macOS packaging and Azure
 credentials only to the Linux-hosted Windows packaging job. Publication additionally verifies the

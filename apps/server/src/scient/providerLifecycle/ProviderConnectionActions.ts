@@ -2,8 +2,9 @@ import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
 } from "../../provider/ScientProviderInstanceSeams.ts";
-import * as Data from "effect/Data";
+import { ProviderConnectionFailureReason } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 const MAX_TERMINAL_OUTPUT_LENGTH = 128 * 1024;
 const MAX_AUTHORIZATION_URL_LENGTH = 8_192;
@@ -97,11 +98,15 @@ export function withProviderSessionShutdown<E>(
   };
 }
 
-export class ProviderConnectionActionError extends Data.TaggedError(
+export class ProviderConnectionActionError extends Schema.TaggedError<ProviderConnectionActionError>()(
   "ProviderConnectionActionError",
-)<{
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly signInMayBeRemoved?: boolean;
-  readonly afterSignIn?: boolean;
-}> {}
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    signInMayBeRemoved: Schema.optional(Schema.Boolean),
+    afterSignIn: Schema.optional(Schema.Boolean),
+    failureReason: Schema.optional(ProviderConnectionFailureReason),
+  },
+) {}
+
+export const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);

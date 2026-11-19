@@ -23,7 +23,7 @@ import {
 } from "~/components/files/fileSurfaceChrome";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Spinner } from "~/components/ui/spinner";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -102,7 +102,7 @@ export function DataGrid(props: DataGridProps) {
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [anchor, setAnchor] = useState<Cell | null>(null);
   const [focus, setFocus] = useState<Cell | null>(null);
-  const { copyToClipboard } = useCopyToClipboard({ target: "cells" });
+  const { copyToClipboard } = useCopyToClipboard({ target: namedClipboardTarget("cells") });
 
   // A new ref callback each render would re-observe, and a resize report renders again.
   const measureScroller = useStableCallback((node: HTMLDivElement | null) => {

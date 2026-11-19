@@ -1,4 +1,5 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -48,7 +49,9 @@ export function InlineAudioPreview(props: {
     <span ref={container} data-markdown-copy={props.copyMarkdown}>
       {needsRemoteLoad ? (
         <Button size="xs" variant="outline" onClick={() => setLoadedRemote(props.src ?? null)}>
-          Load audio {props.name}
+          <T>
+            Load audio <Var>{props.name}</Var>
+          </T>
         </Button>
       ) : (
         <AudioPreview

@@ -7,30 +7,67 @@ app, while an SSH or manually managed environment may run its own Scient server.
 ## Update the desktop app
 
 Packaged Scient releases check their selected update track after startup and
-periodically while the app is open. Updates are deliberate:
+periodically while the app is open. When a release is available, Scient
+downloads it in the background; the update control stays quiet meanwhile, and
+its tooltip shows the download. Installing is your choice:
 
-1. Select the update control near the bottom of the sidebar, or use
-   **Scient → Check for Updates…** on macOS.
-2. When a release is available, choose the control again to download it.
-3. When the download finishes, a notice appears just above the control. Choose
-   **Restart now** to install the update.
+1. When the download is ready, the update control shows **Update**. Its tooltip
+   says **Restart and update to** that version.
+2. Choose **Update**. A card opens just above the control with **Restart now**.
+   Choose it to install that version. The card stays until you use it, close
+   it, or choose **Update** again.
 
-The notice closes after about five seconds, or when you dismiss it. The update
-control then shows **Restart**. Choosing **Restart** in the sidebar, or
-**Install** in **Settings**, restarts Scient right away, with no extra
-confirmation. The
-**Read more** link in the notice opens that version's Scient release notes;
-reading them does not install the update. On Windows, Scient can stay closed for
-a few minutes while the update installs, then reopens.
+If a newer release appears before you restart, Scient downloads it in place of
+the older one, and **Update** returns once it is ready. **Restart now**
+installs only the version its card names: if a newer download replaced it,
+Scient tells you instead of installing a different version.
+
+If the background download fails, Scient tries again after 1, 5 and 15
+minutes, then hourly and every 4 hours. The control shows **Retry** in the
+meantime; choose it to download right away. When that download finishes, a
+notice appears just above the control for about five seconds with **Restart
+now**; afterwards the control shows **Update**.
+
+**Install** in **Settings** also restarts Scient right away for the version
+shown there, with no extra confirmation. The **Read more** link in the card
+opens that version's Scient release notes; reading them does not install the
+update. On Windows, Scient can stay closed for a few minutes while the update
+installs, then reopens.
 
 On a narrow sidebar, **Import conversation** and **Usage** move into the
 three-dot **More sidebar actions** menu while the update control or the update
 circle is showing. Widening the sidebar brings their icons back into the footer
 row.
 
-Scient never installs an update on its own. Restarting interrupts running agent
-turns and terminal commands, so let them finish before choosing **Restart**.
+Scient installs an update only after you choose **Restart now** or
+**Install**, or run an update of everything that includes this app (below).
+Quitting Scient before that consent does not install a downloaded archive.
+Restarting interrupts running agent turns and terminal commands, so let them finish first.
 Threads, settings, and project files remain in their existing locations.
+
+On macOS, choosing **Restart now** first saves open workspaces and prepares the
+exact downloaded update with the native installer while Scient and its servers
+keep running. Native verification must finish, and every open workspace
+must save again, before servers stop and the app restarts. During that final save
+and restart, editing is temporarily locked so no new edits can be lost. Windows
+and Linux keep their supported installer paths rather than replacing the running installation early.
+
+On every platform, the compact update control shows a spinner after **Restart now**,
+and a note beside it opens by itself: **Preparing update… You can keep working.**,
+then **Saving your work before restarting…**. With the sidebar closed, the note
+appears in the corner instead.
+
+If preparation or a workspace save fails, Scient stays open, unlocks editing,
+shows the reason beside the update control for a few seconds, and offers **Retry**.
+Another window whose file or draft could not be saved says so itself.
+A terminal native verification failure requires downloading
+the archive again, then choosing **Restart now** again.
+A preparation wait ends after five minutes; retrying waits for that same
+authorized update rather than starting a competing native operation. On macOS,
+native preparation itself arms installation on quit: after you have authorized
+it, quitting normally can apply that update even if automatic restart did not
+finish. Changing tracks or replacing an already-authorized native update waits
+until that operation ends or you restart Scient.
 
 If the app restarts on its old version, Scient tells you the update did not
 apply. It does not install that version again on its own, even when another
@@ -80,39 +117,44 @@ elsewhere.
 An SSH machine that Scient starts from this app's own package is not listed; it
 moves to the new version the next time it connects after this app updates.
 
-When this app also has an update to download, choosing **Update** on the update
-control includes everything else in one step: outdated providers first, then
-servers that are behind, then this desktop app. Servers move to the version this
-app is installing, or to your web app's version. A background service stays on
-its current release channel, and a remote desktop app installs the latest
-release from its own channel. If servers would stop running threads, a small
-card above **Update** says how many and waits for you to choose **Update** or
-**Cancel**; otherwise the step starts straight away. Progress appears in the
-circle. Once each server has started its own
-restart, a tooltip above **Restart** counts down to this app's restart: choose
-**Restart** to restart now, or **Later** to keep working and restart when you
-are ready. A server that is still restarting finishes on its own.
+When this app's background download has failed and you choose **Retry**,
+the update control includes everything else in one step: outdated providers
+first, then servers that are behind, then this desktop app. Servers move to the
+version this app is installing, or to your web app's version. A background
+service stays on its current release channel, and a remote desktop app installs
+the latest release from its own channel. If servers would stop running threads,
+a small card above the control says how many and waits for you to choose
+**Update** or **Cancel**; otherwise the step starts straight away. Progress
+appears in the circle. Once each server has started its own restart, this app
+restarts right away if no agent on this computer is in the middle of a turn and
+no Compute code is running. An agent waiting on you, on another thread, or
+watching a pull request or a monitor counts as not working; an agent waiting on
+work it started itself, such as a build or a subagent, counts as working.
+Otherwise the update control shows **Update**, and you restart when you are
+ready. A server that is still restarting finishes on its own.
 
 ## Keep a connected server in sync
 
 If a connected environment uses a different server version, the update control
 at the bottom of the sidebar and **Settings → Environments** offer to update it.
 
-**Settings → Maintenance → Continue threads after restarts** is off by default.
+**Settings → Maintenance → Continue threads after restarts** is on by default. Scient once
+shipped it off; the first start of a version with the new default turns it on everywhere, including
+where it was switched off. Switch it off again and that choice is kept.
 When enabled, supported active threads can resume after an update, crash, or machine restart.
 Scient must start again on that machine; this does not enable automatic startup. Threads without
 saved provider resume state need a new message, and terminal commands may still be interrupted.
 Changes apply to connected environments that support the setting. After an offline environment
 reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
-If you previously enabled continuation only for updates, enable this setting once to allow recovery
-without a connected client.
-A thread that finished its turn to wait on a subagent, a background task, or a
-command or monitor the agent said it was waiting on is woken and told that this work
+A thread that finished its turn to wait on a subagent, a background task, a Claude
+monitor, or a command or other monitor the agent said it was waiting on is woken and told that this work
 stopped. Other background shells and monitors, such as a dev server and its
 watchdog, do not wake it; the thread learns about them with your next message.
 A thread is not resumed while it waits for your approval, answer, or secret, or
-while it is archived, snoozed, or settled. After three automatic resumes in a row,
-the thread waits for your next message.
+while it is archived, snoozed, or settled. After three consecutive crash recoveries
+of an unfinished turn, the thread waits for your next message, even when crashes
+are more than five minutes apart. A completed turn or a planned shutdown resets
+that limit.
 
 The action depends on how that environment started:
 
@@ -163,6 +205,10 @@ newer release; see [Run a Scient server without the desktop app](./background-se
 4. If a desktop update cannot be checked or downloaded, install the same or a
    newer official release manually; do not remove the existing data directory.
 
+If you decline the restart for a background service installed by an older
+release, the service can stay down after a crash or reboot until you run
+`scient service restart`.
+
 Only one server can use a Scient data directory at a time. If startup reports
 that another server owns it, stop that server before retrying, or use a separate
 data directory and pair with the running server.
@@ -203,10 +249,12 @@ chose **Update**, it waits in the circle instead.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Two kinds are left
-out on purpose: providers that only offer a manual update command, and
-Scient-managed runtimes, which update from their own actions or the sidebar
-circle.
+at once. Hover it to see which providers it will update. A provider is left out
+when any of its enabled, outdated instances offers only a manual update command,
+or when its instances use different update commands, such as two instances that
+run different CLI installs. Update those by hand, or point every instance of the
+provider at the same CLI. Scient-managed runtimes are also left out; they update
+from their own actions or the sidebar circle.
 
 After a successful provider CLI update, Scient refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected

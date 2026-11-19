@@ -1,13 +1,23 @@
 import { collectLoginFields } from "@t3tools/shared/scientLoginFields";
 
+/** What a submit sent: the password step, or a username step before it (empty password). */
+export interface CapturedStep {
+  readonly url: string;
+  readonly path: string;
+  readonly step: "password" | "username";
+  readonly username: string;
+  readonly password: string;
+}
+
 export function createCaptureDeduplicator() {
-  let last: { url: string; username: string; password: string } | undefined;
+  let last: CapturedStep | undefined;
   let lastAt = -Infinity;
-  return (capture: { url: string; username: string; password: string }, now: number) => {
+  return (capture: CapturedStep, now: number) => {
     if (
       last &&
       now - lastAt < 5_000 &&
       last.url === capture.url &&
+      last.step === capture.step &&
       last.username === capture.username &&
       last.password === capture.password
     )
@@ -18,19 +28,26 @@ export function createCaptureDeduplicator() {
   };
 }
 
+/**
+ * Sends what a real form submits: by the form, or by a trusted click on a submit button or Enter in
+ * a field. Script-only buttons and logins with no form aren't seen.
+ */
 export function installSignInCapture(
   allowed: () => boolean,
-  send: (capture: { url: string; username: string; password: string }) => void,
+  send: (capture: CapturedStep) => void,
 ) {
   const accept = createCaptureDeduplicator();
   const capture = (form: HTMLFormElement | null) => {
     if (!form || !allowed() || !/^https?:$/.test(location.protocol)) return;
     const fields = collectLoginFields(Array.from(form.querySelectorAll("input")));
-    const password = fields.inputs[fields.password]?.value;
-    if (!password) return;
-    const value = {
+    const password = fields.inputs[fields.password]?.value ?? "";
+    const username = fields.inputs[fields.username]?.value ?? "";
+    if (!password && !username) return;
+    const value: CapturedStep = {
       url: location.origin,
-      username: fields.inputs[fields.username]?.value ?? "",
+      path: location.pathname,
+      step: password ? "password" : "username",
+      username,
       password,
     };
     if (accept(value, performance.now())) send(value);

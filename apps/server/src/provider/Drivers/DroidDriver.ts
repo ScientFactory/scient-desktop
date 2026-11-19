@@ -53,7 +53,7 @@ import {
   makeManualOnlyProviderMaintenanceCapabilities,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-import { droidMaintenance, withDroidReleaseVersion } from "../piDroidMaintenance.ts";
+import { droidMaintenance, withDroidReleaseVersion } from "../droidMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,

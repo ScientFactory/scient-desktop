@@ -29,8 +29,8 @@ import * as Registry from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CLAUDE_MODEL_SELECTION } from "../testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { freezeConversationForkNativeSource } from "./ConversationForkNativeSource.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const sourceId = ThreadId.make("claude-root-boundary-source");
 const targetId = ThreadId.make("claude-root-boundary-target");
@@ -104,6 +104,7 @@ it.live(
                     ? "Root answer at the exact native boundary"
                     : "Native destination answer";
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -177,6 +178,7 @@ it.live(
                 return { sessionId: targetSession };
               }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, processSpawner));
@@ -258,8 +260,7 @@ it.live(
             "native_fork",
             nativeDecision.strategy === "portable_context" ? nativeDecision.reason : undefined,
           );
-          const service = yield* ConversationForkService;
-          yield* service.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("claude-boundary-fork"),
             originThreadId: sourceId,

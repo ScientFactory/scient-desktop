@@ -80,7 +80,9 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
+import { resolveParcelWatcherNativeDependencies } from "./lib/scient-parcel-watcher-build.ts";
 import { validatePackagedFilePublication } from "./lib/scient-file-publication-build.ts";
+import { resolveTaggedSourceVersion } from "./lib/tagged-source-version.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -233,6 +235,7 @@ interface BuildCliInput {
   readonly wslPrebuild: Option.Option<string>;
   readonly syncTexRuntime: Option.Option<string>;
   readonly wslSyncTexRuntime: Option.Option<string>;
+  readonly voiceRuntime: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -787,6 +790,15 @@ export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedError<De
   }
 }
 
+export class DesktopBuildArtifactCopyError extends Schema.TaggedError<DesktopBuildArtifactCopyError>()(
+  "DesktopBuildArtifactCopyError",
+  { from: Schema.String, to: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to copy build artifact ${this.from} to ${this.to}.`;
+  }
+}
+
 export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<DesktopBuildNoArtifactsProducedError>()(
   "DesktopBuildNoArtifactsProducedError",
   {
@@ -1057,6 +1069,7 @@ interface ResolvedBuildOptions {
   readonly wslPrebuild: string | undefined;
   readonly syncTexRuntime: string | undefined;
   readonly wslSyncTexRuntime: string | undefined;
+  readonly voiceRuntime: string | undefined;
 }
 
 interface StagePackageJson {
@@ -1129,8 +1142,20 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
       });
     for (const file of expected) {
       const source = path.join(input.sourceDir, file);
-      const info = yield* Effect.tryPromise(() => NodeFSP.lstat(source));
-      const parent = yield* Effect.tryPromise(() => NodeFSP.lstat(path.dirname(source)));
+      const info = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(source),
+        catch: (cause) =>
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite cannot be inspected: ${file}: ${String(cause)}`,
+          }),
+      });
+      const parent = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(path.dirname(source)),
+        catch: (cause) =>
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite folder cannot be inspected: ${file}: ${String(cause)}`,
+          }),
+      });
       if (
         !info.isFile() ||
         info.isSymbolicLink() ||
@@ -1194,6 +1219,7 @@ import {
   WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
 } from "./scient/conversationAssociation.ts";
 export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
+import { renderWindowsInstallFolderMacros } from "./scient/installFolderProtection.ts";
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/file-exchange",
@@ -1274,14 +1300,15 @@ export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
 ] as const;
 
-// node-pty bundles both Darwin architectures; only universal apps need both.
+// Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
+// apps need both. macOS 27 warns that an arm64 app holding x64-only code won't open on macOS 28.
 export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
   if (arch === undefined || arch === "universal") {
     return [...MAC_FILE_EXCLUSIONS];
   }
 
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/node-pty/prebuilds/darwin-${unusedArch}/**/*`];
+  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/**/prebuilds/darwin-${unusedArch}/**/*`];
 }
 // Large ASAR sidecars avoid NSIS extracting thousands of loose files during installs and updates.
 // WSL uses its Linux archive; DesktopWslServerTree can materialize this sidecar as a fallback.
@@ -1352,13 +1379,30 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/node-pty/build",
   "node_modules/node-pty/third_party/conpty",
   "node_modules/@ff-labs/fff-bin-win32-",
+  // SCIENT-FORK
+  "node_modules/@parcel/watcher-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
   // These loaders select separate Linux packages when the WSL Node host runs.
   // Exclude only their Windows variants from this tarball, not the sidecar.
   "node_modules/@napi-rs/canvas-win32-",
   "node_modules/@napi-rs/keyring-win32-",
   "node_modules/@cursor/sdk-win32-",
+  "node_modules/@koromix/koffi-win32-",
+  "node_modules/@transcribe-cpp/win32-",
 ] as const;
+// SCIENT-FORK:START — Scient builds its own WSL archive; Windows packages never load there.
+// A package built for Windows names its target (`koffi-win32-x64`, `win32-x64-cpu-vulkan`); none
+// can load in WSL, so a new one that the list above misses fails the build instead of shipping.
+const WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE = /^node_modules\/(?:@[^/]+\/)?[^/]*win32-/;
+
+export const findForbiddenWslRuntimeArchiveMember = (members: ReadonlyArray<string>) =>
+  members.find(
+    (member) =>
+      member.endsWith(".map") ||
+      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)) ||
+      WSL_RUNTIME_ARCHIVE_WINDOWS_PACKAGE.test(member),
+  );
+// SCIENT-FORK:END
 // Build and ship the WSL archive only with Linux pty.node; otherwise every launch extracts an unusable cache.
 export const bundlesWslRuntime = (input: {
   readonly arch: typeof BuildArch.Type;
@@ -1730,6 +1774,12 @@ export function resolveMergedStageDependencies(input: {
     ...selectCliRuntimeExternalDependencies(input.serverDependencies),
     ...input.desktopDependencies,
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
+    // SCIENT-FORK
+    ...resolveParcelWatcherNativeDependencies(
+      input.platform,
+      input.arch,
+      input.serverDependencies["@parcel/watcher"],
+    ),
   };
 }
 
@@ -2009,6 +2059,7 @@ const BuildEnvConfig = Config.all({
   wslPrebuild: Config.String("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
   syncTexRuntime: Config.String("SCIENT_SYNCTEX_RUNTIME").pipe(Config.option),
   wslSyncTexRuntime: Config.String("SCIENT_WSL_SYNCTEX_RUNTIME").pipe(Config.option),
+  voiceRuntime: Config.String("SCIENT_VOICE_RUNTIME").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -2105,6 +2156,8 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     Option.getOrUndefined(input.syncTexRuntime) ?? Option.getOrUndefined(env.syncTexRuntime);
   const wslSyncTexRuntime =
     Option.getOrUndefined(input.wslSyncTexRuntime) ?? Option.getOrUndefined(env.wslSyncTexRuntime);
+  const voiceRuntime =
+    Option.getOrUndefined(input.voiceRuntime) ?? Option.getOrUndefined(env.voiceRuntime);
 
   return {
     platform,
@@ -2121,6 +2174,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     wslPrebuild,
     syncTexRuntime,
     wslSyncTexRuntime,
+    voiceRuntime,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2467,7 +2521,7 @@ const NativeMarkerManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
-const decodeNativeMarkerManifest = Schema.decodeUnknownSync(
+const decodeNativeMarkerManifest = Schema.decodeUnknownOption(
   Schema.fromJsonString(NativeMarkerManifest),
 );
 
@@ -2507,13 +2561,12 @@ const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (pa
   if (!(yield* exists(manifestPath))) return false;
   const source = yield* fs.readFileString(manifestPath).pipe(Effect.orElseSucceed(() => ""));
   if (source === "") return false;
-  const manifest = yield* Effect.try(() => decodeNativeMarkerManifest(source)).pipe(
-    Effect.orElseSucceed(() => null),
-  );
-  if (manifest === null) return false;
-  return Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }).some(
-    (dependency) => dependency.startsWith("node-gyp-build"),
-  );
+  const manifest = decodeNativeMarkerManifest(source);
+  if (Option.isNone(manifest)) return false;
+  return Object.keys({
+    ...manifest.value.dependencies,
+    ...manifest.value.optionalDependencies,
+  }).some((dependency) => dependency.startsWith("node-gyp-build"));
 });
 
 export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservingSymlinks")(
@@ -2574,6 +2627,13 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
 
 export const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
   function* (input: { readonly asarPath: string; readonly verbose: boolean }) {
+    // A PR preview's bundle is untrusted and this job may hold signing secrets, so never run it.
+    if (yield* Config.Boolean("T3CODE_DESKTOP_UNTRUSTED_BUNDLE").pipe(Config.withDefault(false))) {
+      yield* Effect.log(
+        "[desktop-artifact] Skipped the bundle self-check for an untrusted bundle.",
+      );
+      return;
+    }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
@@ -3244,7 +3304,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           asar: { smartUnpack: false },
           asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB, `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`],
         }
-      : { asarUnpack: [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`] }),
+      : {
+          asarUnpack: [
+            `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`,
+            "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
+          ],
+        }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" && nativePreviewPath
@@ -3285,6 +3350,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         // SCIENT-FORK:END
         NSLocalNetworkUsageDescription:
           "Scient connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+        NSCalendarsUsageDescription:
+          "Commands you run in Scient may need access to your calendars.",
+        NSCalendarsFullAccessUsageDescription:
+          "Commands you run in Scient may need to read and write your calendar events.",
+        NSCalendarsWriteOnlyAccessUsageDescription:
+          "Commands you run in Scient may need to add events to your calendars.",
         NSCameraUsageDescription:
           "Scient lets commands run by terminals and coding agents use the camera.",
       },
@@ -3358,6 +3429,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       },
     };
+    // SCIENT-FORK: Scient's release checks and download links name AppImages by version, so T3's
+    // version-free names wait for a release change of their own.
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       // AppStream consumers associate this metadata with our scient.desktop entry.
@@ -3618,6 +3691,18 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
       // ffi-rs) from the extracted copy of this same tree.
       ...resolveFffNativeDependencies("win", input.arch, input.fffNodeVersion),
       ...resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion),
+      // SCIENT-FORK:START
+      ...resolveParcelWatcherNativeDependencies(
+        "win",
+        input.arch,
+        input.runtimeExternalDependencies["@parcel/watcher"],
+      ),
+      ...resolveParcelWatcherNativeDependencies(
+        "linux",
+        input.arch,
+        input.runtimeExternalDependencies["@parcel/watcher"],
+      ),
+      // SCIENT-FORK:END
     },
   });
   const sidecarPatchedDependencies = createStagePatchedDependencies(
@@ -4172,11 +4257,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    const forbiddenMember = members.find(
-      (member) =>
-        member.endsWith(".map") ||
-        WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
-    );
+    const forbiddenMember = findForbiddenWslRuntimeArchiveMember(members);
     if (forbiddenMember !== undefined) {
       return yield* invalidWslRuntime(
         new Error(`WSL runtime archive contains forbidden member ${forbiddenMember}`),
@@ -4283,6 +4364,34 @@ export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMac
   },
 );
 
+export class LinuxPackagedAppMissingError extends Schema.TaggedError<LinuxPackagedAppMissingError>()(
+  "LinuxPackagedAppMissingError",
+  { stageDistDir: Schema.String },
+) {
+  override get message(): string {
+    return `Expected electron-builder to leave resources/app.asar under ${this.stageDistDir}/linux*-unpacked.`;
+  }
+}
+
+export const validateLinuxPackagedPayload = Effect.fn(
+  "desktopArtifact.validateLinuxPackagedPayload",
+)(function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asarPaths = (yield* fs.readDirectory(input.stageDistDir))
+    .filter((entry) => entry.startsWith("linux") && entry.endsWith("-unpacked"))
+    .map((entry) => path.join(input.stageDistDir, entry, "resources/app.asar"));
+  if (asarPaths.length === 0) {
+    return yield* new LinuxPackagedAppMissingError({ stageDistDir: input.stageDistDir });
+  }
+  for (const asarPath of asarPaths) {
+    yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+  }
+  yield* Effect.log(
+    `[desktop-artifact] Validated Linux payload (${String(asarPaths.length)} app bundle(s)).`,
+  );
+});
+
 const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -4321,7 +4430,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     });
   }
 
-  const appVersion = options.version ?? serverPackageJson.version;
+  const appVersion =
+    options.version ?? resolveTaggedSourceVersion(repoRoot, serverPackageJson.version);
   yield* validateDesktopBuildPackageVersions({
     buildVersion: appVersion,
     serverVersion: serverPackageJson.version,
@@ -4527,6 +4637,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
           stageResourcesDir,
           platform: options.platform,
           arch: options.arch,
+          sourceDirectory: options.voiceRuntime,
           verbose: options.verbose,
         }),
       catch: (cause) =>
@@ -4585,7 +4696,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.verbose,
   );
 
-  const nativePreviewSetting = process.env.SCIC_PREVIEW_ENABLE_NATIVE;
+  const env = yield* HostProcess.Environment;
+  const nativePreviewSetting = env.SCIC_PREVIEW_ENABLE_NATIVE;
   if (
     nativePreviewSetting !== undefined &&
     nativePreviewSetting !== "0" &&
@@ -4614,7 +4726,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
               platform: options.platform,
               arch: options.arch,
               channel: previewChannel,
-              manifestPath: process.env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
+              manifestPath: env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
               repoRoot,
             });
             const nativePath = await buildConversationPreview({
@@ -4650,7 +4762,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     // SCIENT-FORK:START
     yield* fs.writeFileString(
       path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
-      renderWindowsConversationAssociationInclude(previewChannel, nativePreviewPath !== undefined),
+      renderWindowsInstallFolderMacros() +
+        renderWindowsConversationAssociationInclude(
+          previewChannel,
+          nativePreviewPath !== undefined,
+        ),
     );
     // SCIENT-FORK:END
   }
@@ -5029,6 +5145,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       });
     }
   }
+  // The probe runs on the host Node, so a cross-arch build skips it.
+  if (
+    options.platform === "linux" &&
+    hostPlatform === "linux" &&
+    options.arch === (yield* HostProcess.Architecture)
+  ) {
+    yield* validateLinuxPackagedPayload({ stageDistDir, verbose: options.verbose });
+  }
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
   if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {
     yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
@@ -5120,13 +5244,15 @@ export const copyDesktopBuildArtifacts = Effect.fn("copyDesktopBuildArtifacts")(
     // overwrite a directory with a file or a file with a directory, and only merges into
     // an existing directory, so a stale entry of either type must go first.
     yield* fs.remove(to, { recursive: true, force: true });
-    yield* Effect.tryPromise(() =>
-      NodeFSP.cp(from, to, {
-        recursive: true,
-        force: true,
-        verbatimSymlinks: true,
-      }),
-    );
+    yield* Effect.tryPromise({
+      try: () =>
+        NodeFSP.cp(from, to, {
+          recursive: true,
+          force: true,
+          verbatimSymlinks: true,
+        }),
+      catch: (cause) => new DesktopBuildArtifactCopyError({ from, to, cause }),
+    });
     copiedArtifacts.push(to);
   }
 
@@ -5202,6 +5328,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslSyncTexRuntime: Flag.String("wsl-synctex-runtime").pipe(
     Flag.withDescription(
       "Path to the verified Linux x64 SyncTeX runtime directory staged into the WSL sidecar (env: SCIENT_WSL_SYNCTEX_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  voiceRuntime: Flag.String("voice-runtime").pipe(
+    Flag.withDescription(
+      "Path to a verified whisper.cpp runtime directory staged for the desktop target (env: SCIENT_VOICE_RUNTIME).",
     ),
     Flag.optional,
   ),

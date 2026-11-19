@@ -51,6 +51,8 @@ import {
   type ScientPluginManifest,
 } from "./ScientPluginManifest.ts";
 
+const isBundleRejected = Schema.is(BundleRejected);
+
 export const SCIENT_PLUGINS_STATE_FILE = "scient-plugins.json";
 export const SCIENT_PLUGINS_DIRECTORY = "scient-plugins";
 /** One budget for writing and reading `scient-plugins.json`. */
@@ -131,7 +133,7 @@ const snapshot = (root: string) =>
   Effect.tryPromise({
     try: (signal) => snapshotBundle(root, { signal }),
     catch: (cause) =>
-      cause instanceof BundleRejected
+      isBundleRejected(cause)
         ? invalidInput(cause.message)
         : new ExtensionsError({
             reason: "invalid-input",
@@ -387,16 +389,23 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
     }
     if (ownershipKnown) {
       const referenced = new Set(current.plugins.map((plugin) => plugin.record.directory));
-      yield* Effect.tryPromise(async () => {
-        const names = await NodeFSP.readdir(bundlesRoot).catch((error: unknown) => {
-          if (isNodeError(error, "ENOENT")) return [] as string[];
-          throw error;
-        });
-        for (const name of names) {
-          if (!referenced.has(name)) {
-            await NodeFSP.rm(NodePath.join(bundlesRoot, name), { recursive: true, force: true });
+      yield* Effect.tryPromise({
+        try: async () => {
+          const names = await NodeFSP.readdir(bundlesRoot).catch((error: unknown) => {
+            if (isNodeError(error, "ENOENT")) return [] as string[];
+            throw error;
+          });
+          for (const name of names) {
+            if (!referenced.has(name)) {
+              await NodeFSP.rm(NodePath.join(bundlesRoot, name), { recursive: true, force: true });
+            }
           }
-        }
+        },
+        catch: () =>
+          new ExtensionsError({
+            reason: "state-unavailable",
+            message: "Leftover plugin files could not be removed.",
+          }),
       }).pipe(
         Effect.catch(() =>
           Effect.sync(() =>
@@ -523,9 +532,15 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
   });
 
   const removeDirectory = (directory: string) =>
-    Effect.tryPromise(() =>
-      NodeFSP.rm(NodePath.join(bundlesRoot, directory), { recursive: true, force: true }),
-    ).pipe(Effect.ignore);
+    Effect.tryPromise({
+      try: () =>
+        NodeFSP.rm(NodePath.join(bundlesRoot, directory), { recursive: true, force: true }),
+      catch: () =>
+        new ExtensionsError({
+          reason: "state-unavailable",
+          message: "A plugin directory could not be removed.",
+        }),
+    }).pipe(Effect.ignore);
 
   /** Copy the snapshot into its content-addressed directory; reuse an intact existing copy. */
   const writeInstalledCopy = (directory: string, bundle: BundleSnapshot) =>

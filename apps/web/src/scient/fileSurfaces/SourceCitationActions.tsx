@@ -8,7 +8,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import type { CitationDestination } from "../chat/sideChatCitation";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
-import { sourcePosition } from "../math/input/sourceAdapter";
+import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import {
   createSourceCitation,
   resolveSourceCitation,
@@ -78,11 +78,12 @@ export function SourceCitationActions<Annotation>({
       return null;
     const source = editor?.getFile() ? editor.getText() : staticSource;
     if (source === undefined) return null;
+    // Pierre counts offsets on its "\n" text; the citation counts them on the file's own text.
     const selected =
       state && selections?.length === 1
         ? {
-            from: state.document.offsetAt(selections[0]!.start),
-            to: state.document.offsetAt(selections[0]!.end),
+            from: sourceOffset(source, selections[0]!.start),
+            to: sourceOffset(source, selections[0]!.end),
           }
         : staticSourceSelection(viewport, source);
     return selected ? { source, ...selected } : null;

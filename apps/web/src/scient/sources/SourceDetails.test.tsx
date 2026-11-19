@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { safeSourceExternalUrl, SourceDetails } from "./SourceDetails.tsx";
+
+vi.mock("gt-react", async (importOriginal) =>
+  (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
+);
 
 const record = {
   formatVersion: 1 as const,
@@ -100,6 +104,29 @@ describe("SourceDetails", () => {
     expect(markup).toContain("Imported from Zotero");
   });
 
+  it("shows the further details a source has, by name, and none when it has none", () => {
+    const details = (more?: Record<string, string>) =>
+      renderToStaticMarkup(
+        <SourceDetails
+          record={{ ...record, ...(more ? { more } : {}) }}
+          diagnostics={[]}
+          onBack={() => undefined}
+          onEdit={() => undefined}
+          onSaveNote={saveNote}
+          onRefreshMetadata={async () => undefined}
+          onRemove={async () => undefined}
+          onOpenPdf={() => undefined}
+        />,
+      );
+    const markup = details({ edition: "4", "publisher-place": "Oxford", accessed: "2026-03-10" });
+    expect(markup).toContain("More details");
+    expect(markup).toContain("Edition");
+    expect(markup).toContain("Place of publication");
+    expect(markup).toContain("Oxford");
+    expect(markup).toContain("Date accessed");
+    expect(details()).not.toContain("More details");
+  });
+
   it("does not repeat a canonical abstract wrapper heading", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
@@ -141,7 +168,6 @@ describe("SourceDetails", () => {
     );
 
     expect(markup).not.toContain("Open PDF");
-    expect(markup).toContain("Metadata needs review");
   });
 
   it("requires an explicit PDF choice when a Source has several materials", () => {
@@ -215,7 +241,7 @@ describe("SourceDetails", () => {
     expect(markup).not.toContain(">Other source<");
   });
 
-  it("offers approve and reject actions for a pending agent source", () => {
+  it("credits agent work instead of asking for approval", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
         record={{
@@ -226,21 +252,87 @@ describe("SourceDetails", () => {
             operationId: "agent-operation",
             review: "pending",
           },
+          verification: { state: "verified" },
+          updatedBy: "agent",
         }}
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
         onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
-        onApproveReview={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
       />,
     );
 
-    expect(markup).toContain("Approve review");
-    expect(markup).toContain(">Reject</button>");
-    expect(markup).toContain("Pending review");
+    expect(markup).toContain("Added by agent");
+    expect(markup).toContain("Identifier verified");
+    expect(markup).toContain("Edited by agent");
+    expect(markup).not.toContain("Pending review");
+    expect(markup).not.toContain("Approve");
+  });
+});
+
+describe("SourceDetails on a personal Library", () => {
+  const renderLibrary = (
+    detail: Parameters<typeof SourceDetails>[0]["record"],
+    library: Partial<NonNullable<Parameters<typeof SourceDetails>[0]["library"]>> = {},
+  ) =>
+    renderToStaticMarkup(
+      <SourceDetails
+        record={detail}
+        diagnostics={[]}
+        library={{
+          canSavePersonalNote: true,
+          onSavePersonalNote: saveNote,
+          onSetReadingState: async () => undefined,
+          ...library,
+        }}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+  const inLibrary = { ...record, pinned: true, readingStatus: "unread" as const, starred: true };
+
+  it("shows My note only when the details carry the personal note", () => {
+    expect(renderLibrary(inLibrary)).not.toContain("My note");
+    expect(renderLibrary({ ...inLibrary, personalNote: null })).toContain("My note");
+    expect(renderLibrary({ ...inLibrary, personalNote: "Mine" })).toContain(
+      "Note for this project",
+    );
+  });
+
+  it("shows reading state without controls to a session that may not change it", () => {
+    expect(renderLibrary(inLibrary)).toContain("Mark read");
+    const markersOnly = renderToStaticMarkup(
+      <SourceDetails
+        record={inLibrary}
+        diagnostics={[]}
+        readOnly
+        library={{ canSavePersonalNote: false, onSavePersonalNote: saveNote }}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+    expect(markersOnly).toContain("Unread");
+    expect(markersOnly).toContain("Starred");
+    expect(markersOnly).not.toContain("Mark read");
+    expect(markersOnly).not.toContain('aria-label="Remove star"');
+  });
+
+  it("offers no reading state on a review snapshot's record", () => {
+    const snapshot = renderLibrary({ ...record, pinned: true, fromSnapshot: true });
+    expect(snapshot).not.toContain("Mark read");
+    expect(snapshot).not.toContain("Mark unread");
+    expect(snapshot).not.toContain("Unread");
   });
 });
 

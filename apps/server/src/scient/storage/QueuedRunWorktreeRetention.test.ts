@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -26,6 +27,8 @@ import {
 } from "../../../integration/TransferBudgetV2Fixture.integration.ts";
 import { ServerConfig } from "../../config.ts";
 import { GitManager } from "../../git/GitManager.ts";
+import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -45,7 +48,7 @@ const testLayer = Layer.merge(
     ProviderAdapterRegistry.layerFromAdapters([]),
     { databaseLayer: database, runEffectWorker: false },
   ),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -181,6 +184,9 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            // The branch follow-up is a no-op without a current branch.
+            Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
+            Layer.mock(ThreadManagementService)({}),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
@@ -219,9 +225,9 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                       assert.lengthOf(args, 4);
                       const source = args[2]!;
                       const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination).pipe(Effect.orDie));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")).pipe(Effect.orDie));
-                      yield* fs.rename(source, destination).pipe(Effect.orDie);
+                      assert.isFalse(yield* fs.exists(destination));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      yield* fs.rename(source, destination);
                       moves.push(args);
                     } else {
                       const isolatedPath = moves[0]![3]!;
@@ -233,12 +239,10 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                         "--",
                         isolatedPath,
                       ]);
-                      assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));
-                      assert.isTrue(
-                        yield* fs.exists(path.join(isolatedPath, ".git")).pipe(Effect.orDie),
-                      );
+                      assert.isFalse(yield* fs.exists(worktreePath));
+                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
                       removals.push(isolatedPath);
-                      yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
+                      yield* fs.remove(isolatedPath, { recursive: true });
                     }
                   }
                   return {
@@ -253,7 +257,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                     stdoutTruncated: false,
                     stderrTruncated: false,
                   };
-                }),
+                }).pipe(Effect.orDie),
             }),
           ),
         ),

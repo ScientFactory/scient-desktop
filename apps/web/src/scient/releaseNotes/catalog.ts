@@ -9,6 +9,180 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.30",
+    publishedAt: "2026-11-17",
+    format: "paragraphs",
+    headline: "An agentic library for your research.",
+    highlights: [
+      {
+        id: "personal-library-0630",
+        title: "Keep your papers across projects",
+        description:
+          "Sources becomes Library: one collection for all your projects on this computer. Organize papers with collections, tags, reading status and stars, find possible duplicates, and undo bulk changes. Each project keeps its own references and notes. Libraries on different computers are separate for now.",
+      },
+      {
+        id: "library-import-export-0630",
+        title: "Bring your references with you",
+        description:
+          "Import Zotero libraries, groups and collections, PDFs, or reference files. Add papers by identifier, refresh them from Zotero, or send them back with their PDFs. Back up your Library or save a project package to share its papers, notes and highlights.",
+      },
+      {
+        id: "library-reading-0630",
+        title: "Read, highlight and ask about your papers",
+        description:
+          "Highlight passages, add notes and search your papers’ full text. Ask the Library to help answer a question from your papers, with citations and checked quotations. Quote a passage directly into your document with its source and page.",
+      },
+      {
+        id: "library-citations-0630",
+        title: "Cite as you write, and check your references",
+        description:
+          "Find Library references while writing citations in Markdown or LaTeX, and choose a citation style for your project and Word exports. Check references in your Library or documents, including Word files, for incorrect details, missing entries, retractions and published versions of preprints.",
+      },
+      {
+        id: "systematic-reviews-0630",
+        title: "Keep a systematic review organized",
+        description:
+          "Record searches, screen titles and abstracts, track full-text decisions and resolve disagreements in the Library. Scient builds a PRISMA flow diagram from those records. Agents can help with screening, and their decisions are marked for you to review.",
+      },
+      {
+        id: "feedback-0630",
+        title: "Send feedback without leaving Scient",
+        description:
+          "Use the lightbulb beside Settings, type /feedback, or choose Report after a failed turn. Review what will be sent and optionally attach a screenshot, logs or the conversation. Reports saved offline are sent when the connection returns.",
+      },
+      {
+        id: "scient-agent-0630",
+        title: "Improvements to Scient Agent",
+        description:
+          "Continue works after Stop or a usage limit, and recovered turns no longer keep an earlier failure. Long idle conversations can be compacted before their cache expires, while supported agents load optional tools when needed to leave more room for your work. Usage now includes background requests such as titles and prompt suggestions.",
+      },
+      {
+        id: "windows-browser-import-0630",
+        title: "Bring Windows browser sign-ins into Scient",
+        description:
+          "Import Chrome and Edge profiles on Windows through the browser’s own approval flow, without closing it. Saved passwords remain in the browser. Google sign-ins can work directly in Scient again, with clearer alternatives when Google refuses.",
+      },
+    ],
+    alsoIncluded:
+      "A smoother update flow with background downloads and automatic retries. Fork conversations in one click or into a new worktree. Edit queued messages without losing their place. Faster loading of long conversations, less storage used by forks, and startup and crash fixes. Font sizes reset once to the new defaults; you can adjust them again in Settings.",
+  },
+  {
+    version: "0.6.29",
+    publishedAt: "2026-11-15",
+    format: "paragraphs",
+    headline: "Connect your computers. Talk with your agent.",
+    highlights: [
+      {
+        id: "scient-connect-0629",
+        title: "Reach your computers with Scient Connect",
+        description:
+          "Sign in to Scient on your computer, then reach its projects, files and agents from another device or at app.scientfactory.com, without opening ports or setting up a VPN. Keep Scient running on the computer you want to reach.",
+      },
+      {
+        id: "invite-people-0629",
+        title: "Invite people to a conversation",
+        description:
+          "Choose Share in a conversation to invite people with a link. They follow it live in their browser, even without Scient, and talk with you there. Their messages reach the agent only when someone who can use the agent sends them on. Choose whether each person can chat or also use the agent, for 1, 7 or 30 days, and manage everyone from People. Guest links are in beta.",
+      },
+      {
+        id: "voice-0629",
+        title: "Talk with Scient Agent, or dictate with ChatGPT",
+        description:
+          "The waveform button in the composer starts a spoken conversation with Scient Agent. Say what you want done and hear its replies as it works, even in a new conversation. In Voice settings, choose ChatGPT to dictate without downloading a speech model; those recordings are sent to OpenAI and kept there for 30 days. Both need a ChatGPT sign-in in Scient Agent.",
+      },
+      {
+        id: "account-apps-0629",
+        title: "Connect a service once, for every agent",
+        description:
+          "Connect Gmail, Google Calendar, Google Drive and other services from Settings → Extensions. Each agent uses them through an account you already have: Claude through claude.ai, Codex and Scient Agent through ChatGPT. Each service has one row that shows which of your agents can use it.",
+      },
+      {
+        id: "connector-agents-0629",
+        title: "Choose which agents get your tools",
+        description:
+          "When you add a connector, choose which agents may use it, as well as which projects, and change that later on its page. Installed lists your connectors, apps and plugins once each and shows who can use them. Discover keeps each agent’s store separate, and Most used adds Playwright, Vercel, Cloudflare and Telegram.",
+      },
+      {
+        id: "agent-connectors-0629",
+        title: "Ask an agent to make or fix a connector",
+        description:
+          "Need a tool for a service or website you use? Choose Make a connector in Extensions and describe it. Your agent builds it, tests it and adds it. A connector that stops working offers Fix with an agent. Connectors can use saved sign-ins and keys from Accounts, and you can export your copy or undo the last change.",
+      },
+      {
+        id: "plan-goal-0629",
+        title: "Plan first, set a goal, and keep going",
+        description:
+          "Pick /plan and Scient Agent drafts a plan for you to approve before it changes anything. Give it a goal with /goal and it works across turns; a chip in the composer shows progress, with pause and resume. Usage shows Scient Agent’s limits and reset times. When an account runs out, continue with another signed-in account, and work resumes when the limit resets.",
+      },
+      {
+        id: "agent-rows-images-0629",
+        title: "See what Scient Agent does, and make images",
+        description:
+          "Commands, file changes and web searches appear as clear rows with their output, diffs and sources, and a subagent’s steps show in its own thread. Scient Agent can create and edit pictures with a connected ChatGPT or Google Antigravity account; they appear in the conversation and are saved as files. Edit from here can rewind newly recorded turns.",
+      },
+      {
+        id: "workspace-0629",
+        title: "A smoother workspace for larger projects",
+        description:
+          "Very large folders open without freezing the Files panel. Compute finds saved figures from the files a run writes, without scanning the whole project. Agents recover from tool calls that cannot work instead of repeating them, and failed Antigravity and Droid turns say why. Background process cleanup and storage handling improve reliability in long sessions.",
+      },
+    ],
+    alsoIncluded:
+      "Overleaf sync gives clearer results and recovery messages. Updates you start restart Scient at once only when no local work is running. Scient Agent installs and updates in the background, and interrupted downloads resume. Computer control works right after you grant access on macOS. Themes support custom CSS. Browser tools, chat scrolling and model selection receive further fixes.",
+  },
+  {
+    version: "0.6.28",
+    publishedAt: "2026-11-10",
+    format: "paragraphs",
+    headline: "Your skills, your tools, and smoother reading.",
+    highlights: [
+      {
+        id: "personal-skills-0628",
+        title: "Keep your skills across agents",
+        description:
+          "Add a skill from a folder, file, web address or pasted notes, or import skills from your other coding agents. Skills you add or ask an agent to save are available across projects and agents in Scient. Improve them with an agent, export them, or undo the last change from Extensions.",
+      },
+      {
+        id: "local-connectors-0628",
+        title: "Bring your own connected tools",
+        description:
+          "Add local connectors from a bundle, folder or command, or import ones you already use in Claude Desktop, Claude Code, Codex or Cursor. Manage them in Extensions and make them available to your agents. Required keys are kept in Accounts, and missing setup is shown before you get started.",
+      },
+      {
+        id: "office-reader-0628",
+        title: "Read Word files and slides like PDFs",
+        description:
+          "Word and PowerPoint gain page thumbnails, search, zoom and page controls. Select a passage and ask about it in chat, with its page or slide attached. Long Word documents preview more completely, and saving a copy of a filled PDF now keeps the values you entered.",
+      },
+      {
+        id: "document-return-0628",
+        title: "Return to the document you left",
+        description:
+          "Recently opened PDFs, Word files and slide decks stay ready when you switch away and back. Your page, scroll position and zoom stay with them. An unchanged document or data table also stays put while your agent works, instead of reloading after each command.",
+      },
+      {
+        id: "accounts-0628",
+        title: "Keep sign-ins and keys together",
+        description:
+          "Accounts brings API keys into one list showing where each key is kept and what uses it. Keep a key from an agent’s settings in Accounts and update it there later. Removing an agent keeps its saved keys. Browser sign-in and autofill are improved, with a Chrome-window option for sites that refuse embedded sign-in.",
+      },
+      {
+        id: "fresh-context-0628",
+        title: "Start fresh without losing the conversation",
+        description:
+          "Use /clear to give your agent a fresh context while keeping the conversation’s earlier messages visible. Scheduled tasks can also start each run with a fresh context. Provider switching, resuming work and queued follow-ups receive further fixes.",
+      },
+      {
+        id: "streaming-charts-0628",
+        title: "See charts as answers arrive",
+        description:
+          "Charts appear as soon as their chart block is complete, while the agent continues writing. Vega-Lite, Plotly and Mermaid share a more consistent default palette, with clearer chart labels and styling.",
+      },
+    ],
+    alsoIncluded:
+      "Typing and scrolling are smoother with documents open, alongside broader speed and reliability improvements. Julia setup is improved, Scient Agent downloads are smaller, and Droid supports rewinding its conversation context. Browser profiles, Google sign-ins and Overleaf recovery receive fixes.",
+  },
+  {
     version: "0.6.27",
     publishedAt: "2026-11-03",
     format: "paragraphs",

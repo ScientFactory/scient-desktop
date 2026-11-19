@@ -24,10 +24,11 @@ import type { EditorId } from "./editor.ts";
 // SCIENT-FORK:START — Scient preview PDF export artifacts.
 import type {
   DesktopControlledHtmlPdfRenderArtifact,
+  DesktopPreviewLibraryPage,
   DesktopPreviewPdfExportArtifact,
 } from "./scient/desktopPreview.ts";
 // SCIENT-FORK:END
-import type { PreviewForwardedShortcut } from "./keybindings.ts";
+import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -37,6 +38,7 @@ import type {
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
+  detail?: string;
   destructive?: boolean;
   disabled?: boolean;
   header?: boolean;
@@ -53,6 +55,7 @@ export type QuitShortcutHintEvent =
 export interface ContextMenuItemSchemaType {
   readonly id: string;
   readonly label: string;
+  readonly detail?: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly header?: boolean;
@@ -65,6 +68,7 @@ export interface ContextMenuItemSchemaType {
 export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
+  detail: Schema.optionalKey(Schema.String),
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
@@ -78,6 +82,11 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   ),
 });
 
+// Native menus opened from the keyboard select their first item, which is what
+// moves a screen reader into the menu. Electron assumes a mouse unless told.
+export const ContextMenuSource = Schema.Literals(["mouse", "keyboard"]);
+export type ContextMenuSource = typeof ContextMenuSource.Type;
+
 export type DesktopUpdateStatus =
   | "disabled"
   | "idle"
@@ -86,6 +95,7 @@ export type DesktopUpdateStatus =
   | "available"
   | "downloading"
   | "downloaded"
+  | "preparing"
   | "error";
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
@@ -103,6 +113,7 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
   "available",
   "downloading",
   "downloaded",
+  "preparing",
   "error",
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
@@ -344,6 +355,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
+  channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
 });
 
 /** Scient-owned terminal shortcuts managed from desktop Settings. */
@@ -359,6 +371,8 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
    * while it is there, since a link behind it would never run.
    */
   shadowedBy: Schema.optionalKey(Schema.String),
+  /** For an installed `t3` that is off PATH: the shell startup file that adds it, and whether it has. */
+  pathSetup: Schema.optionalKey(Schema.Struct({ file: Schema.String, added: Schema.Boolean })),
   /** The app's bundled `scient` launcher, which runs without Node or a PATH entry. */
   launcherPath: Schema.NullOr(Schema.String),
 });
@@ -674,10 +688,36 @@ export interface DesktopPreviewPointerEvent {
   createdAt: string;
 }
 
+// SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+/** Scient's browser stopped a Google sign-in page, which Google never lets finish here. */
+export interface DesktopPreviewSignInBlockedEvent {
+  tabId: string;
+  page: "credentials" | "transit" | "rejected";
+  /**
+   * The tab itself, a sign-in window ("Continue with Google") a page opened, or a frame in the
+   * tab's page or in such a window.
+   */
+  context: "tab" | "popup" | "frame";
+  /** The https origin of the page the sign-in started from; null for Google's own sign-in. */
+  restartUrl: string | null;
+  /**
+   * The tab's page this is about: for a window or a frame, the page that opened or holds it. Once
+   * the tab shows another page, the explanation no longer applies.
+   */
+  pageUrl: string;
+}
+// SCIENT-FORK:END
+
 export interface DesktopPreviewOpenLinkEvent {
   tabId: string;
   url: string;
   background: boolean;
+}
+
+export interface DesktopPreviewFindResultEvent {
+  tabId: string;
+  activeMatchOrdinal: number;
+  matches: number;
 }
 
 export const DesktopPreviewRecordingInputSchema = Schema.Union([
@@ -809,11 +849,13 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
 export {
   DesktopControlledHtmlPdfRenderArtifactSchema,
   DesktopControlledHtmlPdfRenderInputSchema,
+  DesktopPreviewLibraryPageSchema,
   DesktopPreviewPdfExportArtifactSchema,
   DesktopPreviewPdfExportSourceSignalsSchema,
 } from "./scient/desktopPreview.ts";
 export type {
   DesktopControlledHtmlPdfRenderArtifact,
+  DesktopPreviewLibraryPage,
   DesktopPreviewPdfExportArtifact,
   DesktopPreviewPdfExportSourceSignals,
 } from "./scient/desktopPreview.ts";
@@ -1036,6 +1078,19 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Main must derive the partition to ensure its session has UA rewrites and permission handlers. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Carry the partition's loopback traffic to the environment instead of this machine. */
+  tunnelLoopback: Schema.optional(Schema.Boolean),
+});
+
+export interface DesktopPreviewTunnelAccessRequest {
+  readonly requestId: string;
+  readonly environmentId: EnvironmentId;
+}
+
+export const DesktopPreviewTunnelAccessResolutionInputSchema = Schema.Struct({
+  requestId: Schema.String,
+  /** The environment's tunnel WebSocket URL with its ticket, or null when it cannot be reached. */
+  url: Schema.NullOr(Schema.String),
 });
 
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
@@ -1054,9 +1109,26 @@ export const DesktopPreviewSetZoomFactorInputSchema = Schema.Struct({
   zoomFactor: Schema.Number.check(Schema.isGreaterThan(0)),
 });
 
+export const DesktopPreviewFindInPageInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  text: Schema.NonEmptyString.check(Schema.isMaxLength(1000)),
+  forward: Schema.Boolean,
+  newSession: Schema.Boolean,
+});
+
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   audioMuted: Schema.Boolean,
+});
+
+export const DesktopPreviewSetShownInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  shown: Schema.Boolean,
+});
+
+export const DesktopPreviewSetCaptureDrawnInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  drawn: Schema.Boolean,
 });
 
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
@@ -1085,18 +1157,27 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
+export const SystemSettingsPaneSchema = Schema.Literals([
+  "full-disk-access",
+  "microphone",
+  // SCIENT-FORK:START — computer control asks for the panes that grant capture and input.
+  "screen-recording",
+  "accessibility",
+  // SCIENT-FORK:END
+]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 // SCIENT-FORK:START — Scient members live in ScientDesktopBridge (scient/desktopBridge.ts).
 export interface DesktopBridge extends ScientDesktopBridge {
   // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
-  getRelayTelemetryEnabled: () => boolean;
+  /** `null` until the desktop host has read the login shell's environment; ask again later. */
+  getRelayTelemetryEnabled: () => boolean | null;
   // SCIENT-FORK:START — null when Electron cannot resolve a dropped file's path.
   getPathForFile: (file: File) => string | null;
   // SCIENT-FORK:END
   getClientPlatform: () => string;
+  restartAudioService?: () => Promise<boolean>;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
@@ -1113,9 +1194,15 @@ export interface DesktopBridge extends ScientDesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale: () => string | null;
+  /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
+  getPreferredSystemLanguages: () => readonly string[];
+  /** False when the OS turned off middle-click PRIMARY paste (`gtk-enable-primary-paste`). */
+  getPrimaryPasteEnabled?: () => boolean;
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
+  /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
+  getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
@@ -1154,6 +1241,8 @@ export interface DesktopBridge extends ScientDesktopBridge {
   ) => Promise<AuthAccessTokenResult>;
   fetchSshSessionState: (httpBaseUrl: string, bearerToken: string) => Promise<AuthSessionState>;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
+  /** Fires with a prompt's request id once it is answered, cancelled, expired or abandoned. */
+  onSshPasswordPromptSettled: (listener: (requestId: string) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
@@ -1167,15 +1256,19 @@ export interface DesktopBridge extends ScientDesktopBridge {
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
+  /** Maps a Windows path to the one a local backend (`primary` or `wsl:…`) sees; null when it cannot. */
+  toLocalBackendPath: (backendId: string, windowsPath: string) => Promise<string | null>;
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
+    source?: ContextMenuSource,
   ) => Promise<T | null>;
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
+  startFileDrag: (input: { environmentId: EnvironmentId; path: string }) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
@@ -1204,6 +1297,7 @@ export interface DesktopBridge extends ScientDesktopBridge {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
+    addToPath: () => Promise<DesktopCliCommandState>;
   };
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
@@ -1224,6 +1318,79 @@ export type { DesktopVoiceBridge } from "./scient/desktopVoiceBridge.ts";
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
+/**
+ * Dictation for the annotation editor drawn inside a preview guest. The guest only shows
+ * controls and forwards trusted user gestures; the renderer records, with its consent
+ * checks, and publishes state back. `shortcuts` are the dictation chords in effect.
+ */
+export const DesktopPreviewAnnotationVoiceConfigSchema = Schema.Struct({
+  sessionId: Schema.String.check(Schema.isMaxLength(64)),
+  shortcuts: Schema.Array(KeybindingShortcut).check(Schema.isMaxLength(16)),
+});
+export type DesktopPreviewAnnotationVoiceConfig =
+  typeof DesktopPreviewAnnotationVoiceConfigSchema.Type;
+
+export const DesktopPreviewAnnotationVoiceEventSchema = Schema.Struct({
+  sessionId: Schema.String.check(Schema.isMaxLength(64)),
+  text: Schema.String.check(Schema.isMaxLength(100_000)),
+  cursor: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  selectionEnd: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  action: Schema.Literals([
+    "sync",
+    "start",
+    "stop",
+    "cancel",
+    "skip",
+    "settings",
+    "key",
+    "focus",
+    "blur",
+  ]),
+  keyboard: Schema.optional(
+    Schema.Struct({
+      type: Schema.Literals(["keydown", "keyup"]),
+      key: Schema.String.check(Schema.isMaxLength(32)),
+      code: Schema.String.check(Schema.isMaxLength(64)),
+      metaKey: Schema.Boolean,
+      ctrlKey: Schema.Boolean,
+      shiftKey: Schema.Boolean,
+      altKey: Schema.Boolean,
+      repeat: Schema.Boolean,
+    }),
+  ),
+});
+export type DesktopPreviewAnnotationVoiceEvent =
+  typeof DesktopPreviewAnnotationVoiceEventSchema.Type;
+
+export const DesktopPreviewAnnotationVoiceStateSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  sessionId: Schema.String.check(Schema.isMaxLength(64)),
+  available: Schema.Boolean,
+  phase: Schema.Literals([
+    "idle",
+    "preparing",
+    "recording",
+    "transcribing",
+    "post-processing",
+    "error",
+  ]),
+  status: Schema.NullOr(Schema.String),
+  errorAction: Schema.NullOr(Schema.Literals(["retry", "settings"])),
+  preview: Schema.NullOr(Schema.String),
+  level: Schema.Number,
+  shortcutLabel: Schema.NullOr(Schema.String),
+  freezesEditor: Schema.Boolean,
+  blocksSubmission: Schema.Boolean,
+  draft: Schema.NullOr(Schema.Struct({ text: Schema.String, cursor: Schema.Int })),
+});
+export type DesktopPreviewAnnotationVoiceState =
+  typeof DesktopPreviewAnnotationVoiceStateSchema.Type;
+
+export const DesktopPreviewPickElementInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  voice: Schema.optional(DesktopPreviewAnnotationVoiceConfigSchema),
+});
+
 export interface DesktopPreviewBridge {
   setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => Promise<void>;
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
@@ -1233,6 +1400,7 @@ export interface DesktopPreviewBridge {
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;
   refresh: (tabId: string) => Promise<void>;
+  stopLoading: (tabId: string) => Promise<void>;
   zoomIn: (tabId: string) => Promise<void>;
   zoomOut: (tabId: string) => Promise<void>;
   resetZoom: (tabId: string) => Promise<void>;
@@ -1240,13 +1408,29 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
+  findInPage: (
+    tabId: string,
+    text: string,
+    options: { forward: boolean; newSession: boolean },
+  ) => Promise<void>;
+  stopFindInPage: (tabId: string) => Promise<void>;
+  /** Tells the tab's server whether its webview is on screen. */
+  setShown: (tabId: string, shown: boolean) => Promise<void>;
+  /** Tells the tab's server whether its webview is drawn at full detail for a capture. */
+  setCaptureDrawn: (tabId: string, drawn: boolean) => Promise<void>;
   openDevTools: (tabId: string) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   getPreviewConfig: (
     environmentId: EnvironmentId,
     profileId?: string,
+    tunnelLoopback?: boolean,
   ) => Promise<DesktopPreviewWebviewConfig>;
+  /** Main asks for an environment's tunnel URL once per connection a tunnelled page opens. */
+  onTunnelAccessRequest: (
+    listener: (request: DesktopPreviewTunnelAccessRequest) => void,
+  ) => () => void;
+  resolveTunnelAccess: (requestId: string, url: string | null) => Promise<void>;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;
@@ -1259,8 +1443,17 @@ export interface DesktopPreviewBridge {
   }) => Promise<BrowserImportResult>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   setAnnotationSendEnabled: (tabId: string, enabled: boolean) => Promise<void>;
+  annotationVoice: {
+    onEvent: (
+      listener: (tabId: string, event: DesktopPreviewAnnotationVoiceEvent) => void,
+    ) => () => void;
+    update: (state: DesktopPreviewAnnotationVoiceState) => Promise<void>;
+  };
   /** Resolves with the annotation and attach/send intent, or null on cancellation. Rejects if activation fails. */
-  pickElement: (tabId: string) => Promise<PreviewAnnotationSubmissionResult | null>;
+  pickElement: (
+    tabId: string,
+    voice?: DesktopPreviewAnnotationVoiceConfig,
+  ) => Promise<PreviewAnnotationSubmissionResult | null>;
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (
     tabId: string,
@@ -1269,6 +1462,9 @@ export interface DesktopPreviewBridge {
   exportPdf: (tabId: string) => Promise<DesktopPreviewPdfExportArtifact>;
   /** Render one signed project HTML document in an isolated hidden Chromium guest. */
   renderHtmlPdf: (sourceUrl: string) => Promise<DesktopControlledHtmlPdfRenderArtifact>;
+  // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library"; null when it can't be read.
+  readLibraryPage?: (tabId: string) => Promise<DesktopPreviewLibraryPage | null>;
+  // SCIENT-FORK:END
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {
@@ -1288,12 +1484,18 @@ export interface DesktopPreviewBridge {
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
+  onFindResult: (listener: (event: DesktopPreviewFindResultEvent) => void) => () => void;
+  // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+  onSignInBlocked: (listener: (event: DesktopPreviewSignInBlockedEvent) => void) => () => void;
+  // SCIENT-FORK:END
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Which button takes focus on open. Defaults to Cancel; destructive confirms always keep Cancel. */
+  readonly initialFocus?: "confirm" | "cancel";
 }
 
 export interface LocalApi {
@@ -1313,6 +1515,7 @@ export interface LocalApi {
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
+      source?: ContextMenuSource,
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };

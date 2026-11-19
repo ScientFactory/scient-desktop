@@ -213,9 +213,13 @@ describe("Settings ▸ Documents", () => {
     await act(() =>
       library(_fixture).querySelector<HTMLElement>(`[aria-label="${name} actions"]`)!.click(),
     );
-    const item = [...document.querySelectorAll<HTMLElement>('[data-slot="menu-item"]')].find(
-      (node) => node.textContent === action,
-    );
+    // Only the menu just opened: the previous template's menu stays on the page until the next
+    // frame after it closes, and a slow runner found its item first and changed that template.
+    const item = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-slot="menu-popup"][data-open] [data-slot="menu-item"]',
+      ),
+    ].find((node) => node.textContent === action);
     expect(item, `${name}: ${action}`).toBeDefined();
     await act(async () => {
       item!.click();

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createPreviewHostClaim, type PreviewHostClaim } from "./previewHostOwnership";
+import { fakeTimers } from "../../../test/render";
+
+import {
+  BACKGROUND_FIRST_CLAIM_DELAY_MS,
+  createPreviewHostClaim,
+  type PreviewHostClaim,
+} from "./previewHostOwnership";
 
 let nextTabId = 0;
 
@@ -13,8 +19,13 @@ function openWindow(stack: DisposableStack): { locks: LockManager; close: () => 
   return { locks: frame.contentWindow!.navigator.locks, close };
 }
 
-function claim(stack: DisposableStack, tabId: string, locks: LockManager): PreviewHostClaim {
-  const claimed = createPreviewHostClaim(tabId, locks);
+function claim(
+  stack: DisposableStack,
+  tabId: string,
+  locks: LockManager,
+  inBackground = false,
+): PreviewHostClaim {
+  const claimed = createPreviewHostClaim(tabId, locks, { inBackground: () => inBackground });
   stack.defer(claimed.start());
   return claimed;
 }
@@ -119,5 +130,45 @@ describe("createPreviewHostClaim", () => {
 
     expect(roles).toEqual([]);
     expect(other.role()).toBe("elsewhere");
+  });
+
+  it("leaves a new tab to the window in use, so a background window never mounts its page", async () => {
+    using _timers = fakeTimers();
+    using stack = new DisposableStack();
+    const env = setup(stack);
+    const background = claim(env.stack, env.tabId, env.first.locks, true);
+    const roles: string[] = [];
+    background.subscribe(() => roles.push(background.role()));
+    const inUse = claim(env.stack, env.tabId, env.second.locks);
+
+    await expectRole(inUse, "host");
+    await vi.advanceTimersByTimeAsync(BACKGROUND_FIRST_CLAIM_DELAY_MS);
+    await expectRole(background, "elsewhere");
+    expect(roles).not.toContain("host");
+  });
+
+  it("does not claim again after a background window is asked to show the tab", async () => {
+    using _timers = fakeTimers();
+    using stack = new DisposableStack();
+    const env = setup(stack);
+    const background = claim(env.stack, env.tabId, env.first.locks, true);
+    background.showHere();
+    await expectRole(background, "host");
+    await vi.advanceTimersByTimeAsync(BACKGROUND_FIRST_CLAIM_DELAY_MS);
+    const other = claim(env.stack, env.tabId, env.second.locks);
+    other.showHere();
+
+    await expectRole(other, "host");
+    await expectRole(background, "elsewhere");
+  });
+
+  it("hosts a new tab from a background window when no window in use claims it", async () => {
+    using _timers = fakeTimers();
+    using stack = new DisposableStack();
+    const env = setup(stack);
+    const background = claim(env.stack, env.tabId, env.first.locks, true);
+
+    await vi.advanceTimersByTimeAsync(BACKGROUND_FIRST_CLAIM_DELAY_MS);
+    await expectRole(background, "host");
   });
 });

@@ -12,6 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -179,7 +180,7 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
           );
           const { environment, homePath } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const attachments = NodePath.join(root, "attachments");
           NodeFS.mkdirSync(attachments, { recursive: true });

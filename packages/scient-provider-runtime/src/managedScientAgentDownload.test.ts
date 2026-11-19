@@ -4,12 +4,15 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
+import * as NodeZlib from "node:zlib";
 
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { ManagedProviderRuntimeProgress } from "./managedProviderRuntime.ts";
 import { hydrateManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { ManagedScientAgentRuntime } from "./managedScientAgentRuntime.ts";
 import { resolveScientAgentArtifactPolicy } from "./scientAgentManifest.ts";
+import { managedRuntimeFailureRetryable, managedRuntimeRetryAfterMs } from "./runtimeFiles.ts";
 
 vi.mock("node:timers/promises", { spy: true });
 // The transient-response backoff resolves at once but still honours cancellation.
@@ -61,6 +64,7 @@ async function installedFixture() {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   await Promise.all(
     roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
@@ -109,6 +113,41 @@ it("recovers the Scient download and still runs smoke, admission, and qualificat
   expect(await NodeFSP.readFile(otherState, "utf8")).toBe("keep");
 });
 
+// regression: progress fell back to zero while a resumed download waited or started again.
+it("reports progress from the bytes kept by an earlier try", async () => {
+  const { root } = await installedFixture();
+  // Cut off after 5 bytes on Scient's copy and after 10 on GitHub, then whole on Scient's.
+  const ends = [5, 10, bytes.length];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: URL, init: RequestInit) => {
+      const range = (init.headers as Record<string, string> | undefined)?.range;
+      const from = Number(/bytes=(\d+)-/u.exec(range ?? "")?.[1] ?? 0);
+      const chunk = new Uint8Array(bytes.subarray(from, ends.shift()));
+      return from === 0
+        ? new Response(chunk, { headers: { "content-length": String(bytes.length) } })
+        : new Response(chunk, {
+            status: 206,
+            headers: { "content-range": `bytes ${from}-${bytes.length - 1}/${bytes.length}` },
+          });
+    }),
+  );
+  const downloaded: number[] = [];
+  const runtime = new ManagedScientAgentRuntime(root, { smoke: async () => undefined });
+  await runtime.install({
+    artifact: artifact("0.2.0"),
+    signal: new AbortController().signal,
+    onProgress: (report) => {
+      if (report.stage === "downloading" && report.downloadedBytes !== undefined)
+        downloaded.push(report.downloadedBytes);
+    },
+  });
+  expect(downloaded.at(-1)).toBe(bytes.length);
+  expect(downloaded.slice(downloaded.indexOf(5))).toEqual(
+    downloaded.slice(downloaded.indexOf(5)).toSorted((left, right) => left - right),
+  );
+});
+
 it.each(["checksum", "smoke", "admission", "qualification", "cancellation"] as const)(
   "preserves the installed release when %s refuses an update after a transient response",
   async (failure) => {
@@ -127,8 +166,8 @@ it.each(["checksum", "smoke", "admission", "qualification", "cancellation"] as c
             { status: 503 },
           ),
       )
-      .mockResolvedValueOnce(
-        new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
+      .mockImplementation(
+        async () => new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
       );
     vi.stubGlobal("fetch", fetch);
     const smoke = vi.fn(async () => {
@@ -146,7 +185,10 @@ it.each(["checksum", "smoke", "admission", "qualification", "cancellation"] as c
     await expect(
       runtime.install({ artifact: candidate, signal: controller.signal, beforeActivate, qualify }),
     ).rejects.toThrow();
-    expect(fetch).toHaveBeenCalledTimes(failure === "cancellation" ? 1 : 2);
+    // A wrong digest rules out each copy in turn: Scient's after its 503, then GitHub's.
+    expect(fetch).toHaveBeenCalledTimes(
+      failure === "cancellation" ? 1 : failure === "checksum" ? 3 : 2,
+    );
     if (failure === "checksum" || failure === "cancellation") expect(smoke).not.toHaveBeenCalled();
     if (failure === "checksum" || failure === "cancellation" || failure === "smoke")
       expect(beforeActivate).not.toHaveBeenCalled();
@@ -167,3 +209,227 @@ it.each(["checksum", "smoke", "admission", "qualification", "cancellation"] as c
     expect(await NodeFSP.readFile(otherState, "utf8")).toBe("keep");
   },
 );
+
+describe("installing from the compressed copy", () => {
+  const sha256 = (data: Buffer) => NodeCrypto.createHash("sha256").update(data).digest("hex");
+  const packed = NodeZlib.zstdCompressSync(bytes);
+
+  /** The catalog's compressed copy: by default `packed`, the zstd of `bytes`. */
+  function compressedArtifact(version: string, copy: Buffer = packed) {
+    const policy = resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" })!;
+    return hydrateManagedRuntimeArtifact(
+      policy,
+      {
+        provider: "scient",
+        target: policy.target,
+        version,
+        artifactName: policy.artifactName,
+        url: `${policy.releaseUrlPrefix}${version}/${policy.artifactName}`,
+        checksum: { algorithm: "sha256", digest: sha256(bytes) },
+        size: bytes.length,
+        catalogRevision: `test:scient:${version}`,
+      },
+      {
+        format: "zstd",
+        size: copy.length,
+        checksum: { algorithm: "sha256", digest: sha256(copy) },
+      },
+    )!;
+  }
+
+  /** Serves `zst` for compressed copies and `bytes` for binaries, recording every URL. */
+  function serve(zst: Buffer, urls: string[], onFetch?: () => void) {
+    return vi.fn(async (url: URL) => {
+      urls.push(url.toString());
+      onFetch?.();
+      const body = url.pathname.endsWith(".zst") ? zst : bytes;
+      return new Response(new Uint8Array(body), {
+        headers: { "content-length": String(body.length) },
+      });
+    });
+  }
+
+  async function expectInstalled(
+    runtime: ManagedScientAgentRuntime,
+    root: string,
+    version: string,
+  ) {
+    expect(await runtime.status(compressedArtifact(version))).toMatchObject({
+      installed: true,
+      selected: true,
+      activeVersion: version,
+    });
+    expect(await NodeFSP.readFile(runtime.launchPath(compressedArtifact(version)))).toEqual(bytes);
+    expect(
+      await NodeFSP.readdir(NodePath.join(root, "provider-runtimes", "scient-agent", "staging")),
+    ).toEqual([]);
+  }
+
+  it("names the copy beside the binary on both servers", () => {
+    expect(compressedArtifact("0.2.0").compressed).toEqual({
+      format: "zstd",
+      artifactName: "scient-agent-darwin-arm64.zst",
+      url: "https://github.com/ScientFactory/scient-agent/releases/download/v0.2.0/scient-agent-darwin-arm64.zst",
+      mirrorUrl:
+        "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-darwin-arm64.zst",
+      size: packed.length,
+      checksum: { algorithm: "sha256", digest: sha256(packed) },
+    });
+  });
+
+  it("downloads only the compressed copy and installs the binary it unpacks to", async () => {
+    const { root } = await installedFixture();
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", serve(packed, urls));
+    const onCompressedFallback = vi.fn();
+    const runtime = new ManagedScientAgentRuntime(root, { smoke: async () => undefined });
+    await runtime.install({
+      artifact: compressedArtifact("0.2.0"),
+      signal: new AbortController().signal,
+      onCompressedFallback,
+    });
+    expect(urls).toEqual([
+      "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-darwin-arm64.zst",
+    ]);
+    expect(onCompressedFallback).not.toHaveBeenCalled();
+    await expectInstalled(runtime, root, "0.2.0");
+  });
+
+  it.each([
+    {
+      failure: "a damaged copy on both servers",
+      catalogCopy: packed,
+      served: Buffer.from("junk"),
+      compressedFailure: "size_mismatch",
+    },
+    {
+      failure: "a copy that unpacks to other bytes",
+      catalogCopy: NodeZlib.zstdCompressSync(Buffer.from("other bytes")),
+      served: NodeZlib.zstdCompressSync(Buffer.from("other bytes")),
+      compressedFailure: "other",
+    },
+  ])(
+    "falls back to the binary after $failure",
+    async ({ catalogCopy, served, compressedFailure }) => {
+      const { root } = await installedFixture();
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", serve(served, urls));
+      const onCompressedFallback = vi.fn();
+      const progress: ManagedProviderRuntimeProgress[] = [];
+      const runtime = new ManagedScientAgentRuntime(root, { smoke: async () => undefined });
+      await runtime.install({
+        artifact: compressedArtifact("0.2.0", catalogCopy),
+        signal: new AbortController().signal,
+        onCompressedFallback,
+        onProgress: (report) => progress.push(report),
+      });
+      expect(onCompressedFallback).toHaveBeenCalledOnce();
+      // The binary's download still says why the compressed copy was given up.
+      expect(progress.findLast((report) => report.stage === "verifying")?.download).toMatchObject({
+        compressed: false,
+        sourceKind: "scient_mirror",
+        compressedFailure,
+      });
+      expect(urls.at(-1)).toBe(
+        "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-darwin-arm64",
+      );
+      await expectInstalled(runtime, root, "0.2.0");
+    },
+  );
+
+  it("carries a compressed source cooldown through raw fallback and the terminal failure", async () => {
+    const { root, previousState } = await installedFixture();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    using wait = vi.spyOn(NodeTimersPromises, "setTimeout");
+    wait.mockClear();
+    const urls: string[] = [];
+    const fetch = vi.fn(async (url: URL) => {
+      urls.push(String(url));
+      return url.hostname === "downloads.scientfactory.com"
+        ? new Response("busy", { status: 429, headers: { "retry-after": "3600" } })
+        : new Response("missing", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const runtime = new ManagedScientAgentRuntime(root, { smoke: async () => undefined });
+    const compressedFailures: unknown[] = [];
+    const failure = await runtime
+      .install({
+        artifact: compressedArtifact("0.2.0"),
+        signal: new AbortController().signal,
+        onCompressedFallback: (cause) => {
+          compressedFailures.push(cause);
+          vi.advanceTimersByTime(10_000);
+        },
+      })
+      .catch((cause: unknown) => cause);
+    expect(compressedFailures).toHaveLength(1);
+    expect(managedRuntimeRetryAfterMs(compressedFailures[0])).toBe(3_590_000);
+    expect(managedRuntimeRetryAfterMs(new Error("wrapped", { cause: failure }))).toBe(3_590_000);
+    expect(managedRuntimeFailureRetryable(failure)).toBe(true);
+    expect(String(failure)).toContain("github.com Managed runtime download failed with HTTP 404");
+    expect(urls).toEqual([
+      "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-darwin-arm64.zst",
+      "https://github.com/ScientFactory/scient-agent/releases/download/v0.2.0/scient-agent-darwin-arm64.zst",
+      "https://github.com/ScientFactory/scient-agent/releases/download/v0.2.0/scient-agent-darwin-arm64",
+    ]);
+    expect(wait).not.toHaveBeenCalled();
+    expect(await runtime.readState()).toEqual(previousState);
+    expect(
+      await NodeFSP.readdir(NodePath.join(root, "provider-runtimes", "scient-agent", "staging")),
+    ).toEqual([]);
+  });
+
+  it("stops without the binary when told not to fall back, or when cancelled", async () => {
+    const { root, previousState } = await installedFixture();
+    const runtime = new ManagedScientAgentRuntime(root, { smoke: async () => undefined });
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", serve(Buffer.from("junk"), urls));
+    await expect(
+      runtime.install({
+        artifact: compressedArtifact("0.2.0"),
+        signal: new AbortController().signal,
+        onCompressedFallback: (cause) => {
+          throw new Error("no fallback", { cause });
+        },
+      }),
+    ).rejects.toThrow("no fallback");
+    const controller = new AbortController();
+    vi.stubGlobal(
+      "fetch",
+      serve(packed, urls, () => controller.abort()),
+    );
+    const onCompressedFallback = vi.fn();
+    await expect(
+      runtime.install({
+        artifact: compressedArtifact("0.2.0"),
+        signal: controller.signal,
+        onCompressedFallback,
+      }),
+    ).rejects.toThrow();
+    expect(onCompressedFallback).not.toHaveBeenCalled();
+    expect(urls.every((url) => url.endsWith(".zst"))).toBe(true);
+    expect(await runtime.readState()).toEqual(previousState);
+    expect(
+      await NodeFSP.readdir(NodePath.join(root, "provider-runtimes", "scient-agent", "staging")),
+    ).toEqual([]);
+  });
+
+  it("downloads the binary where this process cannot unpack zstd", async () => {
+    const { root } = await installedFixture();
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", serve(packed, urls));
+    const runtime = new ManagedScientAgentRuntime(root, {
+      smoke: async () => undefined,
+      unpackZstd: undefined,
+    });
+    await runtime.install({
+      artifact: compressedArtifact("0.2.0"),
+      signal: new AbortController().signal,
+    });
+    expect(urls).toEqual([
+      "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-darwin-arm64",
+    ]);
+    await expectInstalled(runtime, root, "0.2.0");
+  });
+});

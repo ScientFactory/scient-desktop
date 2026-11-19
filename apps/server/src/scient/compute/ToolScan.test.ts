@@ -91,6 +91,35 @@ describe("the tool scan", () => {
     expect(tools.get("ruby")?.[0]?.version).toBe("3.3.1");
   });
 
+  it("leads with elan's launcher, which runs the toolchain a Lean project pins", () => {
+    const tools = scan(
+      computer([
+        "/home/a/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lean",
+        "/home/a/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lake",
+        "/home/a/.elan/bin/lean",
+        "/home/a/.elan/bin/lake",
+      ]),
+    );
+    expect(tools.get("lean")?.[0]?.executable).toBe("/home/a/.elan/bin/lean");
+  });
+
+  it("finds the CmdStan CMDSTAN names, as conda sets it, ahead of one in ~/.cmdstan", () => {
+    const tools = scan(
+      computer(
+        [
+          "/home/a/.cmdstan/cmdstan-2.40.0/bin/stanc",
+          "/home/a/miniforge3/envs/bayes/bin/cmdstan/bin/stanc",
+        ],
+        { environment: { CMDSTAN: "/home/a/miniforge3/envs/bayes/bin/cmdstan" } },
+      ),
+    );
+    expect(tools.get("stan")?.map((tool) => tool.executable)).toEqual([
+      "/home/a/miniforge3/envs/bayes/bin/cmdstan/bin/stanc",
+      "/home/a/.cmdstan/cmdstan-2.40.0/bin/stanc",
+    ]);
+    expect(tools.get("stan")?.[1]?.version).toBe("2.40.0");
+  });
+
   it("does not take Windows' WSL launcher for Bash", () => {
     const tools = scan(
       computer(["C:\\Windows\\System32\\bash.exe", "C:\\Tools\\Git\\bin\\bash.exe"], {

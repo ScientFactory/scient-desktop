@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import {
   isReservedConnectorServerName,
   type ProviderInstanceId,
@@ -13,6 +14,7 @@ import {
 import type { McpPluginKeyPolicy } from "@t3tools/provider-core/server/mcpSession";
 import { makeSessionFiles } from "../accounts/agent/sessionFiles.ts";
 import { readLocalPluginKeyStdioServers } from "./LocalPluginContents.ts";
+import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 import type { PluginKeyBindings } from "./PluginKeyBindings.ts";
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 
@@ -98,7 +100,7 @@ export const preparePluginKeyStdio = Effect.fn("PluginKeyStdio.prepare")(functio
     };
     const state = yield* bindings.list(target, policy.requiredKeys);
     if (state.status !== "ready") continue;
-    const servers = yield* Effect.tryPromise(() => readLocalPluginKeyStdioServers(policy.path!));
+    const servers = yield* tryLocalPluginRead(() => readLocalPluginKeyStdioServers(policy.path!));
     for (const server of servers) {
       const serverName =
         provider.driver === "claudeAgent"
@@ -149,6 +151,15 @@ export const preparePluginKeyStdio = Effect.fn("PluginKeyStdio.prepare")(functio
   return prepared;
 });
 
+class PluginKeySessionFilesRemovalError extends Schema.TaggedError<PluginKeySessionFilesRemovalError>()(
+  "PluginKeySessionFilesRemovalError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not remove a session's plugin key files.";
+  }
+}
+
 export const makePluginKeyStdioSessions = Effect.fn("PluginKeyStdio.make")(function* (
   secretsDir: string,
 ) {
@@ -158,9 +169,12 @@ export const makePluginKeyStdioSessions = Effect.fn("PluginKeyStdio.make")(funct
   const clear = Effect.fn("PluginKeyStdio.clear")(function* (credentialId: string) {
     const paths = owned.get(credentialId);
     if (!paths) return;
-    yield* Effect.tryPromise(async () => {
-      for (const file of paths) await NodeFSP.rm(file, { force: true });
-      owned.delete(credentialId);
+    yield* Effect.tryPromise({
+      try: async () => {
+        for (const file of paths) await NodeFSP.rm(file, { force: true });
+        owned.delete(credentialId);
+      },
+      catch: (cause) => new PluginKeySessionFilesRemovalError({ cause }),
     });
   });
   const write = Effect.fn("PluginKeyStdio.write")(function* (

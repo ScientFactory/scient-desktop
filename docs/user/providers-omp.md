@@ -208,7 +208,10 @@ and `::1` to `NO_PROXY`, so an inherited proxy never receives the requests Oh My
 Scient's own local endpoints. `NO_PROXY` and `no_proxy` both get every entry either of them had,
 plus these, because tools disagree about which spelling wins.
 
-Native OMP rollback and fork commands are not exposed. On qualified desktop targets, Scient can
+Rewind uses the agent's conversation tree. Each turn records the message it started from, and
+rewinding moves the conversation into a new session file that ends just before the first turn it
+removes. Turns recorded before this support cannot be rewound; fork those instead. A fork still
+starts a new conversation that carries the source history. On qualified desktop targets, Scient can
 install and manage a private Oh My Pi runtime; that managed path is separate from the system
 installation.
 

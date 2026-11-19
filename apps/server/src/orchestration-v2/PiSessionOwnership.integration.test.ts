@@ -13,7 +13,9 @@ import {
   ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -24,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as Config from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
@@ -39,6 +42,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Ingestor from "./ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2, layerWithOptions } from "./ProviderSessionManager.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -73,15 +77,77 @@ const fixtureServices = Layer.mergeAll(
 );
 const outer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 
+/** Attaches a thread and runs one prompt; `/handoff <file>` moves the fake Pi to that file. */
+const promptTurn = (session: ProviderAdapterV2SessionRuntime, thread: string, text: string) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make(thread);
+    const providerThread: OrchestrationV2ProviderThread = yield* session.ensureThread({
+      threadId,
+      modelSelection: selection,
+      runtimePolicy: policy,
+    });
+    // Subscribe before the prompt so no event of the turn is missed.
+    const subscription = yield* session.subscribeEvents!;
+    yield* session.startTurn({
+      appThread: {
+        id: threadId,
+        projectId: ProjectId.make("pi-owner-project"),
+        title: "Pi ownership",
+        providerInstanceId: instanceId,
+        modelSelection: selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: providerThread.createdAt,
+        updatedAt: providerThread.updatedAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+        createdBy: "user",
+        creationSource: "web",
+      },
+      threadId,
+      runId: RunId.make(`${thread}-handoff-run`),
+      runOrdinal: 1,
+      providerTurnOrdinal: 1,
+      attemptId: RunAttemptId.make(`${thread}-handoff-attempt`),
+      rootNodeId: NodeId.make(`${thread}-handoff-node`),
+      providerThread,
+      message: {
+        messageId: MessageId.make(`${thread}-handoff-message`),
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+      modelSelection: selection,
+      runtimePolicy: policy,
+    });
+    // The turn settles through Pi's get_state probe, which reports the moved session file.
+    return yield* subscription.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runCollect,
+      Effect.exit,
+    );
+  });
+
 const withNativePi = <A, E, R>(
   run: (h: {
     manager: ProviderSessionManagerV2["Service"];
     file: string;
     fileAlias: string;
+    handoffFile: string;
     open: (
       id: string,
       thread?: string,
       file?: string,
+      superseded?: string,
     ) => ReturnType<ProviderSessionManagerV2["Service"]["open"]>;
     startupEntered: Effect.Effect<void>;
     releaseStartup: Effect.Effect<boolean>;
@@ -106,28 +172,39 @@ const withNativePi = <A, E, R>(
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "pi-native-ownership-" });
       const file = `${directory}/native.jsonl`;
       const fileAlias = `${directory}/alias.jsonl`;
+      const handoffFile = `${directory}/handoff.jsonl`;
       const log = `${directory}/wire.jsonl`;
       const script = `${directory}/peer.cjs`;
       yield* fs.writeFileString(
         file,
         '{"type":"session","id":"00000000-0000-4000-8000-000000000002"}\n',
       );
+      yield* fs.writeFileString(
+        handoffFile,
+        '{"type":"session","id":"00000000-0000-4000-8000-000000000003"}\n',
+      );
       yield* fs.symlink(file, fileAlias);
       yield* fs.writeFileString(log, "");
       yield* fs.writeFileString(
         script,
         `const fs = require("node:fs"), rl = require("node:readline");
-let file = process.env.PI_OWNER_FILE;
+// Like Pi, start on the --session file the adapter launches with.
+const at = process.argv.indexOf("--session");
+let file = at === -1 ? process.env.PI_OWNER_FILE : process.argv[at + 1];
 const record = value => fs.appendFileSync(process.env.PI_OWNER_LOG, JSON.stringify({ ...value, pid: process.pid }) + "\\n");
 record({ type: "spawn" });
 rl.createInterface({ input: process.stdin }).on("line", line => {
  const r = JSON.parse(line); record(r);
  let data = {};
  if (r.type === "switch_session") { file = r.sessionPath; data = { cancelled: false }; }
+ // An extension command such as /handoff moves the runtime to another file (ctx.newSession).
+ if (r.type === "prompt" && r.message.startsWith("/handoff ")) file = r.message.slice(9);
  if (r.type === "get_state") data = { sessionFile: file, sessionId: "00000000-0000-4000-8000-000000000002", model: { provider: "fixture", id: "native-model" }, thinkingLevel: "high", isStreaming: false, isCompacting: false, steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", autoCompactionEnabled: true, messageCount: 0, pendingMessageCount: 0 };
  if (r.type === "get_available_models") data = { models: [] };
  if (r.type === "get_commands") data = { commands: [] };
- if (r.id) process.stdout.write(JSON.stringify({ type: "response", id: r.id, command: r.type, success: true, data }) + "\\n");
+ // A rejected prompt fails the turn and leaves the process usable.
+ const rejected = r.type === "prompt" && r.message === "/fail";
+ if (r.id) process.stdout.write(JSON.stringify(rejected ? { type: "response", id: r.id, command: r.type, success: false, error: "Fixture model error" } : { type: "response", id: r.id, command: r.type, success: true, data }) + "\\n");
 });`,
       );
       const binary = `${directory}/pi-peer.sh`;
@@ -193,11 +270,12 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
             makeSingleLayer(adapter),
             Layer.succeed(ProviderRegistry.ProviderRegistry, makeProviderRegistryMock()),
             Layer.mock(McpRegistry.McpSessionRegistry)({}),
+            ProviderInstallationGate.layer,
             Ingestor.layer.pipe(
               Layer.provide(dependencies),
               Layer.provide(
                 Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                  getInstance: () => Effect.succeed(undefined),
+                  getInstance: () => Effect.undefined,
                 }),
               ),
             ),
@@ -254,14 +332,18 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
           manager,
           file,
           fileAlias,
+          handoffFile,
           processes,
-          open: (id, thread = "pi-owner-thread", nativeFile) =>
+          open: (id, thread = "pi-owner-thread", nativeFile, superseded) =>
             manager.open({
               providerSessionId: ProviderSessionId.make(id),
               threadId: ThreadId.make(thread),
               modelSelection: selection,
               runtimePolicy: policy,
               ...(nativeFile === undefined ? {} : { initialNativeThreadId: nativeFile }),
+              ...(superseded === undefined
+                ? {}
+                : { supersededProviderSessionId: ProviderSessionId.make(superseded) }),
             }),
           startupEntered: Deferred.await(startupEntered),
           releaseStartup: Deferred.succeed(startupReleased, undefined),
@@ -519,6 +601,166 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
           );
           assert.lengthOf(h.processes, 1);
           assert.isFalse(processIsLive(h.processes[0]!));
+        }),
+      "scope-failure",
+    ),
+  );
+
+  it.live("a native Pi extension's move to another session file takes that file's lease", () =>
+    withNativePi((h) =>
+      Effect.gen(function* () {
+        const owner = yield* h.open("pi-session", "pi-owner-thread", h.file);
+        const turn = yield* promptTurn(owner, "pi-owner-thread", `/handoff ${h.handoffFile}`);
+        assert.isTrue(Exit.isSuccess(turn));
+        assert.isTrue(
+          Exit.isSuccess(turn) &&
+            [...turn.value].some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeThreadRef?.nativeId === h.handoffFile,
+            ),
+        );
+        // The moved runtime now writes the handoff file, so no second writer may resume it.
+        assert.isTrue(
+          Exit.isFailure(
+            yield* h.open("pi-other-session", "pi-other-thread", h.handoffFile).pipe(Effect.exit),
+          ),
+        );
+        assert.lengthOf(h.processes, 1);
+        assert.isTrue(yield* h.manager.isLive(ProviderSessionId.make("pi-session")));
+      }),
+    ),
+  );
+
+  it.live("stops a native Pi runtime its extension moves onto another live session's file", () =>
+    withNativePi((h) =>
+      Effect.gen(function* () {
+        const holder = yield* h.open("pi-other-session", "pi-other-thread", h.handoffFile);
+        yield* holder.ensureThread({
+          threadId: ThreadId.make("pi-other-thread"),
+          modelSelection: selection,
+          runtimePolicy: policy,
+        });
+        const owner = yield* h.open("pi-session", "pi-owner-thread", h.file);
+        const turn = yield* promptTurn(owner, "pi-owner-thread", `/handoff ${h.handoffFile}`);
+        // The move fails the owner's event pump before the turn ends, releasing it as a runtime error.
+        assert.isTrue(
+          Exit.isFailure(turn) && Cause.pretty(turn.cause).includes("already has a live writer"),
+        );
+        assert.isTrue(Option.isNone(yield* h.manager.get(ProviderSessionId.make("pi-session"))));
+        // Joins the release already under way; the session record keeps its reason.
+        yield* h.manager.close(ProviderSessionId.make("pi-session"));
+        const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+          ThreadId.make("pi-owner-thread"),
+        );
+        const released = projection.providerSessions.find((s) => s.id === "pi-session");
+        assert.strictEqual(released?.status, "error");
+        assert.isFalse(processIsLive(h.processes[1]!));
+        // The file's existing writer is untouched.
+        assert.isTrue(yield* h.manager.isLive(ProviderSessionId.make("pi-other-session")));
+        assert.isTrue(processIsLive(h.processes[0]!));
+      }),
+    ),
+  );
+
+  it.live("retires a failed but live native Pi owner before its replacement under a new id", () =>
+    withNativePi((h) =>
+      Effect.gen(function* () {
+        const ownerId = ProviderSessionId.make("pi-session");
+        const ownerThreadId = ThreadId.make("pi-owner-thread");
+        const peer = yield* h.open("pi-other-session", "pi-other-thread", h.handoffFile);
+        yield* peer.ensureThread({
+          threadId: ThreadId.make("pi-other-thread"),
+          modelSelection: selection,
+          runtimePolicy: policy,
+        });
+        const owner = yield* h.open("pi-session", "pi-owner-thread", h.file);
+        // A healthy superseded owner keeps its process and its lease.
+        assert.isTrue(
+          Exit.isFailure(
+            yield* h
+              .open("pi-replacement-session", "pi-owner-thread", h.file, "pi-session")
+              .pipe(Effect.exit),
+          ),
+        );
+        assert.isTrue(yield* h.manager.isLive(ownerId));
+        const turn = yield* promptTurn(owner, "pi-owner-thread", "/fail");
+        assert.isTrue(Exit.isSuccess(turn));
+        assert.strictEqual(owner.providerSession.status, "error");
+        assert.isTrue(processIsLive(h.processes[1]!));
+        // Without the superseded identity the live owner's lease refuses the replacement.
+        assert.isTrue(
+          Exit.isFailure(
+            yield* h.open("pi-replacement-session", "pi-owner-thread", h.file).pipe(Effect.exit),
+          ),
+        );
+        const replacement = yield* h.open(
+          "pi-replacement-session",
+          "pi-owner-thread",
+          h.file,
+          "pi-session",
+        );
+        const providerThread = yield* replacement.ensureThread({
+          threadId: ownerThreadId,
+          modelSelection: selection,
+          runtimePolicy: policy,
+        });
+        assert.isFalse(processIsLive(h.processes[1]!));
+        assert.isTrue(Option.isNone(yield* h.manager.get(ownerId)));
+        assert.isTrue(Option.isNone(yield* h.manager.getCloseState!(ownerId)));
+        // The replacement resumes the same native history file.
+        assert.strictEqual(
+          yield* (yield* FileSystem.FileSystem).realPath(
+            providerThread.nativeThreadRef?.nativeId ?? "",
+          ),
+          yield* (yield* FileSystem.FileSystem).realPath(h.file),
+        );
+        assert.lengthOf(
+          (yield* h.requests).filter((r) => r.type === "spawn"),
+          3,
+        );
+        const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+          ownerThreadId,
+        );
+        assert.strictEqual(
+          projection.providerSessions.find((s) => s.id === "pi-session")?.status,
+          "error",
+        );
+        assert.isTrue(yield* h.manager.isLive(ProviderSessionId.make("pi-other-session")));
+        assert.isTrue(processIsLive(h.processes[0]!));
+      }),
+    ),
+  );
+
+  it.live("keeps a superseded native Pi owner's lease when its close fails", () =>
+    withNativePi(
+      (h) =>
+        Effect.gen(function* () {
+          const ownerId = ProviderSessionId.make("pi-session");
+          const owner = yield* h.open("pi-session", "pi-owner-thread", h.file);
+          const turn = yield* promptTurn(owner, "pi-owner-thread", "/fail");
+          assert.isTrue(Exit.isSuccess(turn));
+          assert.strictEqual(owner.providerSession.status, "error");
+          const replacement = yield* h
+            .open("pi-replacement-session", "pi-owner-thread", h.file, "pi-session")
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(replacement));
+          assert.strictEqual(
+            Option.getOrUndefined(yield* h.manager.getCloseState!(ownerId))?.state,
+            "failed",
+          );
+          // A retried start fails cleanly too; no second writer reaches the file.
+          assert.isTrue(
+            Exit.isFailure(
+              yield* h
+                .open("pi-replacement-session", "pi-owner-thread", h.file, "pi-session")
+                .pipe(Effect.exit),
+            ),
+          );
+          assert.isTrue(
+            Option.isNone(yield* h.manager.get(ProviderSessionId.make("pi-replacement-session"))),
+          );
+          assert.lengthOf(h.processes, 1);
         }),
       "scope-failure",
     ),

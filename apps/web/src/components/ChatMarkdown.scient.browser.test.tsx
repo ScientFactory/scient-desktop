@@ -33,7 +33,7 @@ import "../index.css";
 import { useTheme } from "../hooks/useTheme";
 import { applyThemeColorPreview, getStandardThemeColors } from "../themePalette";
 import { readLocalApi } from "../localApi";
-import { toastManager } from "./ui/toast";
+import { AnchoredToastProvider, toastManager } from "./ui/toast";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -42,7 +42,7 @@ import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPan
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
-import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 
 const { workspaceSearch, filesystemMetadata, resolveFileLink } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -228,23 +228,23 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
-describe("ChatMarkdown settled chart fences", () => {
+describe("ChatMarkdown streaming chart fences", () => {
   it.each([
     {
       language: "plotly",
       source: '{"data":[{"type":"scatter","x":[1,2],"y":[3,4]}]}',
-      imageLabel: "Settled Plotly",
+      imageLabel: "Streamed Plotly",
       expandLabel: "Expand interactive figure",
     },
     {
       language: "vega-lite",
       source:
         '{"data":{"values":[{"x":1,"y":2}]},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}',
-      imageLabel: "Settled Vega-Lite",
+      imageLabel: "Streamed Vega-Lite",
       expandLabel: "Expand interactive chart",
     },
   ])(
-    "keeps a closed $language fence literal until settlement",
+    "draws a $language fence once it closes mid-stream and keeps it through stream end",
     async ({ language, source, imageLabel, expandLabel }) => {
       setup();
       const disposePlotly = vi.fn();
@@ -281,18 +281,24 @@ describe("ChatMarkdown settled chart fences", () => {
           warnings: [],
         };
       });
-      const text = `\`\`\`${language}\n${source}\n\`\`\``;
-      const message = (isStreaming: boolean) => (
-        <ChatMarkdown cwd={undefined} text={text} isStreaming={isStreaming} />
+      const open = `\`\`\`${language}\n${source}`;
+      const text = `${open}\n\`\`\``;
+      const message = (body: string, isStreaming: boolean) => (
+        <ChatMarkdown cwd={undefined} text={body} isStreaming={isStreaming} />
       );
-      await using screen = await render(message(true));
+      await using screen = await render(message(open, true));
       expect(screen.container.querySelector("pre")?.textContent).toContain(source);
       expect(screen.container.querySelector('[role="figure"]')).toBeNull();
       expect(mountPlotly).not.toHaveBeenCalled();
       expect(mountVegaLite).not.toHaveBeenCalled();
 
-      await screen.rerender(message(false));
+      const answer = `${text}\n\nThe remaining explanation.`;
+      await screen.rerender(message(answer, true));
       await expect.element(screen.getByRole("img", { name: imageLabel })).toBeVisible();
+      const chart = screen.container.querySelector('svg[role="img"]');
+      await screen.rerender(message(answer, false));
+      expect(screen.container.querySelector('svg[role="img"]')).toBe(chart);
+      expect(screen.container.textContent).toContain("The remaining explanation.");
       await expect
         .element(screen.getByRole("button", { name: expandLabel, exact: true }))
         .toBeEnabled();
@@ -571,6 +577,28 @@ describe("ChatMarkdown Scient headings", () => {
     expect(paragraph?.getAttribute("dir")).toBe("rtl");
     expect(code?.textContent).toBe("useEffect useLayoutEffect React");
     expect(code?.getAttribute("dir")).toBe("ltr");
+  });
+});
+
+describe("ChatMarkdown code block direction", () => {
+  it("gives Hebrew plain text a right-to-left box and English a left-to-right one", async () => {
+    setup();
+    await using screen = await renderText(
+      ["```text", "שלום עולם", "```", "", "```text", "hello world", "```"].join("\n"),
+    );
+    const blocks = [...screen.container.querySelectorAll(".chat-markdown-codeblock")];
+    expect(blocks.map((block) => block.getAttribute("dir"))).toEqual(["rtl", "ltr"]);
+    // The header and its actions stay left to right inside a right-to-left box.
+    const header = blocks[0]!.querySelector(".chat-markdown-codeblock-header")!;
+    expect(getComputedStyle(header).direction).toBe("ltr");
+  });
+
+  it("keeps source code left to right even when it holds Hebrew", async () => {
+    setup();
+    await using screen = await renderText(["```ts", 'const greeting = "שלום";', "```"].join("\n"));
+    expect(screen.container.querySelector(".chat-markdown-codeblock")?.getAttribute("dir")).toBe(
+      "ltr",
+    );
   });
 });
 
@@ -881,38 +909,77 @@ it.each([
     full: "/home/repo/reports/report.csv",
     relative: "reports/report.csv",
   },
-])("copies $name and shows the copied text", async ({ platform, cwd, href, full, relative }) => {
-  setup();
-  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
-  using _clipboardItem = stubGlobal("ClipboardItem", undefined);
-  using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-  using toast = vi.spyOn(toastManager, "add");
-  const api = readLocalApi();
-  if (!api) throw new Error("Local API unavailable");
-  using choose = vi.spyOn(api.contextMenu, "show");
-  await using screen = await renderText(`[File](<${href}>)`, {
-    cwd,
-    environmentId: EnvironmentId.make("env-file-copy"),
-  });
-  const { container } = screen;
-  const link = container.querySelector(".chat-markdown-file-link");
-  if (!link) throw new Error("File link unavailable");
-  for (const [action, expected] of [
-    ["copy-full", full],
-    ...(relative === null ? [] : [["copy-relative", relative] as const]),
-  ] as const) {
-    choose.mockResolvedValue(action);
-    await act(async () => {
-      link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+])(
+  "copies $name without a success notification",
+  async ({ platform, cwd, href, full, relative }) => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    using _clipboardItem = stubGlobal("ClipboardItem", undefined);
+    using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    using toast = vi.spyOn(toastManager, "add");
+    const api = readLocalApi();
+    if (!api) throw new Error("Local API unavailable");
+    using choose = vi.spyOn(api.contextMenu, "show");
+    await using screen = await renderText(`[File](<${href}>)`, {
+      cwd,
+      environmentId: EnvironmentId.make("env-file-copy"),
     });
-    expect(writeText).toHaveBeenLastCalledWith(expected);
-    expect(choose.mock.lastCall?.[0].some((item) => item.id === "copy-relative")).toBe(
-      relative !== null,
+    const { container } = screen;
+    const link = container.querySelector(".chat-markdown-file-link");
+    if (!link) throw new Error("File link unavailable");
+    for (const [action, expected] of [
+      ["copy-full", full],
+      ...(relative === null ? [] : [["copy-relative", relative] as const]),
+    ] as const) {
+      choose.mockResolvedValue(action);
+      await act(async () => {
+        link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+      });
+      expect(writeText).toHaveBeenLastCalledWith(expected);
+      expect(choose.mock.lastCall?.[0].some((item) => item.id === "copy-relative")).toBe(
+        relative !== null,
+      );
+    }
+    // Copying is routine, so it shows no notification.
+    expect(toast).not.toHaveBeenCalled();
+  },
+);
+
+describe("ChatMarkdown code block copy", () => {
+  it.each([
+    { outcome: "a failed copy explains itself beside Copy", fails: true },
+    { outcome: "a successful copy shows only Copied", fails: false },
+  ])("$outcome", async ({ fails }) => {
+    setup();
+    using write = vi.spyOn(navigator.clipboard, "writeText");
+    if (fails)
+      write.mockRejectedValue(new DOMException("Clipboard access denied", "NotAllowedError"));
+    else write.mockResolvedValue(undefined);
+    using _console = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await using screen = await render(
+      <AnchoredToastProvider timeout={0}>
+        <ChatMarkdown cwd="/tmp/project" text={"```sh\nnpm install\n```\n"} />
+      </AnchoredToastProvider>,
     );
-    expect(toast).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "success", description: expected }),
-    );
-  }
+    const copyButton = screen.getByRole("button", { name: "Copy code" });
+    const copy = await copyButton.findElement();
+    await copyButton.click();
+
+    const message = page.getByText("Failed to copy", { exact: true });
+    if (fails) {
+      await expect.element(message).toBeVisible();
+      expect(message.elements()).toHaveLength(1);
+      const button = copy.getBoundingClientRect();
+      const popup = message.element().closest('[data-slot="toast-popup"]')!.getBoundingClientRect();
+      const gap = Math.max(popup.top - button.bottom, button.top - popup.bottom);
+      expect(gap).toBeLessThanOrEqual(8);
+      expect(popup.left < button.right && popup.right > button.left).toBe(true);
+      expect(copy.getAttribute("aria-label")).toBe("Copy code");
+    } else {
+      await expect.element(screen.getByRole("button", { name: "Copied" })).toBeVisible();
+      expect(message.query()).toBeNull();
+    }
+  });
 });
 
 describe("ChatMarkdown math", () => {
@@ -1347,6 +1414,8 @@ describe("ChatMarkdown environment-owned file opening", () => {
         viewport: getBrowserDefaults().viewport,
         profileId: getBrowserDefaults().profileId,
         runtime: "server",
+        zoomFactor: getBrowserDefaults().zoomFactor,
+        colorScheme: getBrowserDefaults().appearance,
       },
     });
     expect(selectedFileOpeningSurface()).toMatchObject({

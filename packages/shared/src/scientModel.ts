@@ -12,17 +12,79 @@ import {
 
 import { codexModelFamily, type SelectableModelOption } from "./model.ts";
 
-const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
-  "anthropic/claude-sonnet-5-5",
-  "anthropic/claude-opus-5-5",
-  "anthropic/claude-fable-5-5",
-  "openai-codex/gpt-6-astra",
-  "openai-codex/gpt-6-luna",
-  "openai-codex/gpt-6.1-sol",
-  "google-antigravity/gemini-3.8-flash",
-  "google-antigravity/gemini-3.1-pro",
-  "google-antigravity/claude-opus-4-6",
+const HIDDEN_SUBSCRIPTION_MODELS: Readonly<Record<string, readonly string[]>> = {
+  "openai-codex": ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-sol"],
+  anthropic: [
+    "claude-fable-5",
+    "claude-fable-5-1",
+    "claude-mythos-5",
+    "claude-mythos-5-1",
+    "claude-mythos-5-2",
+    "claude-opus-4-5",
+    "claude-opus-4-5-20251101",
+    "claude-opus-4-6",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4-6",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+  ],
+  "google-antigravity": [
+    "gemini-3-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-pro",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-sonnet-5-5",
+    "gpt-oss-120b-medium",
+  ],
+  "antigravity-cli": [
+    "gemini-4-carbon",
+    "gemini-3.8-flash",
+    "claude-sonnet-5-5",
+    "gpt-oss-120b-medium",
+  ],
+  "muse-code": [
+    "muse-spark-1.1",
+    "muse-spark-1.2",
+    "muse-spark-1.3",
+    "muse-wonder-1.0-contributor",
+    "muse-wonder-full-1.0-contributor",
+    "muse-spark-1.2-contributor",
+    "muse-spark-1.3-contributor",
+    "assetgen-nano-1.0",
+    "assetgen-pro-1.0",
+  ],
+};
+
+const HIDDEN_AGENT_MODELS = new Set(
+  Object.entries(HIDDEN_SUBSCRIPTION_MODELS).flatMap(([account, ids]) =>
+    ids.map((id) => `${account}/${id}`),
+  ),
+);
+const HIDDEN_ANTIGRAVITY_MODELS = new Set([
+  ...(HIDDEN_SUBSCRIPTION_MODELS["google-antigravity"] ?? []),
+  ...(HIDDEN_SUBSCRIPTION_MODELS["antigravity-cli"] ?? []),
 ]);
+const HIDDEN_MUSE_MODELS = new Set(HIDDEN_SUBSCRIPTION_MODELS["muse-code"]);
+
+const PREFERRED_SUBSCRIPTION_MODELS: Readonly<Record<string, readonly string[]>> = {
+  "openai-codex": ["openai-codex/gpt-6.1-sol"],
+  anthropic: ["anthropic/claude-opus-5-5"],
+  "google-antigravity": ["google-antigravity/gemini-4-hydrogen"],
+  "antigravity-cli": ["antigravity-cli/gemini-4-hydrogen"],
+  "muse-code": ["muse-code/muse-wonder-full-1.0"],
+};
+
+export function preferredScientSubscriptionModels(accountId: string): readonly string[] {
+  return Object.hasOwn(PREFERRED_SUBSCRIPTION_MODELS, accountId)
+    ? (PREFERRED_SUBSCRIPTION_MODELS[accountId] ?? [])
+    : [];
+}
 
 const AGENT_ACCOUNT_GROUP_ORDER = new Map([
   ["anthropic", 0],
@@ -49,16 +111,16 @@ export function getDefaultHiddenAgentModels(
   driver: string,
   models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
 ): string[] {
-  if (driver !== "pi" && driver !== "omp" && driver !== "scient") return [];
+  const hidden =
+    driver === "pi" || driver === "omp" || driver === "scient"
+      ? HIDDEN_AGENT_MODELS
+      : driver === "antigravity"
+        ? HIDDEN_ANTIGRAVITY_MODELS
+        : driver === "muse"
+          ? HIDDEN_MUSE_MODELS
+          : undefined;
   return models
-    .filter(
-      (model) =>
-        !model.isCustom &&
-        ["anthropic/", "openai-codex/", "google-antigravity/"].some((prefix) =>
-          model.slug.startsWith(prefix),
-        ) &&
-        !VISIBLE_AGENT_SUBSCRIPTION_MODELS.has(model.slug),
-    )
+    .filter((model) => !model.isCustom && hidden?.has(model.slug))
     .map((model) => model.slug);
 }
 
@@ -70,13 +132,13 @@ export function resolveProviderModelPreferences(
     | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
     | undefined,
 ) {
-  if (driver !== "pi" && driver !== "omp" && driver !== "scient") {
-    return preferences ?? { hiddenModels: [], modelOrder: [] };
-  }
-  if (preferences?.modelOrder.length) return preferences;
+  const agent = driver === "pi" || driver === "omp" || driver === "scient";
+  if (preferences !== undefined && (!agent || preferences.modelOrder.length > 0))
+    return preferences;
   return {
+    ...preferences,
     hiddenModels: preferences?.hiddenModels ?? getDefaultHiddenAgentModels(driver, models),
-    modelOrder: sortAgentModelsByAccount(driver, models).map((model) => model.slug),
+    modelOrder: agent ? sortAgentModelsByAccount(driver, models).map((model) => model.slug) : [],
   };
 }
 
@@ -100,18 +162,15 @@ export function preferredReasoningLevel(
 }
 
 const PREFERRED_ACCOUNT_MODELS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  anthropic: ["claude-opus-5-5"],
-  "openai-codex": ["gpt-6.1-sol"],
   cursor: ["grok-4.7-high", "cursor-grok-4.7-high", "grok-4.7", "cursor-grok-4.7"],
-  "google-antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash"],
+  "google-antigravity": ["gemini-4-hydrogen", "gemini-3.8-flash-high", "gemini-3.8-flash"],
+  "muse-code": ["muse-wonder-full-1.0"],
 };
 
 function preferredAccountModel<T extends SelectableModelOption>(
   driver: ProviderDriverKind,
   models: ReadonlyArray<T>,
 ): T | undefined {
-  // Preserve account order; choose within the first account, without jumping
-  // to another account when its preferred model is absent.
   const accounts =
     driver === "scient"
       ? [models[0]?.slug.split("/")[0] ?? ""]
@@ -119,10 +178,16 @@ function preferredAccountModel<T extends SelectableModelOption>(
         ? ["cursor"]
         : driver === "antigravity"
           ? ["google-antigravity"]
-          : [];
+          : driver === "muse"
+            ? ["muse-code"]
+            : [];
   for (const account of accounts) {
-    for (const id of PREFERRED_ACCOUNT_MODELS[account] ?? []) {
-      const slug = driver === "scient" ? `${account}/${id}` : id;
+    const preferences =
+      driver === "scient" && account !== "cursor"
+        ? preferredScientSubscriptionModels(account)
+        : (PREFERRED_ACCOUNT_MODELS[account] ?? []);
+    for (const id of preferences) {
+      const slug = driver === "scient" && account === "cursor" ? `${account}/${id}` : id;
       const match = models.find(
         (model) => model.slug.split("[")[0] === slug || model.aliases?.includes(slug),
       );

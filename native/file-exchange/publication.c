@@ -452,6 +452,9 @@ result:
 }
 #ifdef _WIN32
 int wmain(int argc, wchar_t **wide) {
+  /* System DLLs come only from System32: another user able to add files beside the helper must not
+     be able to plant one it loads. */
+  if (!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)) return 71;
   if (argc > 1 && (!wcscmp(wide[1], L"--lease=1") || !wcscmp(wide[1], L"--serve=1")) &&
       _setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
   char **argv = calloc((size_t)argc, sizeof(*argv));

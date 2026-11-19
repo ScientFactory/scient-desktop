@@ -12,6 +12,15 @@ their project, including when you connect to more than one environment.
 
 To require confirmation before unpinning, enable **Settings → General → Unpin confirmation**. The
 confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
+On web and desktop, **New thread** opens the project picker when you have more than one
+open project in the default or project-grouped sidebar. Archived projects don't count. **Shift-click** to start in
+the current project, or use a project's own new-thread action. A new thread carries
+your model and mode selections, unless the destination project has its own model default.
+Its branch and workspace mode come from your configured defaults. To continue in
+an existing worktree, use **New thread in this worktree** from the branch toolbar.
+A worktree needs a commit to start from. In a Git repository with no commits, no
+branches and no remote, a thread or scheduled task set to use a new worktree works
+in the project folder instead, as it would in a folder that is not a Git repository.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
@@ -222,7 +231,7 @@ project**. It appears when the current environment offers scratch conversations.
 to a real project without losing the draft. The sidebar row and Add project flow stay the same.
 
 Scient creates one internal scratch project per machine and a separate plain folder for
-each conversation under its data directory. Files, Sources, Documents, and Compute use
+each conversation under its data directory. Files, Library, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
 conversation and its files into another existing project is not yet supported.
@@ -245,12 +254,15 @@ On web and desktop, sections let you group related threads by topic, such as **T
 **Research**, across projects. A thread belongs to at most one section. Sections only organize the
 list: filing a thread never pins, settles, snoozes, or reorders it, and does not count as activity.
 
-Right-click a thread and choose **Section**, next to Pin, Settle and Snooze, to file it. The
-current section is checked. Choose **New section…** to name a section and file the thread in one
-step; the name field says which threads it is for. Choose **General** to take it out of its
-section. A fork of a thread in a section starts in the same section.
-With several threads selected, **Move to section** files them together. Each move shows
-**Undo** in the sidebar, and `mod+z` restores the previous section.
+Right-click a thread and choose **Move to section…**, next to Pin, Settle and Snooze, to file
+it. A picker opens with a search field: type to find a section, then press Enter or click it. The
+current section is checked. **General**, which takes the thread out of its section, comes first,
+then the sections by name; when there are many, the ones you used most recently lead the list.
+If no section has the name you typed, choose **Create “name”** to make it and file the thread in
+one step. With one project selected, the picker lists that project's sections; searching also
+finds other projects' sections, under **Other projects**. A fork of a thread in a section starts
+in the same section. With several threads selected, **Move to section** files them together.
+Each move shows **Undo** in the sidebar, and `mod+z` restores the previous section.
 
 Click **Group by section** next to search to see the sidebar by section; the button stays
 highlighted while it is on. Click it again to return to the default Pinned and Active layout. In the
@@ -265,8 +277,10 @@ Sections view:
   header to file it at the top of that section, including an empty or collapsed one. Only a
   header that the drop would change is highlighted. Drag a section header to reorder sections, or
   drag a thread onto the **Settled** header to settle it. Dragging never unpins a thread.
-- Click a header to collapse it. A collapsed section's arrow points right; it shows a dot while
-  one of its threads is working, and still shows the thread you have open. An open section's
+- Click a header to collapse it. A collapsed section's arrow points right, and it still shows the
+  thread you have open. A dot shows its most urgent thread state, in the project folder colors:
+  needs you, failed, done but not yet opened, or working; a hollow ring means a thread is
+  waiting. Hover the dot for the count of each. An open section's
   arrow points down and appears when you hover the header. Double-click a header to rename it.
 - Each header's buttons start a **New thread in section** and open the section menu, which also
   offers **Rename**, **Move up**, **Move down**, and **Delete section**.
@@ -326,8 +340,8 @@ sections yet; it keeps its usual layout.
 
 Threads that are working or waiting on work they will resume from move into a collapsed
 **Working** section below the active list.
-That includes subagents, watched pull requests, and background commands or monitors the agent
-says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
+That includes subagents, watched pull requests with checks still running, Claude monitors,
+and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
@@ -351,9 +365,8 @@ project's folder comes last and shows only while it has active threads. Click a 
 close it. A closed folder shows how many threads it holds, and a dot when one of them
 needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-cannot drag threads, and the Working section is off. Each device keeps its own choice.
-Folders replace the default Pinned and Active layout; with **Group by section** on, the Sections
-view shows instead.
+can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
+section is off. Each device keeps its own choice.
 
 ## Settle finished work
 
@@ -363,7 +376,11 @@ and prevents automatic settlement until new activity resumes the usual rules.
 Manually settling an idle thread dismisses unanswered async questions without
 sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
-runs a command, such as a dev server, stays open.
+runs a command, such as a dev server, stays open unless its action has **Stop this action
+when the thread settles** enabled in Settings > Projects > Actions. You can also set
+`"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
+that action so Scient can stop its terminal and child processes. Commands started through an
+agent's own shell tools are managed by the provider.
 
 If reordering is unavailable for one environment, update the Scient server
 running there using the version guidance shown in the app. Older servers can still pin and unpin
@@ -382,7 +399,7 @@ settle every thread in that section between it and the one you release on.
 The **Un-settle** and **Wake** buttons work the same way in their sections.
 Press `Escape` while dragging to cancel.
 
-By default, environments settle inactive threads after three days and settle
+By default, environments settle inactive threads after seven days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.
 Work in progress, pending questions or approvals, and background work the agent
@@ -393,9 +410,10 @@ resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
-choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
-**Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
-is disabled.
+choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick
+**Follow settings** to return to the rules in **Settings → Threads**. While those rules are off,
+a thread on **Follow settings** does not settle automatically either. Manual settle, snooze, and
+archive still work while it is set to **Never**.
 
 Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
@@ -480,8 +498,8 @@ pauses updates until a window is reopened; the last count remains. Quitting Scie
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
-manually. Do this when the provider reports no reset time, because nothing
-continues the turn on its own.
+manually when the provider supports native continuation, or send a message to continue.
+Do this when the provider reports no reset time, because nothing continues the turn on its own.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
@@ -506,6 +524,7 @@ On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.
 Stop on a thread also stops the subagents it delegated to.
+Before archiving the parent, wait for its delegated tasks to finish or cancel them.
 
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
@@ -548,9 +567,10 @@ You can also open a new tab in the right panel with **+** and choose **Side chat
 The side chat opens as a tab there, with its own composer. Side chats do not show
 in the sidebar. Find one again under **Side chats** in thread details.
 
-A side chat works in the same folder as the thread. Its first reply asks before it
-edits files or runs commands. After that, it uses the permission mode you choose
-in its composer.
+A side chat works in the same folder as the thread and starts with the permissions,
+model, and reasoning level shown in the thread's composer, including for its first
+reply. Change them for an individual side chat in its composer. Later changes to the
+parent do not change existing side chats.
 
 To use what you learned, choose **Bring back**. The thread gets the side chat with
 your next message there. Bring back is available while the thread is idle.
@@ -574,6 +594,8 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
 A snoozed thread keeps working and stays hidden until its wake time, even while
-its agent wakes itself for background work. It comes back early only when it needs
-an approval or answer from you, when a run fails, or when you send it a message.
+its agent wakes itself for background work. It comes back early for an approval,
+a new question, a failed run, or a message or answer you send. You can snooze an existing
+question and answer when the thread wakes; the question stays unanswered.

@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import packageJson from "../../../package.json" with { type: "json" };
@@ -245,7 +246,7 @@ export function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
           collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
@@ -283,6 +284,67 @@ export function codexReplayPreamble(input: {
   ];
 }
 
+function withReplayRequestId(
+  entry: CodexReplay.CodexAppServerReplayEntry,
+  id: number,
+): CodexReplay.CodexAppServerReplayEntry {
+  return entry.type !== "runtime_exit" && Predicate.isObject(entry.frame)
+    ? { ...entry, frame: { ...entry.frame, id } }
+    : entry;
+}
+
+/**
+ * Every turn/start follows a config/read; inserts that exchange and shifts later client ids,
+ * as T3's CodexAdapterV2.test.ts does for its own transcripts.
+ */
+function withConfigReadBeforeTurnStart(
+  entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
+): Array<CodexReplay.CodexAppServerReplayEntry> {
+  const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
+  let offset = 0;
+  let clientIds = new Map<number, number>();
+  for (const entry of entries) {
+    const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
+    if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
+      result.push(entry);
+      continue;
+    }
+    if (entry.type === "expect_outbound" && typeof frame.method === "string") {
+      if (frame.method === "initialize") {
+        offset = 0;
+        clientIds = new Map();
+      }
+      if (frame.method === "turn/start") {
+        const id = frame.id + offset;
+        const params = Predicate.isObject(frame.params) ? frame.params : {};
+        result.push(
+          {
+            type: "expect_outbound",
+            label: "config/read",
+            frame: { id, method: "config/read", params: { cwd: params.cwd, includeLayers: false } },
+          },
+          {
+            type: "emit_inbound",
+            label: "config/read",
+            frame: { id, result: { config: {}, origins: {} } },
+          },
+        );
+        offset += 1;
+      }
+      clientIds.set(frame.id, frame.id + offset);
+      result.push(withReplayRequestId(entry, frame.id + offset));
+      continue;
+    }
+    const mapped = clientIds.get(frame.id);
+    result.push(
+      entry.type === "emit_inbound" && frame.method === undefined && mapped !== undefined
+        ? withReplayRequestId(entry, mapped)
+        : entry,
+    );
+  }
+  return result;
+}
+
 export function makeCodexReplayTranscript(input: {
   readonly scenario: string;
   readonly entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>;
@@ -294,6 +356,13 @@ export function makeCodexReplayTranscript(input: {
     scenario: input.scenario,
     entries: input.entries,
   };
+}
+
+/** Applied where a transcript is replayed, so transcripts built from others keep one id space. */
+export function withConfigReads(
+  transcript: CodexReplay.CodexAppServerReplayTranscript,
+): CodexReplay.CodexAppServerReplayTranscript {
+  return { ...transcript, entries: withConfigReadBeforeTurnStart(transcript.entries) };
 }
 
 export const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
@@ -326,7 +395,7 @@ export const makeCodexReplayHarness = (
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
     const continuationRequests: Array<ProviderContinuationRequest> = [];
-    const transcripts = [transcript, ...(options.additionalSessions ?? [])];
+    const transcripts = [transcript, ...(options.additionalSessions ?? [])].map(withConfigReads);
     let sessionOrdinal = 0;
     const clientFactory: CodexAdapterV2.CodexAppServerClientFactory["Service"] = {
       open: (openInput) => {

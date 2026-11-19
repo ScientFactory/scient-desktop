@@ -35,8 +35,13 @@ import { ComputeSessionService, layerWithRuntimeBindings } from "./ComputeSessio
 import { pythonRuntimeBinding } from "./PythonComputeRuntime.ts";
 import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 
+// Local only: no CI runner has Python and a licensed MATLAB together. Before changing how Compute
+// sessions share or end processes, run from apps/server with both set (the Python needs
+// jupyter_client and ipykernel): SCIENT_TEST_PYTHON=<python> SCIENT_TEST_MATLAB=<matlab>
+// vp test run src/scient/compute/ConcurrentCompute.integration.test.ts
 const PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
+const QUALIFICATION_REPORT_PATH = NodeProcess.env.SCIENT_COMPUTE_QUALIFICATION_REPORT;
 const PROJECT = ComputeProjectId.make("native-concurrent-compute");
 const encodeQualificationMeasurement = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -195,10 +200,9 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
             })),
           };
           yield* Effect.logInfo("Native Compute baseline", measurement);
-          const reportPath = NodeProcess.env.SCIENT_COMPUTE_QUALIFICATION_REPORT;
-          if (reportPath)
+          if (QUALIFICATION_REPORT_PATH)
             yield* fs.writeFileString(
-              reportPath,
+              QUALIFICATION_REPORT_PATH,
               yield* encodeQualificationMeasurement(measurement),
             );
           const submit = (session: ComputeSessionRecord, suffix: string, code: string) =>

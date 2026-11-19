@@ -1,9 +1,25 @@
 /* oxlint-disable react/no-array-index-key -- Text spans retain their order within an immutable page. */
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
+import { msg } from "gt-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { m } from "~/i18n/messages";
 import { FileSurfaceLoading } from "../fileSurfaceChrome";
-import { OfficePages, type PaintPage } from "./OfficePages";
+import type { PaintPage } from "./OfficePages";
+// SCIENT-FORK:START
+import {
+  ScientOfficeReader,
+  showBitmap,
+  type OfficeReaderDocument,
+} from "~/scient/office/ScientOfficeReader";
+import {
+  sessionState,
+  slotSession,
+  type OfficeSession,
+  type OfficeSessionSlot,
+} from "~/scient/office/officeSession";
+// SCIENT-FORK:END
+import { rasterize } from "./vector-pictures";
 import { createWorkerClient } from "./worker-rpc";
 import {
   layerFont,
@@ -18,69 +34,161 @@ type Opened = {
   pages: readonly WordPageSize[];
   paint: PaintPage;
   engine: ReturnType<typeof createWorkerClient<WordMethods>>;
+  // SCIENT-FORK: the reader's sidebar and find, and whether layout has placed every page.
+  reader: Pick<OfficeReaderDocument, "thumbnail" | "find">;
+  complete: boolean; // SCIENT-FORK
 };
+
+// SCIENT-FORK:START — the opened document lives in a session, kept with its file for a reader who
+// comes back (scient/office/officeDocuments.ts); the viewer shows whatever state it has reached.
+type WordState = { opened?: Opened; limited: boolean; error?: unknown };
+
+function openWordSession(bytes: ArrayBuffer): OfficeSession<WordState> {
+  const store = sessionState<WordState>({ limited: false });
+  const controller = new AbortController();
+  const worker = new Worker(new URL("./document.worker.ts", import.meta.url), { type: "module" });
+  const engine = createWorkerClient<WordMethods>(worker);
+  const fail = (error: unknown) => {
+    if (!controller.signal.aborted) store.set({ ...store.get(), error });
+  };
+  worker.addEventListener("error", fail);
+  worker.addEventListener("messageerror", fail);
+  const buffer = bytes.slice(0);
+  const paint = async (
+    index: number,
+    canvas: HTMLCanvasElement,
+    scale: number,
+    signal: AbortSignal,
+    again = false,
+  ): Promise<void> => {
+    const painted = await engine.call(
+      "paint",
+      { index, scale, ratio: window.devicePixelRatio || 1 },
+      { key: `paint:${index}`, signal },
+    );
+    void engine
+      .call("build", { index: index + 1 }, { key: "build", signal })
+      .catch(() => undefined);
+    if (!painted) return;
+    const context = canvas.getContext("bitmaprenderer");
+    if (!context || signal.aborted) {
+      painted.bitmap.close();
+      return;
+    }
+    canvas.width = painted.bitmap.width;
+    canvas.height = painted.bitmap.height;
+    context.transferFromImageBitmap(painted.bitmap);
+    if (again || !painted.vectors.length) return;
+    const bitmaps = await Promise.all(painted.vectors.map(rasterize));
+    if (signal.aborted) {
+      bitmaps.forEach((value) => value.bitmap?.close());
+      return;
+    }
+    await engine.call("vectors", bitmaps, {
+      transfer: bitmaps.flatMap((value) => (value.bitmap ? [value.bitmap] : [])),
+      signal,
+    });
+    if (!signal.aborted) await paint(index, canvas, scale, signal, true);
+  };
+  // Thumbnails leave the pages built around the view, and find waits for the
+  // whole document's layout, which places every match on its page.
+  const laidOut = Promise.withResolvers<void>();
+  const reader: Opened["reader"] = {
+    thumbnail: async (index, canvas, scale, signal) => {
+      const ratio = window.devicePixelRatio || 1;
+      const painted = await engine.call(
+        "paint",
+        { index, scale, ratio, thumbnail: true },
+        { key: `thumbnail:${index}`, signal },
+      );
+      // SVG pictures arrive with the page's own paint; a later thumbnail draws them.
+      if (painted) showBitmap(canvas, painted.bitmap, signal);
+    },
+    find: async (query, signal) => {
+      await laidOut.promise;
+      const hits = await engine.call("find", { query }, { signal });
+      return hits.filter((hit) => hit.index < 1000);
+    },
+  };
+  void engine
+    .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
+    .then(async (first) => {
+      if (controller.signal.aborted) return;
+      const opened = { pages: first.pages, paint, engine, reader, complete: !first.loading };
+      store.set({ ...store.get(), opened });
+      if (!first.loading) {
+        laidOut.resolve();
+        return;
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      while (!controller.signal.aborted) {
+        const step = await engine.call("layout", undefined, { signal: controller.signal });
+        if (!step.done) continue;
+        // Keep the first 1,000 pages rather than replace them with an error.
+        const pages = step.pages.slice(0, 1000);
+        store.set({
+          opened: { pages, paint, engine, reader, complete: true },
+          limited: pages.length < step.pages.length,
+        });
+        laidOut.resolve();
+        break;
+      }
+    })
+    .catch(fail);
+  return {
+    state: store.get,
+    subscribe: store.subscribe,
+    failed: () => store.get().error !== undefined,
+    // Measured in the desktop app: about 120 MB for the engine, and 1.5 MB per laid-out page.
+    memory: () => (120 + 1.5 * (store.get().opened?.pages.length ?? 0)) * 1024 * 1024,
+    close: () => {
+      controller.abort();
+      engine.close();
+    },
+  };
+}
 
 export default function WordDocument(props: {
   bytes: ArrayBuffer;
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
+  // SCIENT-FORK: the pages past the preview's limit are left out.
+  onLimited: () => void;
+  // SCIENT-FORK: where the opened document is kept between visits.
+  session?: OfficeSessionSlot | undefined;
 }) {
-  const { onError, bytes, onDetails } = props;
+  const { onError, bytes, onDetails, onLimited, session: slot } = props;
   const [opened, setOpened] = useState<Opened>();
   const scroll = useRef<((index: number, y?: number) => void) | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
+  // SCIENT-FORK:START
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Shows the document session's state as it lays out, and leaves the session to its slot's owner, or closes it, on unmount.
   useEffect(() => {
-    const controller = new AbortController();
-    const worker = new Worker(new URL("./document.worker.ts", import.meta.url), { type: "module" });
-    const engine = createWorkerClient<WordMethods>(worker);
-    const fail = (error: unknown) => {
-      if (!controller.signal.aborted) onError(error);
-    };
-    worker.addEventListener("error", fail);
-    worker.addEventListener("messageerror", fail);
-    const buffer = bytes.slice(0);
-    const paint: PaintPage = async (index, canvas, scale, signal) => {
-      const bitmap = await engine.call(
-        "paint",
-        { index, scale, ratio: window.devicePixelRatio || 1 },
-        { key: `paint:${index}`, signal },
-      );
-      void engine
-        .call("build", { index: index + 1 }, { key: "build", signal })
-        .catch(() => undefined);
-      if (!bitmap) return;
-      const context = canvas.getContext("bitmaprenderer");
-      if (!context || signal.aborted) {
-        bitmap.close();
-        return;
+    const { session, release } = slotSession(slot, () => openWordSession(bytes));
+    const show = (state: WordState) => {
+      if (state.error !== undefined) onError(state.error);
+      if (state.limited) onLimited();
+      setOpened(state.opened);
+      if (state.opened) {
+        const { pages, complete } = state.opened;
+        onDetails(
+          complete
+            ? m(
+                msg("{count, plural, one {{count} page} other {{count} pages}}", {
+                  count: pages.length,
+                }),
+              )
+            : m(msg("{count}+ pages", { count: String(pages.length) })),
+        );
       }
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      context.transferFromImageBitmap(bitmap);
     };
-    void engine
-      .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
-      .then(async (first) => {
-        if (controller.signal.aborted) return;
-        setOpened({ pages: first.pages, paint, engine });
-        onDetails(`${first.pages.length}${first.loading ? "+" : ""} pages`);
-        if (!first.loading) return;
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        while (!controller.signal.aborted) {
-          const step = await engine.call("layout", undefined, { signal: controller.signal });
-          if (!step.done) continue;
-          if (step.pages.length > 1000) throw new Error("Preview limited to 1,000 pages.");
-          setOpened({ pages: step.pages, paint, engine });
-          onDetails(`${step.pages.length} pages`);
-          break;
-        }
-      })
-      .catch(fail);
+    show(session.state());
+    const unsubscribe = session.subscribe(show);
     return () => {
-      controller.abort();
-      engine.close();
+      unsubscribe();
+      release();
     };
-  }, [bytes, onDetails, onError]);
+  }, [bytes, slot, onDetails, onError, onLimited]);
+  // SCIENT-FORK:END
   if (!opened) return <FileSurfaceLoading />;
   const follow = (link: WordLink) => {
     if (link.kind === "external") {
@@ -95,12 +203,18 @@ export default function WordDocument(props: {
       .catch(onError);
   };
   return (
-    <OfficePages
-      pages={opened.pages}
-      paint={opened.paint}
-      label="Page"
+    // SCIENT-FORK:START — Scient's reader draws the pages with its controls, sidebar and find.
+    <ScientOfficeReader
+      document={{
+        kind: "document",
+        pages: opened.pages,
+        paint: opened.paint,
+        complete: opened.complete,
+        ...opened.reader,
+      }}
       scrollRef={scroll}
       onError={onError}
+      // SCIENT-FORK:END
       overlay={(index) => (
         <WordTextLayer
           engine={opened.engine}
@@ -140,6 +254,7 @@ function WordTextLayer(props: {
         const text = (
           <span
             dir={span.dir}
+            data-office-aside={span.aside} // SCIENT-FORK
             role={span.link ? "link" : undefined}
             tabIndex={span.link ? 0 : undefined}
             aria-label={span.title}

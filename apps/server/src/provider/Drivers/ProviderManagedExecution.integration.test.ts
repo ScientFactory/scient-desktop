@@ -29,6 +29,7 @@ import * as ModelManifest from "../ModelManifest.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as CodexInstallation from "../CodexInstallation.ts";
+import * as ProviderInstallationGate from "../ProviderInstallationGate.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ClaudeAdapterV2 from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -40,6 +41,7 @@ import { CodexDriver } from "./CodexDriver.ts";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
 import { GrokDriver } from "../AppProviderDriverComposition.ts";
 import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 
 const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-managed-native-execution-",
@@ -52,6 +54,8 @@ const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ResetCreditCoordinator.layerTest),
+  Layer.provideMerge(PortScanner.layerTest),
+  Layer.provideMerge(ProviderInstallationGate.layer),
   Layer.provideMerge(
     Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "unused" }),
   ),
@@ -195,6 +199,7 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                       ),
                     forkSession: () => Effect.die("unused"),
                     subagentLaunchToolUseId: () => Effect.succeed(null),
+                    subagentModel: () => Effect.succeed(null),
                     assertComplete: Effect.void,
                   }),
                 );

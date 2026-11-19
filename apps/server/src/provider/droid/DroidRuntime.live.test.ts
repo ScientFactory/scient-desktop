@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
@@ -70,7 +71,7 @@ it.effect.skipIf(!binary)(
         cwd: root,
         clientInfo: { name: "scient-droid-controls-test", version: "0" },
         environment: {
-          PATH: process.env.PATH,
+          PATH: (yield* HostProcess.Environment).PATH,
           HOME: root,
           FACTORY_PROFILE_DIR: path.join(root, "profile"),
           FACTORY_API_KEY: "fk-fixture",
@@ -254,7 +255,7 @@ for (const explicitLimits of [true, false]) {
           cwd: root,
           clientInfo: { name: "scient-droid-limit-test", version: "0" },
           environment: {
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             HOME: root,
             FACTORY_PROFILE_DIR: path.join(root, "profile"),
             FACTORY_API_KEY: "fk-fixture",
@@ -417,7 +418,7 @@ it.effect.skipIf(!binary)(
               cwd: root,
               clientInfo: { name: "scient-droid-test", version: "0" },
               environment: {
-                PATH: process.env.PATH,
+                PATH: (yield* HostProcess.Environment).PATH,
                 HOME: root,
                 FACTORY_PROFILE_DIR: path.join(root, "profile"),
                 FACTORY_API_KEY: "fk-fixture",

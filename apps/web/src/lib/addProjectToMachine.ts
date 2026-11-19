@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   executeAtomQuery,
   runAtomCommand,
@@ -11,11 +12,13 @@ import type {
   ScopedProjectRef,
 } from "@t3tools/contracts";
 import { ProjectWriteFileInput } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { create } from "zustand";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import * as Schema from "effect/Schema";
 
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
@@ -25,6 +28,9 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 const isWritableFilePath = Schema.is(ProjectWriteFileInput.fields.relativePath);
+
+/** The server lists at most this many ignored files, so one pick never exceeded it. */
+export const COPIED_FILES_MAX_COUNT = 200;
 
 function isCopyRelativePath(path: string): boolean {
   return (
@@ -60,7 +66,7 @@ export interface AddProjectToMachineInput {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 /**
@@ -91,7 +97,12 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
 
 export type ProjectFileCopy =
   | { readonly phase: "copying" }
-  | { readonly phase: "failed"; readonly title: string; readonly failures: ReadonlyArray<string> };
+  | {
+      readonly phase: "failed";
+      /** A `msg()`, resolved where it is shown so it follows the UI language. */
+      readonly title: string;
+      readonly failures: ReadonlyArray<string>;
+    };
 
 /** Ignored-file copies still owed to a cloned project, keyed by its scoped project key. */
 const useFileCopies = create<{ copies: Readonly<Record<string, ProjectFileCopy>> }>(() => ({
@@ -115,12 +126,11 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
 }
 
 /**
- * Clones a project onto another machine, then copies the chosen ignored files
- * from the source. The client relays the files because the two servers never
- * talk to each other. Resolves once the clone starts. The caller opens the new
- * project, whose composer shows the clone and copy progress, so nothing toasts.
+ * Clones onto another machine, then relays the chosen ignored files, since the
+ * two servers never talk. Resolves with the cloning project once it starts; the
+ * caller opens it, and its composer shows progress, so nothing toasts.
  */
-export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<void> {
+export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
   const subdirectory = input.subdirectory;
   const files = [...input.files];
   if (
@@ -132,7 +142,9 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           !isWritableFilePath(subdirectory ? `${subdirectory}/${path}` : path),
       ))
   ) {
-    throw new Error("Files to copy must stay inside the selected workspace and repository.");
+    throw new Error(
+      m(msg("Files to copy must stay inside the selected workspace and repository.")),
+    );
   }
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
@@ -146,13 +158,16 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
       if (result._tag === "Failure") throw new Error(`${relativePath}: ${failureMessage(result)}`);
-      if (result.value.exists === false) throw new Error(`${relativePath}: File no longer exists.`);
+      if (result.value.exists === false)
+        throw new Error(m(msg("{path}: File no longer exists.", { path: relativePath })));
       if (result.value.outsideWorkspace)
-        throw new Error(`${relativePath}: File is outside the selected workspace.`);
+        throw new Error(
+          m(msg("{path}: File is outside the selected workspace.", { path: relativePath })),
+        );
       if (result.value.relativePath !== relativePath)
-        throw new Error(`${relativePath}: The source file path changed.`);
+        throw new Error(m(msg("{path}: The source file path changed.", { path: relativePath })));
       if (result.value.truncated || result.value.byteLength > COPYABLE_FILE_MAX_BYTES)
-        throw new Error(`${relativePath}: Too large to copy.`);
+        throw new Error(m(msg("{path}: Too large to copy.", { path: relativePath })));
       const bytes = new TextEncoder().encode(result.value.contents);
       // The server decodes non-fatally but hashes original bytes. A size check
       // alone misses equally sized UTF-8 replacement characters. Refuse BOM
@@ -163,18 +178,22 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         `sha256:${bytesToHex(sha256(bytes))}` !== result.value.revision
       ) {
         throw new Error(
-          `${relativePath}: Cannot copy as UTF-8 without changing the original bytes.`,
+          m(
+            msg("{path}: Cannot copy as UTF-8 without changing the original bytes.", {
+              path: relativePath,
+            }),
+          ),
         );
       }
       return { relativePath, contents: result.value.contents };
     }),
   );
 
-  const targetRef = { environmentId: input.target.environmentId, projectId: input.projectId };
-  const copyKey = scopedProjectKey(targetRef);
+  const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
+  const requestedKey = scopedProjectKey(requestedRef);
   // Marked before the start request, since the clone list can arrive before its reply.
-  silenceProjectCloneToasts(targetRef);
-  if (reads.length > 0) setFileCopy(copyKey, { phase: "copying" });
+  silenceProjectCloneToasts(requestedRef);
+  if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
   const started = await runAtomCommand(
     appAtomRegistry,
     sourceControlEnvironment.startProjectClone,
@@ -191,14 +210,25 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     { label: "Add project to machine", reportFailure: false },
   );
   if (started._tag === "Failure") {
-    setFileCopy(copyKey, null);
+    setFileCopy(requestedKey, null);
     throw new Error(failureMessage(started));
   }
+  // The server clones for the existing project when one already owns the empty destination.
+  const { projectId } = started.value;
+  const targetRef = { environmentId: input.target.environmentId, projectId };
+  const copyKey = scopedProjectKey(targetRef);
+  if (projectId !== input.projectId) {
+    silenceProjectCloneToasts(targetRef);
+    if (reads.length > 0) {
+      setFileCopy(copyKey, { phase: "copying" });
+      setFileCopy(requestedKey, null);
+    }
+  }
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
-  if (reads.length === 0) return;
+  if (reads.length === 0) return projectId;
 
   void (async () => {
-    const clone = await waitForClone(input.target.environmentId, input.projectId);
+    const clone = await waitForClone(input.target.environmentId, projectId);
     if (!clone) {
       setFileCopy(copyKey, null);
       return;
@@ -229,15 +259,21 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: msg(
+              "Could not copy {count, plural, one {{count} file} other {{count} files}} to {target}",
+              { count: failed.length, target: input.target.label },
+            ),
             failures: failed,
           },
     );
   })().catch(() => {
     setFileCopy(copyKey, {
       phase: "failed",
-      title: `Could not finish copying files to ${input.target.label}`,
-      failures: ["The file transfer was interrupted. Check the destination before sending."],
+      title: msg("Could not finish copying files to {target}", { target: input.target.label }),
+      failures: [
+        m(msg("The file transfer was interrupted. Check the destination before sending.")),
+      ],
     });
   });
+  return projectId;
 }

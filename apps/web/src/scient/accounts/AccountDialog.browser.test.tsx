@@ -96,8 +96,16 @@ it("preserves a site separator while the user enters another allowed site", asyn
   await expect.element(sites).toHaveValue("example.com, login.example.org");
 });
 
-const browser = vi.hoisted(() => ({ open: vi.fn() }));
+const browser = vi.hoisted(() => ({ open: vi.fn(), signIn: vi.fn(), saved: [] as unknown[] }));
 vi.mock("./useAccountBrowser", () => ({ useAccountBrowser: () => browser.open }));
+vi.mock("./useSignIn", () => ({ useSignIn: () => browser.signIn }));
+vi.mock("./useAccounts", async (original) => ({
+  ...(await original<typeof import("./useAccounts")>()),
+  useAccountCommand: () => async (input: unknown) => {
+    browser.saved.push(input);
+    return { ok: true, value: { accountId: "acc_synthetic_added" } };
+  },
+}));
 
 it("routes pasted keys out of search and into the matching private field", async () => {
   const snapshot: AccountsSnapshot = {
@@ -140,8 +148,9 @@ it("routes pasted keys out of search and into the matching private field", async
   await expect.element(page.getByRole("searchbox", { name: "Find an account" })).toHaveValue("");
 });
 
-it("opens a signed-in suggestion with its profile for assisted sign-in", async () => {
-  browser.open.mockReset().mockResolvedValue(true);
+it("signs in to a signed-in suggestion through Scient, in its profile, only where the server can", async () => {
+  browser.signIn.mockReset().mockResolvedValue(true);
+  browser.saved = [];
   const closed = vi.fn();
   using _bridge = stubGlobal("desktopBridge", {
     accounts: { signedInSites: vi.fn(async () => [{ domain: "synthetic.example.org" }]) },
@@ -159,23 +168,39 @@ it("opens a signed-in suggestion with its profile for assisted sign-in", async (
       onePassword: { state: "not-connected" },
     },
   };
-  await using _screen = await render(
+  const dialog = (accountsProtocol: number | undefined) => (
     <AccountDialog
       environmentId={EnvironmentId.make("synthetic")}
-      snapshot={snapshot}
+      snapshot={{ ...snapshot, ...(accountsProtocol === undefined ? {} : { accountsProtocol }) }}
       account={null}
       canWrite
       onClose={closed}
-    />,
+    />
   );
+  await using screen = await render(dialog(undefined));
   await page.getByRole("searchbox", { name: "Find an account" }).fill("synthetic");
   await expect.element(page.getByText("Signed in on Main", { exact: true })).toBeVisible();
   await page.getByText("synthetic.example.org", { exact: true }).first().click();
+  // An older server can't sign in to a website row.
+  await expect
+    .element(page.getByRole("button", { name: "Sign in with the browser", exact: true }))
+    .not.toBeInTheDocument();
+  await screen.rerender(dialog(1));
   await page.getByRole("button", { name: "Sign in with the browser", exact: true }).click();
   await vi.waitFor(() =>
-    expect(browser.open).toHaveBeenCalledWith("synthetic.example.org", "default", {
-      name: "synthetic.example.org",
-      site: "synthetic.example.org",
+    expect(browser.signIn).toHaveBeenCalledWith("acc_synthetic_added", {
+      discardIfUnfinished: true,
+    }),
+  );
+  expect(browser.saved).toContainEqual(
+    expect.objectContaining({
+      secrets: {},
+      details: expect.objectContaining({
+        kind: "website",
+        sites: ["synthetic.example.org"],
+        profileId: "default",
+        origin: "browser-session",
+      }),
     }),
   );
   expect(closed).toHaveBeenCalledOnce();

@@ -24,6 +24,12 @@ export type ScientMarkdownFootnoteNodeViewRegistrar = (
   registration: ScientMarkdownFootnoteNodeViewRegistration,
 ) => () => void;
 
+/** Opens what the citation at `position` names, clicked at `at`; false when nothing is known. */
+export type ScientMarkdownCitationOpener = (
+  position: number,
+  at: { readonly x: number; readonly y: number },
+) => boolean;
+
 function sourceValue(node: ProseMirrorNode): string {
   return node.type.name === "citation"
     ? String(node.attrs.source)
@@ -56,6 +62,7 @@ class ScientReferenceNodeView implements NodeView {
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
     registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar,
+    private readonly openCitation?: ScientMarkdownCitationOpener,
   ) {
     this.node = node;
     const definition = node.type.name === "footnote_definition";
@@ -181,6 +188,15 @@ class ScientReferenceNodeView implements NodeView {
     if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
     const position = this.getPos();
     if (position === undefined) return;
+    // As with links, Command or Control-click follows a citation while writing.
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      this.node.type.name === "citation" &&
+      this.openCitation?.(position, { x: event.clientX, y: event.clientY })
+    ) {
+      event.preventDefault();
+      return;
+    }
     const selection = this.view.state.selection;
     if (!(selection instanceof NodeSelection) || selection.from !== position) {
       this.view.dispatch(
@@ -355,6 +371,7 @@ export function createScientReferenceNodeView(
   view: EditorView,
   getPos: () => number | undefined,
   registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar,
+  openCitation?: ScientMarkdownCitationOpener,
 ): NodeView {
-  return new ScientReferenceNodeView(node, view, getPos, registerFootnote);
+  return new ScientReferenceNodeView(node, view, getPos, registerFootnote, openCitation);
 }

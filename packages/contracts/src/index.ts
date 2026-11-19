@@ -41,6 +41,7 @@ export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
+export * from "./speech.ts";
 export * from "./pullRequest.ts";
 // SCIENT-ORCHESTRATION:START — historical data keeps its canonical codecs
 // after the V1 execution facade retires.
@@ -62,6 +63,7 @@ export {
 // SCIENT-FORK:END
 // SCIENT-ORCHESTRATION:END
 export * from "./pullRequestReviewGuide.ts";
+export * from "./issue.ts";
 export * from "./orchestrationDispatch.ts";
 // SCIENT-FORK: current wire names stay independent of the legacy barrel.
 export { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
@@ -69,6 +71,9 @@ export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";
+// SCIENT-FORK: thread rooms.
+export * from "./scient/threadRoom.ts";
+export * from "./scient/threadRoomStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
 export * from "./peerLink.ts";
@@ -87,10 +92,18 @@ export * from "./assets.ts";
 export * from "./review.ts";
 export * from "./scientProject.ts";
 export * from "./scientSources.ts";
+export * from "./scientReferences.ts";
+// SCIENT-FORK: managed bibliography contracts (new file, no upstream edits).
+export * from "./scientBibliography.ts";
+// SCIENT-FORK:START — Scient PDF annotation contracts (new file, no upstream edits).
+export * from "./scientAnnotations.ts";
+// SCIENT-FORK:END
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
+export * from "./scientComputeResults.ts";
 export * from "./scient/computeLanguages.ts";
+export * from "./scient/sourcesSettings.ts";
 export * from "./scient/computeLanguageStatus.ts";
 export * from "./scient/computeRunTable.ts";
 export * from "./scientData.ts";
@@ -98,6 +111,7 @@ export * from "./scientNotebook.ts";
 export * from "./scientSkills.ts";
 // SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";
+export * from "./scient/connectHost.ts";
 export * from "./scient/extensions.ts";
 export * from "./scient/nativeSubagentControl.ts";
 // SCIENT-FORK:END
@@ -106,6 +120,7 @@ export * from "./scient/accounts.ts";
 export * from "./scient/accountRpcs.ts";
 export * from "./scient/browserHistoryRpcs.ts";
 export * from "./scient/desktopAccountsBridge.ts";
+export * from "./scient/feedback.ts";
 // SCIENT-FORK:END
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
@@ -116,6 +131,9 @@ export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient tool input schema checks (new file, no upstream edits).
 export * from "./scientToolSchemas.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient idle compaction providers (new file, no upstream edits).
+export * from "./scient/idleCompaction.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
@@ -124,6 +142,9 @@ export * from "./scientConversationExport.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient conversation import contracts (new file, no upstream edits).
 export * from "./scientConversationImport.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Cloud desktop-server contracts (new file, no upstream edits).
+export * from "./scientCloud.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient managed Pandoc contracts (new file, no upstream edits).
 export * from "./scientPandoc.ts";
@@ -163,6 +184,13 @@ export * from "./scientPdfEdits.ts";
 // SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
 export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Agent voice contracts: live calls and ChatGPT dictation (new files, no upstream edits).
+export * from "./scient/liveVoice.ts";
+export * from "./scient/chatGptDictation.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient chat-only rewind without a file snapshot (new file, no upstream edits).
+export * from "./scient/checkpointRewind.ts";
 // SCIENT-FORK:END

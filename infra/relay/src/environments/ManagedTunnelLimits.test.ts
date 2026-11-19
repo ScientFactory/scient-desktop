@@ -400,6 +400,16 @@ describe("ManagedTunnelLimits", () => {
     }),
   );
 
+  // SCIENT-FORK:START — the relay's configured default replaces the contract constant.
+  it.effect("uses the configured default cap", () =>
+    Effect.gen(function* () {
+      yield* reserve({ activeTunnels: 4, plan: "free" });
+      const error = yield* Effect.flip(reserve({ activeTunnels: 5, plan: "free" }));
+      expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: 5 });
+    }).pipe(Effect.provideService(ManagedTunnelLimits.ManagedTunnelDefaultLimit, 5)),
+  );
+  // SCIENT-FORK:END
+
   it.effect("treats a manual override as the exact cap", () =>
     Effect.gen(function* () {
       const lookups: Array<string> = [];

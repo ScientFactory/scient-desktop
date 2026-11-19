@@ -61,3 +61,23 @@ export function shouldDismissScientOnboardingOnManualExit(
 ): boolean {
   return status === "unseen" || status === "in-progress";
 }
+
+/**
+ * Ask "How will you use Scient?" once of someone who finished or skipped
+ * onboarding without answering it, including people who updated from a
+ * release that never asked about field and role.
+ */
+export function shouldAskScientProfile(input: {
+  readonly status: ScientOnboardingPresentationStatus;
+  readonly asked: boolean;
+  readonly answered: boolean;
+  readonly shellBootstrapped: boolean;
+  readonly primaryEnvironmentReady: boolean;
+  readonly operateAccess: "granted" | "denied" | "pending";
+}): boolean {
+  if (input.status !== "completed" && input.status !== "dismissed") return false;
+  if (input.asked || input.answered) return false;
+  return (
+    input.shellBootstrapped && input.primaryEnvironmentReady && input.operateAccess === "granted"
+  );
+}

@@ -2,6 +2,11 @@ import {
   ProviderSetupError,
   type ProviderAuthState,
   type ProviderInstanceId,
+  // SCIENT-FORK:START — sign-in failure reasons.
+  markProviderConnectionFailure,
+  providerConnectionFailureReason,
+  type ProviderConnectionFailureReason,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -38,11 +43,15 @@ import {
 import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
-// Once initialized, a healthy agent shows the Google link or finishes within seconds. Its bundled
-// Python has no IPv4 fallback race, so a host with broken IPv6 waits about two minutes per Google
-// request. The hint is timed from initialize, not spawn: the one-file runtime unpacks itself on
-// every launch, which can take about a minute on Windows before it answers at all.
+// Once initialized, a healthy agent shows the Google link within seconds; its bundled Python has no
+// IPv4 fallback, so broken IPv6 stalls each Google request. Startup is timed separately: the
+// one-file runtime unpacks on every launch (about a minute on Windows) before it answers initialize.
 const NO_RESPONSE_HINT_MS = 30_000;
+const STARTUP_HINT_MS = 90_000;
+const NOT_STARTED_MESSAGE =
+  "Antigravity has not started after 90 seconds. Its runtime may be stuck starting on this machine.";
+const NOT_RESPONDING_MESSAGE =
+  "Antigravity did not respond. Its runtime may not run on this machine.";
 const NO_RESPONSE_MESSAGE =
   "Antigravity has not reached Google after 30 seconds. Check this machine's network connection. Broken IPv6 is a common cause.";
 const UNREACHABLE_MESSAGE =
@@ -62,6 +71,7 @@ interface AuthFlow {
   readonly expiresAtMillis: number;
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
+  initialized: boolean;
   callbackSent: boolean;
   authorizationUrlReceived: boolean;
   fiber: Fiber.Fiber<void> | undefined;
@@ -120,6 +130,17 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
 }
 
 // SCIENT-FORK:START — safe failure presentation; native OAuth and account checks stay upstream.
+/** A deadline marked where it was set wins; past `start`, Antigravity accepted the sign-in. */
+function antigravityAuthFailureReason(
+  cause: Cause.Cause<unknown>,
+  phase: ProviderAuthState["phase"],
+): ProviderConnectionFailureReason {
+  return (
+    providerConnectionFailureReason(Option.getOrUndefined(Cause.findErrorOption(cause))) ??
+    (phase === "verifying" ? "post_signin_setup" : "provider_failed")
+  );
+}
+
 function safeAuthFailure(
   cause: Cause.Cause<unknown>,
   usesBrowser: boolean,
@@ -129,8 +150,11 @@ function safeAuthFailure(
   if (Option.isSome(error)) {
     const stageFailure = antigravityAuthStageFailure(error.value, beforeAuthorizationUrl);
     if (stageFailure !== undefined) return stageFailure;
-    if (isSetupError(error.value) && error.value.detail === UNREACHABLE_MESSAGE) {
-      return UNREACHABLE_MESSAGE;
+    if (
+      isSetupError(error.value) &&
+      (error.value.detail === UNREACHABLE_MESSAGE || error.value.detail === NOT_RESPONDING_MESSAGE)
+    ) {
+      return error.value.detail;
     }
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {
@@ -230,7 +254,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         );
         // Propagate interruption after the exit wait so concurrent stop waiters stay attached.
         return yield* restore(Fiber.await(fiber)).pipe(
-          Effect.flatMap((result) => result),
+          Effect.flatten,
           Effect.ensuring(Fiber.interrupt(fiber)),
           Effect.ensuring(
             Effect.sync(() => {
@@ -263,6 +287,10 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               ? "Signed in with Google."
               : "Connected to Antigravity."
             : safeAuthFailure(result.cause, usesBrowser, !flow.authorizationUrlReceived),
+          // SCIENT-FORK: why the attempt failed, from where it failed.
+          ...(Exit.isFailure(result)
+            ? { failureReason: antigravityAuthFailureReason(result.cause, flow.state.phase) }
+            : {}),
         });
       }),
     );
@@ -294,25 +322,31 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       ),
     );
 
+  const publishStartingHint = (flow: AuthFlow, delayMs: number, message: string) =>
+    Effect.sleep(delayMs).pipe(
+      Effect.andThen(
+        lock.withPermits(1)(
+          Effect.gen(function* () {
+            if (activeFlow !== flow || flow.state.phase !== "starting") return;
+            yield* publishFlow(flow, { ...flow.state, message });
+          }),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+
   const runSignIn = Effect.fn("AntigravityAuth.runSignIn")(
     function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
       const runtime = yield* options.makeRuntime({
         onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
       });
+      const startupHint = yield* publishStartingHint(flow, STARTUP_HINT_MS, NOT_STARTED_MESSAGE);
       // `start` reuses this memoized handshake.
       yield* runtime.initialize();
-      yield* Effect.sleep(NO_RESPONSE_HINT_MS).pipe(
-        Effect.andThen(
-          lock.withPermits(1)(
-            Effect.gen(function* () {
-              if (activeFlow !== flow || flow.state.phase !== "starting") return;
-              yield* publishFlow(flow, { ...flow.state, message: NO_RESPONSE_MESSAGE });
-            }),
-          ),
-        ),
-        Effect.forkScoped,
-      );
+      flow.initialized = true;
+      yield* Fiber.interrupt(startupHint);
+      yield* publishStartingHint(flow, NO_RESPONSE_HINT_MS, NO_RESPONSE_MESSAGE);
       const started = yield* runtime.start();
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
@@ -335,11 +369,17 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           duration: AUTH_TIMEOUT_MS,
           orElse: () =>
             Effect.fail(
-              setupError(
-                "start",
-                flow.state.phase === "starting"
-                  ? UNREACHABLE_MESSAGE
-                  : "Google sign-in expired. Start sign-in again.",
+              // SCIENT-FORK: this deadline is Scient's own.
+              markProviderConnectionFailure(
+                "timeout",
+                setupError(
+                  "start",
+                  flow.state.phase !== "starting"
+                    ? "Google sign-in expired. Start sign-in again."
+                    : flow.initialized
+                      ? UNREACHABLE_MESSAGE
+                      : NOT_RESPONDING_MESSAGE,
+                ),
               ),
             ),
         }),
@@ -363,6 +403,8 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               authorizationUrl: null,
               expiresAt: null,
               message,
+              // SCIENT-FORK: a stopped flow fails only when Antigravity refused the callback.
+              ...(phase === "failed" ? { failureReason: "provider_failed" as const } : {}),
             });
             return true;
           }),
@@ -426,6 +468,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               expiresAtMillis,
               state,
               pending: undefined,
+              initialized: false,
               callbackSent: false,
               authorizationUrlReceived: false,
               fiber: undefined,
@@ -571,7 +614,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         }),
       );
       const worker = yield* task.pipe(Effect.forkIn(instanceScope));
-      return yield* Fiber.await(worker).pipe(Effect.flatMap((result) => result));
+      return yield* Fiber.await(worker).pipe(Effect.flatten);
     }),
     subscribe: (ownerSessionId) =>
       SubscriptionRef.changes(snapshot).pipe(

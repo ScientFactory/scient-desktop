@@ -258,3 +258,7 @@ function unsavedNow(
   }
   return found;
 }
+
+export function hasUnsavedWindowEditors(editors: WindowEditors): boolean {
+  return unsavedNow(editors, () => true).length > 0;
+}

@@ -7,6 +7,7 @@ import type { PlatformError } from "effect/PlatformError";
 import type { SchemaError } from "effect/Schema";
 import type * as Terminal from "effect/Terminal";
 import type * as Prompt from "effect/cli/Prompt";
+import type { OverleafConnectionRefusal } from "./OverleafConnections.ts";
 import type { OverleafGitError } from "./OverleafGitExecutor.ts";
 import {
   isRateLimited,
@@ -124,6 +125,32 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
                         : "unclassified";
   return { reason: error.reason, exitCode: error.exitCode ?? -1, category };
 }
+
+/** A Git failure as a fixed category; Git's own text never leaves (contract section 11). */
+export const gitRefusal = (
+  error: OverleafGitError | Repository.OverleafRepositoryError,
+): OverleafConnectionRefusal => {
+  if (error._tag === "OverleafRepositoryError") return "git-failed";
+  if (error.reason === "git-not-found" || error.reason === "git-too-old") return "git-unavailable";
+  switch (classifyProbeGitFailure(error).category) {
+    case "authentication-or-access-denied":
+    case "credential-prompt":
+    case "server-refused":
+      return "access-denied";
+    case "project-not-found":
+      return "project-not-found";
+    case "rate-limited":
+      return "rate-limited";
+    case "timeout":
+    case "dns":
+    case "tls":
+    case "connection":
+    case "redirect":
+      return "unreachable";
+    default:
+      return "git-failed";
+  }
+};
 
 /** Acceptance evidence is positive only. Missing or rewritten history stays unknown. */
 export const probeAcceptance = Effect.fnUntraced(function* (input: {

@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -208,7 +209,7 @@ export default function(pi) {
               extension,
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: profile,
               PI_TELEMETRY: "0",
@@ -648,7 +649,7 @@ export default function(pi) {
             extension,
           ],
           env: {
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             HOME: root,
             PI_CODING_AGENT_DIR: profile,
             PI_TELEMETRY: "0",

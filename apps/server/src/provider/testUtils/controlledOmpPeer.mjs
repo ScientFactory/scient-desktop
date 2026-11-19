@@ -54,6 +54,16 @@ let ordinal = 0;
 let sessionId;
 let sessionFile;
 let thinkingLevel = "off";
+// The session tree get_entries reports: this process's messages, each child of the last.
+let entries = [];
+const record = (role) =>
+  entries.push({
+    type: "message",
+    id: `entry-${process.pid}-${entries.length + 1}`,
+    parentId: entries.at(-1)?.id ?? null,
+    timestamp: new Date().toISOString(),
+    message: { role },
+  });
 const model = {
   provider: "controlled",
   id: "model",
@@ -95,6 +105,7 @@ const finish = () => {
     stopReason: "stop",
   };
   NodeFS.appendFileSync(sessionFile, JSON.stringify({ type: "message", ...message }) + "\n");
+  record("assistant");
   output({ type: "message_end", message, messageId: `assistant-${active}` });
   output({ type: "turn_end", message });
   output({ type: "agent_end", messages: [message], isTerminal: true, yielded: true });
@@ -168,6 +179,7 @@ for await (const line of input) {
       break;
     case "new_session":
       fresh();
+      entries = [];
       await emitHook("session_start");
       response(command, { cancelled: false });
       break;
@@ -176,8 +188,27 @@ for await (const line of input) {
       if (NodePath.relative(root, file).startsWith("..")) throw new Error("Foreign transcript");
       sessionFile = file;
       sessionId = JSON.parse(NodeFS.readFileSync(file, "utf8").split("\n")[0]).id;
+      entries = [];
       await emitHook("session_start");
       response(command, { cancelled: false });
+      break;
+    }
+    case "get_entries": {
+      const start =
+        command.since === undefined
+          ? 0
+          : entries.findIndex((entry) => entry.id === command.since) + 1;
+      if (command.since !== undefined && start === 0) {
+        output({
+          type: "response",
+          id: command.id,
+          command: command.type,
+          success: false,
+          error: `Unknown entry ${command.since}`,
+        });
+        break;
+      }
+      response(command, { entries: entries.slice(start), leafId: entries.at(-1)?.id ?? null });
       break;
     }
     case "set_model":
@@ -216,6 +247,7 @@ for await (const line of input) {
         sessionFile,
         JSON.stringify({ type: "message", role: "user", text: command.message }) + "\n",
       );
+      record("user");
       if (command.message.endsWith("CONTROLLED_HOLD")) break;
       finish();
       break;

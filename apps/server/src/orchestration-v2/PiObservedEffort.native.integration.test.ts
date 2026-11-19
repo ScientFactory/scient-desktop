@@ -1,4 +1,5 @@
 /** Controlled native Pi JSONL peer; real adapter, manager, worker and file-backed V2 SQL. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -145,7 +146,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
           settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
           environment: {
             HOME: profile,
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             PI_EFFORT_CONTROL: control,
             PI_EFFORT_WIRE: wire,
           },

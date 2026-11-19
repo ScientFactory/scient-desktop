@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
+import { isOmpLiveFrame, type OmpLiveVoice } from "./OmpLiveVoice.ts";
 import type { OmpRpcEvent, OmpRpcState } from "effect-omp-rpc/schema";
 import { isRecord } from "effect-omp-rpc/schema";
 import { encodeOmpModelSlug } from "./OmpModel.ts";
@@ -80,6 +81,12 @@ export type OmpSessionUpdate =
       readonly stopReason?: "length" | "error" | "abort";
       /** A failure the user has to act on, such as a spending cap or a usage limit. */
       readonly failureClass?: "usage_limit";
+      /** ISO time at which the provider said the usage limit resets. */
+      readonly resetAt?: string;
+      /** Why the turn failed or stayed unconfirmed, for analytics: a provider cause or a host one. */
+      readonly failureCode?: string;
+      /** The provider's HTTP status, when the failure came from a request. */
+      readonly httpStatus?: number;
       readonly requestId?: string;
       /**
        * `command`: the prompt command itself was rejected, which the sender
@@ -109,6 +116,8 @@ export type OmpSessionUpdate =
       readonly result?: string;
       readonly model?: string;
       readonly presentation?: ScientSubagentObservation["presentation"];
+      /** Where OMP saves this subagent's own conversation. */
+      readonly sessionFile?: string;
     }
   | { readonly type: "command-output"; readonly delta: string }
   | {
@@ -392,6 +401,8 @@ interface TurnEvidence {
   promptError?: string | undefined;
   promptErrorCode?: string | undefined;
   promptHttpStatus?: number | undefined;
+  promptResetAt?: number | undefined;
+  promptErrorKinds?: ReadonlyArray<string> | undefined;
   retryExhausted?: boolean;
   retryFinalError?: string | undefined;
 }
@@ -427,6 +438,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
    * the shared native provider event log; failures must never affect the turn.
    */
   readonly onNativeNotification?: (notification: OmpRpcNotification) => Effect.Effect<void>;
+  /** Takes the agent's `live_*` frames before the inbox, so a call never waits behind a turn. */
+  readonly liveVoice?: Pick<OmpLiveVoice, "onFrame" | "onProcessEnded">;
 }): Effect.fn.Return<OmpSessionRuntime, never, Scope.Scope> {
   const inbox = yield* Queue.bounded<InboxItem>(OMP_INBOX_CAPACITY);
   /** Local commands waiting for the event queue, each with the drain marker that ends its wait. */
@@ -490,6 +503,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let commandRejected = false;
   /** Evidence for the open turn's outcome; reset when a turn begins. */
   let evidence: TurnEvidence = {};
+  /**
+   * A later run of the open turn started after its prompt's own run ended, for example when a
+   * background result woke the agent before the turn settled. prompt_result reports only the
+   * prompt's own run: when the later run ends normally, the turn recovered and completes.
+   */
+  let promptSuperseded = false;
   const settledPromptIds: Array<string> = [];
   /**
    * prompt_result and AsyncCommandFailure frames that arrived while the open
@@ -513,6 +532,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /** Agent runs are numbered at agent_start; OMP events carry no run id. */
   let runSequence = 0;
   let openRunId: number | undefined;
+  // SCIENT-FORK: since OMP 18.21 a run paused on background work later ends with no loop of its own.
+  let pausedRunId: number | undefined;
   /** A run still open when its turn settled; nothing it sends belongs to a turn. */
   let abandonedRunId: number | undefined;
   let protocolFailed = false;
@@ -597,19 +618,40 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return {
         outcome,
         detail: clipOmpErrorMessage(input.target, failureDetail),
-        ...(commandRejected ? { source: "command" as const } : {}),
+        ...(commandRejected
+          ? { source: "command" as const, failureCode: "command_rejected" }
+          : { failureCode: "prompt_command_failed" }),
       };
     }
+    // After a later run, prompt_result describes only the prompt's own run, so the latest run's
+    // ending decides. Only a later run that failed after a failed prompt keeps the prompt's
+    // structured cause (a usage limit's reset time, for example).
+    const laterRunFailed =
+      evidence.stopReason === "error" ||
+      evidence.stopReason === "aborted" ||
+      evidence.retryExhausted === true;
+    const runOnly = promptSuperseded && !(laterRunFailed && evidence.promptStatus === "error");
     const verdict = classifyOmpTurnOutcome(input.target, {
       settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
-      ...evidence,
+      ...(runOnly
+        ? {
+            stopReason: evidence.stopReason,
+            errorMessage: evidence.errorMessage,
+            retryExhausted: evidence.retryExhausted,
+            retryFinalError: evidence.retryFinalError,
+          }
+        : evidence),
     });
     if (verdict.outcome === "unknown") {
       return {
         outcome: "unknown",
         ...(signal.type === "process-exit"
-          ? { source: "process" as const }
-          : { source: "unconfirmed" as const }),
+          ? { source: "process" as const, failureCode: "process_exit" }
+          : {
+              source: "unconfirmed" as const,
+              failureCode:
+                signal.type === "unconfirmed" ? (signal.reason ?? "unconfirmed") : "unconfirmed",
+            }),
       };
     }
     if (verdict.outcome === "failed") {
@@ -618,6 +660,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         detail: verdict.errorMessage,
         stopReason: verdict.stopReason,
         ...(verdict.failureClass ? { failureClass: verdict.failureClass } : {}),
+        ...(verdict.resetAt ? { resetAt: verdict.resetAt } : {}),
+        ...(verdict.failureCode ? { failureCode: verdict.failureCode } : {}),
+        ...(verdict.httpStatus ? { httpStatus: verdict.httpStatus } : {}),
       };
     }
     if (verdict.outcome === "completed" && verdict.stopReason) {
@@ -678,10 +723,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     promptReported = false;
     promptWaitStartedAt = undefined;
     evidence = {};
+    promptSuperseded = false;
     pendingOutcomes = [];
+    // SCIENT-FORK: a paused run is unfinished too, so its final agent_end is stale here.
+    const staleRunId = openRunId ?? pausedRunId;
     yield* applySignal({
       type: "begin",
-      ...(openRunId === undefined ? {} : { staleRunId: openRunId }),
+      ...(staleRunId === undefined ? {} : { staleRunId }),
     });
     yield* publish({ type: "turn-started", turnId });
   });
@@ -720,7 +768,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "warning",
         message: `${input.target.name} did not report the result of this message.`,
       });
-      yield* applySignal({ type: "unconfirmed" });
+      yield* applySignal({ type: "unconfirmed", reason: "prompt_result_timeout" });
       return;
     }
     yield* scheduleDrainRetry;
@@ -763,7 +811,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "warning",
         message: `${input.target.name} stayed busy after the turn ended.`,
       });
-      yield* applySignal({ type: "unconfirmed" });
+      yield* applySignal({ type: "unconfirmed", reason: "drain_busy" });
       return;
     }
     if (drainRetryPending) return;
@@ -789,7 +837,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "warning",
         message: `${input.target.name} did not confirm the session was idle.`,
       });
-      yield* applySignal({ type: "unconfirmed" });
+      yield* applySignal({ type: "unconfirmed", reason: "idle_confirmation_failed" });
       return;
     }
     if ((yield* Queue.size(inbox)) !== 0) return;
@@ -975,7 +1023,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     });
   });
 
-  const applyEvent = Effect.fn("OmpSessionRuntime.applyEvent")(function* (event: OmpRpcEvent) {
+  const applyEvent = Effect.fnUntraced(function* (event: OmpRpcEvent) {
     eventSequence += 1;
     const sequence = eventSequence;
     if (event.type === "agent_start") {
@@ -995,13 +1043,31 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       ) {
         yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
       }
+      const followUpRun = turnIsOpen(turn) && turn.phase === "draining";
       openRunId = ++runSequence;
+      // SCIENT-FORK: a paused run that resumes starts a loop of its own.
+      pausedRunId = undefined;
       yield* applySignal({ type: "agent-start", runId: openRunId });
+      if (followUpRun && turn.runId === openRunId) {
+        // Only this run's ending says whether the earlier run's failure was recovered from.
+        promptSuperseded = true;
+        evidence = {
+          ...evidence,
+          stopReason: undefined,
+          errorMessage: undefined,
+          assistantEnded: false,
+          retryExhausted: false,
+          retryFinalError: undefined,
+        };
+      }
       return;
     }
     if (event.type === "agent_end") {
-      const runId = openRunId;
+      // SCIENT-FORK: the final agent_end of a paused run closes that run, not the next turn's.
+      const runId = openRunId ?? pausedRunId;
       openRunId = undefined;
+      // SCIENT-FORK: a non-terminal end leaves its run paused.
+      pausedRunId = event.isTerminal === false ? runId : undefined;
       // The tail of an aborted run carries no output for the current turn.
       const stale = runId !== undefined && runId === turn.staleRunId;
       // Yield ends the visible response even when a background result can
@@ -1071,6 +1137,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       evidence.promptError = event.promptError?.message;
       evidence.promptErrorCode = event.promptError?.code;
       evidence.promptHttpStatus = event.promptError?.httpStatus;
+      evidence.promptResetAt = event.promptError?.resetAt;
+      evidence.promptErrorKinds = event.promptError?.kinds;
       if (typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",
@@ -1089,6 +1157,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       yield* publish({ type: "observation", event });
       return;
     }
+    // SCIENT-FORK:START — Scient Agent's warming stopped: its confirmed cache times idle compaction.
+    if (event.type === "cache_warming_stopped") {
+      yield* publish({ type: "observation", event });
+      return;
+    }
+    // SCIENT-FORK:END
     if (event.type === "auto_retry_start") {
       if (!turnIsOpen(turn) || staleRunOpen()) return;
       evidence.retryExhausted = false;
@@ -1370,6 +1444,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       const terminal = previous !== undefined && previous !== "inProgress";
       if (terminal && (input.target.driverKind !== "scient" || status !== previous)) return;
       if (status !== previous) subagentStatuses.set(id, status);
+      const sessionFile = rawText(subagentPayload(event)?.sessionFile);
       if (input.target.driverKind === "scient") {
         const observed = parseScientSubagent(event, status !== "inProgress");
         const prior = scientSubagents.get(id);
@@ -1405,6 +1480,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           id,
           title: title ?? "Subagent",
           status,
+          ...(sessionFile === undefined ? {} : { sessionFile }),
         });
       } else {
         const detail = subagentDetail(event);
@@ -1414,6 +1490,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           title: subagentTitle(event) ?? "Subagent",
           status,
           ...(detail ? { detail } : {}),
+          ...(sessionFile === undefined ? {} : { sessionFile }),
         });
       }
       return;
@@ -1486,6 +1563,15 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       yield* publish({ type: "session-settled" });
       return;
     }
+    // SCIENT-FORK: the goal row and plan card follow the agent's goal and proposed plan.
+    if (
+      event.type === "goal_updated" ||
+      event.type === "plan_proposed" ||
+      event.type === "plan_updated"
+    ) {
+      yield* publish({ type: "observation", event });
+      return;
+    }
     if (ignoredLifecycleEvents.has(event.type)) return;
     if (seenUnknownEvents.has(event.type)) return;
     seenUnknownEvents.add(event.type);
@@ -1495,9 +1581,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     });
   });
 
-  const applyNotification = Effect.fn("OmpSessionRuntime.applyNotification")(function* (
-    notification: OmpRpcNotification,
-  ) {
+  const applyNotification = Effect.fnUntraced(function* (notification: OmpRpcNotification) {
     const onNativeNotification = input.onNativeNotification;
     if (onNativeNotification) {
       yield* onNativeNotification(notification).pipe(Effect.ignore);
@@ -1505,9 +1589,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* interpretNotification(notification);
   });
 
-  const interpretNotification = Effect.fn("OmpSessionRuntime.interpretNotification")(function* (
-    notification: OmpRpcNotification,
-  ) {
+  const interpretNotification = Effect.fnUntraced(function* (notification: OmpRpcNotification) {
     if (notification._tag === "ProtocolFailure") {
       protocolFailed = true;
       yield* publish({ type: "error", message: notification.detail });
@@ -1570,7 +1652,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* confirmIdle;
   });
 
-  const consume = Effect.fn("OmpSessionRuntime.consume")(function* (item: InboxItem) {
+  // These run once per OMP frame; the turn-level steps above carry the spans.
+  const consume = Effect.fnUntraced(function* (item: InboxItem) {
     if (item.type === "begin" && item.turnId && item.admission) {
       paused = false;
       pauseSettled = undefined;
@@ -1629,10 +1712,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
   });
 
+  const liveVoice = input.liveVoice;
   yield* input.client.events.pipe(
     Stream.runForEach((notification) =>
-      Queue.offer(inbox, { type: "event", notification }).pipe(Effect.asVoid),
+      liveVoice !== undefined &&
+      notification._tag === "Event" &&
+      isOmpLiveFrame(notification.event.type)
+        ? liveVoice.onFrame(notification.event.raw)
+        : Queue.offer(inbox, { type: "event", notification }).pipe(Effect.asVoid),
     ),
+    Effect.ensuring(liveVoice?.onProcessEnded ?? Effect.void),
     Effect.andThen(Queue.offer(inbox, { type: "process-exit" })),
     Effect.forkIn(input.scope),
   );

@@ -135,16 +135,32 @@ export const layer: Layer.Layer<
             Option.isSome(targetAdapter) &&
             Option.isSome(currentInstance) &&
             (currentSession !== undefined || currentProviderThread !== undefined)
-              ? yield* targetAdapter.value.planSelectionTransition({
-                  current,
-                  target: targetModelSelection,
-                  sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
-                })
+              ? negotiatedCapabilities === undefined
+                ? // No session record left to switch in place; the next session starts with it.
+                  ({ type: "apply_on_next_turn" } as const)
+                : yield* targetAdapter.value.planSelectionTransition({
+                    current,
+                    target: targetModelSelection,
+                    sessionCapabilities: negotiatedCapabilities,
+                  })
               : undefined;
-          // SCIENT-FORK:START — native canonical paths do not change workspace authority.
-          const currentWorkspace =
-            currentSession?.cwd ?? projection.thread.worktreePath ?? "<unresolved-workspace>";
-          let targetWorkspace = targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>";
+          // SCIENT-FORK:START — pooled processes do not own their threads' workspaces.
+          const perThreadWorkspace =
+            negotiatedCapabilities?.sessions.supportsMultipleProviderThreadsPerSession === true &&
+            negotiatedCapabilities.sessions.supportsPerThreadWorkspace === true;
+          // A selection change keeps the thread where it is. A shared session's cwd is the
+          // workspace of whichever thread opened it, not a move of this thread.
+          const keepsWorkspace =
+            selectionTransition !== undefined && targetThread === projection.thread;
+          const currentWorkspace = keepsWorkspace
+            ? (projection.thread.worktreePath ?? currentSession?.cwd ?? "<unresolved-workspace>")
+            : ((perThreadWorkspace ? currentProviderThread?.nativeMetadata?.cwd : undefined) ??
+              currentSession?.cwd ??
+              projection.thread.worktreePath ??
+              "<unresolved-workspace>");
+          let targetWorkspace = keepsWorkspace
+            ? currentWorkspace
+            : (targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>");
           if (currentWorkspace !== targetWorkspace) {
             const sameWorkspace = yield* Effect.all([
               fileSystem.realPath(currentWorkspace),

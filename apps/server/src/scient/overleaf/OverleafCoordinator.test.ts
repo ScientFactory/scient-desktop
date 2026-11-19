@@ -15,7 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 
 import {
-  type CheckoutLookupError,
+  CheckoutLookupError,
   type CheckoutRecoveryRequiredError,
   type makeCheckoutBarrier,
 } from "../workspace/CheckoutBarrier.ts";
@@ -330,6 +330,140 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
         expect(mutated).toBe(false);
       }),
     ),
+  );
+
+  it.live(
+    "holds bulk changes back for an unlinked folder's unfinished sync, never for an idle link it can't examine",
+    () => {
+      let unexaminable: string | null = null;
+      return run(
+        Effect.gen(function* () {
+          const w = yield* world({
+            synced: { "main.tex": "A" },
+            remote: { "main.tex": "A" },
+            barrier: (real) => ({
+              ...real,
+              current: (path) =>
+                path === unexaminable
+                  ? Effect.fail(new CheckoutLookupError({ path, cause: new Error("EACCES") }))
+                  : real.current(path),
+            }),
+          });
+          const other = NodePath.join(NodePath.dirname(w.checkout), "other");
+          yield* Effect.promise(() =>
+            NodeFSP.mkdir(NodePath.join(other, ".git"), { recursive: true }),
+          );
+          const bulk = (checkout: string) =>
+            w.barrier.bulk(checkout, Effect.void).pipe(
+              Effect.as("changed" as const),
+              Effect.catchTags({
+                CheckoutRecoveryRequiredError: (error) => Effect.succeed(error.reason ?? "recover"),
+              }),
+            );
+          unexaminable = w.folder;
+          expect(yield* bulk(other)).toBe("changed");
+          unexaminable = null;
+          const current = yield* w.connection;
+          yield* w.store.replaceConnection({
+            expectedRevision: current.revision,
+            next: {
+              ...current,
+              revision: current.revision + 1,
+              state: "archived",
+              stagingPaths: [".scient-overleaf-apply-earlier-1"],
+              updatedAt: "2026-10-22T12:00:00.000Z",
+            },
+          });
+          expect(yield* bulk(w.checkout)).toBe("unlinked-unfinished-sync");
+          expect(yield* bulk(other)).toBe("changed");
+          const relinked = { ...current, connectionId: "connection-relinked" };
+          yield* w.store.createConnection(relinked);
+          expect(yield* bulk(w.checkout)).toBe("changed");
+          yield* w.store.replaceConnection({
+            expectedRevision: relinked.revision,
+            next: { ...relinked, revision: relinked.revision + 1, state: "archived" },
+          });
+          expect(yield* bulk(w.checkout)).toBe("unlinked-unfinished-sync");
+          yield* Effect.promise(() => NodeFSP.rename(w.folder, `${w.folder}-moved`));
+          expect(yield* bulk(w.checkout)).toBe("changed");
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "holds bulk changes back at an unreadable record's own checkout, or every one when it names none",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+          const current = yield* w.connection;
+          const record = NodePath.join(w.stateRoot, "connections", `${current.connectionId}.json`);
+          const other = NodePath.join(NodePath.dirname(w.checkout), "other");
+          yield* Effect.promise(() =>
+            NodeFSP.mkdir(NodePath.join(other, ".git"), { recursive: true }),
+          );
+          const write = (contents: string) =>
+            Effect.promise(() => NodeFSP.writeFile(record, contents));
+          const bulk = (checkout: string) =>
+            w.barrier.bulk(checkout, Effect.void).pipe(
+              Effect.as("changed" as const),
+              Effect.catchTags({
+                CheckoutRecoveryRequiredError: (error) => Effect.succeed(error.reason ?? "recover"),
+              }),
+            );
+          const staged = { ...current, stagingPaths: [".scient-overleaf-apply-earlier-1"] };
+
+          // A newer release's unfinished sync: only its checkout waits, and the record stays.
+          yield* write(JSON.stringify({ ...staged, schemaVersion: 99 }));
+          expect(yield* bulk(w.checkout)).toBe("newer-unfinished-record");
+          expect(yield* bulk(other)).toBe("changed");
+          expect(
+            yield* Effect.flip(
+              w.store.quarantineConnection(current.connectionId, { acceptUnfinished: true }),
+            ),
+          ).toMatchObject({ condition: "unfinished" });
+
+          // A newer release's fields can't prove it settled: its checkout still waits.
+          yield* write(JSON.stringify({ ...current, schemaVersion: 99 }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+          expect(yield* bulk(other)).toBe("changed");
+
+          // A damaged record that shows no unfinished sync holds nothing back.
+          yield* write(JSON.stringify({ ...current, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("changed");
+
+          // Without a version this release knows, the same fields prove nothing.
+          const { schemaVersion: _version, ...unversioned } = current;
+          yield* write(JSON.stringify({ ...unversioned, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+
+          // A folder path a readable record couldn't have names no folder.
+          yield* write(
+            JSON.stringify({
+              ...staged,
+              revision: "damaged",
+              folder: { ...current.folder, relativePath: "../other" },
+            }),
+          );
+          expect(yield* bulk(other)).toBe("unreadable-record");
+
+          // A damaged record showing staged copies goes only once the user accepts it.
+          yield* write(JSON.stringify({ ...staged, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+          expect(yield* bulk(other)).toBe("changed");
+          expect(
+            yield* Effect.flip(w.store.quarantineConnection(current.connectionId)),
+          ).toMatchObject({ condition: "unfinished" });
+
+          // One that names no folder holds every checkout back.
+          yield* write("{ not json");
+          expect(yield* bulk(other)).toBe("unreadable-record");
+          yield* write(JSON.stringify({ ...staged, revision: "damaged" }));
+          yield* w.store.quarantineConnection(current.connectionId, { acceptUnfinished: true });
+          expect(yield* bulk(w.checkout)).toBe("changed");
+        }),
+      ),
   );
 
   it.live("refuses a bulk change when inline recovery finds structural copies", () => {
@@ -1357,6 +1491,21 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
         const blocked = yield* w.coordinatorWith(other);
         const refused = yield* Effect.exit(blocked.prepare({ connectionId: CONNECTION }));
         expect(String(refused)).toContain("OverleafStateLockedError");
+      }),
+    ),
+  );
+
+  it.live("lists kept copies while another server holds the writable lease", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+        const other = yield* OverleafStateStore.make({
+          publicationHelper: yield* Effect.promise(filePublicationTestHelper),
+          root: w.stateRoot,
+          volumeUuid: w.volumeUuid,
+        });
+        const reader = yield* w.coordinatorWith(other);
+        expect(yield* reader.keptCopies({ connectionId: CONNECTION })).toEqual([]);
       }),
     ),
   );

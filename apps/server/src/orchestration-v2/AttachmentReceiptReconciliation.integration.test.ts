@@ -646,7 +646,7 @@ it.live(
               RuntimeLayer.layerProviderEventIngestorProvided.pipe(
                 Layer.provide(
                   Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                    getInstance: () => Effect.succeed(undefined),
+                    getInstance: () => Effect.undefined,
                   }),
                 ),
                 Layer.provideMerge(services),

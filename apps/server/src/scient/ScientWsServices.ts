@@ -12,28 +12,39 @@ import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
 import * as DataTables from "./data/DataTables.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
+import * as ComputeResults from "./results/ComputeResults.ts";
 import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./conversationExport/ConversationExportService.ts";
 import { EditorFlush } from "./editorFlush/EditorFlush.ts";
 import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
+import { ProviderModelFreshness } from "./providerLifecycle/ProviderModelFreshness.ts";
+import { ScientAgentBackgroundRuntime } from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 
 // SCIENT-FORK:START — Scient Accounts: capture the shared owner for each client connection.
 import { AccountsService } from "./accounts/AccountsService.ts";
 import { accountsForRpc } from "./accounts/AccountsRpcHandlers.ts";
+import { makeRemoteSessions, RemoteSessions } from "./accounts/remoteSessions.ts";
 // SCIENT-FORK:END
 import { BrowserHistory } from "./browserHistory/BrowserHistory.ts";
 
 export const captureScientWsServices = Effect.gen(function* () {
   // SCIENT-FORK:START — Scient Accounts: preserve one owner across WebSocket connections.
   const accounts = yield* accountsForRpc;
+  const remoteSessions = yield* makeRemoteSessions.pipe(
+    Effect.provideService(AccountsService, accounts),
+  );
+  // For the server's life: copies from a desktop revoked here, or silent 30 days, go. Scoped to
+  // the route's layer, so shutdown interrupts the sweep and waits for its finalizers.
+  yield* remoteSessions.watch.pipe(Effect.forkScoped);
   // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
   const browserHistory = yield* BrowserHistory;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const dataTables = yield* DataTables.DataTables;
   const notebooks = yield* NotebookStore.NotebookStore;
+  const computeResults = yield* ComputeResults.ComputeResults;
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const conversationExports = yield* ConversationExportService;
   const editorFlush = yield* EditorFlush;
@@ -41,9 +52,12 @@ export const captureScientWsServices = Effect.gen(function* () {
   const providerLifecycleCoordinator =
     yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
   const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
+  const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
+  const providerModelFreshness = yield* ProviderModelFreshness;
   return Layer.mergeAll(
     // SCIENT-FORK:START — Scient Accounts: reuse the captured owner.
     Layer.succeed(AccountsService, accounts),
+    Layer.succeed(RemoteSessions, remoteSessions),
     // SCIENT-FORK:END
     Layer.succeed(
       ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
@@ -51,11 +65,14 @@ export const captureScientWsServices = Effect.gen(function* () {
     ),
     Layer.succeed(ProviderConnectionManager.ProviderConnectionManager, providerConnectionManager),
     Layer.succeed(ProviderRuntimeManager.ProviderRuntimeManager, providerRuntimeManager),
+    Layer.succeed(ScientAgentBackgroundRuntime, scientAgentBackground),
+    Layer.succeed(ProviderModelFreshness, providerModelFreshness),
     Layer.succeed(AnalysisService.AnalysisService, analysis),
     Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(DataTables.DataTables, dataTables),
     Layer.succeed(NotebookStore.NotebookStore, notebooks),
+    Layer.succeed(ComputeResults.ComputeResults, computeResults),
     Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
     Layer.succeed(ConversationExportService, conversationExports),
     Layer.succeed(EditorFlush, editorFlush),

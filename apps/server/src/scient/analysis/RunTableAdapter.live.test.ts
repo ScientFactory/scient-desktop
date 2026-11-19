@@ -54,7 +54,7 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string, string?]>> = {
   scala: ["a.scala", '@main def run(): Unit = println("scient-ran")\n'],
   perl: ["a.pl", 'print "scient-ran\\n";\n'],
   spss: ["a.sps", "ECHO 'scient-ran'.\n"],
-  stan: ["a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n", ""],
+  stan: ["a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n", "R_hat"],
   lean: ["a.lean", '#eval IO.println "scient-ran"\n'],
   isabelle: [
     "a.thy",
@@ -120,6 +120,9 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string, string?]>> = {
   agda: ["a.agda", "module a where\n", ""],
   // The apostrophe proves the path reaches sqlite3 whole.
   sqlite: ["o'brien.sql", ".bail on\nselect 'scient-ran';\n"],
+  // Licensed, so these run only where someone has them. Both print nothing and write a log.
+  stata: ["a.do", 'display "scient-ran"\n'],
+  sas: ["a.sas", 'data _null_; put "scient-ran"; run;\n'],
 };
 
 /** Sold with a license, so no test computer can install them. Everything else has a program. */
@@ -229,22 +232,333 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           NodeFS.mkdirSync(staging);
           const absoluteSourcePath = NodePath.join(cwd, name);
           NodeFS.writeFileSync(absoluteSourcePath, source);
-          const prepared = adapter.prepare({
+          const context = {
             runId: ExecutionRunId.make("run-table-live"),
             projectId: "live",
             runtime: profile,
             source: { cwd, relativePath: name, revision: "live" as never },
             absoluteSourcePath,
             artifactStagingDirectory: staging,
-          });
+          };
+          yield* Effect.promise(async () => adapter.prepareRun?.(context));
+          const prepared = adapter.prepare(context);
           let output = "";
+          let code: number | null = 0;
           for (const step of [...(prepared.before ?? []), prepared]) {
             const result = yield* runStep(step);
             output += `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`;
-            expect(result.code, output).toBe(0);
+            code = result.code;
+            if (adapter.concludeRun === undefined) expect(result.code, output).toBe(0);
+            // As Run does: a failed step, such as a build, ends the run before the next starts.
+            if (result.code !== 0) break;
+          }
+          const concludeRun = adapter.concludeRun;
+          if (concludeRun !== undefined) {
+            const outcome = yield* Effect.promise(() => concludeRun(context, code));
+            output += outcome.output.map((chunk) => chunk.text).join("");
+            expect(outcome.failureMessage, output).toBeNull();
           }
           expect(output).toContain(prints);
         }).pipe(Effect.provide(Live)),
     );
   }
+
+  // A file that imports its own project's module, which only Lake can build. Needs no network.
+  it.live.runIf(installedForTest?.includes("lean") ?? tools.has("lean"))(
+    "runs a Lean file in a Lake project through Lake",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "lean")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-lake ")),
+        );
+        const write = (name: string, text: string) => {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, name)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(cwd, name), text);
+        };
+        write("lakefile.toml", 'name = "greet"\n\n[[lean_lib]]\nname = "Greet"\n');
+        write("Greet/Basic.lean", 'def greeting := "scient-ran"\n');
+        write("Notes/Use it.lean", "import Greet.Basic\n\n#eval IO.println greeting\n");
+        const staging = NodePath.join(cwd, ".staging");
+        NodeFS.mkdirSync(staging);
+        const prepared = adapter.prepare({
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source: { cwd, relativePath: "Notes/Use it.lean", revision: "live" as never },
+          absoluteSourcePath: NodePath.join(cwd, "Notes", "Use it.lean"),
+          artifactStagingDirectory: staging,
+        });
+        let output = "";
+        for (const step of [...(prepared.before ?? []), prepared]) {
+          const result = yield* runStep(step);
+          output += `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`;
+          expect(result.code, output).toBe(0);
+        }
+        expect(output).toContain("scient-ran");
+      }).pipe(Effect.provide(Live)),
+  );
+
+  // Eight schools with its data beside it, in a folder with a space, which make alone cannot build.
+  it.live.runIf(installedForTest?.includes("stan") ?? tools.has("stan"))(
+    "samples a Stan model with its data, and keeps the draws beside it",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "stan")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        expect(profile.availability, profile.detail ?? "").toBe("available");
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stan ")),
+        );
+        const models = NodePath.join(cwd, "my models");
+        NodeFS.mkdirSync(models);
+        NodeFS.writeFileSync(
+          NodePath.join(models, "eight schools.stan"),
+          "data {\n  int<lower=0> J;\n  array[J] real y;\n  array[J] real<lower=0> sigma;\n}\nparameters {\n  real mu;\n  real<lower=0> tau;\n  vector[J] theta_tilde;\n}\ntransformed parameters {\n  vector[J] theta = mu + tau * theta_tilde;\n}\nmodel {\n  mu ~ normal(0, 5);\n  tau ~ cauchy(0, 5);\n  theta_tilde ~ normal(0, 1);\n  y ~ normal(theta, sigma);\n}\n",
+        );
+        const source = {
+          cwd,
+          relativePath: "my models/eight schools.stan",
+          revision: "live" as never,
+        };
+        expect(adapter.validateSource?.(source)).toMatch(/reads data/u);
+        NodeFS.writeFileSync(
+          NodePath.join(models, "eight schools.data.json"),
+          '{"J": 8, "y": [28, 8, -3, 7, -1, 1, 18, 12], "sigma": [15, 10, 16, 11, 9, 11, 10, 18]}',
+        );
+        expect(adapter.validateSource?.(source)).toBeNull();
+        const staging = NodePath.join(cwd, ".staging");
+        NodeFS.mkdirSync(staging);
+        const context = {
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source,
+          absoluteSourcePath: NodePath.join(models, "eight schools.stan"),
+          artifactStagingDirectory: staging,
+        };
+        yield* Effect.promise(async () => adapter.prepareRun?.(context));
+        const prepared = adapter.prepare(context);
+        let shown = "";
+        for (const step of [...(prepared.before ?? []), prepared]) {
+          const result = yield* runStep(step);
+          expect(result.code, `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`).toBe(
+            0,
+          );
+          if (!("showOutput" in step)) shown += result.output;
+        }
+        expect(shown).toMatch(/^mu\s+\S+/mu);
+        expect(shown).toMatch(/^theta\[8\]\s+\S+/mu);
+        expect(shown).toContain("R_hat");
+        expect(shown).toContain("Processing complete");
+        expect(shown).not.toContain("num_warmup");
+        expect(NodeFS.readdirSync(NodePath.join(models, "eight schools-draws")).sort()).toEqual([
+          "eight_schools_1.csv",
+          "eight_schools_2.csv",
+          "eight_schools_3.csv",
+          "eight_schools_4.csv",
+          "summary.csv",
+        ]);
+        expect(NodeFS.readdirSync(models).filter((name) => name.endsWith(".hpp"))).toEqual([]);
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }).pipe(Effect.provide(Live)),
+  );
+
+  // Windows forbids double quotes in names; everything else a shell or make reads is here.
+  it.live.runIf(installedForTest?.includes("stan") ?? tools.has("stan"))(
+    "builds a Stan model with includes from a folder whose name a shell would run",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "stan")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        expect(profile.availability, profile.detail ?? "").toBe("available");
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stan-")),
+        );
+        const markers = ["scient-ran-tick", "scient-ran-sub", "scient-ran-semi"];
+        const name = `a \`touch ${markers[0]}\` $(touch ${markers[1]}) $HOME ${NodeProcess.platform === "win32" ? "" : '"q" '}'s' ;touch ${markers[2]}; 100%`;
+        const models = NodePath.join(cwd, name, "models");
+        NodeFS.mkdirSync(NodePath.join(models, "parts"), { recursive: true });
+        NodeFS.mkdirSync(NodePath.join(cwd, name, "shared"));
+        NodeFS.writeFileSync(
+          NodePath.join(models, "m.stan"),
+          "functions {\n#include parts/f.stanfunctions\n#include ../shared/g.stanfunctions\n}\nparameters {\n  real y;\n}\nmodel {\n  y ~ normal(f(), g());\n}\n",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(models, "parts", "f.stanfunctions"),
+          "real f() { return 0; }\n",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, name, "shared", "g.stanfunctions"),
+          "real g() { return 1; }\n",
+        );
+        const staging = NodePath.join(cwd, ".staging");
+        NodeFS.mkdirSync(staging);
+        const relativePath = `${name}/models/m.stan`;
+        const source = { cwd, relativePath, revision: "live" as never };
+        expect(adapter.validateSource?.(source)).toBeNull();
+        const context = {
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source,
+          absoluteSourcePath: NodePath.join(models, "m.stan"),
+          artifactStagingDirectory: staging,
+        };
+        yield* Effect.promise(async () => adapter.prepareRun?.(context));
+        const prepared = adapter.prepare(context);
+        let shown = "";
+        for (const step of [...(prepared.before ?? []), prepared]) {
+          const result = yield* runStep(step);
+          expect(result.code, `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`).toBe(
+            0,
+          );
+          if (!("showOutput" in step)) shown += result.output;
+        }
+        expect(shown).toMatch(/^y\s+\S+/mu);
+        expect(shown).toContain("R_hat");
+        const root = NodePath.dirname(
+          NodePath.dirname(NodeFS.realpathSync(profile.executablePath!)),
+        );
+        for (const folder of [cwd, models, root, NodeProcess.cwd()]) {
+          for (const marker of markers) {
+            expect(NodeFS.existsSync(NodePath.join(folder, marker)), `${marker} in ${folder}`).toBe(
+              false,
+            );
+          }
+        }
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }).pipe(Effect.provide(Live)),
+  );
+
+  // Inline includes and a symlinked folder, read as stanc reads them; the program is rebuilt only
+  // when the model or an included file changed.
+  it.live.runIf(installedForTest?.includes("stan") ?? tools.has("stan"))(
+    "reads a Stan model's includes as stanc does, and rebuilds only when one changes",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "stan")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        expect(profile.availability, profile.detail ?? "").toBe("available");
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stan-")),
+        );
+        const write = (name: string, text: string) => {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, name)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(cwd, name), text);
+        };
+        const linked = NodeProcess.platform !== "win32";
+        // Through the link, `link/../g` is elsewhere/g; read as text it would be models/g.
+        write("models/g.stanfunctions", "real g() { return 1; }\n");
+        write("elsewhere/deep/a.stanfunctions", "real a() { return 3; }\n");
+        write("elsewhere/g.stanfunctions", "real g() { return 100; }\n");
+        if (linked) {
+          NodeFS.symlinkSync(
+            NodePath.join(cwd, "elsewhere", "deep"),
+            NodePath.join(cwd, "models", "link"),
+          );
+        }
+        write("models/f.stanfunctions", "real f() { return 2; }\n");
+        const includes = linked
+          ? "#include link/a.stanfunctions\n#include link/../g.stanfunctions\n"
+          : "#include g.stanfunctions\nreal a() { return 3; }\n";
+        write(
+          "models/m.stan",
+          `functions { #include f.stanfunctions\n${includes}}\n// #include missing.stanfunctions\nparameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\ngenerated quantities {\n  real v = f() + a() + g();\n}\n`,
+        );
+        const model = NodePath.join(cwd, "models", "m.stan");
+        const run: { prepared: ReturnType<typeof adapter.prepare> | null } = { prepared: null };
+        const program = () =>
+          run.prepared?.before?.find((step) => step.args[0] === "sample")?.executable ?? null;
+        const sample = Effect.fn("live.stan.sample")(function* () {
+          const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
+          const context = {
+            runId: ExecutionRunId.make("run-table-live"),
+            projectId: "live",
+            runtime: profile,
+            source: { cwd, relativePath: "models/m.stan", revision: "live" as never },
+            absoluteSourcePath: model,
+            artifactStagingDirectory: staging,
+          };
+          yield* Effect.promise(async () => adapter.prepareRun?.(context));
+          run.prepared = adapter.prepare(context);
+          for (const step of [...(run.prepared.before ?? []), run.prepared]) {
+            const result = yield* runStep(step);
+            expect(
+              result.code,
+              `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`,
+            ).toBe(0);
+          }
+          yield* Effect.promise(async () => adapter.concludeRun?.(context, 0));
+          const summary = NodeFS.readFileSync(
+            NodePath.join(cwd, "models", "m-draws", "summary.csv"),
+            "utf8",
+          );
+          return Number(/^"v",([^,]+),/mu.exec(summary)?.[1]);
+        });
+        const hasMake = () => (run.prepared?.before ?? []).some((step) => step.cwd !== cwd);
+        expect(yield* sample()).toBe(linked ? 105 : 6);
+        expect(hasMake()).toBe(true);
+        const first = program()!;
+        expect(NodePath.basename(NodePath.dirname(first))).toBe("build");
+        // The published program keeps the build's name, `m.exe` on Windows.
+        const published = NodePath.join(
+          NodePath.dirname(NodePath.dirname(first)),
+          NodePath.basename(first),
+        );
+        // The same C++ again: the program the run published is sampled, and nothing is compiled.
+        expect(yield* sample()).toBe(linked ? 105 : 6);
+        expect(hasMake()).toBe(false);
+        expect(program()).toBe(published);
+        // A changed include changes the C++, which gets a folder and a program of its own.
+        write("models/f.stanfunctions", "real f() { return 20; }\n");
+        expect(yield* sample()).toBe(linked ? 123 : 24);
+        expect(hasMake()).toBe(true);
+        expect(NodePath.dirname(NodePath.dirname(program()!))).not.toBe(
+          NodePath.dirname(published),
+        );
+        expect(NodeFS.existsSync(published)).toBe(true);
+        // A model that no longer translates fails the run, and nothing earlier runs in its place.
+        write("models/f.stanfunctions", "real f() { return 20 }\n");
+        const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
+        const context = {
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source: { cwd, relativePath: "models/m.stan", revision: "live" as never },
+          absoluteSourcePath: model,
+          artifactStagingDirectory: staging,
+        };
+        yield* Effect.promise(async () => adapter.prepareRun?.(context));
+        expect(() => adapter.prepare(context)).toThrow(
+          /^Stan could not translate the model: .*error/iu,
+        );
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }).pipe(Effect.provide(Live)),
+  );
 });

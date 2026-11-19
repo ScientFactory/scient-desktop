@@ -1,4 +1,9 @@
 import { reserveGeneratedImagePublication } from "./orchestration-v2/AttachmentFileUse.ts";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { ServerConfig } from "./config.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -333,3 +338,27 @@ export async function cleanupStaleGeneratedImageAttachmentTemps(input: {
   }
   return removed;
 }
+
+class GeneratedImageTempSweepError extends Schema.TaggedError<GeneratedImageTempSweepError>()(
+  "GeneratedImageTempSweepError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not remove stale generated-image temp files.";
+  }
+}
+
+/** A crash while saving a generated image leaves its temp file; the server sweeps them at start. */
+export const generatedImageTempSweepLayer = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const { attachmentsDir } = yield* ServerConfig;
+    const now = yield* Clock.currentTimeMillis;
+    yield* Effect.tryPromise({
+      try: () => cleanupStaleGeneratedImageAttachmentTemps({ attachmentsDir, now }),
+      catch: (cause) => new GeneratedImageTempSweepError({ cause }),
+    }).pipe(
+      Effect.catch((error) => Effect.logWarning(error.message, { cause: error.cause })),
+      Effect.forkScoped,
+    );
+  }),
+);

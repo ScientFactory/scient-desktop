@@ -11,7 +11,7 @@ import * as NodePath from "node:path";
 
 import {
   WorkspaceEntryChangeError,
-  type WorkspaceEntryChangeFailure,
+  WorkspaceEntryChangeFailure,
   type WorkspaceEntryChangeInput,
   type WorkspaceEntryChangeOutcome,
   type WorkspaceEntryChangeResult,
@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import type { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import { workspaceEntryDisposition } from "./WorkspaceEntryPolicy.ts";
@@ -39,25 +40,19 @@ interface Entry {
 }
 
 /** A failure on the way, with whatever already changed. */
-class ChangeFailure extends Error {
-  readonly failure: WorkspaceEntryChangeFailure;
-  readonly paths: ReadonlyArray<string> | undefined;
-  constructor(
-    failure: WorkspaceEntryChangeFailure,
-    message: string,
-    paths?: ReadonlyArray<string>,
-  ) {
-    super(message);
-    this.failure = failure;
-    this.paths = paths;
-  }
-}
+class ChangeFailure extends Schema.TaggedError<ChangeFailure>()("ChangeFailure", {
+  failure: WorkspaceEntryChangeFailure,
+  message: Schema.String,
+  paths: Schema.optional(Schema.Array(Schema.String)),
+}) {}
+
+const isChangeFailure = Schema.is(ChangeFailure);
 
 const toChangeError = (error: unknown, completed: ReadonlyArray<WorkspaceEntryChangeOutcome>) =>
   new WorkspaceEntryChangeError({
-    failure: error instanceof ChangeFailure ? error.failure : "failed",
+    failure: isChangeFailure(error) ? error.failure : "failed",
     message: (error instanceof Error && error.message.trim()) || "The change could not be made.",
-    ...(error instanceof ChangeFailure && error.paths ? { paths: [...error.paths] } : {}),
+    ...(isChangeFailure(error) && error.paths ? { paths: [...error.paths] } : {}),
     ...(completed.length > 0 ? { completed: [...completed] } : {}),
   });
 
@@ -107,7 +102,7 @@ async function freeEntry(
       return { absolutePath, relativePath: joinRelative(parentOf(entry.relativePath), candidate) };
     }
   }
-  throw new ChangeFailure("failed", `No free name was found for ${leaf}.`);
+  throw new ChangeFailure({ failure: "failed", message: `No free name was found for ${leaf}.` });
 }
 
 /** A rename, or a copy and removal between volumes. */
@@ -184,13 +179,16 @@ async function trashEntries(
   if (failed.length > 0) {
     const first = failed[0]!;
     throw Object.assign(
-      new ChangeFailure(
-        completed.length === 0 && /no Trash/u.test(first.message) ? "trash-unavailable" : "failed",
-        `${NodePath.basename(first.entry.absolutePath)} could not be moved to ${trashName(
+      new ChangeFailure({
+        failure:
+          completed.length === 0 && /no Trash/u.test(first.message)
+            ? "trash-unavailable"
+            : "failed",
+        message: `${NodePath.basename(first.entry.absolutePath)} could not be moved to ${trashName(
           host.platform,
         )}: ${first.message}`,
-        failed.map(({ entry }) => entry.relativePath),
-      ),
+        paths: failed.map(({ entry }) => entry.relativePath),
+      }),
       { completed },
     );
   }
@@ -214,11 +212,11 @@ async function transferEntries(input: {
   const sources = await Promise.all(input.pairs.map((pair) => lstatOrNull(pair.from.absolutePath)));
   const missing = input.pairs.filter((_, index) => sources[index] === null);
   if (missing.length > 0) {
-    throw new ChangeFailure(
-      "missing",
-      `${NodePath.basename(missing[0]!.from.absolutePath)} is no longer there.`,
-      missing.map((pair) => pair.from.relativePath),
-    );
+    throw new ChangeFailure({
+      failure: "missing",
+      message: `${NodePath.basename(missing[0]!.from.absolutePath)} is no longer there.`,
+      paths: missing.map((pair) => pair.from.relativePath),
+    });
   }
   const pairs = input.pairs.map((pair, index) => ({ ...pair, source: sources[index]! }));
   // A move onto itself changes nothing; a case-only rename is still a move.
@@ -232,11 +230,11 @@ async function transferEntries(input: {
       pair.from.absolutePath !== pair.to.absolutePath &&
       isWithin(pair.from.absolutePath, pair.to.absolutePath)
     ) {
-      throw new ChangeFailure(
-        "into-itself",
-        `${NodePath.basename(pair.from.absolutePath)} can't go inside itself.`,
-        [pair.from.relativePath],
-      );
+      throw new ChangeFailure({
+        failure: "into-itself",
+        message: `${NodePath.basename(pair.from.absolutePath)} can't go inside itself.`,
+        paths: [pair.from.relativePath],
+      });
     }
   }
   const clashOf = async (pair: (typeof active)[number]) => {
@@ -249,11 +247,11 @@ async function transferEntries(input: {
       await Promise.all(active.map(async (pair) => ((await clashOf(pair)) ? pair : null)))
     ).filter((pair) => pair !== null);
     if (clashes.length > 0) {
-      throw new ChangeFailure(
-        "exists",
-        `An item named ${NodePath.basename(clashes[0]!.to.absolutePath)} already exists there.`,
-        clashes.map((pair) => pair.to.relativePath),
-      );
+      throw new ChangeFailure({
+        failure: "exists",
+        message: `An item named ${NodePath.basename(clashes[0]!.to.absolutePath)} already exists there.`,
+        paths: clashes.map((pair) => pair.to.relativePath),
+      });
     }
   }
 
@@ -261,19 +259,19 @@ async function transferEntries(input: {
     let destination = pair.to;
     if (await clashOf(pair)) {
       if (collision === "ask") {
-        throw new ChangeFailure(
-          "exists",
-          `An item named ${NodePath.basename(destination.absolutePath)} already exists there.`,
-          [destination.relativePath],
-        );
+        throw new ChangeFailure({
+          failure: "exists",
+          message: `An item named ${NodePath.basename(destination.absolutePath)} already exists there.`,
+          paths: [destination.relativePath],
+        });
       }
       if (collision === "replace") {
         if (isWithin(destination.absolutePath, pair.from.absolutePath)) {
-          throw new ChangeFailure(
-            "into-itself",
-            `${NodePath.basename(destination.absolutePath)} can't be replaced by something inside it.`,
-            [destination.relativePath],
-          );
+          throw new ChangeFailure({
+            failure: "into-itself",
+            message: `${NodePath.basename(destination.absolutePath)} can't be replaced by something inside it.`,
+            paths: [destination.relativePath],
+          });
         }
         completed.push(...(await trashEntries(input.host, input.cwd, [destination])));
       } else {
@@ -417,11 +415,11 @@ export const changeWorkspaceEntries = Effect.fn("WorkspaceEntryChanges.change")(
           if ((await lstatOrNull(entry.absolutePath)) === null) missing.push(entry);
         }
         if (missing.length > 0) {
-          throw new ChangeFailure(
-            "missing",
-            `${NodePath.basename(missing[0]!.absolutePath)} is no longer there.`,
-            missing.map((entry) => entry.relativePath),
-          );
+          throw new ChangeFailure({
+            failure: "missing",
+            message: `${NodePath.basename(missing[0]!.absolutePath)} is no longer there.`,
+            paths: missing.map((entry) => entry.relativePath),
+          });
         }
         completed.push(...(await trashEntries(host, cwd, entries)));
       });
@@ -446,11 +444,11 @@ export const changeWorkspaceEntries = Effect.fn("WorkspaceEntryChanges.change")(
           const target = targets[index]!;
           const trashed = await lstatOrNull(record!.trashedPath);
           if (trashed === null) {
-            throw new ChangeFailure(
-              "missing",
-              `${NodePath.basename(record!.originalPath)} is no longer in the Trash.`,
-              [record!.relativePath],
-            );
+            throw new ChangeFailure({
+              failure: "missing",
+              message: `${NodePath.basename(record!.originalPath)} is no longer in the Trash.`,
+              paths: [record!.relativePath],
+            });
           }
           const destination = (await lstatOrNull(target.absolutePath))
             ? await freeEntry(target, trashed.isDirectory(), "number")

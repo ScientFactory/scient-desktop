@@ -42,6 +42,7 @@ import {
   isForkOriginBusy,
 } from "./forkAttempt";
 import { markForkLanding } from "./forkLanding";
+import { toastManager } from "../ui/toast";
 
 const memory = new Map<string, string>();
 const attemptStore = createForkAttemptStore(
@@ -72,6 +73,9 @@ export type ForkSource =
     }
   // The running turn, including the work it has done so far.
   | { readonly kind: "running-turn"; readonly runId: RunId };
+const UNSUPPORTED_FORK_MESSAGE =
+  "Update Scient on the computer that runs this conversation, then fork again.";
+// The fork card's check is reused when its Fork button is pressed soon after.
 const CHECKED_FORK_OPTIONS_REUSE_MS = 30_000;
 
 function assertForkEligibility(
@@ -90,7 +94,9 @@ function assertForkEligibility(
     throw new Error(eligibility.reason ?? "The original workspace is unavailable.");
   if (workspaceMode === "new-worktree" && !eligibility.newWorktree)
     throw new Error(
-      "The saved checkpoint is unavailable. Choose the current workspace or another fork point.",
+      source.kind === "running-turn"
+        ? "A new worktree needs this project's Git repository and the original folder. Fork here instead."
+        : "This point has no saved Git checkpoint for a new worktree. Fork here, or fork from another point.",
     );
 }
 
@@ -113,20 +119,6 @@ const sourceKey = (source: ForkSource) =>
     : source.kind === "assistant-response" && source.latest
       ? "latest"
       : `${source.kind}:${source.messageId}`;
-
-// SCIENT-FORK:START — `thread.fork` is a V1-only command, but it rides the
-// `orchestration.dispatchCommand` tag that V1 and V2 both register. The client
-// resolves that tag to V2's `{ sequence }` result, while the server still
-// returns V1's optional attachment receipt, so read it off the raw payload.
-function readForkAttachmentIdMap(receipt: object): Readonly<Record<string, string>> | undefined {
-  if (!("forkAttachmentIdMap" in receipt)) return undefined;
-  const map: unknown = receipt.forkAttachmentIdMap;
-  if (map === null || typeof map !== "object" || Array.isArray(map)) return undefined;
-  return Object.fromEntries(
-    Object.entries(map).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-  );
-}
-// SCIENT-FORK:END
 
 function composerFingerprint(ref: ScopedThreadRef): string {
   const draft = useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)];
@@ -162,7 +154,7 @@ export function userFacingForkError(error: unknown): string {
     return "One of this message's images could not be prepared for editing. Wait for it to load and try again.";
   }
   if (message.includes("no ready Git checkpoint")) {
-    return "This fork point has no saved Git checkpoint for a separate worktree. Choose Same workspace or a checkpointed fork point.";
+    return "This point has no saved Git checkpoint for a new worktree. Fork here, or fork from another point.";
   }
   if (
     message.includes("not a completed conversation boundary") ||
@@ -311,14 +303,17 @@ export function moveAcceptedForkComposerDraft(input: {
 export function useScientThreadFork({
   origin,
   navigate,
-  supportsRecovery,
+  supported,
 }: {
   readonly origin: ForkOrigin | null;
   readonly navigate: NavigateToThread;
-  readonly supportsRecovery: boolean;
+  /** The server takes Scient's fork options on T3's fork command. */
+  readonly supported: boolean;
 }) {
-  const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
+  const forkConversation = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
+  const awaitFork = useAtomCommand(threadEnvironment.awaitFork, { reportFailure: false });
   const getForkOptions = useAtomCommand(threadEnvironment.getForkOptions, { reportFailure: false });
+  // What the open fork card shows: the checked options, and a saved fork to resume.
   const [preview, setPreview] = useState<{
     key: string;
     options: ForkOptions | null;
@@ -331,7 +326,7 @@ export function useScientThreadFork({
     readonly threadId: ThreadId;
     readonly environmentId: EnvironmentId;
     readonly message: string | null;
-    /** The fork point the error is about; another point's dialog does not show it. */
+    /** The fork point the error is about; another point's card does not show it. */
     readonly key: string;
   } | null>(null);
   const originId = origin?.id;
@@ -356,27 +351,12 @@ export function useScientThreadFork({
     };
   }, []);
   const previewSequence = useRef(0);
-  // The options the open fork menu just checked. Submitting from it uses them
+  // The options the open fork card just checked. Submitting from it uses them
   // once instead of checking again; the server checks the fork itself anyway.
   const checkedOptions = useRef<{ key: string; options: ForkOptions; at: number } | null>(null);
 
   const resolveOptions = async (source: ForkSource): Promise<ForkOptions> => {
     if (!originId || !environmentId) throw new Error("The original conversation is unavailable.");
-    if (!supportsRecovery)
-      return {
-        // Older servers cannot fork a running turn.
-        available:
-          source.kind === "user-message" ||
-          (source.kind === "assistant-response" && source.messageId !== null),
-        localAvailable: true,
-        reason:
-          source.kind === "running-turn"
-            ? "Update the server to fork a conversation while the agent is working."
-            : null,
-        newWorktree: true,
-        sourceAssistantMessageId: source.kind === "assistant-response" ? source.messageId : null,
-        sourceUserMessageId: source.kind === "user-message" ? source.messageId : null,
-      };
     const result = await getForkOptions({
       environmentId,
       input: {
@@ -394,34 +374,41 @@ export function useScientThreadFork({
     return result.value;
   };
 
+  /** Checks a fork point for the fork card, or finds the saved fork it resumes. */
   const prepareFork = async (source: ForkSource) => {
     if (!originId || !environmentId) return;
     const key = forkAttemptKey(environmentId, originId, sourceKey(source));
     const sequence = ++previewSequence.current;
     setErrorUpdate(null);
     setPreview({ key, options: null, checking: true, locked: false });
+    const current = () =>
+      sequence === previewSequence.current && mounted.current && activeOrigin.current === originKey;
+    if (!supported) {
+      if (!current()) return;
+      setPreview({ key, options: null, checking: false, locked: false });
+      setErrorUpdate({ threadId: originId, environmentId, key, message: UNSUPPORTED_FORK_MESSAGE });
+      return;
+    }
     try {
       const pending = attemptStore.get(key);
-      const options = pending
+      const boundary = pending?.command.scient.boundary;
+      const options: ForkOptions = pending
         ? {
             available: true,
             localAvailable: true,
             reason: null,
-            newWorktree: pending.command.workspaceMode === "new-worktree",
-            sourceAssistantMessageId: pending.command.sourceAssistantMessageId ?? null,
-            sourceUserMessageId: pending.command.sourceUserMessageId ?? null,
-            sourceRunningRunId: pending.command.sourceRunningRunId ?? null,
+            newWorktree: pending.command.scient.workspaceMode === "new-worktree",
+            sourceAssistantMessageId:
+              boundary?.kind === "assistant-response" ? boundary.messageId : null,
+            sourceUserMessageId: boundary?.kind === "user-message" ? boundary.messageId : null,
+            sourceRunningRunId: boundary?.kind === "running-turn" ? boundary.runId : null,
             ...(pending.workspaceNotice === undefined
               ? {}
               : { workspaceNotice: pending.workspaceNotice }),
           }
         : await resolveOptions(source);
-      if (
-        sequence === previewSequence.current &&
-        mounted.current &&
-        activeOrigin.current === originKey
-      ) {
-        // Only the menu being shown publishes its options for reuse.
+      if (current()) {
+        // Only the card being shown publishes its options for reuse.
         if (!pending) checkedOptions.current = { key, options, at: Date.now() };
         setPreview({
           key,
@@ -429,15 +416,11 @@ export function useScientThreadFork({
           checking: false,
           locked: pending !== null,
           ...(pending?.displayTitle === undefined ? {} : { retryTitle: pending.displayTitle }),
-          ...(pending ? { retryWorkspaceMode: pending.command.workspaceMode } : {}),
+          ...(pending ? { retryWorkspaceMode: pending.command.scient.workspaceMode } : {}),
         });
       }
     } catch (error) {
-      if (
-        sequence === previewSequence.current &&
-        mounted.current &&
-        activeOrigin.current === originKey
-      ) {
+      if (current()) {
         setPreview({ key, options: null, checking: false, locked: false });
         setErrorUpdate({
           threadId: originId,
@@ -453,10 +436,14 @@ export function useScientThreadFork({
     source: ForkSource,
     options: {
       readonly workspaceMode: "new-worktree" | "local";
+      /** An edited title from the fork card; without one the server numbers the fork. */
       readonly titleOverride?: string;
+      /** The title the fork card showed, shown again if the fork is resumed. */
       readonly displayTitle?: string;
-      /** Complete the source dialog exit before changing the conversation. */
+      /** Complete the fork card's exit before changing the conversation. */
       readonly beforeNavigate?: () => Promise<boolean>;
+      /** The fork card shows errors itself; other forks report them as toasts. */
+      readonly fromCard?: boolean;
       readonly confirmSkippedImages?: (names: ReadonlyArray<string>) => Promise<boolean>;
       /** Move only portable unsent text/images after the fork command is accepted. */
       readonly composerDraftSource?: ScopedThreadRef;
@@ -464,15 +451,38 @@ export function useScientThreadFork({
     originWorkspaceRoot: string | undefined,
   ): Promise<ForkAcceptanceOutcome> => {
     if (!originId || !environmentId) return "not-accepted";
+    const fromCard = options.fromCard === true;
+    if (!supported) {
+      if (fromCard)
+        setErrorUpdate({
+          threadId: originId,
+          environmentId,
+          key: forkAttemptKey(environmentId, originId, sourceKey(source)),
+          message: UNSUPPORTED_FORK_MESSAGE,
+        });
+      else
+        toastManager.add({
+          type: "error",
+          title: "This conversation cannot be forked here",
+          description: UNSUPPORTED_FORK_MESSAGE,
+        });
+      return "not-accepted";
+    }
     const outcome = await withForkOriginLock(
       originKey,
       async (): Promise<ForkAcceptanceOutcome> => {
         const key = forkAttemptKey(environmentId, originId, sourceKey(source));
-        setErrorUpdate(null);
+        let workspaceNotice: string | undefined;
+        // The notice the fork card already showed, so it is not said twice.
+        let cardNotice: string | undefined;
+        if (fromCard) setErrorUpdate(null);
         try {
+          // A fork already under way from this point resumes with its saved command.
           let attempt = attemptStore.get(key);
+          if (attempt) cardNotice = attempt.workspaceNotice;
           if (!attempt) {
             const checked = checkedOptions.current;
+            if (checked?.key === key) cardNotice = checked.options.workspaceNotice;
             checkedOptions.current = null;
             // "Latest" names whatever response is newest now, so check it again.
             const eligibility =
@@ -511,33 +521,42 @@ export function useScientThreadFork({
                 ? { composerDraftFingerprint: composerFingerprint(options.composerDraftSource) }
                 : {}),
               command: {
-                type: "thread.fork",
                 commandId: CommandId.make(`client:thread-fork:${id}`),
-                originThreadId: originId,
-                newThreadId: id,
-                workspaceMode: options.workspaceMode,
-                ...(options.titleOverride === undefined
-                  ? {}
-                  : { titleOverride: options.titleOverride }),
-                ...(eligibility.sourceRunningRunId
-                  ? { sourceRunningRunId: eligibility.sourceRunningRunId }
-                  : eligibility.sourceAssistantMessageId
-                    ? { sourceAssistantMessageId: eligibility.sourceAssistantMessageId }
-                    : { sourceUserMessageId: eligibility.sourceUserMessageId! }),
+                sourceThreadId: originId,
+                targetThreadId: id,
+                ...(options.titleOverride === undefined ? {} : { title: options.titleOverride }),
+                scient: {
+                  workspaceMode: options.workspaceMode,
+                  boundary: eligibility.sourceRunningRunId
+                    ? { kind: "running-turn", runId: eligibility.sourceRunningRunId }
+                    : eligibility.sourceAssistantMessageId
+                      ? {
+                          kind: "assistant-response",
+                          messageId: eligibility.sourceAssistantMessageId,
+                        }
+                      : { kind: "user-message", messageId: eligibility.sourceUserMessageId! },
+                },
               },
             };
             storeFreshForkAttempt(key, attempt, scopeThreadRef(environmentId, id));
           }
-          const destinationRef = scopeThreadRef(environmentId, attempt.command.newThreadId);
+          workspaceNotice = attempt.workspaceNotice;
+          const destinationRef = scopeThreadRef(environmentId, attempt.command.targetThreadId);
           attempt = await deliverForkAttempt({
             key,
             attempt,
             store: attemptStore,
             discardDraft: () => clearStagedUserForkDraft(destinationRef),
             dispatch: async (current) => {
-              const result = await forkThread({ environmentId, input: current.command });
-              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-              return readForkAttachmentIdMap(result.value);
+              const accepted = await forkConversation({ environmentId, input: current.command });
+              if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);
+              // A new worktree is set up after acceptance; the fork opens once it is ready.
+              const ready = await awaitFork({
+                environmentId,
+                input: { threadId: current.command.targetThreadId },
+              });
+              if (ready._tag === "Failure") throw squashAtomCommandFailure(ready);
+              return ready.value.forkAttachmentIdMap;
             },
           });
           // Completing in the background must not steal navigation or a composer
@@ -558,7 +577,7 @@ export function useScientThreadFork({
             try {
               stageForkViewContinuity({
                 originRef: scopeThreadRef(environmentId, originId),
-                destinationThreadId: attempt.command.newThreadId,
+                destinationThreadId: attempt.command.targetThreadId,
                 originWorkspaceRoot,
                 attachmentIdMap: attempt.attachmentIdMap,
               });
@@ -572,7 +591,7 @@ export function useScientThreadFork({
                   : readProject(scopeProjectRef(environmentId, destinationShell.projectId));
               restoreForkPdfContinuity({
                 environmentId,
-                threadId: attempt.command.newThreadId,
+                threadId: attempt.command.targetThreadId,
                 destinationWorkspaceRoot: resolveThreadWorkspaceRoot({
                   worktreePath: destinationShell?.worktreePath,
                   projectCwd: destinationProject?.workspaceRoot,
@@ -588,9 +607,12 @@ export function useScientThreadFork({
           markForkLanding(scopedThreadKey(destinationRef));
           await navigate({
             to: "/$environmentId/$threadId",
-            params: { environmentId, threadId: attempt.command.newThreadId },
+            params: { environmentId, threadId: attempt.command.targetThreadId },
           });
           attemptStore.delete(key);
+          // Said here unless the fork card showed this notice before the fork was made.
+          if (workspaceNotice !== undefined && !(fromCard && workspaceNotice === cardNotice))
+            toastManager.add({ type: "info", title: "Forked", description: workspaceNotice });
           return "accepted";
         } catch (cause) {
           if (mounted.current && activeOrigin.current === originKey) {
@@ -600,29 +622,47 @@ export function useScientThreadFork({
             } catch {
               /* Keep corrupt/unavailable storage untouched. */
             }
-            setErrorUpdate({
-              threadId: originId,
-              environmentId,
-              key,
-              message: pending?.ready
-                ? "The fork is ready. Retry to open it; this will not create another conversation."
-                : `${userFacingForkError(cause)}${pending ? " Retry to resume this same fork; your draft is saved." : ""}`,
+            if (fromCard) {
+              setErrorUpdate({
+                threadId: originId,
+                environmentId,
+                key,
+                message: pending?.ready
+                  ? "The fork is ready. Retry to open it; this will not create another conversation."
+                  : `${userFacingForkError(cause)}${pending ? " Retry to resume this same fork; your draft is saved." : ""}`,
+              });
+              setPreview((current) =>
+                current?.key === key ? { ...current, locked: pending !== null } : current,
+              );
+              return "not-accepted";
+            }
+            toastManager.add({
+              type: "error",
+              title: pending?.ready ? "The fork is ready" : "The fork did not finish",
+              description: pending?.ready
+                ? "Fork from the same point again to open it; this will not create another conversation."
+                : `${userFacingForkError(cause)}${pending ? " Fork from the same point again to resume it; your draft is saved." : ""}`,
             });
-            setPreview((current) =>
-              current?.key === key ? { ...current, locked: pending !== null } : current,
-            );
           }
           return "not-accepted";
         }
       },
     );
     if (outcome === null && mounted.current && activeOrigin.current === originKey) {
-      setErrorUpdate({
-        threadId: originId,
-        environmentId,
-        key: forkAttemptKey(environmentId, originId, sourceKey(source)),
-        message:
-          "A fork is already being prepared from this conversation. Wait for it to finish, then retry.",
+      if (fromCard) {
+        setErrorUpdate({
+          threadId: originId,
+          environmentId,
+          key: forkAttemptKey(environmentId, originId, sourceKey(source)),
+          message:
+            "A fork is already being prepared from this conversation. Wait for it to finish, then retry.",
+        });
+        return "not-accepted";
+      }
+      toastManager.add({
+        type: "warning",
+        title: "A fork is already being prepared",
+        description: "Wait for it to finish, then fork again.",
       });
     }
     return outcome ?? "not-accepted";

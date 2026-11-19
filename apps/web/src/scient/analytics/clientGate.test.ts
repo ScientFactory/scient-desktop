@@ -11,6 +11,169 @@ const tick = async () => {
 };
 
 describe("UI analytics gate", () => {
+  it("recovers the voice context after a server restart without replaying the old job", async () => {
+    let now = 0;
+    let context = "before-restart";
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({
+      record,
+      now: () => now,
+      status: async (): Promise<ScientAnalyticsStatus> => ({
+        available: true,
+        consent: "product",
+        collectionContext: context,
+        voiceLifecycleVersion: 2,
+      }),
+    });
+    const connection = {};
+    await gate.readStatus(connection);
+    context = "after-restart";
+    now = 60_001;
+    const old = gate.beginVoiceOperation(connection);
+    old({ name: "voice.transcription.started", properties: {} });
+    await tick();
+    old({ name: "voice.transcription.completed", properties: {} });
+    const fresh = gate.beginVoiceOperation(connection);
+    fresh({ name: "voice.transcription.started", properties: {} });
+    fresh({ name: "voice.transcription.completed", properties: {} });
+    await tick();
+    expect(record.mock.calls.map((call) => call[1])).toEqual([
+      { name: "voice.transcription.started", properties: {}, collectionContext: "after-restart" },
+      { name: "voice.transcription.completed", properties: {}, collectionContext: "after-restart" },
+    ]);
+  });
+  it("keeps long work's context through a routine status refresh, not across a consent change", async () => {
+    let now = 0;
+    let consent: ScientAnalyticsStatus["consent"] = "product";
+    let context = "context-a";
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({
+      record,
+      now: () => now,
+      status: async (): Promise<ScientAnalyticsStatus> => ({
+        available: true,
+        consent,
+        collectionContext: context,
+      }),
+    });
+    const connection = {};
+    await gate.readStatus(connection);
+    const began = gate.productContext(connection)!;
+    // A sign-in window open for minutes: the status is due for refresh when it closes.
+    now = 60_001;
+    expect(gate.productContext(connection)).toBe("context-a");
+    gate.recordInContext(connection, began, event);
+    await tick();
+    expect(record.mock.calls.map((call) => call[1])).toEqual([
+      { ...event, collectionContext: "context-a" },
+    ]);
+    // Consent turned off and on elsewhere meanwhile: a new context, so the old work records nothing.
+    consent = "essential";
+    now = 120_002;
+    gate.productContext(connection);
+    await tick();
+    expect(gate.productContext(connection)).toBeUndefined();
+    consent = "product";
+    context = "context-b";
+    now = 180_003;
+    gate.productContext(connection);
+    await tick();
+    gate.recordInContext(connection, began, event);
+    await tick();
+    expect(record).toHaveBeenCalledOnce();
+  });
+  it("keeps a voice job paired during status refresh and long correction", async () => {
+    let now = 0;
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const status = vi.fn(async (): Promise<ScientAnalyticsStatus> => ({
+      available: true,
+      consent: "diagnostic",
+      collectionContext: "voice-context",
+      voiceLifecycleVersion: 2,
+    }));
+    const gate = createAnalyticsClientGate({ record, status, now: () => now });
+    const connection = {};
+    await gate.readStatus(connection);
+    now = 60_001;
+    const voice = gate.beginVoiceOperation(connection);
+    voice({ name: "voice.transcription.started", properties: { voiceSchemaVersion: 2 } });
+    await tick();
+    now = 180_000;
+    voice({ name: "voice.transcription.completed", properties: { voiceSchemaVersion: 2 } });
+    voice({ name: "voice.transcription.cancelled", properties: {} });
+    await tick();
+    expect(record.mock.calls.map((call) => call[1])).toEqual([
+      {
+        name: "voice.transcription.started",
+        properties: { voiceSchemaVersion: 2 },
+        collectionContext: "voice-context",
+      },
+      {
+        name: "voice.transcription.completed",
+        properties: { voiceSchemaVersion: 2 },
+        collectionContext: "voice-context",
+      },
+    ]);
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replay voice work from before consent, a reset context, or an older server", async () => {
+    let next: ScientAnalyticsStatus = { available: true, consent: "off" };
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({ record, status: async () => next });
+    const connection = {};
+    await gate.readStatus(connection);
+    const old = gate.beginVoiceOperation(connection);
+    next = {
+      available: true,
+      consent: "product",
+      collectionContext: "first",
+      voiceLifecycleVersion: 2,
+    };
+    await gate.readStatus(connection);
+    old({ name: "voice.transcription.completed", properties: {} });
+    const admitted = gate.beginVoiceOperation(connection);
+    admitted({ name: "voice.transcription.started", properties: {} });
+    await tick();
+    next = { ...next, collectionContext: "after-delete" };
+    await gate.readStatus(connection);
+    admitted({ name: "voice.transcription.completed", properties: {} });
+    next = { available: true, consent: "product", collectionContext: "older-server" };
+    await gate.readStatus(connection);
+    const legacy = gate.beginVoiceOperation(connection);
+    legacy({ name: "voice.transcription.started", properties: {} });
+    legacy({ name: "voice.transcription.completed", properties: {} });
+    await tick();
+    expect(record).toHaveBeenCalledOnce();
+    expect(record.mock.calls[0]?.[1].name).toBe("voice.transcription.started");
+  });
+
+  it("keeps recording failures distinct and permits reliability-only voice failures", async () => {
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({
+      record,
+      status: async (): Promise<ScientAnalyticsStatus> => ({
+        available: true,
+        consent: "essential",
+        collectionContext: "essential",
+        voiceLifecycleVersion: 2,
+      }),
+    });
+    const connection = {};
+    await gate.readStatus(connection);
+    gate.record(connection, {
+      name: "voice.recording.failed",
+      properties: { failureClass: "permission" },
+    });
+    const voice = gate.beginVoiceOperation(connection);
+    voice({ name: "voice.transcription.started", properties: {} });
+    voice({ name: "voice.transcription.failed", properties: { failureClass: "audio" } });
+    await tick();
+    expect(record.mock.calls.map((call) => call[1].name)).toEqual([
+      "voice.recording.failed",
+      "voice.transcription.failed",
+    ]);
+  });
   it("observes only the current visible view after discovery, with no historic replay", async () => {
     let resolve!: (status: ScientAnalyticsStatus) => void;
     let next: ScientAnalyticsStatus | null = null;
@@ -232,6 +395,33 @@ describe("UI operation outcomes", () => {
         },
         collectionContext: "context-1",
       },
+    ]);
+  });
+
+  it("says which step a failed export failed at, and whose step that was", async () => {
+    const status = vi.fn(async () => ({
+      available: true,
+      consent: "product" as const,
+      collectionContext: "context-1",
+    }));
+    const record = vi.fn<(connection: object, event: ScientAnalyticsUiEvent) => Promise<void>>(
+      async () => undefined,
+    );
+    const gate = createAnalyticsClientGate({ status, record, now: () => 0 });
+    const connection = {};
+    await gate.readStatus(connection);
+    gate.beginOperation(connection, "pdf-export")("failed", "renderer-unavailable");
+    gate.beginOperation(connection, "pdf-export")("failed");
+    await tick();
+    const failures = record.mock.calls
+      .map((call) => call[1])
+      .filter((event) => event.name === "scient.operation.failed");
+    expect(failures.map((event) => event.properties)).toEqual([
+      expect.objectContaining({
+        failureOwner: "scient",
+        failureCategory: "renderer-unavailable",
+      }),
+      expect.objectContaining({ failureOwner: "unknown", failureCategory: "unknown" }),
     ]);
   });
 

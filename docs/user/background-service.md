@@ -69,18 +69,30 @@ environment. Copy and run that command on the machine that hosts the
 environment; it names the installation and data directory that reported the
 space.
 
+When the desktop app or the background service runs Scient on that machine,
+select **Reclaim** in Settings on web or desktop. Scient checks for free disk
+space, then stops, repairs the database, and starts again. It is offline while
+the repair runs, and running agents stop. If the repair fails, Settings shows
+why. In other cases, such as a server you started by hand, run the command
+below on the machine that hosts the environment.
+
 The command runs `doctor`. It reports the database size and the space it can
 reclaim, then asks which repairs to run; `--fix` runs the recommended ones
 without a prompt, and `--dry-run` only reports. An installed background service
 for the same data directory is stopped for the repair and started again
 afterwards, also when the repair fails. Quit the desktop app or a server you
-started by hand first: the repair refuses to touch a database that is in use.
+started by hand first: the repair refuses to touch a database that is in use,
+and names the server process that holds it when it can tell. While the repair
+runs, a server started for the same data directory, for example by a desktop
+app connecting over SSH, is refused until the repair ends.
 
-The repair can take several minutes on a large database. It rebuilds the
-database through a temporary copy, so it needs free space of about the
-database's size twice over: once in the system temporary directory (`TMPDIR`
-or `/tmp` on Linux and macOS) and once next to the database for its
-write-ahead log.
+The repair's time grows with the size of the whole database, not only the
+space it reclaims, and can exceed an hour on a large database or a slow disk;
+`t3 doctor` shows each step as it runs. It rebuilds the database through a
+temporary copy, so it needs free space of about twice the data still in use
+(the database size minus the reclaimable space): once in the system temporary
+directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it is not set) and
+once next to the database for its write-ahead log.
 
 If you upgraded from an older version, its original database (`state.sqlite`)
 is kept next to the current one. Scient still reads it to bring in older

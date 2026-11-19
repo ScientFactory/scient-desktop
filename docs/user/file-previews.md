@@ -59,7 +59,7 @@ follow a renamed or moved file. Scient's own records and tool folders, such as
 `.scient` and `.git`, stay as they are.
 
 The same file list can sit beside other side-panel tabs too, such as a browser
-page, Sources, or a Scientific computing session. Use the folder button at the
+page, the Library, or a Scientific computing session. Use the folder button at the
 end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
 and PDFs included. Clicking a file opens it in its own tab. Diff keeps its own
 file list, and a panel too narrow for both shows the page alone.
@@ -179,6 +179,20 @@ not yet relocate an already open file automatically.
   file in the file tree and choose **Open source**.
 - If the integrated browser is unavailable or an HTML preview fails, Scient
   opens the source instead.
+
+Word (`.docx`) and PowerPoint (`.pptx`) files open in a reader with the PDF reader's
+controls: the page number and steps, zoom (buttons, pinch, the PDF reader's zoom keys,
+**Fit width** and actual size), a sidebar of pages, and search (**⌘F**), which marks every
+match. Their text can be
+selected, copied and quoted (see [Message Scient](composer.md#quote-a-word-page-or-slide)).
+A very long document shows its first 1,000 pages, and a paragraph or table too long to lay
+out quickly ends the preview there; each says **Preview limited**. Open the file in Word or PowerPoint for the rest. An open file
+reloads only when the file itself changes, not each time the agent runs a command, and a
+file opened again returns to the page and zoom it was left at. The last two PDF, Word or
+PowerPoint files you left in the file panel stay open in the background, so switching back to
+one shows it exactly as you left it, without drawing it again. Scient keeps them within a memory
+budget that follows your computer's memory; a very long document may be opened afresh instead.
+A file changed while you were away shows its new version when you come back.
 
 To save a project Markdown file as a PDF, expand the editor's formatting tools
 and choose **More actions → Export → PDF**. Scient saves your latest edits,

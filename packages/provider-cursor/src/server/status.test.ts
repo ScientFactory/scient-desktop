@@ -4,23 +4,26 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import type { CursorSettings } from "../settings.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 
 import {
   buildCursorCapabilitiesFromSdkModel,
   buildCursorDiscoveredModelsFromSdk,
   buildCursorProviderSnapshot,
+  buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "./status.ts";
 import { makeCursorCommandCatalog } from "./commandCatalog.ts";
-import { parseCursorAboutOutput } from "./about.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 import { hasCursorSkillMention, probeCursorSkills, rewriteCursorSkillMentions } from "./skills.ts";
 import { loadCursorSdk } from "./sdk.ts";
@@ -399,6 +402,21 @@ describe("Cursor command catalog", () => {
   );
 });
 
+describe("buildInitialCursorProviderSnapshot", () => {
+  effectIt.effect.each([true, false])(
+    "advertises manual compaction only when enabled (%s)",
+    (enabled) =>
+      Effect.gen(function* () {
+        const provider = yield* buildInitialCursorProviderSnapshot({
+          ...baseCursorSettings,
+          enabled,
+        });
+
+        expect(provider.slashCommands).toEqual(enabled ? [COMPACT_SLASH_COMMAND] : []);
+      }),
+  );
+});
+
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
@@ -416,7 +434,7 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
-      supportsConversationRollback: false,
+      supportsConversationRollback: true,
     });
   });
 
@@ -464,7 +482,8 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor SDK model discovery returned no built-in models.",
       models: [],
-      supportsConversationRollback: false,
+      slashCommands: [COMPACT_SLASH_COMMAND],
+      supportsConversationRollback: true,
     });
   });
 });
@@ -489,19 +508,32 @@ describe("Cursor SDK model discovery", () => {
     );
   });
 
-  it("filters invalid and duplicate SDK model entries", () => {
+  it("keeps catalog aliases and filters invalid and duplicate SDK model entries", () => {
+    const composer = {
+      id: "composer-2",
+      displayName: "Composer 2",
+      aliases: [" composer-latest ", "", "composer"],
+    } satisfies SDKModel;
     expect(
       buildCursorDiscoveredModelsFromSdk([
         sdkParameterizedModel,
         { ...sdkParameterizedModel, displayName: "Duplicate" },
         { id: "", displayName: "Invalid" },
+        composer,
       ]),
-    ).toEqual([
+    ).toStrictEqual([
       {
         slug: "claude-opus-4-8",
         name: "Opus 4.8",
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(sdkParameterizedModel),
+      },
+      {
+        slug: "composer-2",
+        name: "Composer 2",
+        aliases: ["composer-latest", "composer"],
+        isCustom: false,
+        capabilities: buildCursorCapabilitiesFromSdkModel(composer),
       },
     ]);
   });
@@ -534,6 +566,7 @@ describe("checkCursorProviderStatus", () => {
 
       expect(provider).toMatchObject({
         status: "ready",
+        slashCommands: [COMPACT_SLASH_COMMAND],
         auth: {
           status: "authenticated",
           type: "api-key",
@@ -545,6 +578,33 @@ describe("checkCursorProviderStatus", () => {
           { slug: "internal/cursor-model", isCustom: true },
         ],
       });
+    }),
+  );
+
+  effectIt.effect("allows slow SDK discovery with a configured readiness timeout", () =>
+    Effect.gen(function* () {
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-key",
+        T3CODE_CURSOR_PROBE_TIMEOUT_MS: "30000",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.sleep("20 seconds").pipe(
+              Effect.as({
+                user: {
+                  apiKeyName: "test",
+                  userEmail: "cursor@example.com",
+                  createdAt: "2026-01-01",
+                },
+                models: [sdkParameterizedModel],
+              }),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* Fiber.join(fiber)).status).toBe("ready");
     }),
   );
 
@@ -707,6 +767,36 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
+  effectIt.effect("does not report a single slow catalog read as a provider error", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() => {
+            reads += 1;
+            return reads === 1
+              ? Effect.never
+              : Effect.succeed({
+                  user: {
+                    apiKeyName: "test-key",
+                    userEmail: "cursor@example.com",
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                  },
+                  models: [sdkParameterizedModel],
+                });
+          }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      const provider = yield* Fiber.join(fiber);
+
+      expect(provider.status).not.toBe("error");
+    }),
+  );
+
   effectIt.effect("requires a Cursor API key without probing any external Cursor binary", () =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
@@ -725,71 +815,4 @@ describe("checkCursorProviderStatus", () => {
       });
     }),
   );
-});
-
-describe("parseCursorAboutOutput", () => {
-  it("parses json about output and forwards subscription metadata", () => {
-    expect(
-      parseCursorAboutOutput({
-        code: 0,
-        stdout: JSON.stringify({
-          cliVersion: "2026.04.09-f2b0fcd",
-          subscriptionTier: "Team",
-          userEmail: "jmarminge@gmail.com",
-        }),
-        stderr: "",
-      }),
-    ).toEqual({
-      version: "2026.04.09-f2b0fcd",
-      status: "ready",
-      auth: {
-        status: "authenticated",
-        email: "jmarminge@gmail.com",
-        type: "Team",
-        label: "Cursor Team Subscription",
-      },
-    });
-  });
-
-  it("treats json about output with a logged-out email as unauthenticated", () => {
-    expect(
-      parseCursorAboutOutput({
-        code: 0,
-        stdout: JSON.stringify({
-          cliVersion: "2026.04.09-f2b0fcd",
-          subscriptionTier: "Team",
-          userEmail: "Not logged in",
-        }),
-        stderr: "",
-      }),
-    ).toEqual({
-      version: "2026.04.09-f2b0fcd",
-      status: "error",
-      auth: {
-        status: "unauthenticated",
-      },
-      message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
-    });
-  });
-
-  it("treats json about output with a null email as unauthenticated", () => {
-    expect(
-      parseCursorAboutOutput({
-        code: 0,
-        stdout: JSON.stringify({
-          cliVersion: "2026.04.09-f2b0fcd",
-          subscriptionTier: null,
-          userEmail: null,
-        }),
-        stderr: "",
-      }),
-    ).toEqual({
-      version: "2026.04.09-f2b0fcd",
-      status: "error",
-      auth: {
-        status: "unauthenticated",
-      },
-      message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
-    });
-  });
 });

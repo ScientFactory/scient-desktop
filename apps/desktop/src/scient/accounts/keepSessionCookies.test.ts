@@ -2,6 +2,8 @@ import * as NodeEvents from "node:events";
 import type { Cookie, Session } from "electron";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { keepSessionCookies, keptCookie } from "./keepSessionCookies.ts";
+import { mainInsertTracker, makeInsertTracker } from "./mainInserts.ts";
+import { rememberAccountsSession } from "./sessionIdentity.ts";
 
 const sessionCookie: Cookie = {
   name: "shibsession",
@@ -65,5 +67,35 @@ describe("keepSessionCookies", () => {
     cookies.emit("changed", {}, sessionCookie, "inserted", false);
     vi.advanceTimersByTime(5_000);
     expect(cookies.flushStore).toHaveBeenCalledTimes(1);
+  });
+
+  it("records what lands in Main, but not its own upkeep of a session cookie", () => {
+    vi.setSystemTime(1_000_000);
+    const session = { cookies: fakeSession() };
+    rememberAccountsSession(session as unknown as Session, "environment");
+    keepSessionCookies(session);
+    const tracker = mainInsertTracker(session)!;
+    vi.setSystemTime(1_010_000);
+    session.cookies.emit("changed", {}, sessionCookie, "inserted", false);
+    expect(tracker.touchedSince(["example.ac.il"], 1_005_000)).toBe(true);
+    vi.setSystemTime(1_020_000);
+    session.cookies.emit("changed", {}, { ...sessionCookie, session: false }, "inserted", false);
+    expect(tracker.touchedSince(["example.ac.il"], 1_015_000)).toBe(false);
+    expect(mainInsertTracker({ cookies: fakeSession() })).toBeUndefined();
+  });
+});
+
+describe("the Main insert tracker", () => {
+  it("vouches only for times since it started, and raises that floor as it forgets sites", () => {
+    const tracker = makeInsertTracker(100, 2);
+    tracker.record("a.test", 200);
+    tracker.record("b.test", 300);
+    expect(tracker.touchedSince(["a.test"], 150)).toBe(true);
+    expect(tracker.touchedSince(["a.test"], 250)).toBe(false);
+    expect(tracker.touchedSince(["c.test"], 50)).toBe(true);
+    tracker.record("c.test", 400);
+    expect(tracker.touchedSince(["a.test"], 150)).toBe(true);
+    expect(tracker.touchedSince(["a.test"], 250)).toBe(false);
+    expect(tracker.touchedSince(["b.test"], 250)).toBe(true);
   });
 });

@@ -1,50 +1,8 @@
 /**
- * Emit queue Send and release decisions in one command so the terminal hold fence observes a single
- * release boundary. Direct idle sends also resume a held queue.
+ * Scient's queue additions around upstream's `queued-run.start`: a direct user send on an idle
+ * thread releases a held queue, and an older Scient client's Send is read as `queued-run.start`.
  */
-import type {
-  OrchestrationV2Command,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2Run,
-  OrchestrationV2ThreadProjection,
-  RunId,
-} from "@t3tools/contracts";
-import { queuedRunSendRefusal } from "@t3tools/shared/scientQueuedRunSend";
-
-import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
-
-const REFUSAL_MESSAGES = {
-  not_queued: "The queued message has already started or was removed.",
-  automatic: "Automatic deliveries cannot be sent from the queue.",
-  busy: "Wait for the current turn to finish, or steer this message into it.",
-} as const;
-
-/**
- * Send on `runId`: automatic completion deliveries keep going first, then the
- * chosen message, then the other queued messages in their current order. Every
- * queued run is released. Returns the refusal text when the server refuses.
- */
-export function planQueuedRunSend(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
-  runId: RunId,
-):
-  | { readonly refusal: string }
-  | { readonly refusal: null; readonly runs: ReadonlyArray<OrchestrationV2Run> } {
-  const refusal = queuedRunSendRefusal(projection, runId);
-  if (refusal !== null) return { refusal: REFUSAL_MESSAGES[refusal] };
-  const queued = queuedRunsInDeliveryOrder(projection);
-  const automatic = queued.filter((run) => isAutomaticCompletionRun(projection, run));
-  const chosen = queued.filter((run) => run.id === runId);
-  const rest = queued.filter((run) => run.id !== runId && !automatic.includes(run));
-  return {
-    refusal: null,
-    runs: [...automatic, ...chosen, ...rest].map((run, index) => ({
-      ...run,
-      queuePosition: index + 1,
-      queueHeld: false,
-    })),
-  };
-}
+import type { OrchestrationV2Command, OrchestrationV2DomainEvent } from "@t3tools/contracts";
 
 /**
  * Use original Send intent, not the resulting run, to release a held queue. Queue/Steer can start
@@ -78,12 +36,15 @@ export function startsDirectUserRun(
 }
 
 /**
- * The queued runs a direct user send releases: every queued run, held or not.
- * A failure whose hold reaction has not run yet leaves its queue unheld; the
- * release written here is the boundary that reaction must respect.
+ * Scient builds before 0.6.26, and phones built from them, send a held message now as
+ * `queue.resume` with its `runId`. That is upstream's `queued-run.start`.
  */
-export function queuedRunsReleasedByDirectSend(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-): ReadonlyArray<OrchestrationV2Run> {
-  return runs.filter((run) => run.status === "queued");
+export function withLegacyQueuedRunStart(command: OrchestrationV2Command): OrchestrationV2Command {
+  if (command.type !== "queue.resume" || command.runId === undefined) return command;
+  return {
+    type: "queued-run.start",
+    commandId: command.commandId,
+    threadId: command.threadId,
+    runId: command.runId,
+  };
 }

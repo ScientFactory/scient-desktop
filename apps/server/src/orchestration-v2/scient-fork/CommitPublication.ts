@@ -8,6 +8,7 @@ class CommitPublicationTransactionError extends Schema.TaggedError<CommitPublica
   "CommitPublicationTransactionError",
   { message: Schema.String },
 ) {}
+export const isCommitPublicationTransactionError = Schema.is(CommitPublicationTransactionError);
 
 /** Keep the application cursor's commit and publication order identical. */
 export const makeCommitPublication = Effect.fnUntraced(function* (sql: SqlClient.SqlClient) {

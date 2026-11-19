@@ -2,8 +2,8 @@
  * Each Scratch thread gets its own folder; named projects get a new Git repository.
  * @module ManagedProjectFolders
  */
-import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { CommandId, GitCommandError, ProjectId, type ThreadId } from "@t3tools/contracts";
+import { foldLatinDiacritics, newProjectFolderName } from "@t3tools/shared/path";
 // SCIENT-FORK:START — product admission policy.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 // SCIENT-FORK:END
@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -34,10 +35,16 @@ import {
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
-  {},
+  {
+    baseDir: Schema.String,
+    repositoryRoot: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
-    return "Threads without a project are not available on this environment.";
+    if (this.repositoryRoot === undefined) {
+      return "Threads without a project are not available on this environment.";
+    }
+    return `Threads without a project are off because the Scient data folder ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point SCIENT_NEXT_HOME (or --base-dir) at a folder outside it. Then restart Scient.`;
   }
 }
 
@@ -65,7 +72,17 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
   }
 }
 
+// SCIENT-FORK: No project folders live at ServerConfig.scratchWorkspaceRoot.
+
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
+
+// The spawner checks cwd before spawning, so NotFound from spawn itself means a missing executable.
+const isMissingExecutable = (cause: unknown) =>
+  PlatformError.isPlatformError(cause) &&
+  cause.reason._tag === "NotFound" &&
+  cause.reason.method === "spawn";
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFolderError>()(
   "NamedProjectFolderError",
@@ -75,7 +92,9 @@ export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFold
   },
 ) {
   override get message(): string {
-    return "Failed to create the project folder.";
+    return isGitCommandError(this.cause) && isMissingExecutable(this.cause.cause)
+      ? "Git isn't installed on this machine. Install Git to create a project."
+      : "Failed to create the project folder.";
   }
 }
 
@@ -135,7 +154,7 @@ export class ManagedProjectFolders extends Context.Service<
 >()("t3/project/ManagedProjectFolders") {}
 
 const folderWords = (text: string) =>
-  text
+  foldLatinDiacritics(text)
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean)
@@ -255,33 +274,76 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),
   );
+  const unavailable = () => new ScratchUnavailableError({ baseDir: scratchParent });
+  // Scient re-probes while Scratch is unavailable, so say why once per repository.
+  let warnedRepositoryRoot: string | undefined;
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.isRepository(scratchParent).pipe(
-      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-      Effect.flatMap((isRepository) =>
-        isRepository || !SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled
-          ? Effect.succeed(Option.none<string>())
-          : verifyScratchRoot.pipe(
-              Effect.map((plain) =>
-                plain ? Option.some(configuredScratchRoot) : Option.none<string>(),
-              ),
+    gitWorkflow.repositoryRoot(scratchParent).pipe(
+      Effect.catchIf(isGitMissing, () => Effect.succeed(null)),
+      Effect.flatMap(
+        (
+          repositoryRoot,
+        ): Effect.Effect<
+          Result.Result<string, ScratchUnavailableError>,
+          PlatformError.PlatformError
+        > => {
+          if (repositoryRoot !== null) {
+            const insideRepository = new ScratchUnavailableError({
+              baseDir: scratchParent,
+              repositoryRoot,
+            });
+            if (warnedRepositoryRoot === repositoryRoot) {
+              return Effect.succeed(Result.fail(insideRepository));
+            }
+            warnedRepositoryRoot = repositoryRoot;
+            return Effect.logWarning(insideRepository.message).pipe(
+              Effect.as(Result.fail(insideRepository)),
+            );
+          }
+          if (!SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled) {
+            return Effect.succeed(Result.fail(unavailable()));
+          }
+          return verifyScratchRoot.pipe(
+            Effect.map((plain) =>
+              plain ? Result.succeed(configuredScratchRoot) : Result.fail(unavailable()),
             ),
+          );
+        },
       ),
       Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Result.fail(unavailable())),
       ),
     ),
     (exit) =>
-      Exit.isSuccess(exit) && Option.isSome(exit.value) ? Duration.infinity : Duration.zero,
+      Exit.isSuccess(exit) && Result.isSuccess(exit.value) ? Duration.infinity : Duration.zero,
   );
-  const scratchRoot = probe.pipe(
-    Effect.filterOrElse(Option.isNone, (root) =>
-      verifyScratchRoot.pipe(Effect.map((plain) => (plain ? root : Option.none<string>()))),
+  const scratchProbe = probe.pipe(
+    Effect.filterOrElse(Result.isFailure, (root) =>
+      verifyScratchRoot.pipe(Effect.map((plain) => (plain ? root : Result.fail(unavailable())))),
     ),
     Effect.catchCause((cause) =>
-      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Result.fail(unavailable())),
     ),
     Effect.onInterrupt(() => invalidate),
+  );
+  // A symlinked scratch folder lets the No project live at either the link or its target.
+  const scratchProjectRoot = (root: string) =>
+    fileSystem.realPath(root).pipe(
+      Effect.flatMap((target) =>
+        target === root
+          ? Effect.succeed(root)
+          : projects
+              .getByWorkspaceRoot(target)
+              .pipe(Effect.map((project) => (Option.isSome(project) ? target : root))),
+      ),
+      Effect.orElseSucceed(() => root),
+    );
+  const scratchRoot = scratchProbe.pipe(
+    Effect.flatMap((probed) =>
+      Result.isSuccess(probed)
+        ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
+        : Effect.succeedNone,
+    ),
   );
 
   // SCIENT-FORK:END
@@ -304,15 +366,9 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
 
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
-      const workspaceRoot = yield* scratchRoot.pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(new ScratchUnavailableError()),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
-      yield* makeScratchFolder(workspaceRoot);
+      const probedRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
+      yield* makeScratchFolder(probedRoot);
+      const workspaceRoot = yield* scratchProjectRoot(probedRoot);
       const id = yield* random
         .uuidV4()
         .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));

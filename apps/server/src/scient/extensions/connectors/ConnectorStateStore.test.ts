@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -52,7 +53,10 @@ const addRecord = (directory: string) =>
   Effect.gen(function* () {
     const store = yield* makeConnectorStateStore(directory);
     return yield* store.update((current) =>
-      Effect.succeed([undefined, { connectors: [...current.connectors, record] }] as const),
+      Effect.succeed([
+        undefined,
+        { ...current, connectors: [...current.connectors, record] },
+      ] as const),
     );
   });
 
@@ -80,7 +84,10 @@ describe("connector state size limit", () => {
       const store = yield* makeConnectorStateStore(over);
       const refused = yield* Effect.flip(
         store.update((current) =>
-          Effect.succeed([undefined, { connectors: [...current.connectors, record] }] as const),
+          Effect.succeed([
+            undefined,
+            { ...current, connectors: [...current.connectors, record] },
+          ] as const),
         ),
       );
       expect(refused.reason).toBe("limit-reached");
@@ -124,6 +131,7 @@ describe("connector state size limit", () => {
           Effect.succeed([
             undefined,
             {
+              ...current,
               connectors: current.connectors.map((entry) => ({ ...entry, displayName: "Renamed" })),
             },
           ] as const),
@@ -138,6 +146,79 @@ describe("connector state size limit", () => {
       expect(reloaded.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
         "connector-record-unreadable",
       ]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("GitHub removal", () => {
+  it.live("is remembered across restarts, and files without it still load", () =>
+    Effect.gen(function* () {
+      const directory = yield* seededDirectory(
+        JSON.stringify({ formatVersion: 2, connectors: [encodeRecord(record)] }),
+      );
+      const store = yield* makeConnectorStateStore(directory);
+      expect(yield* store.read).toMatchObject({
+        connectors: [record],
+        githubFromSourceControlDeclined: false,
+      });
+      yield* store.update(() =>
+        Effect.succeed([
+          undefined,
+          { connectors: [], githubFromSourceControlDeclined: true },
+        ] as const),
+      );
+      expect(JSON.parse(yield* stateText(directory))).toMatchObject({
+        githubFromSourceControlDeclined: true,
+      });
+      expect(
+        (yield* (yield* makeConnectorStateStore(directory)).read).githubFromSourceControlDeclined,
+      ).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("connector agent state compatibility", () => {
+  it.live.each([false, true])(
+    "round-trips agent choices with the compatible format (restricted=%s)",
+    (restricted) =>
+      Effect.gen(function* () {
+        const directory = yield* seededDirectory(
+          JSON.stringify({ formatVersion: 2, connectors: [] }),
+        );
+        const store = yield* makeConnectorStateStore(directory);
+        const saved = restricted
+          ? { ...record, agents: [ProviderInstanceId.make("codex")] }
+          : record;
+        yield* store.update((current) =>
+          Effect.succeed([undefined, { ...current, connectors: [saved] }] as const),
+        );
+        expect(JSON.parse(yield* stateText(directory)).formatVersion).toBe(restricted ? 3 : 2);
+        const reloaded = yield* (yield* makeConnectorStateStore(directory)).read;
+        expect(reloaded.writable).toBe(true);
+        expect(reloaded.connectors).toEqual([saved]);
+        if (restricted) {
+          yield* store.update((current) =>
+            Effect.succeed([undefined, { ...current, connectors: [record] }] as const),
+          );
+          expect(JSON.parse(yield* stateText(directory)).formatVersion).toBe(2);
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("decodes a v3 file and retains removed-instance ids and Source Control preferences", () =>
+    Effect.gen(function* () {
+      const saved = { ...record, agents: [ProviderInstanceId.make("removed-agent")] };
+      const directory = yield* seededDirectory(
+        JSON.stringify({
+          formatVersion: 3,
+          connectors: [saved],
+          githubFromSourceControlDeclined: true,
+        }),
+      );
+      const loaded = yield* (yield* makeConnectorStateStore(directory)).read;
+      expect(loaded.writable).toBe(true);
+      expect(loaded.connectors).toEqual([saved]);
+      expect(loaded.githubFromSourceControlDeclined).toBe(true);
     }).pipe(Effect.scoped),
   );
 });

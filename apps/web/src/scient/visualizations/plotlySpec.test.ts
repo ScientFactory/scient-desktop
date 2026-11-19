@@ -109,14 +109,22 @@ describe("parsePlotlySource", () => {
     expect(parsed.hasNetworkContent).toBe(false);
   });
 
-  it("warns about compatible deprecated Mapbox traces", () => {
+  it("accepts removed Mapbox traces without a warning, since they draw as map traces", () => {
     const parsed = parsePlotlySource(
       JSON.stringify({ data: [{ type: "scattermapbox", lat: [1], lon: [2] }] }),
     );
 
-    expect(parsed.warnings).toHaveLength(1);
-    expect(parsed.warnings[0]).toContain("deprecated Mapbox");
+    expect(parsed.warnings).toEqual([]);
     expect(parsed.hasWebGl).toBe(true);
+    expect(parsed.hasMapTiles).toBe(true);
+  });
+
+  it("gives quiver plots the cartesian pan default", () => {
+    const parsed = parsePlotlySource(
+      JSON.stringify({ data: [{ type: "quiver", x: [0], y: [0], u: [1], v: [1] }] }),
+    );
+
+    expect(parsed.hasCartesian).toBe(true);
   });
 
   it("renders Plotly Express scatter output without treating dormant template defaults as active traces", () => {

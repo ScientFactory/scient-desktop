@@ -25,13 +25,30 @@ export class CheckoutSuspendedError extends Schema.TaggedError<CheckoutSuspended
   }
 }
 
-/** A bulk mutation was refused because an unfinished Overleaf sync could not be settled first. */
+/**
+ * A bulk mutation was refused because an unfinished Overleaf sync could not be settled
+ * first, or because an unreadable link record might describe one.
+ */
 export class CheckoutRecoveryRequiredError extends Schema.TaggedError<CheckoutRecoveryRequiredError>()(
   "CheckoutRecoveryRequiredError",
-  { checkout: Schema.String },
+  {
+    checkout: Schema.String,
+    reason: Schema.optional(
+      Schema.Literals(["unreadable-record", "newer-unfinished-record", "unlinked-unfinished-sync"]),
+    ),
+  },
 ) {
   override get message(): string {
-    return "An Overleaf sync in this project did not finish. Recover it before changing the project's files in bulk.";
+    switch (this.reason) {
+      case "unreadable-record":
+        return "Scient can't read one of its Overleaf link records, so it won't change project files in bulk. Set it aside in Settings › Synced folders › Overleaf, then try again.";
+      case "newer-unfinished-record":
+        return "A newer version of Scient left an Overleaf sync unfinished, so this version won't change project files in bulk. Finish that sync in the newer version, then try again. The record is listed in Settings › Synced folders › Overleaf.";
+      case "unlinked-unfinished-sync":
+        return "An Overleaf sync of a folder in this project did not finish before the folder was unlinked, so Scient won't change project files in bulk. Link the folder to the same Overleaf project again to finish it, then try again.";
+      default:
+        return "An Overleaf sync in this project did not finish. Recover it before changing the project's files in bulk.";
+    }
   }
 }
 
@@ -125,6 +142,30 @@ const missing = (error: unknown) =>
  * nothing at or above `path` exists and `skipMissing` is set.
  */
 async function locate(path: string, skipMissing: boolean): Promise<Located | null> {
+  if (!skipMissing) return examine(path, false);
+  // A skipped change runs outside the barrier, so only the requested path's own absence may
+  // skip it. Removed while being examined, it can fail a step (Windows' identity read has no
+  // error code) or leave its enclosing checkout as the nearest; an enclosing checkout or `.git`
+  // that vanished while the path still exists must refuse, never skip.
+  const gone = () =>
+    NodeFSP.stat(NodePath.resolve(path)).then(
+      () => false,
+      (error: unknown) => {
+        if (missing(error)) return true;
+        throw error;
+      },
+    );
+  let found: Located | null;
+  try {
+    found = await examine(path, true);
+  } catch (error) {
+    if (await gone()) return null;
+    throw error;
+  }
+  return found !== null && (await gone()) ? null : found;
+}
+
+async function examine(path: string, skipMissing: boolean): Promise<Located | null> {
   let current = NodePath.resolve(path);
   for (;;) {
     try {

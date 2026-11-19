@@ -50,6 +50,15 @@ export const VoiceLanguagePreference = Schema.Literals([
 ]);
 export type VoiceLanguagePreference = typeof VoiceLanguagePreference.Type;
 
+/**
+ * Who turns dictation into text. `local` is this computer's Whisper and `chatgpt` is ChatGPT through
+ * a provider's ChatGPT sign-in (Scient Agent or Codex). `auto` has not chosen yet: it dictates with
+ * a local model that is already set up, and otherwise offers ChatGPT, when a sign-in exists, beside
+ * the local models the first time the microphone is used.
+ */
+export const VoiceDictationEngine = Schema.Literals(["auto", "local", "chatgpt"]);
+export type VoiceDictationEngine = typeof VoiceDictationEngine.Type;
+
 export const VOICE_LANGUAGE_NAMES = {
   auto: "Automatic",
   ar: "Arabic",

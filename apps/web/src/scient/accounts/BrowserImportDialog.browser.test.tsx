@@ -16,6 +16,11 @@ const state = vi.hoisted(() => ({
   importCookies: vi.fn(),
   toast: vi.fn(),
   command: vi.fn(async () => ({ ok: true, value: { created: 2, updated: 1, skipped: 1 } })),
+  intoMain: vi.fn(),
+}));
+vi.mock("./mainFill", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mainFill")>()),
+  chromeSignInIntoMain: state.intoMain,
 }));
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: { listBrowserImportSources: async () => state.sources },
@@ -34,6 +39,7 @@ vi.mock("~/components/ui/toast", async (importOriginal) => ({
 }));
 vi.mock("./useAccounts", () => ({
   useAccountCommand: () => state.command,
+  toastAccountFailure: () => undefined,
 }));
 const snapshot: AccountsSnapshot = {
   agentAccess: true,
@@ -48,7 +54,7 @@ const snapshot: AccountsSnapshot = {
     onePassword: { state: "not-connected" },
   },
 };
-it("lists running-browser metadata and imports the selection only after quit and recheck", async () => {
+it("lists running-browser metadata, imports the selection only after quit and recheck, and says what it brought", async () => {
   state.sources = [
     { id: "chrome", name: "Chrome", profiles: [], unavailable: "browserRunning" },
     { id: "edge", name: "Edge", profiles: [], unavailable: "notInstalled" },
@@ -56,9 +62,10 @@ it("lists running-browser metadata and imports the selection only after quit and
   ];
   state.importCookies.mockReset().mockResolvedValue({
     kind: "imported",
-    imported: 1,
+    imported: 4,
     skipped: 0,
     skippedDomains: [],
+    importedSites: 2,
     targetName: "Work",
   });
   using _bridge = stubGlobal("desktopBridge", {
@@ -104,7 +111,10 @@ it("lists running-browser metadata and imports the selection only after quit and
     { id: "chrome", name: "Chrome", profiles: [{ directory: "Profile 1", name: "Work" }] },
   ];
   await page.getByRole("button", { name: "I’ve quit it" }).click();
-  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  await expect
+    .element(page.getByText("Chrome · synthetic@example.invalid · cookies for 2 sites"))
+    .toBeVisible();
+  expect(close).not.toHaveBeenCalled();
   expect(state.importCookies).toHaveBeenCalledOnce();
   expect(state.importCookies.mock.calls[0]?.[3]).toMatchObject({
     sourceProfileDirectory: "Profile 1",
@@ -113,9 +123,13 @@ it("lists running-browser metadata and imports the selection only after quit and
   });
 });
 
-it("imports a Chromium profile's saved passwords through the Accounts importer", async () => {
+it("imports a Chromium profile's saved passwords through the Accounts importer, saying so meanwhile", async () => {
   state.sources = [
-    { id: "chrome", name: "Chrome", profiles: [{ directory: "Default", name: "Personal" }] },
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [{ directory: "Default", name: "Personal", cookieCount: 1200 }],
+    },
   ];
   state.importCookies.mockReset().mockResolvedValue({
     kind: "imported",
@@ -126,13 +140,14 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
   });
   state.toast.mockReset();
   state.command.mockClear();
+  const passwords = Promise.withResolvers<{ content: string; skipped: number }>();
   using _bridge = stubGlobal("desktopBridge", {
     getLocalEnvironmentBootstraps: () => [],
     accounts: {
       sourceProfiles: async () => [
         { sourceId: "chrome", directory: "Default", name: "Personal", passwordCount: 7 },
       ],
-      readBrowserPasswords: async () => ({ content: "synthetic csv", skipped: 3 }),
+      readBrowserPasswords: () => passwords.promise,
     },
   });
   await using _screen = await render(
@@ -143,11 +158,15 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
       onClose={() => {}}
     />,
   );
+  await expect.element(page.getByText("Chrome · 1,200 cookies", { exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "Personal · Chrome" }).click();
   await expect
     .element(page.getByRole("checkbox", { name: "Also import saved passwords (7)" }))
     .toBeChecked();
   await page.getByRole("button", { name: "Import (1)", exact: true }).click();
+  await expect.element(page.getByRole("status")).toHaveTextContent("Importing saved passwords…");
+  passwords.resolve({ content: "synthetic csv", skipped: 3 });
+  await expect.element(page.getByRole("status")).not.toBeInTheDocument();
   await vi.waitFor(() =>
     expect(state.toast).toHaveBeenCalledWith({
       type: "success",
@@ -159,4 +178,176 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
     content: "synthetic csv",
     profileId: expect.stringMatching(/^profile-/),
   });
+});
+
+it("lists Chrome and Edge on Windows as protected, each offering a window of the installed browser", async () => {
+  state.sources = [
+    { id: "chrome", name: "Chrome", profiles: [], unavailable: "appBoundEncryption" },
+    { id: "edge", name: "Microsoft Edge", profiles: [], unavailable: "appBoundEncryption" },
+    { id: "brave", name: "Brave", profiles: [], unavailable: "notInstalled" },
+  ];
+  state.intoMain.mockReset().mockReturnValue(new Promise(() => {}));
+  state.importCookies.mockReset();
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    getClientPlatform: () => "win32",
+    accounts: {
+      sourceProfiles: async () => [],
+      chromeSignIn: vi.fn(),
+      chromeSignInBrowser: async () => ({ name: "Edge", canQuit: true }),
+    },
+  });
+  const environmentId = EnvironmentId.make("synthetic");
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={environmentId}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  await expect
+    .element(page.getByText("Windows protects this browser's saved sign-ins from other apps."))
+    .toHaveLength(2);
+  await expect.element(page.getByText("No browsers found")).not.toBeInTheDocument();
+  // Nothing to select: a protected browser is never imported from.
+  await expect.element(page.getByRole("checkbox")).toHaveLength(0);
+  const windowActions = page.getByRole("button", { name: "Sign in in an Edge window" });
+  await expect.element(windowActions).toHaveLength(2);
+  await windowActions.first().click();
+  await expect.element(page.getByRole("heading", { name: "Sign in in Edge" })).toBeVisible();
+  expect(state.intoMain).toHaveBeenCalledWith(environmentId, "https://accounts.google.com/");
+  expect(state.importCookies).not.toHaveBeenCalled();
+});
+
+it("imports Windows Chrome profiles through Chrome itself, once remote debugging is on", async () => {
+  state.sources = [
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [{ directory: "Profile 2", name: "Lab" }],
+      unavailable: "appBoundEncryption",
+      connection: { settingsUrl: "chrome://inspect/#remote-debugging" },
+    },
+  ];
+  const imported = Promise.withResolvers<unknown>();
+  state.importCookies.mockReset().mockReturnValue(imported.promise);
+  state.toast.mockReset();
+  let on = false;
+  const browserConnection = vi.fn(async () => ({ on }));
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    getClientPlatform: () => "win32",
+    accounts: {
+      sourceProfiles: async () => [
+        { sourceId: "chrome", directory: "Profile 2", name: "Lab", email: "lab@example.invalid" },
+      ],
+      browserConnection,
+      chromeSignIn: vi.fn(),
+      chromeSignInBrowser: async () => ({ name: "Chrome", canQuit: true }),
+    },
+  });
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  // A profile like any other: no protected row, nothing counted from files Windows locks.
+  await expect
+    .element(page.getByText("Windows protects this browser's saved sign-ins from other apps."))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Chrome · lab@example.invalid", { exact: true }))
+    .toBeVisible();
+  await page.getByRole("checkbox", { name: "Lab · Chrome" }).click();
+  await page.getByRole("button", { name: "Import (1)", exact: true }).click();
+  await expect.element(page.getByRole("heading", { name: "Import from Chrome" })).toBeVisible();
+  await expect.element(page.getByText("chrome://inspect/#remote-debugging")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Sign in in a Chrome window instead" }))
+    .toBeVisible();
+  const proceed = page.getByRole("button", { name: "Continue" });
+  await expect.element(proceed).toBeDisabled();
+  expect(state.importCookies).not.toHaveBeenCalled();
+  // The person turns the switch on in Chrome; the step notices by itself.
+  on = true;
+  await expect.element(page.getByText("It’s on.")).toBeVisible();
+  await proceed.click();
+  await expect
+    .element(page.getByText("Chrome asks “Allow remote debugging?”: click Allow in Chrome."))
+    .toBeVisible();
+  expect(state.importCookies).toHaveBeenCalledOnce();
+  expect(state.importCookies.mock.calls[0]?.[3]).toMatchObject({
+    sourceProfileDirectory: "Profile 2",
+    profileName: "Lab",
+    target: { kind: "new" },
+  });
+  imported.resolve({
+    kind: "imported",
+    imported: 9,
+    skipped: 0,
+    skippedDomains: [],
+    importedSites: 3,
+    targetName: "Lab",
+  });
+  await expect
+    .element(page.getByText("Chrome · lab@example.invalid · cookies for 3 sites"))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Chrome asks “Allow remote debugging?”: click Allow in Chrome."))
+    .not.toBeInTheDocument();
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "Remote debugging is still on in Chrome",
+      description: "To turn it off, open chrome://inspect/#remote-debugging in Chrome.",
+    }),
+  );
+});
+
+it("asks Chrome once per import: after a refusal its other profiles wait", async () => {
+  state.sources = [
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [
+        { directory: "Default", name: "Home" },
+        { directory: "Profile 2", name: "Lab" },
+      ],
+      unavailable: "appBoundEncryption",
+      connection: { settingsUrl: "chrome://inspect/#remote-debugging" },
+    },
+  ];
+  state.importCookies
+    .mockReset()
+    .mockResolvedValue({ kind: "blocked", reason: "connectionDeclined" });
+  state.toast.mockReset();
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    accounts: { sourceProfiles: async () => [], browserConnection: async () => ({ on: true }) },
+  });
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  await page.getByRole("checkbox", { name: "Home · Chrome" }).click();
+  await page.getByRole("checkbox", { name: "Lab · Chrome" }).click();
+  await page.getByRole("button", { name: "Import (2)", exact: true }).click();
+  await expect.element(page.getByText("It’s on.")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await vi.waitFor(() =>
+    expect(state.toast).toHaveBeenCalledWith({
+      type: "error",
+      title: "The browser didn't allow the connection. Try again and click Allow.",
+    }),
+  );
+  expect(state.importCookies).toHaveBeenCalledOnce();
+  // Both stay selected for another try.
+  await expect.element(page.getByRole("button", { name: "Import (2)", exact: true })).toBeEnabled();
 });

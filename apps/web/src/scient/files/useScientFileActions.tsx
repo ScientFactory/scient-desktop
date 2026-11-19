@@ -16,6 +16,7 @@ import {
 import {
   type ContextMenuItem,
   type EnvironmentId,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
   type ProjectDirectoryEntry,
   type WorkspaceEntryChange,
   type WorkspaceEntryChangeOutcome,
@@ -323,6 +324,15 @@ export function useScientFileActions(input: {
       primaryEnvironmentId: readPrimaryEnvironmentId(),
       connection: readPreparedConnection(environmentId),
       isDesktopRenderer: true,
+      // A WSL primary names files by Linux paths, so this computer's paths do not reach it.
+      primaryRunsInWsl:
+        window.desktopBridge
+          ?.getLocalEnvironmentBootstraps()
+          .some(
+            (bootstrap) =>
+              bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID &&
+              typeof bootstrap.runningDistro === "string",
+          ) === true,
     }) === "local";
 
   const refresh = () => {
@@ -533,7 +543,7 @@ export function useScientFileActions(input: {
     await windowFocused();
     // Clicked elsewhere meanwhile (the chat box, say): that is where the typing goes.
     if (early.typed.abandoned) return;
-    model.add(treePath);
+    controller.addProvisional(treePath);
     pendingCreateRef.current = { relativePath, kind };
     input.quietSelection();
     model.startRenaming(treePath, { removeIfCanceled: true });

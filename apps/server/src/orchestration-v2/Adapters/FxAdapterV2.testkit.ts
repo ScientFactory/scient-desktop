@@ -47,7 +47,7 @@ function layerFxProviderAdapterRegistryReplay(
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
-        .makeTempDirectory({
+        .makeTempDirectoryScoped({
           prefix: `t3-orchestration-v2-fx-replay-${transcript.scenario}-`,
         })
         .pipe(Effect.orDie);

@@ -10,6 +10,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { openDelimitedSource } from "./DelimitedTableSource.ts";
 import { openParquetSource } from "./ParquetTableSource.ts";
@@ -19,6 +20,8 @@ import {
   WorkbookFormatError,
   workbookTableSource,
 } from "./WorkbookTableSource.ts";
+
+const isWorkbookFormatError = Schema.is(WorkbookFormatError);
 
 /** Indexed sources stay open for paging; each can hold a few hundred megabytes. */
 const MAX_OPEN_SOURCES = 3;
@@ -83,7 +86,7 @@ function tableError(path: string, cause: unknown): DataFileTableError {
   return new DataFileTableError({
     path,
     reason: "invalid",
-    ...(cause instanceof WorkbookFormatError ? { detail: cause.message } : {}),
+    ...(isWorkbookFormatError(cause) ? { detail: cause.message } : {}),
   });
 }
 

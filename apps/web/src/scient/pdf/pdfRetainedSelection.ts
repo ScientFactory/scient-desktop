@@ -15,9 +15,14 @@ export function installPdfRetainedSelection(container: HTMLElement) {
   };
   const remember = () => {
     const selection = document.getSelection();
-    if (!selection?.rangeCount || selection.isCollapsed) return;
+    if (!selection?.rangeCount) return;
+    // Selection.isCollapsed forces layout; this runs for every caret move anywhere.
     const range = selection.getRangeAt(0);
-    if (container.contains(range.startContainer) && container.contains(range.endContainer))
+    if (
+      !range.collapsed &&
+      container.contains(range.startContainer) &&
+      container.contains(range.endContainer)
+    )
       saved = range.cloneRange();
   };
   const retain = (event: Event) => {

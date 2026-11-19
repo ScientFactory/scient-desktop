@@ -44,6 +44,7 @@ const LEGACY_SURFACE_FILES = new Set([
 // public user documentation. The bare-T3, T3 Connect and command rules apply here.
 const SHIPPED_SURFACE_ROOTS = [
   "apps/desktop/",
+  "apps/mobile/",
   "apps/server/",
   "apps/web/",
   "packages/",
@@ -51,8 +52,8 @@ const SHIPPED_SURFACE_ROOTS = [
   "docs/user/",
 ] as const;
 
-// Unshipped clients and the upstream site stay out until Scient ships them.
-const EXCLUDED_ROOTS = ["apps/mobile/", "apps/marketing/"] as const;
+// The upstream site stays out; Scient does not ship it.
+const EXCLUDED_ROOTS = ["apps/marketing/"] as const;
 // Test harness packages, vendored third-party headers, and developer tooling
 // are not product surfaces.
 const NON_SHIPPED_PATH = /(?:^|\/)(?:scripts|tests?|__tests__|testkit|fixtures)\/|-testing\//u;

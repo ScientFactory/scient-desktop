@@ -1,8 +1,8 @@
 import * as MacPermissions from "./permissions/MacPermissions.ts";
+import { handleStdioError } from "./app/stdioErrors.ts";
+
 for (const stream of [process.stdout, process.stderr]) {
-  stream.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code !== "EPIPE") throw err;
-  });
+  stream.on("error", handleStdioError);
 }
 
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
@@ -12,22 +12,27 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
-import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as DesktopVoice from "./app/DesktopVoice.ts";
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — the update facts journal the updater writes and the telemetry pipe delivers.
+import * as DesktopUpdateFacts from "./scient/updateOutcomes/DesktopUpdateFacts.ts";
+import * as DesktopUpdateFactsHttpDelivery from "./scient/updateOutcomes/DesktopUpdateFactsHttpDelivery.ts";
 // SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
@@ -42,12 +47,17 @@ import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
+import * as DesktopRestartTiming from "./app/DesktopRestartTiming.ts";
+import * as DesktopUpdateSave from "./app/DesktopUpdateSave.ts";
+// SCIENT-FORK:END
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopCliCommand from "./app/DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
+import * as DesktopPrimaryPaste from "./app/DesktopPrimaryPaste.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
@@ -77,6 +87,7 @@ import * as BrowserImport from "./preview/BrowserImport/BrowserImport.ts";
 import * as LinuxBrowserSecret from "./preview/BrowserImport/LinuxBrowserSecret.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as DesktopBrowserHost from "./preview/DesktopBrowserHost.ts";
+import * as LoopbackTunnel from "./preview/LoopbackTunnel.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PreviewPasskeys from "./preview/Passkeys.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
@@ -116,6 +127,7 @@ const layerDesktopEnvironment = Layer.unwrap(
     );
     const platform = yield* HostProcess.Platform;
     const processArch = yield* HostProcess.Architecture;
+    const env = yield* HostProcess.Environment;
     return DesktopEnvironment.layer({
       dirname: __dirname,
       homeDirectory: NodeOS.homedir(),
@@ -124,40 +136,29 @@ const layerDesktopEnvironment = Layer.unwrap(
       ...metadata,
       // The Finder-facing dev bundle contains a tiny bootstrap app, while the
       // real desktop main bundle still lives in this worktree.
-      ...(process.env.SCIENT_DEV_BOOTSTRAP === "1"
-        ? { appPath: __dirname, isPackaged: false }
-        : {}),
+      ...(env.SCIENT_DEV_BOOTSTRAP === "1" ? { appPath: __dirname, isPackaged: false } : {}),
     });
   }),
 );
 
-const resolveDesktopSshCliRunner = (
-  environment: DesktopEnvironment.DesktopEnvironment["Service"],
-): RemoteT3RunnerOptions => {
-  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
-  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
-    return {
-      nodeScriptPath: devRemoteEntryPath,
-      nodeEngineRange: serverPackageJson.engines.node,
-    };
-  }
-  // SCIENT-FORK: without a published Scient server for this build the remote
-  // runner reports that clearly instead of installing a substitute.
-  const packageSpec = resolveRemoteT3CliPackageSpec({
-    appVersion: environment.appVersion,
-    isDevelopment: environment.isDevelopment,
-  });
-  return {
-    ...(packageSpec === undefined ? {} : { packageSpec }),
-    nodeEngineRange: serverPackageJson.engines.node,
-  };
-};
-
 const layerDesktopSshEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const env = yield* HostProcess.Environment;
     return DesktopSshEnvironment.layer({
-      resolveCliRunner: Effect.sync(() => resolveDesktopSshCliRunner(environment)),
+      // Per connect: the login shell's environment is installed after this layer is built.
+      resolveCliRunner: Effect.sync(() =>
+        DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, env),
+      ),
+      resolveLauncherId: yield* Effect.cached(
+        DesktopSshEnvironment.readOrCreateLauncherId(
+          environment.path.join(environment.stateDir, "ssh-launcher-id"),
+        ).pipe(
+          Effect.provide(
+            yield* Effect.context<FileSystem.FileSystem | SecureRandom.SecureRandom>(),
+          ),
+        ),
+      ),
     });
   }),
 );
@@ -173,7 +174,7 @@ const layerElectron = Layer.mergeAll(
   ElectronTheme.layer,
   ElectronUpdater.layer,
   ElectronWindow.layer,
-  DesktopIpc.layer(Electron.ipcMain),
+  DesktopIpc.layer(Electron.ipcMain).pipe(Layer.provide(ElectronWindow.layer)),
 );
 
 const layerDesktopFoundation = Layer.mergeAll(
@@ -185,6 +186,9 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopClientSettings.layer,
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
+  DesktopPrimaryPaste.layer,
+  // SCIENT-FORK: restart receipts for consented update restarts.
+  DesktopRestartTiming.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,
 ).pipe(Layer.provideMerge(layerDesktopEnvironment));
@@ -199,6 +203,7 @@ const layerDesktopServerExposure = DesktopServerExposure.layer.pipe(
 );
 
 const layerDesktopPreview = PreviewManager.layer.pipe(
+  Layer.provideMerge(LoopbackTunnel.layer),
   Layer.provideMerge(DesktopBrowserHost.layer),
   // IPC needs both services on the same BrowserSession.
   Layer.provideMerge(BrowserImport.layer.pipe(Layer.provide(LinuxBrowserSecret.layer))),
@@ -208,7 +213,8 @@ const layerDesktopPreview = PreviewManager.layer.pipe(
 );
 
 const layerDesktopWindow = DesktopWindow.layer.pipe(
-  Layer.provideMerge(DesktopTelemetryPublisher.layer),
+  // SCIENT-FORK: the same journal layer as the updater's, so both share one journal.
+  Layer.provideMerge(DesktopTelemetryPublisher.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
   Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(layerDesktopServerExposure),
   Layer.provideMerge(layerDesktopPreview),
@@ -244,23 +250,33 @@ const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — keep the computer awake while threads work.
   DesktopKeepAwake.layer,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — feedback reports to the Scient team.
+  DesktopFeedback.layer,
+  // SCIENT-FORK:END
+  // SCIENT-FORK: update facts over HTTP for a primary without the telemetry pipes (WSL-only).
+  DesktopUpdateFactsHttpDelivery.layer.pipe(Layer.provide(DesktopUpdateFacts.layer)),
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
   DesktopCliCommand.layer,
-  layerDesktopSsh,
 ).pipe(
   Layer.provideMerge(layerDesktopVoice),
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(
     DesktopUpdates.layer.pipe(
       Layer.provide(DesktopUpdatePolicy.layer),
+      // SCIENT-FORK: the same journal layer as the telemetry publisher's.
+      Layer.provide(DesktopUpdateFacts.layer),
       // The same layer as the foundation's, so the policy is still read once.
       Layer.provide(DesktopManagedPolicy.layer),
     ),
   ),
+  // SCIENT-FORK: every window saves before a consented update restart.
+  Layer.provideMerge(DesktopUpdateSave.layer.pipe(Layer.provide(layerDesktopWindow))),
+  // Updates closes the same tunnels the SSH IPC opens before quitAndInstall.
+  Layer.provideMerge(layerDesktopSsh),
   Layer.provideMerge(layerDesktopWslBackend),
   Layer.provideMerge(layerDesktopLocalEnvironmentAuth),
 );

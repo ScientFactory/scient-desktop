@@ -38,6 +38,12 @@ import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { computeTranscript } from "./computeTranscript.ts";
 import { editScientNotebook, readScientNotebook, runScientNotebook } from "./notebookHandlers.ts";
 import {
+  checkScientResults,
+  listScientResults,
+  runScientResults,
+  scientResultMarkdown,
+} from "./resultHandlers.ts";
+import {
   ScientComputeToolkit,
   type ComputeToolImage,
   type ComputeToolRun,
@@ -553,6 +559,10 @@ const handlers = {
   scient_compute_control: controlScientCompute,
   scient_compute_setup: setupScientCompute,
   scient_compute_inventory: () => listScientComputeInventory(),
+  scient_results_run: runScientResults,
+  scient_results_list: () => listScientResults(),
+  scient_results_markdown: scientResultMarkdown,
+  scient_results_check: checkScientResults,
 } satisfies Parameters<typeof ScientComputeToolkit.toLayer>[0];
 
 export const ScientComputeToolkitHandlersLive = ScientComputeToolkit.toLayer(handlers);

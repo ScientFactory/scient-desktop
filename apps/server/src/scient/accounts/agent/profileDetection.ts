@@ -9,6 +9,8 @@ export const ProfileDetection = Schema.Struct({
   signOutLink: Schema.optional(Schema.Boolean),
   signInLink: Schema.optional(Schema.Boolean),
   limited: Schema.optional(Schema.Boolean),
+  /** Who the page says is signed in, from a site's own tag (GitHub, Overleaf). */
+  identity: Schema.optional(Schema.String),
 });
 export type ProfileDetection = typeof ProfileDetection.Type;
 
@@ -19,7 +21,9 @@ export const profileDetectionScript = String.raw`(() => {
   };
   const controls = Array.from(document.querySelectorAll('a, button, [role="button"], [role="menuitem"]')).filter(visible).map(element => element.textContent?.trim() ?? "");
   const passwords = Array.from(document.querySelectorAll('input[type="password"]')).filter(visible);
+  const identity = document.querySelector('meta[name="user-login"],meta[name="ol-usersEmail"]')?.getAttribute("content")?.trim().slice(0, 256);
   return {
+    ...(identity ? { identity } : {}),
     limited: new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(document.body?.innerText ?? ""),
     signOutLink: controls.some(text => /^(sign out|log out|logout|sign off)$/i.test(text)),
     signInLink: controls.some(text => /^(sign in|log in|login|sign up)$/i.test(text)),

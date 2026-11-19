@@ -5,6 +5,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
+import { InfoIcon } from "lucide-react";
+
+import { Button } from "../../components/ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
@@ -28,6 +32,54 @@ export function ActionError({ message }: { readonly message: string | null }) {
     <p role="alert" className="text-xs text-destructive-foreground">
       {message}
     </p>
+  );
+}
+
+/** An error short enough to read in place, with no unbroken run that would push the layout wide. */
+const fitsInline = (message: string) => message.length <= 110 && !/\S{36,}/.test(message);
+
+/**
+ * An error in a form or dialog. A short one is shown whole; a long one (a path, a program's own
+ * output) takes one line, and the full text opens from the info button beside it.
+ */
+export function ErrorNote({
+  message,
+  summary,
+}: {
+  readonly message: string | null;
+  /** The one line shown for a long error; the message itself, cut short, if not given. */
+  readonly summary?: string | undefined;
+}) {
+  if (message === null) return null;
+  if (fitsInline(message)) {
+    return (
+      <p role="alert" className="text-sm text-destructive-foreground [overflow-wrap:anywhere]">
+        {message}
+      </p>
+    );
+  }
+  return (
+    <div
+      role="alert"
+      className="flex min-w-0 items-center gap-1 text-sm text-destructive-foreground"
+    >
+      <span className="min-w-0 truncate">{summary ?? message}</span>
+      <span className="sr-only">{message}</span>
+      <Popover>
+        <PopoverTrigger
+          openOnHover
+          delay={150}
+          render={<Button size="icon-xs" variant="ghost-muted" aria-label="Show the full error" />}
+        >
+          <InfoIcon aria-hidden />
+        </PopoverTrigger>
+        <PopoverPopup align="start" width="lg" padding="comfortable">
+          <p className="text-xs whitespace-pre-wrap select-text [overflow-wrap:anywhere]">
+            {message}
+          </p>
+        </PopoverPopup>
+      </Popover>
+    </div>
   );
 }
 

@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Clock, Effect, FileSystem, Redacted, Schema, Stream } from "effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
@@ -83,7 +84,7 @@ const startDroid = Effect.fn("startDroid")(function* (input: {
     cwd,
     clientInfo: { name: "scient-droid-request-limit-test", version: "0" },
     environment: {
-      PATH: process.env.PATH,
+      PATH: (yield* HostProcess.Environment).PATH,
       HOME: home,
       TMPDIR: `${tmp}/`,
       FACTORY_PROFILE_DIR: NodePath.join(home, "profile"),

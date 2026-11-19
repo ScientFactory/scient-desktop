@@ -75,26 +75,24 @@ const codexCatalogAt = (version: string): ManagedRuntimeCatalogData => {
 describe("Codex managed runtime policy", () => {
   effectIt.effect("requires a real executable code-mode host beside a managed Codex binary", () =>
     Effect.gen(function* () {
-      const root = yield* Effect.tryPromise(() =>
+      const root = yield* Effect.promise(() =>
         NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-codex-health-")),
       );
       const binary = NodePath.join(root, "bin/codex");
       const host = NodePath.join(root, "bin/codex-code-mode-host");
       try {
-        yield* Effect.tryPromise(() =>
-          NodeFSP.mkdir(NodePath.dirname(binary), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() => NodeFSP.writeFile(binary, "codex", { mode: 0o755 }));
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(binary), { recursive: true }));
+        yield* Effect.promise(() => NodeFSP.writeFile(binary, "codex", { mode: 0o755 }));
         expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(false);
 
-        yield* Effect.tryPromise(() => NodeFSP.writeFile(host, "host", { mode: 0o600 }));
+        yield* Effect.promise(() => NodeFSP.writeFile(host, "host", { mode: 0o600 }));
         expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(false);
 
-        yield* Effect.tryPromise(() => NodeFSP.chmod(host, 0o755));
+        yield* Effect.promise(() => NodeFSP.chmod(host, 0o755));
         expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(true);
 
-        yield* Effect.tryPromise(() => NodeFSP.rm(host));
-        yield* Effect.tryPromise(() => NodeFSP.symlink(binary, host));
+        yield* Effect.promise(() => NodeFSP.rm(host));
+        yield* Effect.promise(() => NodeFSP.symlink(binary, host));
         expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(false);
         expect(resolveCodexCodeModeHostPath("C:\\Codex\\bin\\codex.exe", "win32")).toBe(
           "C:\\Codex\\bin\\codex-code-mode-host.exe",

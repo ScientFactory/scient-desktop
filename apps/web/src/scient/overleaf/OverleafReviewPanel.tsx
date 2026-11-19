@@ -263,7 +263,8 @@ export function OverleafReviewPanel(props: {
   if (!connection) {
     return (
       <div className="scient-reading-ui flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-        {workspace.loaded ? "This folder is no longer linked to Overleaf." : "Loading…"}
+        {workspace.error ??
+          (workspace.loaded ? "This folder is no longer linked to Overleaf." : "Loading…")}
       </div>
     );
   }

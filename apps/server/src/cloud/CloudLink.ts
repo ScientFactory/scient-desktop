@@ -1,5 +1,4 @@
 import {
-  AuthStandardClientScopes,
   EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
@@ -29,6 +28,7 @@ import {
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
+  decodeRelayJwt,
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_HEALTH_RESPONSE_TYP,
@@ -99,6 +99,7 @@ import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
   filterRelayResponse,
@@ -171,7 +172,7 @@ export class CloudLinkNotLinkedError extends Schema.TaggedError<CloudLinkNotLink
   {},
 ) {
   override get message(): string {
-    return "Link this environment to T3 Connect first.";
+    return "Link this environment to Scient Connect first.";
   }
 }
 
@@ -189,7 +190,7 @@ export class CloudLinkAuthorizationMissingError extends Schema.TaggedError<Cloud
   {},
 ) {
   override get message(): string {
-    return "Run `t3 connect link` to authorize this environment.";
+    return "Run `scient connect link` to authorize this environment.";
   }
 }
 
@@ -243,14 +244,14 @@ const INTERNAL_OPERATION_MESSAGES = {
   "persist-relay-config": "Could not persist environment relay configuration.",
   "register-endpoint-origin": "Could not register the managed endpoint origin.",
   "resolve-server-origin": "Could not resolve the local server origin.",
-  "persist-desired-link": "Could not persist desired T3 Connect link state.",
+  "persist-desired-link": "Could not persist desired Scient Connect link state.",
   "sign-recovery-proof": "Could not sign the managed tunnel recovery request.",
   "unsupported-recovered-tunnel":
-    "T3 Connect returned an unsupported managed tunnel configuration.",
+    "Scient Connect returned an unsupported managed tunnel configuration.",
   "persist-recovered-tunnel": "Could not persist the recovered managed tunnel configuration.",
   "read-relay-config": "Could not read environment relay configuration.",
   "remove-relay-config": "Could not remove environment relay configuration.",
-  "update-webhook-settings": "Could not update T3 Connect webhook settings.",
+  "update-webhook-settings": "Could not update Scient Connect webhook settings.",
   "read-preferences": "Could not read environment cloud preferences.",
   "persist-preferences": "Could not persist environment cloud preferences.",
   "answer-health": "Could not answer cloud health request.",
@@ -298,7 +299,7 @@ export const shouldRetryCloudLink = (error: unknown): boolean =>
   !(CliTokenManager.isCloudCliCredentialRefreshError(error) && error.requiresLogin);
 
 const rollbackFailed = (cause: unknown) =>
-  Effect.logWarning("Could not roll back a T3 Connect preference", { cause });
+  Effect.logWarning("Could not roll back a Scient Connect preference", { cause });
 
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
@@ -509,6 +510,23 @@ export class CloudLink extends Context.Service<
       | CliTokenManager.CloudCliTokenManagerError
       | HttpClientError.HttpClientError
     >;
+    // SCIENT-FORK:START — scient/connect: the desktop app links its own computer with a token its
+    // window lends, moving it from another account if needed. `stillWanted` runs just before the
+    // credentials apply; false abandons the link and leaves this computer as it was.
+    readonly linkWithAccessToken: (input: {
+      readonly localOrigin: string;
+      readonly accessToken: string;
+      readonly stillWanted: Effect.Effect<boolean>;
+    }) => Effect.Effect<
+      "linked" | "abandoned",
+      | CloudLinkBackgroundError
+      | CloudLinkAccountMismatchError
+      | CloudLinkRelayConfigInvalidError
+      | CloudLinkTunnelSupersededError
+      | EnvironmentAuth.ServerAuthInternalError
+      | ManagedLimits.ManagedPolicyRefusedError
+    >;
+    // SCIENT-FORK:END
   }
 >()("t3/cloud/CloudLink") {}
 
@@ -518,6 +536,7 @@ const make = Effect.gen(function* () {
   const endpointRuntime = yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime;
   const reachability = yield* ConnectReachability.ConnectReachability;
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const cliTokenManager = yield* CliTokenManager.CloudCliTokenManager;
   const httpClient = yield* HttpClient.HttpClient;
   const httpServer = yield* HttpServer.HttpServer;
@@ -592,16 +611,22 @@ const make = Effect.gen(function* () {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
     const now = yield* DateTime.now;
-    const expiresAt = DateTime.add(now, { minutes: 5 });
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    // Borrow only the relay clock; the relay still verifies and consumes the challenge.
+    const issuedAt = yield* decodeRelayJwt(request.challenge).pipe(
+      Effect.map(({ iat }) =>
+        typeof iat === "number" && Number.isSafeInteger(iat) && iat > 0 ? iat : nowSeconds,
+      ),
+      Effect.orElseSucceed(() => nowSeconds),
+    );
     const descriptor = yield* environment.getDescriptor;
     const payload = {
       iss: `t3-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
       sub: descriptor.environmentId,
       jti: yield* random.uuidV4(),
-      iat: nowSeconds,
-      exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+      iat: issuedAt,
+      exp: issuedAt + 5 * 60,
       challenge: request.challenge,
       descriptor,
       environmentId: descriptor.environmentId,
@@ -750,11 +775,17 @@ const make = Effect.gen(function* () {
     options?: {
       readonly lockHeld?: boolean;
       readonly confirmedOrigin?: RelayManagedEndpointOrigin;
+      // SCIENT-FORK:START — scient/connect: a desktop sign-in moves the computer to its account.
+      readonly replaceLinkedAccount?: boolean;
+      // SCIENT-FORK:END
     },
   ) {
     const apply = Effect.gen(function* () {
       yield* validateRelayConfigPayload(payload);
-      yield* validateLinkedCloudUser(payload.cloudUserId);
+      // SCIENT-FORK:START — scient/connect: a desktop sign-in moves the computer to its account.
+      if (options?.replaceLinkedAccount !== true)
+        // SCIENT-FORK:END
+        yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
@@ -919,6 +950,74 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // SCIENT-FORK:START — scient/connect: the desktop app links its own computer with a token its
+  // window lends. Same transaction as the CLI link above, without the CLI's stored sign-in.
+  const linkWithAccessToken = Effect.fn("environment.cloud.linkWithAccessToken")(function* (input: {
+    readonly localOrigin: string;
+    readonly accessToken: string;
+    readonly stillWanted: Effect.Effect<boolean>;
+  }) {
+    const parsedOrigin = yield* Effect.try({
+      try: () => parseManagedEndpointLocalOrigin(input.localOrigin),
+      catch: () => new CloudLinkOriginInvalidError({ origin: "local" }),
+    });
+    const relayUrl = yield* requireRelayUrl;
+    return yield* endpointRuntime.withLinkStateLock(
+      Effect.gen(function* () {
+        const challenge = yield* relayClientRequest({
+          url: `${relayUrl}/v1/client/environment-link-challenges`,
+          token: input.accessToken,
+          payload: {
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+          schema: RelayEnvironmentLinkChallengeResponse,
+        });
+        const proof = yield* makeCloudLinkProof(
+          {
+            challenge: challenge.challenge,
+            relayIssuer: relayUrl,
+            endpoint: {
+              httpBaseUrl: parsedOrigin.httpBaseUrl,
+              wsBaseUrl: parsedOrigin.wsBaseUrl,
+              providerKind: "cloudflare_tunnel",
+            },
+            origin: parsedOrigin.origin,
+          },
+          parsedOrigin.httpBaseUrl,
+        );
+        const link = yield* relayClientRequest({
+          url: `${relayUrl}/v1/client/environment-links`,
+          token: input.accessToken,
+          payload: {
+            proof,
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+          schema: RelayEnvironmentLinkResponse,
+          timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
+        });
+        // A newer link for this computer replaces this one at the relay, and Off removes it there.
+        if (!(yield* input.stillWanted)) return "abandoned" as const;
+        yield* applyCloudRelayConfig(
+          {
+            relayUrl,
+            relayIssuer: link.relayIssuer,
+            cloudUserId: link.cloudUserId,
+            environmentCredential: link.environmentCredential,
+            cloudMintPublicKey: link.cloudMintPublicKey,
+            endpointRuntime: link.endpointRuntime,
+          },
+          { lockHeld: true, confirmedOrigin: parsedOrigin.origin, replaceLinkedAccount: true },
+        );
+        return "linked" as const;
+      }),
+    );
+  });
+  // SCIENT-FORK:END
+
   const makeManagedTunnelRecoveryProof = Effect.fn(
     "environment.cloud.makeManagedTunnelRecoveryProof",
   )(function* (input: ManagedTunnelRecoveryProofInput) {
@@ -968,7 +1067,7 @@ const make = Effect.gen(function* () {
           return false;
         }
         yield* Effect.logWarning(
-          "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
+          "Scient Connect no longer accepts this environment's link. Link it again to restore remote access.",
           { cause },
         );
         yield* secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"));
@@ -1283,6 +1382,10 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: 8 },
     );
+    // The hostname arrives once cloudflared connects, before any check passes.
+    const connector = Option.isSome(endpointRuntimeConfig)
+      ? yield* endpointRuntime.inspectConnector
+      : null;
     // A not-linked check predates the stored tunnel config; the next check replaces it.
     const currentReachability = Option.filter(
       latestReachability,
@@ -1303,6 +1406,7 @@ const make = Effect.gen(function* () {
       holdWebhooksWhileOffline:
         Option.isSome(holdWebhooks) && bytesToString(holdWebhooks.value) === "true",
       ...(Option.isSome(currentReachability) ? { reachability: currentReachability.value } : {}),
+      ...(connector?.hostname ? { tunnelHostname: connector.hostname } : {}),
     } satisfies EnvironmentCloudLinkStateResult;
   });
 
@@ -1578,12 +1682,12 @@ const make = Effect.gen(function* () {
         return yield* new CloudLinkProofReplayedError({ request: "mint" });
       }
 
-      const issued = yield* environmentAuth.createPairingLink({
-        scopes: AuthStandardClientScopes,
-        subject: "cloud-connect",
-        ttl: Duration.minutes(2),
-        label: "T3 Connect connect",
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.catch(internalError("issue-credential")),
+      );
+      const issued = yield* environmentAuth.issueConnectCredential({
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
+        requireApproval: settings.requireConnectDeviceApproval,
       });
       const responsePayload = {
         iss: `t3-env:${environmentId}`,
@@ -1622,9 +1726,11 @@ const make = Effect.gen(function* () {
   if (!ManagedLimits.allowsConnect(managedPolicy)) {
     // Reading state and unlinking stay available so clients can show and leave the old link.
     yield* unlink().pipe(
-      Effect.tap(() => Effect.logInfo("T3 Connect is off by managed policy; unlinked.")),
+      Effect.tap(() => Effect.logInfo("Scient Connect is off by managed policy; unlinked.")),
       Effect.catch((cause) =>
-        Effect.logWarning("Failed to unlink T3 Connect turned off by managed policy", { cause }),
+        Effect.logWarning("Failed to unlink Scient Connect turned off by managed policy", {
+          cause,
+        }),
       ),
     );
     const refused = Effect.fn("CloudLink.refusedByPolicy")(function* () {
@@ -1648,6 +1754,9 @@ const make = Effect.gen(function* () {
       recoverManagedTunnel: notStarted,
       startManagedTunnelIfOriginConfirmed: notStarted,
       releaseManagedTunnelOnShutdown,
+      // SCIENT-FORK:START — scient/connect
+      linkWithAccessToken: refused,
+      // SCIENT-FORK:END
     });
   }
 
@@ -1664,6 +1773,9 @@ const make = Effect.gen(function* () {
     recoverManagedTunnel,
     startManagedTunnelIfOriginConfirmed,
     releaseManagedTunnelOnShutdown,
+    // SCIENT-FORK:START — scient/connect
+    linkWithAccessToken,
+    // SCIENT-FORK:END
   });
 });
 

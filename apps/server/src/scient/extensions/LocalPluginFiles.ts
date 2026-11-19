@@ -4,11 +4,24 @@ import * as NodeFSP from "node:fs/promises";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+class LocalPluginReadError extends Schema.TaggedError<LocalPluginReadError>()(
+  "LocalPluginReadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read the plugin's local files.";
+  }
+}
+
+/** Reads agent-owned plugin files; a failure is a typed error carrying the original cause. */
+export const tryLocalPluginRead = <A>(read: () => Promise<A>) =>
+  Effect.tryPromise({ try: read, catch: (cause) => new LocalPluginReadError({ cause }) });
+
 const readPluginText = Effect.fn("readPluginText")(function* (
   path: string,
   maxBytes = 4 * 1024 * 1024,
 ) {
-  return yield* Effect.tryPromise(async () => {
+  return yield* tryLocalPluginRead(async () => {
     const file = await NodeFSP.open(path, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK);
     try {
       const stat = await file.stat();

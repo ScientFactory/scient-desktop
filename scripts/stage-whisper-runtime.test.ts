@@ -204,18 +204,19 @@ describe("stage-whisper-runtime", () => {
   });
 
   it("uses Windows-safe extraction for local tarballs and zip prebuilts", () => {
+    // \a and \t are escapes to GNU tar; runner temp lives at D:\a\_temp.
     const sourcePlan = resolveArchiveExtractionPlan(
-      String.raw`C:\\runner\\whisper.cpp.tar.gz`,
-      String.raw`C:\\runner\\source`,
+      String.raw`D:\a\_temp\whisper.cpp.tar.gz`,
+      String.raw`D:\a\_temp\source`,
       "win32",
     );
     expect(sourcePlan.command).toBe("tar");
     expect(sourcePlan.args).toEqual([
       "--force-local",
       "-xzf",
-      String.raw`C:\\runner\\whisper.cpp.tar.gz`,
+      "D:/a/_temp/whisper.cpp.tar.gz",
       "-C",
-      String.raw`C:\\runner\\source`,
+      "D:/a/_temp/source",
     ]);
 
     const prebuiltPlan = resolveArchiveExtractionPlan(

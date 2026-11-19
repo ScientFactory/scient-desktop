@@ -6,6 +6,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -35,6 +37,7 @@ import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
 // SCIENT-FORK:START Scient runtime instruction composition
 import { buildScientRuntimeInstructions } from "../src/provider/ScientRuntimeInstructions.ts";
 // SCIENT-FORK:END Scient runtime instruction composition
+import * as Result from "effect/Result";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -372,7 +375,14 @@ function normalizeEntries(input: {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
+const RecorderEnv = Config.all({
+  T3_GROK_BIN: Config.String("T3_GROK_BIN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  HOME: Config.String("HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  USER: Config.String("USER").pipe(Config.option, Config.map(Option.getOrUndefined)),
+});
+
 const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: string) {
+  const recorderEnv = yield* RecorderEnv;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === GROK_PROVIDER);
   if (fixture === undefined || variant === undefined) {
@@ -406,7 +416,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   };
 
   const tee = makeWireTee();
-  const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
+  const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: recorderEnv.T3_GROK_BIN ?? "grok" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const environment = yield* HostProcess.Environment;
@@ -524,8 +534,8 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
       ...normalizeEntries({
         entries,
         workspace: realWorkspace,
-        home: process.env.HOME ?? "",
-        user: process.env.USER ?? "",
+        home: recorderEnv.HOME ?? "",
+        user: recorderEnv.USER ?? "",
         // SCIENT-FORK:START Scient replay instruction context
         runtimeInstructions: buildScientRuntimeInstructions({
           harness: "Grok",
@@ -549,12 +559,9 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Grok ACP replay entries to ${outputPath}`);
 
-  const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
-    Effect.flip,
-    Effect.option,
-  );
-  if (liveFailure._tag === "Some") {
-    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.value);
+  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
+  if (Result.isFailure(liveFailure)) {
+    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.failure);
   }
 });
 

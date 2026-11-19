@@ -407,6 +407,90 @@ it("tells a fork in the current workspace where it works, until a new worktree i
   expect(document.body.textContent).not.toContain(notice);
 });
 
+it.each([true, false])(
+  "/fork-worktree opens the card with New worktree on when it can be used (%s)",
+  async (available) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const confirm = vi.fn();
+    await act(
+      async () =>
+        await _fixture.root0.rerender(
+          <ScientForkWorkspaceModeDialog
+            open
+            disabled={false}
+            source="latest-response"
+            initialNewWorktree
+            proposedTitle="Thread (2)"
+            titleOverrideSupported
+            worktreeAvailability={
+              available ? { available: true } : { available: false, reason: "no-checkpoint" }
+            }
+            onOpenChange={() => {}}
+            onConfirm={confirm}
+          />,
+        ),
+    );
+    const toggle = document.querySelector<HTMLElement>('[aria-label="New worktree"]')!;
+    expect(toggle.getAttribute("aria-checked")).toBe(String(available));
+    expect(document.body.textContent?.includes("No saved checkpoint for this response")).toBe(
+      !available,
+    );
+    await act(() => {
+      document
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(confirm.mock.calls[0]![0]).toMatchObject({
+      workspaceMode: available ? "new-worktree" : "local",
+    });
+  },
+);
+
+it("keeps a failed saved fork's title and worktree choice when the card unlocks", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const confirm = vi.fn();
+  const card = (locked: boolean, retry: boolean) => (
+    <ScientForkWorkspaceModeDialog
+      open
+      disabled={false}
+      source="this-response"
+      proposedTitle="Thread (2)"
+      titleOverrideSupported
+      worktreeAvailability={{ available: true }}
+      locked={locked}
+      retryTitle={retry ? "Chosen title" : undefined}
+      retryWorkspaceMode={retry ? "new-worktree" : undefined}
+      error={locked ? null : "The saved checkpoint is unavailable."}
+      onOpenChange={() => {}}
+      onConfirm={confirm}
+    />
+  );
+  await act(async () => await _fixture.root0.rerender(card(true, true)));
+  // The saved fork failed for good: the card unlocks with the same choices.
+  await act(async () => await _fixture.root0.rerender(card(false, true)));
+  const title = document.querySelector<HTMLInputElement>('[aria-label="Thread title"]')!;
+  expect(title.value).toBe("Chosen title");
+  expect(document.querySelector('[aria-label="New worktree"]')!.getAttribute("aria-checked")).toBe(
+    "true",
+  );
+  await act(() => {
+    document
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(confirm.mock.calls[0]![0]).toMatchObject({
+    workspaceMode: "new-worktree",
+    titleOverride: "Chosen title",
+  });
+});
+
 function _createFixture() {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();

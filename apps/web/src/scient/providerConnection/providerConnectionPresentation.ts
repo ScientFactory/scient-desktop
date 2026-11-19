@@ -49,13 +49,32 @@ export function isActiveProviderRuntimeOperation(
   );
 }
 
+/** An update Scient runs on its own switches over quietly, so it shows nowhere as an update. */
 export function activeProviderRuntimeUpdateOperation(
   runtime: ProviderRuntimeSummary | null | undefined,
 ): ProviderRuntimeOperation | null {
   const operation = runtime?.operation;
-  return operation?.action === "update" && isActiveProviderRuntimeOperation(operation)
+  return operation?.action === "update" &&
+    !operation.background &&
+    isActiveProviderRuntimeOperation(operation)
     ? operation
     : null;
+}
+
+/** How much of the download has arrived, while one is running. */
+export function runtimeDownloadPercent(
+  operation: ProviderRuntimeOperation | null | undefined,
+): number | null {
+  return operation?.downloadedBytes !== undefined && operation.totalBytes !== undefined
+    ? Math.min(100, Math.round((operation.downloadedBytes / operation.totalBytes) * 100))
+    : null;
+}
+
+/** A failure the user should see: one from a change Scient started on its own stays quiet. */
+export function isUserFacingRuntimeFailure(
+  operation: ProviderRuntimeOperation | null | undefined,
+): boolean {
+  return operation?.status === "failed" && !operation.background;
 }
 
 export function providerLifecycleFailureMessage(value: unknown, fallback: string): string {
@@ -91,7 +110,9 @@ export function failedRuntimeOperationMessage(
   operation: ProviderRuntimeOperation | null | undefined,
   action: ProviderManagedRuntimeAction,
 ): string | null {
-  return operation?.status === "failed" && operation.action === action ? operation.message : null;
+  return isUserFacingRuntimeFailure(operation) && operation?.action === action
+    ? operation.message
+    : null;
 }
 
 /**

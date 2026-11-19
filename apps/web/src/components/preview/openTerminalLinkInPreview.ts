@@ -69,7 +69,9 @@ export async function openTerminalLinkInPreview<E>(
       // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
       profileId: await openProfileId(input.threadRef, input.url, defaults),
       // SCIENT-FORK:END
-      ...(runtime === undefined ? {} : { runtime }),
+      ...(runtime === undefined
+        ? {}
+        : { runtime, zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance }),
     },
   });
   if (result._tag === "Failure") {

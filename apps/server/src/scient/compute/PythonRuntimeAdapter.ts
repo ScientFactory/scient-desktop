@@ -295,7 +295,8 @@ export function buildLaunchPlan(
   bridgePath: string,
 ): ComputeLaunchPlan {
   const cwd = validateProjectRoot(request.cwd);
-  const { environment } = sanitizeComputeEnvironment(request.environment);
+  // The session already sanitized the host's variables and added the run's own.
+  const { environment } = sanitizeComputeEnvironment(request.environment, { keepRunKeys: true });
   return {
     executable: request.profile.executable,
     args: ["-I", "-u", bridgePath],

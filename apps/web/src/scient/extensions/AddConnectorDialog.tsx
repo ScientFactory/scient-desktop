@@ -6,9 +6,10 @@ import {
   type CredentialStrategy,
   type DiscoverEntry,
   type EnvironmentId,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
 import { Button } from "../../components/ui/button";
@@ -29,7 +30,9 @@ import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
+import { GitHubConnect, type SourceControlLogin } from "./GitHubConnect";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
 import {
   entryAddTarget,
@@ -72,9 +75,9 @@ interface Draft {
   readonly accountId: string;
 }
 
-function emptyDraft(entry: DiscoverEntry | null): Draft {
+function emptyDraft(entry: DiscoverEntry | null, initialUrl = ""): Draft {
   return {
-    url: "",
+    url: initialUrl,
     remoteUrl: entry?.address ? "" : entry ? (installableRemotes(entry)[0]?.url ?? "") : "",
     displayName: entry?.title ?? "",
     authMode: entryNeedsToken(entry) || entry?.apiKey ? "api-key" : "automatic",
@@ -129,7 +132,11 @@ function validateAddConnectorDraft(
   return errors;
 }
 
-function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInput {
+function toAddInput(
+  draft: Draft,
+  entry: DiscoverEntry | null,
+  agents?: ReadonlyArray<ProviderInstanceId>,
+): ConnectorAddInput {
   const displayName = draft.displayName.trim();
   const clientId = draft.clientId.trim();
   const clientSecret = draft.clientSecret.trim();
@@ -140,6 +147,7 @@ function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInpu
       : { type: "url", url: draft.url.trim() },
     ...(displayName ? { displayName } : {}),
     ...(description ? { description } : {}),
+    ...(agents === undefined ? {} : { agents }),
     ...(draft.authMode === "automatic" && clientId
       ? { oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } }
       : {}),
@@ -189,30 +197,72 @@ function invalidProps(fieldId: string, message: string | undefined) {
   return message ? { "aria-invalid": true as const, "aria-describedby": `${fieldId}-error` } : {};
 }
 
-export function AddConnectorDialog({
-  open,
-  onOpenChange,
-  environmentId,
-  entry,
-  callbackOrigin,
-}: {
+interface AddConnectorDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   /** Prefills a registry target; null adds by URL. */
   readonly entry: DiscoverEntry | null;
   readonly callbackOrigin: string | null;
-}) {
+  /** A web address already given, from Add your own. */
+  readonly initialUrl?: string;
+  /** Shows Back instead of Cancel, returning to Add your own. */
+  readonly onBack?: () => void;
+  /** The agents chosen when it was added from Discover; absent gives it to every agent. */
+  readonly agents?: ReadonlyArray<ProviderInstanceId> | undefined;
+}
+
+/** A registry entry that only runs locally gets the local form. */
+/** After a few seconds of adding, the person hears that the server is still waking up. */
+const STILL_CONNECTING_AFTER_MS = 4_000;
+
+function useStillConnecting(submitting: boolean): boolean {
+  const [slow, setSlow] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer, held while an add waits, that shows the note
+  useEffect(() => {
+    if (!submitting) return;
+    const timer = window.setTimeout(() => setSlow(true), STILL_CONNECTING_AFTER_MS);
+    return () => {
+      window.clearTimeout(timer);
+      setSlow(false);
+    };
+  }, [submitting]);
+  return submitting && slow;
+}
+
+export function AddConnectorDialog(props: AddConnectorDialogProps) {
+  return props.entry?.localPackage === undefined ? (
+    <RemoteConnectorDialog {...props} />
+  ) : (
+    <AddLocalConnectorDialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      environmentId={props.environmentId}
+      entry={props.entry}
+      agents={props.agents}
+    />
+  );
+}
+
+function RemoteConnectorDialog({
+  open,
+  onOpenChange,
+  environmentId,
+  entry,
+  callbackOrigin,
+  initialUrl,
+  onBack,
+  agents,
+}: AddConnectorDialogProps) {
   const github = entryNeedsToken(entry) === true;
-  const githubClientId = github
-    ? import.meta.env.VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID?.trim()
-    : undefined;
+  const [githubToken, setGithubToken] = useState(false);
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
-  const [draft, setDraft] = useState(() => emptyDraft(entry));
+  const [draft, setDraft] = useState(() => emptyDraft(entry, initialUrl));
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const slow = useStillConnecting(submitting);
   const [needsSignIn, setNeedsSignIn] = useState<ConnectorSummary | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
@@ -227,6 +277,12 @@ export function AddConnectorDialog({
           ),
       ) ?? [])
     : [];
+  const githubLogins: ReadonlyArray<SourceControlLogin> =
+    accountsQuery.data?.managedElsewhere?.flatMap((row) =>
+      row.kind === "github" && (row.detail ?? "github.com").toLowerCase() === "github.com"
+        ? [{ login: row.name, via: row.via }]
+        : [],
+    ) ?? [];
   const errors = validateAddConnectorDraft(draft, entry, matchingAccounts);
   const shownErrors = attempted ? errors : {};
   const remotes = entry ? installableRemotes(entry) : [];
@@ -234,27 +290,39 @@ export function AddConnectorDialog({
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const close = () => onOpenChange(false);
 
-  const submit = async (githubOAuth = false) => {
-    if (submitting || (githubOAuth && !githubClientId)) return;
-    const sendingDraft = githubOAuth
-      ? {
-          ...draft,
-          authMode: "automatic" as const,
-          clientId: githubClientId!,
-          clientSecret: "",
-          value: "",
-          accountId: "",
-        }
-      : draft;
-    const sendingErrors = validateAddConnectorDraft(sendingDraft, entry, matchingAccounts);
-    const invalid = FIELD_IDS.find(([field]) => sendingErrors[field] !== undefined);
+  const connectWithSourceControl = async (account: string) => {
+    if (submitting) return;
+    setSubmitting(true);
+    setServerError(null);
+    const result = await add({
+      environmentId,
+      input: {
+        ...toAddInput({ ...draft, authMode: "automatic", clientId: "" }, entry, agents),
+        credential: { type: "source-control", account },
+      },
+    });
+    setSubmitting(false);
+    if (result._tag === "Failure") {
+      setServerError(commandFailureMessage(result));
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: `${result.value.connector.displayName} connected as ${account}`,
+    });
+    close();
+  };
+
+  const submit = async () => {
+    if (submitting) return;
+    const invalid = FIELD_IDS.find(([field]) => errors[field] !== undefined);
     if (invalid) {
       setAttempted(true);
       document.getElementById(invalid[1])?.focus();
       return;
     }
-    const input = toAddInput(sendingDraft, entry);
-    const sentSecret = sendingDraft.value.length > 0 || sendingDraft.clientSecret.length > 0;
+    const input = toAddInput(draft, entry, agents);
+    const sentSecret = draft.value.length > 0 || draft.clientSecret.length > 0;
     // Secrets leave the form as soon as they are sent, whatever the outcome.
     patch({ value: "", clientSecret: "" });
     setAttempted(false);
@@ -270,7 +338,6 @@ export function AddConnectorDialog({
     }
     if (result.value.nextStep === "sign-in-required") {
       setNeedsSignIn(result.value.connector);
-      if (githubOAuth) await signIn(result.value.connector);
       return;
     }
     toastManager.add({ type: "success", title: `${result.value.connector.displayName} connected` });
@@ -329,10 +396,41 @@ export function AddConnectorDialog({
               </Button>
             </DialogFooter>
           </>
+        ) : github && !githubToken ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Add GitHub</DialogTitle>
+              <DialogDescription>
+                Connect GitHub to work with your repositories, issues and pull requests.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <div className="grid gap-3">
+                <GitHubConnect
+                  environmentId={environmentId}
+                  logins={githubLogins}
+                  busy={submitting}
+                  onConnect={(account) => void connectWithSourceControl(account)}
+                  onUseToken={() => {
+                    setServerError(null);
+                    setGithubToken(true);
+                  }}
+                />
+                <ActionError message={serverError} />
+              </div>
+            </DialogPanel>
+            <DialogFooter variant="bare">
+              <Button variant="outline" onClick={close}>
+                Cancel
+              </Button>
+            </DialogFooter>
+          </>
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>{entry ? `Add ${entry.title ?? entry.name}` : "Add by URL"}</DialogTitle>
+              <DialogTitle>
+                {entry ? `Add ${entry.title ?? entry.name}` : "Add from a web address"}
+              </DialogTitle>
               <DialogDescription>
                 {github
                   ? "Connect GitHub to work with your repositories, issues and pull requests."
@@ -341,7 +439,7 @@ export function AddConnectorDialog({
             </DialogHeader>
             <DialogPanel>
               <form
-                className="grid gap-4"
+                className="grid grid-cols-1 gap-4 [overflow-wrap:anywhere]"
                 noValidate
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -401,16 +499,6 @@ export function AddConnectorDialog({
                       onChange={(event) => patch({ displayName: event.target.value })}
                     />
                   </div>
-                ) : null}
-                {githubClientId ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={submitting || callbackOrigin === null}
-                    onClick={() => void submit(true)}
-                  >
-                    Sign in with GitHub
-                  </Button>
                 ) : null}
                 {github ? (
                   <p className="text-sm text-muted-foreground">
@@ -604,12 +692,22 @@ export function AddConnectorDialog({
                     {serverError}
                   </p>
                 ) : null}
+                {slow ? (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    Still connecting. A hosted server can take up to 30 seconds to wake up.
+                  </p>
+                ) : null}
                 <button type="submit" hidden />
               </form>
             </DialogPanel>
             <DialogFooter variant="bare">
-              <Button variant="outline" onClick={close}>
-                Cancel
+              <Button
+                variant="outline"
+                // Back unmounts this form, so it waits for a pending Add to answer here.
+                disabled={onBack !== undefined && submitting}
+                onClick={onBack ?? close}
+              >
+                {onBack ? "Back" : "Cancel"}
               </Button>
               <Button disabled={submitting} onClick={() => void submit()}>
                 {submitting ? "Adding…" : "Add"}

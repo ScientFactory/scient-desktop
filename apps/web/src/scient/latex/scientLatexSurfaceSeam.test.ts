@@ -141,7 +141,8 @@ describe("Scient LaTeX file-preview seam", () => {
       /usesDocumentSession && relativePath !== null \? \{ environmentId, cwd, relativePath \} : null/u,
     );
     expect(panelSource).toMatch(
-      /markdownLease \? \(\s*<MarkdownSourceSurface[\s\S]*?persistence=\{markdownLease\}/u,
+      // T3's file-content focus target (Cmd+F reaches the editor) may sit just before it.
+      /markdownLease \? \(\s*(?:<>\s*\{contentFocus\}\s*)?<MarkdownSourceSurface[\s\S]*?persistence=\{markdownLease\}/u,
     );
   });
 

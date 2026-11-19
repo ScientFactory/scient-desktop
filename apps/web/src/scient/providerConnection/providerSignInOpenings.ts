@@ -6,7 +6,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 import { toastManager } from "../../components/ui/toast";
-import { openProviderAuthorizationPage, SignInPageBlocked } from "./providerSignInPage";
+import { isSignInPageBlocked, openProviderAuthorizationPage } from "./providerSignInPage";
 import {
   notifyProviderSignIn,
   type ProviderSignInKey,
@@ -59,7 +59,7 @@ export async function openProviderSignInPage(input: {
     setOpening(id, { status: "opened", error: null });
   } catch (error) {
     // The native error can name the link or local paths; users see fixed guidance.
-    const blocked = error instanceof SignInPageBlocked;
+    const blocked = isSignInPageBlocked(error);
     setOpening(id, {
       status: "failed",
       error: blocked ? BLOCKED : OPEN_FAILURE,

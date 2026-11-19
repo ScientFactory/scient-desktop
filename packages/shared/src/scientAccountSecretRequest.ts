@@ -15,8 +15,3 @@ export const isSignInCodeRequest = (turnItemId: string | undefined) =>
 export const isAccountSecretRequest = (turnItemId: string | undefined) =>
   turnItemId?.includes(`:${encodeURIComponent(ACCOUNT_SECRET_REQUEST_PREFIX)}`) === true &&
   !isSignInCodeRequest(turnItemId);
-
-/** Accounts cards' privacy note: new keys are readable by default, so the card says so. */
-export const ACCOUNT_SECRET_REQUEST_NOTE =
-  "Saved to Settings ▸ Accounts & secrets. Agents can use it, and read it in their commands, as you allow there";
-export const ACCOUNT_SECRET_REQUEST_SAVED = "Saved to Accounts";

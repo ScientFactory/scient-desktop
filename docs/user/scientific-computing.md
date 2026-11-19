@@ -224,7 +224,13 @@ computer came with and a newer one is installed. `JAVA_HOME` chooses Java. A cho
 page outranks all of these. C++ builds to the newest standard your compiler knows and Rust to edition 2021. A file type two languages share goes to the first of them on this computer: `.m` to MATLAB, then
 Octave; `.gp` to gnuplot, then PARI/GP; `.v` to Rocq, then Verilog; and `.pro` to IDL, then Prolog. A
 `.sql` file that uses sqlite3's dot commands, such as `.bail on`, runs with `sqlite3` when it is here.
-A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
+A `.lean` file in a Lake project runs through Lake from the project's folder, so its imports build
+first; a Mathlib project fetches Mathlib's ready-built files the first time. Stata and SAS write
+their results to files in the project's folder, and Run shows them: Stata's log, or SAS's listing
+followed by any warnings. A do-file that stops at an error fails with that error, though Stata
+itself reports success. A Stan model samples four chains with the CmdStan that cmdstanpy or cmdstanr
+installed, reading its data from `<name>.data.json` beside it, and shows the summary and
+diagnostics; the draws stay in `<name>-draws` beside the model. A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
 NetLogo runs nothing else without its window; save an experiment in the model to run it. A run gets
 no typed input, so a tool that waits at a prompt after its file exits instead.
 
@@ -412,10 +418,9 @@ identical-content rerun renews its retained resource without resetting zoom. Fig
 selection, unsaved buffer, historical run, or output without stable provenance remain immutable
 snapshots.
 
-PNG and SVG project files created or changed by that execution also appear inline, so an ordinary
-script that saves figures remains useful without notebook-only display calls. Discovery is bounded
-and reports when a project or execution exceeds its safety limits; Scient never guesses figure paths
-from printed console text.
+PNG and SVG project files created or changed by that execution also appear inline, at any depth and
+however large the project is, so an ordinary script that saves figures remains useful without
+notebook-only display calls. Scient never guesses figure paths from printed console text.
 
 The separate **Compute** project surface is secondary: use **Scientific computing** from the
 right-panel add menu when you need a kernel that is not tied to the open file, or open project
@@ -449,11 +454,16 @@ Reopening a result never starts a kernel or replays code. Source links in the se
 surface return to the ordinary project editor. Python errors keep their full bounded traceback and
 show project-local frames as source links; dependency and standard-library frames stay readable but
 cannot become filesystem links. Files created by code are ordinary project files;
-Scient observes new or changed SVG/PNG files during execution and retains verified static figures.
-Discovery is bounded: very large, deep, slow, or unreadable directories can leave some files unchecked.
-In that case, verified figures are still retained alongside a compact coverage warning. The warning
-does not mean the code failed or establish that any figures were lost. A project-file observation
-also does not prove which process wrote the file.
+Scient learns which SVG/PNG files an execution wrote and retains verified static figures, at any
+depth and through any library. It watches the project folder for the session or run; hidden folders,
+`node_modules`, and Python or conda environments are left out. Python also reports the files each
+cell saves. Scient reads only files inside the project that changed during the execution.
+
+If the watch cannot start or loses events, for example while thousands of files change at once or on
+some network folders, Scient falls back to a bounded search for recently changed files. When that
+search cannot finish, verified figures are still retained alongside a compact coverage warning. The
+warning does not mean the code failed or establish that any figures were lost. A watched file also
+does not prove which process wrote it.
 Changing the project file later does not rewrite what the earlier run displayed. Other generated
 file types remain ordinary project files and are not inferred from their names or printed paths.
 Retained compute history is operational data, not a second project filesystem or a portable result

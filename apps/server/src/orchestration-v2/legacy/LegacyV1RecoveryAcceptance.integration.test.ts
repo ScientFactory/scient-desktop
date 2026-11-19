@@ -137,7 +137,7 @@ const backupDatabase = Effect.fn("MigrationAcceptance.backupDatabase")(function*
   sourcePath: string,
   destinationPath: string,
 ) {
-  yield* Effect.tryPromise(async () => {
+  yield* Effect.promise(async () => {
     const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
     try {
       await NodeSqlite.backup(database, destinationPath);
@@ -456,7 +456,7 @@ it.live(
           sourceQueue,
         );
         // Restoring into a separate profile must not replace work completed after the backup.
-        yield* Effect.try(() => {
+        yield* Effect.sync(() => {
           const database = new NodeSqlite.DatabaseSync(config.dbPath, { readOnly: true });
           try {
             assert.equal(
@@ -474,7 +474,7 @@ it.live(
             database.close();
           }
         });
-        yield* Effect.try(() => {
+        yield* Effect.sync(() => {
           const database = new NodeSqlite.DatabaseSync(
             path.join(restoredConfig.stateDir, "state.sqlite"),
             { readOnly: true },

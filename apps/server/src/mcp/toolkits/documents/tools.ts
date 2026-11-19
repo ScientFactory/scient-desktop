@@ -1,6 +1,7 @@
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import {
+  ScientLatexBuildFailureClass,
   ScientLatexPdfBuildDiagnostic,
   ScientLatexPdfBuildInput,
   ScientLatexPdfBuildResult,
@@ -16,6 +17,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
@@ -114,6 +116,8 @@ export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBui
       Schema.Array(ScientLatexPdfBuildDiagnostic).check(Schema.isMaxLength(64)),
     ),
     toolchain: Schema.optional(Schema.NullOr(ScientLatexToolchainStatus)),
+    /** Why the build failed, for analytics. */
+    failureClass: Schema.optional(ScientLatexBuildFailureClass),
     publishedSource: Schema.optional(PdfSourceDescriptor),
     publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
     recoveryId: Schema.optional(Schema.String),
@@ -141,6 +145,8 @@ const htmlDocumentDependencies = [
   ServerConfig.ServerConfig,
   ServerSecretStore.ServerSecretStore,
   WorkspacePaths.WorkspacePaths,
+  // Asset links map a Windows drive path under WSL with wslpath.
+  ChildProcessSpawner.ChildProcessSpawner,
 ];
 
 const latexDependencies = [...sharedDocumentDependencies, LatexBuildService.LatexBuildService];
@@ -168,7 +174,7 @@ export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {
 
 export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
   description:
-    "Build a project LaTeX file into a PDF at the project path you give, and open it in Scient's Split view. Scient finds the main document; if the file belongs to several, pass rootSourcePath. Returns compiler diagnostics. Scient may download missing TeX packages. If the result is in-progress, wait retryAfterMs, then call again with the same paths. It does not check how the pages look.",
+    "Build a project LaTeX file into a PDF at the project path you give, and open it in Scient's Split view. Scient finds the main document; pass rootSourcePath when the file belongs to several. Returns compiler diagnostics, and may download missing TeX packages. If the result is in-progress, wait retryAfterMs, then call again with the same paths. It does not check how the pages look.",
   parameters: ScientLatexPdfBuildInput,
   success: ScientLatexPdfBuildResult,
   failure: ScientLatexBuildToolError,
@@ -183,7 +189,7 @@ export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
 
 const ScientDocumentExportTool = Tool.make("scient_document_export", {
   description:
-    "Export a project Markdown file to the project path you give, and open it in Scient. The output extension picks the format; PDF is available. Missing images become placeholders listed in warnings. Needs a connected Scient desktop. It does not check how the pages look.",
+    "Export a project Markdown file to a PDF at the project path you give, and open it in Scient. Missing images become placeholders listed in warnings. Needs a connected Scient desktop. It does not check how the pages look.",
   parameters: ScientDocumentExportInput,
   success: ScientDocumentExportResult,
   failure: ScientDocumentExportToolError,
