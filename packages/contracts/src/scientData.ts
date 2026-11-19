@@ -27,6 +27,8 @@ export const DataFileTable = Schema.Struct({
   sheets: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
     Schema.isMaxLength(4096),
   ),
+  /** The sheet reads right to left; older servers omit it. */
+  rightToLeft: Schema.optional(Schema.Boolean),
 });
 export type DataFileTable = typeof DataFileTable.Type;
 

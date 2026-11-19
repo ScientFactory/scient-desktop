@@ -27,6 +27,7 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:office:1.0": "office",
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
+  "urn:oasis:names:tc:opendocument:xmlns:style:1.0": "style",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
   "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
   "http://www.w3.org/1999/xlink": "xlink",
@@ -266,7 +267,43 @@ async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<st
   reserveMarkup(tag.length * 2 + spans.length + 5);
   return `<${tag}${spans}>${children}</${tag}>`;
 }
-async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
+function readableXml(source: string): XmlNode | undefined {
+  try {
+    return parseXml(source);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Paragraph styles whose writing mode, set or inherited from a parent style, names a direction. */
+function paragraphDirections(roots: ReadonlyArray<XmlNode>): Map<string, "rtl" | "ltr"> {
+  const styles = new Map<string, { parent: string | undefined; mode: string | undefined }>();
+  for (const root of roots)
+    for (const style of find(root, "style:style")) {
+      if (style.attrs["style:family"] !== "paragraph") continue;
+      styles.set(style.attrs["style:name"] ?? "", {
+        parent: style.attrs["style:parent-style-name"],
+        mode: style.children.find((child) => child.name === "style:paragraph-properties")?.attrs[
+          "style:writing-mode"
+        ],
+      });
+    }
+  const directions = new Map<string, "rtl" | "ltr">();
+  for (const name of styles.keys()) {
+    let style = styles.get(name);
+    for (let depth = 0; style && !style.mode && style.parent && depth < 20; depth++)
+      style = styles.get(style.parent);
+    if (style?.mode?.startsWith("rl")) directions.set(name, "rtl");
+    else if (style?.mode?.startsWith("lr")) directions.set(name, "ltr");
+  }
+  return directions;
+}
+
+async function odfHtml(
+  node: XmlNode,
+  archive: JSZip,
+  directions: ReadonlyMap<string, "rtl" | "ltr">,
+): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
@@ -292,7 +329,7 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   )
     return "";
   let children = "";
-  for (const child of node.children) children += await odfHtml(child, archive);
+  for (const child of node.children) children += await odfHtml(child, archive, directions);
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -311,7 +348,9 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  const markup = `<${tag}>${children}</${tag}>`;
+  const direction =
+    tag === "p" || tag === "h2" ? directions.get(node.attrs["text:style-name"] ?? "") : undefined;
+  const markup = `<${tag}${direction ? ` dir="${direction}"` : ""}>${children}</${tag}>`;
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
@@ -394,6 +433,10 @@ export async function openDocument(
       }),
     };
   }
+  // Direction is best effort: styles the preview cannot read leave paragraphs undirected.
+  const stylesSource = await archive.file("styles.xml")?.async("string");
+  const sharedStyles = stylesSource === undefined ? undefined : readableXml(stylesSource);
+  const directions = paragraphDirections(sharedStyles ? [sharedStyles, root] : [root]);
   const pages = kind === "odp" ? find(root, "draw:page") : find(root, "office:text");
   if (!pages.length || pages.length > 500)
     throw new Error("This document has no pages or too many pages to preview.");
@@ -401,7 +444,7 @@ export async function openDocument(
   for (const [index, page] of pages.entries()) {
     rendered.push({
       title: page.attrs["draw:name"] || `Page ${index + 1}`,
-      html: await odfHtml(page, archive),
+      html: await odfHtml(page, archive, directions),
     });
   }
   return { type: "document", navigation: kind === "odp" ? "slide" : "page", pages: rendered };

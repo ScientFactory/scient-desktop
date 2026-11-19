@@ -48,7 +48,7 @@ export function sanitizeDocumentHtml(source: string): string {
       "dd",
       "img",
     ],
-    ALLOWED_ATTR: ["src", "alt", "colspan", "rowspan", "data-odf-whitespace"],
+    ALLOWED_ATTR: ["src", "alt", "colspan", "rowspan", "dir", "data-odf-whitespace"],
   });
   for (const image of fragment.querySelectorAll("img")) {
     if (

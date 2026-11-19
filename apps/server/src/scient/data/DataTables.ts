@@ -53,6 +53,7 @@ function dataFileFormat(path: string): DataFileFormat | null {
 interface OpenTable {
   readonly view: TableViewCache;
   readonly sheets: ReadonlyArray<string>;
+  readonly rightToLeft: boolean;
 }
 
 async function openTable(
@@ -67,12 +68,21 @@ async function openTable(
       return {
         view: new TableViewCache(await openDelimitedSource(path, size, format.delimiter, signal)),
         sheets: [],
+        rightToLeft: false,
       };
     case "parquet":
-      return { view: new TableViewCache(await openParquetSource(path)), sheets: [] };
+      return {
+        view: new TableViewCache(await openParquetSource(path)),
+        sheets: [],
+        rightToLeft: false,
+      };
     case "workbook": {
       const read = await readWorkbookSheet(path, format.workbook, sheet);
-      return { view: new TableViewCache(workbookTableSource(read)), sheets: read.sheets };
+      return {
+        view: new TableViewCache(workbookTableSource(read)),
+        sheets: read.sheets,
+        rightToLeft: read.rightToLeft,
+      };
     }
   }
 }
@@ -145,7 +155,11 @@ const make = Effect.sync(() => {
       try: async (signal) => {
         const table = await openCached(input.path, format, input.sheet);
         const page = await readTablePage(table.view, input.query, signal);
-        return { ...page, sheets: table.sheets } satisfies DataFileTable;
+        return {
+          ...page,
+          sheets: table.sheets,
+          rightToLeft: table.rightToLeft,
+        } satisfies DataFileTable;
       },
       catch: (cause) => tableError(input.path, cause),
     });

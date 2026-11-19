@@ -90,4 +90,39 @@ describe("DataGrid", () => {
     expect(requests.at(-1)?.search).toBe("sample 5");
     await screenshot("search");
   });
+
+  it("lays a right-to-left sheet out from the right and scrolls and steps toward the left", async () => {
+    const host = document.createElement("div");
+    host.style.cssText = "width: 300px; height: 300px; display: flex; flex-direction: column;";
+    await using screen = await render(
+      <DataGrid label="sheet.xlsx" revision="1" rightToLeft loadPage={syntheticTable([])} />,
+      { container: host, router: false },
+    );
+    const grid = host.querySelector<HTMLElement>('[role="grid"]')!;
+    await vi.waitFor(() => expect(host.textContent).toContain("sample 1"));
+    const right = (selector: string) => host.querySelector(selector)!.getBoundingClientRect().right;
+    expect(right('[role="rowheader"]')).toBeCloseTo(grid.getBoundingClientRect().right, 0);
+    expect(right('[role="columnheader"][aria-colindex="2"]')).toBeGreaterThan(
+      right('[role="columnheader"][aria-colindex="3"]'),
+    );
+
+    grid.focus();
+    for (let step = 0; step < 3; step++)
+      await act(() =>
+        grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })),
+      );
+    await vi.waitFor(() => expect(host.textContent).toContain("2024-01-01"));
+    expect(grid.scrollLeft).toBeLessThan(0);
+    expect(screen.container.querySelector('[role="gridcell"][aria-colindex="5"]')).not.toBeNull();
+    await act(() =>
+      grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })),
+    );
+    await vi.waitFor(() =>
+      expect(
+        [...host.querySelectorAll('[role="gridcell"][aria-selected="true"]')].map((cell) =>
+          cell.getAttribute("aria-colindex"),
+        ),
+      ).toEqual(["4"]),
+    );
+  });
 });

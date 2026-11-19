@@ -81,6 +81,8 @@ export interface DataGridProps {
   readonly loadPage: (query: DataTableQuery) => Promise<DataTablePage>;
   /** A new revision drops every loaded row, as when the source changes. */
   readonly revision: string;
+  /** Lays the columns out from the right, as a right-to-left sheet does. */
+  readonly rightToLeft?: boolean;
   readonly toolbarStart?: ReactNode;
 }
 
@@ -99,6 +101,11 @@ export function DataGrid(props: DataGridProps) {
 
   const scroller = useRef<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  // Scroll offsets and pointer deltas run backwards when the sheet reads right to left.
+  const inline = props.rightToLeft ? -1 : 1;
+  const [backKey, forwardKey] = props.rightToLeft
+    ? ["ArrowRight", "ArrowLeft"]
+    : ["ArrowLeft", "ArrowRight"];
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [anchor, setAnchor] = useState<Cell | null>(null);
   const [focus, setFocus] = useState<Cell | null>(null);
@@ -255,8 +262,9 @@ export function DataGrid(props: DataGridProps) {
     const left = offsets[cell.column]!;
     const right = offsets[cell.column + 1]!;
     const dataWidth = node.clientWidth - rowHeaderWidth;
-    if (left < node.scrollLeft) node.scrollLeft = left;
-    else if (right > node.scrollLeft + dataWidth) node.scrollLeft = right - dataWidth;
+    const scrolled = Math.abs(node.scrollLeft);
+    if (left < scrolled) node.scrollLeft = inline * left;
+    else if (right > scrolled + dataWidth) node.scrollLeft = inline * (right - dataWidth);
   };
 
   const copySelection = async () => {
@@ -301,8 +309,8 @@ export function DataGrid(props: DataGridProps) {
     const moves: Record<string, Cell> = {
       ArrowUp: { row: mod ? 0 : current.row - 1, column: current.column },
       ArrowDown: { row: mod ? lastRow : current.row + 1, column: current.column },
-      ArrowLeft: { row: current.row, column: mod ? 0 : current.column - 1 },
-      ArrowRight: { row: current.row, column: mod ? lastColumn : current.column + 1 },
+      [backKey]: { row: current.row, column: mod ? 0 : current.column - 1 },
+      [forwardKey]: { row: current.row, column: mod ? lastColumn : current.column + 1 },
       PageUp: { row: current.row - visibleRows.rowsPerPage, column: current.column },
       PageDown: { row: current.row + visibleRows.rowsPerPage, column: current.column },
       Home: { row: mod ? 0 : current.row, column: 0 },
@@ -340,7 +348,7 @@ export function DataGrid(props: DataGridProps) {
               ...current,
               values: current.values.map((width, index) =>
                 index === column
-                  ? clampColumnWidth(startWidth + moveEvent.clientX - startX)
+                  ? clampColumnWidth(startWidth + inline * (moveEvent.clientX - startX))
                   : width,
               ),
             },
@@ -417,9 +425,13 @@ export function DataGrid(props: DataGridProps) {
         aria-rowcount={rowCount + 1}
         aria-colcount={columns.length + 1}
         aria-multiselectable="true"
+        dir={props.rightToLeft ? "rtl" : "ltr"}
         className="relative min-h-0 flex-1 overflow-auto text-xs outline-none select-none"
         onScroll={(event) =>
-          setScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft })
+          setScroll({
+            top: event.currentTarget.scrollTop,
+            left: Math.abs(event.currentTarget.scrollLeft),
+          })
         }
         onKeyDown={onKeyDown}
       >
@@ -437,7 +449,7 @@ export function DataGrid(props: DataGridProps) {
               style={{ height: HEADER_HEIGHT }}
             >
               <div
-                className="sticky left-0 z-10 shrink-0 border-r border-border bg-muted"
+                className="sticky start-0 z-10 shrink-0 border-e border-border bg-muted"
                 style={{ width: rowHeaderWidth }}
               />
               {columnIndexes.map((column) => (
@@ -445,7 +457,7 @@ export function DataGrid(props: DataGridProps) {
                   key={column}
                   column={columns[column]!}
                   index={column}
-                  left={rowHeaderWidth + offsets[column]!}
+                  start={rowHeaderWidth + offsets[column]!}
                   width={columnWidths[column]!}
                   sort={sort?.column === column ? sort : null}
                   onSort={() => changeSort(column)}
@@ -472,7 +484,7 @@ export function DataGrid(props: DataGridProps) {
                     <div
                       role="rowheader"
                       className={cn(
-                        "sticky left-0 z-10 shrink-0 truncate border-r border-border bg-background px-2 text-right leading-7 text-muted-foreground tabular-nums",
+                        "sticky start-0 z-10 shrink-0 truncate border-e border-border bg-background px-2 text-end leading-7 text-muted-foreground tabular-nums",
                         rowSelected && "text-foreground",
                       )}
                       style={{ width: rowHeaderWidth }}
@@ -490,6 +502,7 @@ export function DataGrid(props: DataGridProps) {
                     </div>
                     {columnIndexes.map((column) => {
                       const value = row?.cells[column] ?? null;
+                      const numeric = isNumericType(columns[column]!.type);
                       const selected =
                         rowSelected && column >= selection!.left && column <= selection!.right;
                       const active = focus?.row === position && focus.column === column;
@@ -500,14 +513,14 @@ export function DataGrid(props: DataGridProps) {
                           aria-colindex={column + 2}
                           aria-selected={selected}
                           className={cn(
-                            "absolute top-0 h-full truncate border-r border-border/40 px-2 leading-7",
-                            isNumericType(columns[column]!.type) && "text-right tabular-nums",
+                            "absolute top-0 h-full border-e border-border/40 px-2 leading-7",
+                            numeric && "tabular-nums",
                             value === null && "text-muted-foreground/50",
                             selected && "bg-primary/10",
                             active && "outline outline-1 -outline-offset-1 outline-primary",
                           )}
                           style={{
-                            left: rowHeaderWidth + offsets[column]!,
+                            insetInlineStart: rowHeaderWidth + offsets[column]!,
                             width: columnWidths[column],
                           }}
                           onPointerDown={(event) => {
@@ -519,7 +532,12 @@ export function DataGrid(props: DataGridProps) {
                             if (event.buttons === 1 && anchor) setFocus({ row: position, column });
                           }}
                         >
-                          {row ? (value ?? "null") : ""}
+                          <span
+                            dir={numeric ? "ltr" : "auto"}
+                            className={cn("block truncate", numeric ? "text-right" : "text-start")}
+                          >
+                            {row ? (value ?? "null") : ""}
+                          </span>
                         </div>
                       );
                     })}
@@ -537,7 +555,7 @@ export function DataGrid(props: DataGridProps) {
 function ColumnHeader(props: {
   readonly column: DataTableColumn;
   readonly index: number;
-  readonly left: number;
+  readonly start: number;
   readonly width: number;
   readonly sort: DataTableSort | null;
   readonly onSort: () => void;
@@ -549,8 +567,8 @@ function ColumnHeader(props: {
       role="columnheader"
       aria-colindex={props.index + 2}
       aria-sort={props.sort === null ? "none" : props.sort.descending ? "descending" : "ascending"}
-      className="absolute top-0 h-full border-r border-border/60"
-      style={{ left: props.left, width: props.width }}
+      className="absolute top-0 h-full border-e border-border/60"
+      style={{ insetInlineStart: props.start, width: props.width }}
     >
       <button
         type="button"
@@ -575,7 +593,7 @@ function ColumnHeader(props: {
       </button>
       <div
         aria-hidden="true"
-        className="absolute top-0 -right-1 z-10 h-full w-2 cursor-col-resize hover:bg-primary/30"
+        className="absolute top-0 -end-1 z-10 h-full w-2 cursor-col-resize hover:bg-primary/30"
         onPointerDown={props.onResize}
       />
     </div>
