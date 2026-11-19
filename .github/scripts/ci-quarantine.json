@@ -50,16 +50,6 @@
       "owner": "Compute",
       "quarantined": "2026-11-17",
       "expires": "2026-11-24"
-    },
-    {
-      "id": "web-minimap-adjacent-user-turns",
-      "job": "Test Web *",
-      "step": "Test",
-      "test": "browser (chromium) src/components/chat/MessagesTimeline.browser.test.tsx > MessagesTimeline messages > steps the minimap's next turn past two adjacent user messages",
-      "signature": "AssertionError: expected 'false' to be 'true'",
-      "owner": "Chat timeline",
-      "quarantined": "2026-11-19",
-      "expires": "2026-11-26"
     }
   ]
 }
