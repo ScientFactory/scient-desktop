@@ -22,7 +22,6 @@ function createStorage(overrides: Partial<Storage> = {}): Storage {
 }
 
 afterEach(() => {
-  vi.doUnmock("react");
   vi.resetModules();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -46,17 +45,7 @@ describe("theme failure handling", () => {
     vi.stubGlobal("window", {
       localStorage: storage,
     });
-    vi.doMock("react", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("react")>()),
-      useEffect: vi.fn(),
-      useSyncExternalStore: (
-        _subscribe: unknown,
-        _getSnapshot: unknown,
-        getServerSnapshot: () => unknown,
-      ) => getServerSnapshot(),
-    }));
-
-    const { readThemePreference, ThemeStorageError, useTheme } = await import("./useTheme");
+    const { readThemePreference, setTheme, ThemeStorageError } = await import("./useTheme");
 
     try {
       readThemePreference();
@@ -71,7 +60,7 @@ describe("theme failure handling", () => {
     }
 
     getItem.mockRestore();
-    expect(useTheme().setTheme("dark")).toBe(false);
+    expect(setTheme("dark")).toBe(false);
     expect(storage.getItem("scient-next:theme")).toBeNull();
     expect(errorLog).toHaveBeenCalledWith(
       "Failed to write theme preference for scient-next:theme.",

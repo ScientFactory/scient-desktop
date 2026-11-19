@@ -153,7 +153,14 @@ async function render(
       model="model-0"
       lockedProvider={locked ? provider.driver : null}
       instanceEntries={deriveProviderInstanceEntries(providers)}
-      modelOptionsByInstance={new Map([[provider.instanceId, options]])}
+      modelOptionsByInstance={
+        new Map(
+          providers.map((entry) => [
+            entry.instanceId,
+            entry.instanceId === provider.instanceId ? options : entry.models,
+          ]),
+        )
+      }
       terminalOpen={false}
       onInstanceModelChange={selectModel}
       isProviderSetupAvailable={(entry) =>
@@ -210,26 +217,24 @@ async function setupButton() {
 
 describe("actual picker provider setup", () => {
   // regression: 4e07b49b73 fix(providers): restore composer installation and account setup
-  it.each(DRIVERS)("keeps %s installation visible with no model rows", async (driver) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  it.each(DRIVERS)(
+    "keeps %s setup reachable with no model rows, before and after installation",
+    async (driver) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    await page.viewport(1280, 720);
-    await render(_fixture, snapshot(driver));
-    await setupButton();
-    expect(_fixture.host.querySelector("[data-model-picker-models]")).toBeNull();
-    expect(commands.planRuntime).not.toHaveBeenCalled();
-    expect(commands.startConnection).not.toHaveBeenCalled();
-  });
+      await page.viewport(1280, 720);
+      await render(_fixture, snapshot(driver));
+      await setupButton();
+      expect(_fixture.host.querySelector("[data-model-picker-models]")).toBeNull();
+      expect(commands.planRuntime).not.toHaveBeenCalled();
+      expect(commands.startConnection).not.toHaveBeenCalled();
 
-  // regression: 4e07b49b73 fix(providers): restore composer installation and account setup
-  it.each(DRIVERS)("keeps %s model connection visible after installation", async (driver) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    await render(_fixture, snapshot(driver, true));
-    await setupButton();
-  });
+      // The same picker, rerendered once the runtime is installed: connection setup stays.
+      await render(_fixture, snapshot(driver, true));
+      await setupButton();
+    },
+  );
 
   it("centers setup beside the full provider rail without relying on model rows", async () => {
     await using _fixture = _createFixture();
@@ -252,11 +257,18 @@ describe("actual picker provider setup", () => {
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
     const provider = snapshot("scient");
+    // The favorite must be pickable, or the picker would open the active provider anyway.
+    const readyCodex: ServerProvider = {
+      ...snapshot("codex", true),
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [{ slug: "cached-model", name: "Cached model", isCustom: false, capabilities: null }],
+    };
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
-      favorites: [{ provider: ProviderInstanceId.make("codex"), model: "cached-model" }],
+      favorites: [{ provider: readyCodex.instanceId, model: "cached-model" }],
     });
-    await render(_fixture, provider);
+    await render(_fixture, provider, provider.models, false, [provider, readyCodex]);
     await setupButton();
   });
 

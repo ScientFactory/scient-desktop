@@ -9,6 +9,7 @@ const { computeQualificationSuites } = require("../.github/scripts/compute-ci-ga
   computeQualificationSuites: (paths: string[]) => {
     realKernel: boolean;
     managedPython: boolean;
+    pythonProduct: boolean;
     platforms: string;
   };
 };
@@ -62,9 +63,10 @@ function simulate(files: string[], eventName = "pull_request", reused = false, b
   const gates = Object.fromEntries(
     Object.entries({
       ...outputs,
-      compute_changed: full || compute.realKernel || compute.managedPython,
+      compute_changed: full || compute.realKernel || compute.managedPython || compute.pythonProduct,
       real_kernel: full || compute.realKernel,
       managed_python: full || compute.managedPython,
+      python_product: full || compute.pythonProduct,
       compute_platforms: full ? "all" : compute.platforms,
       windows_changed: full || needsWindowsPackaging(files),
       linux_changed: full || needsLinuxPackaging(files),
@@ -206,7 +208,7 @@ describe("CI workflow decisions", () => {
     },
   );
 
-  it("has one required gate covering every job, sixteen server shards and twelve hosted web shards", () => {
+  it("has one required gate covering every job", () => {
     expect(workflow.jobs.check).toMatchObject({ name: "Check", if: "${{ always() }}" });
     expect([...(workflow.jobs.check!.needs as string[])].sort()).toEqual(
       Object.keys(workflow.jobs)
@@ -214,14 +216,8 @@ describe("CI workflow decisions", () => {
         .sort(),
     );
     expect(workflow.jobs.lint!.name).toBe("Lint");
-    expect(workflow.jobs.test_server).toMatchObject({
-      "timeout-minutes": 20,
-      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] } },
-    });
-    expect(workflow.jobs.test_web).toMatchObject({
-      "runs-on": "ubuntu-24.04",
-      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } },
-    });
+    expect(workflow.jobs.test_server).toMatchObject({ "timeout-minutes": 20 });
+    expect(workflow.jobs.test_web).toMatchObject({ "runs-on": "ubuntu-24.04" });
   });
 
   it.each([

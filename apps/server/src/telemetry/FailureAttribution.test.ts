@@ -1,13 +1,79 @@
+// @effect-diagnostics nodeBuiltinImport:off -- reads the bridge source to pin its fixed reasons.
+import * as NodeFS from "node:fs";
+
 import { describe, expect, it } from "@effect/vitest";
 import {
   captureRejectionAttribution,
+  COMPUTE_BRIDGE_LOSS_PREFIXES,
   computeRunAttribution,
   latexBuildAttribution,
+  pdfExportAttribution,
   programRunAttribution,
   toolFailureAttribution,
 } from "./FailureAttribution.ts";
 
 describe("failure attribution", () => {
+  it.each([
+    ["admission-timeout", "scient", "admission-timeout"],
+    ["protocol-error", "scient", "protocol-error"],
+    ["missing-capability", "scient", "missing-capability"],
+    ["persistence-failed", "scient", "persistence-failed"],
+    // A kernel can die of the user's code, memory or an extension.
+    ["kernel-exited", "unknown", "kernel-exited"],
+    ["kernel-connection", "unknown", "kernel-connection"],
+    ["exited", "unknown", "runtime-exited"],
+  ] as const)("attributes a run lost for %s", (reason, owner, category) => {
+    expect(computeRunAttribution({ kind: "lost", reason }, false)).toEqual({
+      failureOwner: owner,
+      failureCategory: category,
+    });
+  });
+
+  it("attributes a run Scient refused because its source changed to the input", () => {
+    expect(
+      computeRunAttribution(
+        { kind: "runtime-reported", errorName: "Scient:SourceConflict" },
+        false,
+      ),
+    ).toEqual({ failureOwner: "input", failureCategory: "source-conflict" });
+  });
+
+  it("reads loss reasons the compute bridge still writes", () => {
+    const bridge = NodeFS.readFileSync(
+      new URL("../scient/compute/bridge/scient_compute_bridge.py", import.meta.url),
+      "utf8",
+    );
+    for (const [prefix] of COMPUTE_BRIDGE_LOSS_PREFIXES) expect(bridge).toContain(prefix);
+  });
+
+  it("says why a run file did not start", () => {
+    expect(programRunAttribution("failed", null, "runtime-missing")).toEqual({
+      failureOwner: "environment",
+      failureCategory: "runtime-missing",
+    });
+    expect(programRunAttribution("failed", null, "source-changed")).toEqual({
+      failureOwner: "input",
+      failureCategory: "source-changed",
+    });
+    expect(programRunAttribution("failed", null)).toEqual({
+      failureOwner: "unknown",
+      failureCategory: "not-started",
+    });
+  });
+
+  it("attributes a PDF export by its typed code only", () => {
+    expect(pdfExportAttribution("renderer-unavailable")).toEqual({
+      failureOwner: "scient",
+      failureCategory: "renderer-unavailable",
+    });
+    expect(pdfExportAttribution("source-not-found")).toEqual({
+      failureOwner: "input",
+      failureCategory: "source-not-found",
+    });
+    expect(pdfExportAttribution("/private/path")).toBeUndefined();
+    expect(pdfExportAttribution(undefined)).toBeUndefined();
+  });
+
   it.each([
     [{ kind: "runtime-reported", errorName: "ValueError" }, false, "code", "code-error"],
     [{ kind: "runtime-reported", errorName: "SyntaxError" }, false, "code", "syntax"],

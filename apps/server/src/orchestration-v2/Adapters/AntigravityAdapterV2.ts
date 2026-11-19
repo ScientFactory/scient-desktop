@@ -325,8 +325,9 @@ export function makeAntigravityAcpAdapterFlavor(
     ...(profileDirectory === undefined
       ? {}
       : {
-          watchPromptOutcome: (sessionId: string) =>
-            watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          // SCIENT-FORK: the session's delivered connectors say whose tool server failed.
+          watchPromptOutcome: (sessionId: string, delivery) =>
+            watchAntigravityPromptOutcome(profileDirectory, sessionId, delivery),
         }),
   };
 }

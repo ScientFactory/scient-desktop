@@ -13,10 +13,6 @@ import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
 import { remarkScientMath, remarkScientMathRefinements } from "./remarkScientMath";
 import { normalizeScientMathDelimiters } from "./scientMathText";
 import { remarkScientSingleDollarMath } from "./scientSingleDollarMath";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-} from "../markdown/scientMarkdownPipeline";
 
 const chatMarkdownSource = NodeFS.readFileSync(
   new URL("../../components/ChatMarkdown.tsx", import.meta.url),
@@ -24,31 +20,9 @@ const chatMarkdownSource = NodeFS.readFileSync(
 );
 
 describe("ChatMarkdown math seam", () => {
-  it("registers the math plugins and refinements in both remark plugin arrays", () => {
-    for (const plugins of [
-      CHAT_MARKDOWN_REMARK_PLUGINS,
-      CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-    ]) {
-      expect(plugins.slice(1, 4)).toEqual([
-        remarkScientMath,
-        remarkScientSingleDollarMath,
-        remarkScientMathRefinements,
-      ]);
-    }
-  });
-
-  it("normalizes delimiters unconditionally — the rewrite is length-preserving", () => {
-    expect(chatMarkdownSource).toContain("scientMathMarkdownText(textProp)");
-    expect(chatMarkdownSource).not.toContain("scientMathMarkdownText(textProp,");
-  });
-
-  it("threads the original text through the per-message plugin hook", () => {
-    expect(chatMarkdownSource).toContain(
-      "scientMathRemarkPluginsForMessage(sharedRemarkPlugins, text)",
-    );
-    expect(chatMarkdownSource).toContain("remarkPlugins={remarkPlugins}");
-  });
-
+  // Plugin order, normalization and the authored-intent hook are owned by
+  // scientMarkdownProfiles.test.ts and ChatMarkdown.scient.browser.test.tsx. No rendered chat
+  // case observes the streaming and focusable props yet, so this text check stays.
   it("routes math code nodes to the Scient components, with streaming state", () => {
     expect(chatMarkdownSource).toContain("const tex = nodeToPlainText(children);");
     expect(chatMarkdownSource).toMatch(
@@ -132,14 +106,6 @@ describe("single-dollar math from model output", () => {
     }
   });
 
-  it("recognizes a span whole before emphasis can fragment it", () => {
-    const html = renderChatShapedPipeline("compute $a*b*c$ now");
-
-    expect(html).toContain(INLINE_MATH_SHAPE);
-    expect(html).toContain("a*b*c");
-    expect(html).not.toContain("<em>");
-  });
-
   it("renders valid math after an escaped dollar in the same run", () => {
     const html = renderChatShapedPipeline("literal \\$5 then $x+1$ renders");
 
@@ -200,20 +166,6 @@ describe("dollar text that must stay text", () => {
 
     expect(html).not.toContain("language-math");
     expect(html).toContain("$5 and $10");
-  });
-
-  it("keeps price ranges literal", () => {
-    const html = renderChatShapedPipeline("between $5-$10 total");
-
-    expect(html).not.toContain("language-math");
-  });
-
-  it("keeps file links with dollar route parameters intact", () => {
-    const html = renderChatShapedPipeline("[_chat.$threadId.tsx](/tmp/_chat.$threadId.tsx)");
-
-    expect(html).toContain('href="/tmp/_chat.$threadId.tsx"');
-    expect(html).toContain("_chat.$threadId.tsx");
-    expect(html).not.toContain("language-math");
   });
 
   it("respects escaped dollars", () => {

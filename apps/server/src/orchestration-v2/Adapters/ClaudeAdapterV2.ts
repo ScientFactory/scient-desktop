@@ -87,6 +87,8 @@ import {
   type SpawnOptions as ClaudeSpawnOptions,
   type SpawnedProcess as ClaudeSpawnedProcess,
   type SDKAssistantMessage,
+  // SCIENT-FORK: closed assistant error names a result failure.
+  type SDKAssistantMessageError,
   type SDKAPIRetryMessage,
   type SDKMessage,
   type SDKRateLimitInfo,
@@ -5005,6 +5007,40 @@ function claudeRewrittenVersion(
     : undefined;
 }
 
+// SCIENT-FORK:START — name a result failure by the SDK's closed assistant error.
+/** Codes that say only that the turn failed, not how; specific ones such as `blocking_limit` stay. */
+const GENERIC_CLAUDE_RESULT_CODES: ReadonlySet<string | null> = new Set([
+  null,
+  "sdk_result_error",
+  "api_error",
+  "model_error",
+  "turn_setup_failed",
+  "error_during_execution",
+]);
+
+/**
+ * A generic result failure with no API status is named by the SDK's closed error on
+ * the latest assistant message, which says how it failed (sign-in, plan, model).
+ */
+function withClaudeAssistantErrorCode(
+  failure: OrchestrationV2ProviderFailure | null,
+  message: SDKResultMessage,
+  assistantError: SDKAssistantMessageError | undefined,
+): OrchestrationV2ProviderFailure | null {
+  if (
+    failure === null ||
+    failure.class !== "provider_error" ||
+    assistantError === undefined ||
+    assistantError === "unknown" ||
+    !GENERIC_CLAUDE_RESULT_CODES.has(failure.code) ||
+    (message.subtype === "success" && message.api_error_status != null)
+  ) {
+    return failure;
+  }
+  return { ...failure, code: `assistant_${assistantError}` };
+}
+// SCIENT-FORK:END
+
 function providerFailureFromResult(
   message: SDKResultMessage,
   receivedAt: DateTime.Utc,
@@ -5323,6 +5359,8 @@ interface ActiveClaudeTurnContext {
     readonly type: string | null;
     readonly resetAt: string | null;
   } | null;
+  // SCIENT-FORK: the SDK's closed error on the turn's latest root assistant message.
+  latestAssistantError: SDKAssistantMessageError | undefined;
   // Set while this turn's latest compaction status reports a failure, with
   // Claude's error text when it sent one.
   compactionFailure: { readonly message: string | undefined } | null;
@@ -10239,7 +10277,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : {
                     failure: makeProviderFailure({
                       cause: cause === undefined ? undefined : Cause.squash(cause),
-                      ...(cause === undefined ? {} : claudeProcessExitFailure(cause)),
+                      // SCIENT-FORK: a query that ended with no result and no process exit still has a code.
+                      ...(cause === undefined
+                        ? { code: "claude_stream_ended" }
+                        : (claudeProcessExitFailure(cause) ?? { code: "claude_query_failed" })),
                       class: "transport_error",
                     }),
                   }),
@@ -11532,6 +11573,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
               context.latestAssistantRateLimit =
                 message.error === "rate_limit" ? { type: null, resetAt: null } : null;
+              // SCIENT-FORK: kept to name a result failure that has no API status.
+              context.latestAssistantError = message.error;
               if (message.error === "rate_limit" && isClaudeBlockedAssistantRateLimit(message)) {
                 const info = message.api_error_params.rate_limit_info;
                 const overageAllowed =
@@ -12624,10 +12667,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
                 : null;
-            const terminalFailure =
+            // SCIENT-FORK: a failure with no API status is named by the SDK's closed assistant error.
+            const terminalFailure = withClaudeAssistantErrorCode(
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt }
-                : resultFailure;
+                : resultFailure,
+              message,
+              context.latestAssistantError,
+            );
             yield* finalizeActiveTurn({
               context,
               status: interrupted
@@ -14229,6 +14276,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     rejectedRateLimitTypes: new Set(),
                     rateLimitResetTimes: new Map(),
                     latestAssistantRateLimit: null,
+                    // SCIENT-FORK: no assistant error yet.
+                    latestAssistantError: undefined,
                     steeredSegmentUsage: [],
                     steersClosed: false,
                     steeredLedgerUsage: { inputTokens: 0, outputTokens: 0 },

@@ -8,42 +8,35 @@ import {
   type ScientSourceRecord,
 } from "./model.ts";
 import { normalizePersistentIdentifier, sourceMetadataDiagnostics } from "./normalize.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const decodeScientSourceCandidate = Schema.decodeUnknownSync(ScientSourceCandidate);
-const candidate = decodeScientSourceCandidate({
-  sourceKey: "ABC123",
-  type: "article",
-  customType: null,
-  title: "A careful study",
-  creators: [
-    { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
-  ],
-  issuedRaw: "2026",
-  issuedYear: 2026,
-  identifiers: [{ scheme: "doi", value: "10.1000/Example" }],
-  abstract: null,
-  containerTitle: "Journal",
-  publisher: null,
-  volume: null,
-  issue: null,
-  pages: null,
-  language: "en",
-  url: null,
-  tags: [],
-  externalReferences: [
-    {
-      system: "zotero",
-      libraryId: "0",
-      itemKey: "ABC123",
-      itemVersion: 4,
-      rawItemType: "journalArticle",
-    },
-  ],
-  fieldProvenance: [],
-  pdfAvailable: true,
-  pdfFileName: "paper.pdf",
-  pdfAttachmentCount: 1,
-});
+const candidate = decodeScientSourceCandidate(
+  sourceCandidate({
+    sourceKey: "ABC123",
+    title: "A careful study",
+    creators: [
+      { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+    ],
+    issuedRaw: "2026",
+    issuedYear: 2026,
+    identifiers: [{ scheme: "doi", value: "10.1000/Example" }],
+    containerTitle: "Journal",
+    language: "en",
+    externalReferences: [
+      {
+        system: "zotero",
+        libraryId: "0",
+        itemKey: "ABC123",
+        itemVersion: 4,
+        rawItemType: "journalArticle",
+      },
+    ],
+    pdfAvailable: true,
+    pdfFileName: "paper.pdf",
+    pdfAttachmentCount: 1,
+  }),
+);
 
 function record(overrides: Partial<ScientSourceRecord> = {}): ScientSourceRecord {
   return {

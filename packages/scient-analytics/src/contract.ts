@@ -124,10 +124,34 @@ const FAILURE_CATEGORIES = [
   "app-restart",
   "runtime-connection",
   "runtime-exited",
+  "kernel-exited",
+  "kernel-connection",
+  "protocol-error",
+  "missing-capability",
+  "admission-timeout",
+  "source-conflict",
   // Run file
   "nonzero-exit",
   "not-started",
   "failed-after-exit",
+  "runtime-missing",
+  "source-changed",
+  // PDF export
+  "project-required",
+  "project-changed",
+  "invalid-source-path",
+  "invalid-output-path",
+  "source-not-found",
+  "renderer-unavailable",
+  "render-failed",
+  "publication-failed",
+  "output-write-failed",
+  "partial-publication",
+  "unsupported-format",
+  "too-large",
+  "unsaved-changes",
+  "prepare-failed",
+  "delivery-failed",
   // LaTeX builds
   "compile_error",
   "missing_package",
@@ -283,6 +307,20 @@ const LIFECYCLE_FAILED_CHECKS = new Set([
   "rollback",
   "refresh",
 ]);
+const SIGN_IN_FAILURE_REASONS = new Set([
+  "start_failed",
+  "no_signin_page",
+  "invalid_response",
+  "timeout",
+  "provider_failed",
+  "provider_exited",
+  "verification",
+  "post_signin_setup",
+  "flow_stopped",
+  "unknown",
+]);
+const SIGN_IN_PAGES = new Set(["primary", "manual_fallback", "none"]);
+const TOOL_SERVER_OWNERS = new Set(["scient", "connector", "user", "unknown"]);
 const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
@@ -1214,8 +1252,13 @@ function normalizeEvent(
     case "provider.lifecycle.failed":
     case "provider.lifecycle.cancelled": {
       const failed = name === "provider.lifecycle.failed";
-      // Read on every lifecycle event so a stray class never passes through on the others.
+      // Read on every lifecycle event so a stray value never passes through on the others.
       const failureClass = normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES);
+      const failureDetails = optionalProperties(input, {
+        failedCheck: LIFECYCLE_FAILED_CHECKS,
+        failureReason: SIGN_IN_FAILURE_REASONS,
+      });
+      const signInPage = optionalProperties(input, { signInPage: SIGN_IN_PAGES });
       return {
         name,
         privacyLevel: failed ? "essential" : "product",
@@ -1237,7 +1280,9 @@ function normalizeEvent(
             networkKind: DOWNLOAD_NETWORK_KINDS,
             compressedFailure: FAILURE_CLASSES,
           }),
-          ...(failed ? optionalProperties(input, { failedCheck: LIFECYCLE_FAILED_CHECKS }) : {}),
+          ...(failed ? failureDetails : {}),
+          // Every sign-in end says which page it waited on, so outcomes compare by page.
+          ...(name === "provider.lifecycle.started" ? {} : signInPage),
           ...(property(input, "resumedBytes") === undefined
             ? {}
             : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),
@@ -1702,6 +1747,8 @@ function normalizeEvent(
             retryAttempts: "count",
             // False when the run failed before its provider session started.
             started: "boolean",
+            // Whose tool server failed to start, for a failure caused by one.
+            toolServerOwner: TOOL_SERVER_OWNERS,
           }),
           ...turnRunProperties(input),
           ...failureCodeProperty(provider, input),

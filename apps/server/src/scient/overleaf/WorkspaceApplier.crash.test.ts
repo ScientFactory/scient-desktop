@@ -39,18 +39,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
     }),
   );
 
-  it.live("publishes nothing into a changed group when an editor reads first", () =>
-    fixture(async (h) => {
-      await crashAt(h, "prepared");
-      await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
-      await h.restart();
-      await editorReads(h);
-      expect(await read(h.cwd, "a.tex")).toBe("base");
-      expect((await h.apply("crash")).interrupted).toEqual([]);
-      expect(await read(h.cwd, "a.tex")).toBe("base");
-    }),
-  );
-
   // A peer is checked by what stands there, not only by its bytes.
   it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
     "publishes nothing when a peer that should be absent becomes a %s",

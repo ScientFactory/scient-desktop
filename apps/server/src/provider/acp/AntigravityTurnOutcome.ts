@@ -12,7 +12,11 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 // SCIENT-FORK:START — Scient classifies harness errors that are not Google API errors.
-import { antigravityHarnessFailure } from "../../scient/providerLifecycle/AntigravityHarnessFailure.ts";
+import {
+  antigravityHarnessFailure,
+  readAntigravityUserToolServers,
+  type AntigravityToolServers,
+} from "../../scient/providerLifecycle/AntigravityHarnessFailure.ts";
 // SCIENT-FORK:END
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 
@@ -113,6 +117,8 @@ function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
   now: DateTime.Utc,
+  // SCIENT-FORK: the tool servers this session had, to say whose one failed.
+  toolServers?: AntigravityToolServers,
 ):
   | {
       readonly failure: OrchestrationV2ProviderFailure;
@@ -157,7 +163,7 @@ function turnFailure(
   }
   if (apiError === null) {
     // SCIENT-FORK:START — Antigravity's own error text, and a tool server that failed to start.
-    return reusable(antigravityHarnessFailure(step?.payload ?? null));
+    return reusable(antigravityHarnessFailure(step?.payload ?? null, toolServers));
     // SCIENT-FORK:END
   }
   const [, httpStatus, message, status] = apiError;
@@ -187,6 +193,8 @@ const conversationSegments = ["antigravity-acp", "conversations"];
 export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.watch")(function* (
   profileDirectory: string,
   sessionId: string,
+  // SCIENT-FORK: the connectors Scient delivered to this session.
+  delivery?: { readonly connectorServerNames: ReadonlySet<string> },
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
     DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
@@ -246,6 +254,17 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    // SCIENT-FORK:START — an error step may name a tool server; say whose it was.
+    const toolServers: AntigravityToolServers | undefined =
+      step?.type === ERROR_STEP_TYPE
+        ? {
+            connectorServerNames: delivery?.connectorServerNames ?? new Set(),
+            userServerNames: yield* Effect.promise(() =>
+              readAntigravityUserToolServers(profileDirectory),
+            ),
+          }
+        : undefined;
+    return turnFailure(result.stopReason, step, yield* DateTime.now, toolServers);
+    // SCIENT-FORK:END
   });
 });

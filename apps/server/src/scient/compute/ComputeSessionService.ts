@@ -93,6 +93,8 @@ import * as Effect from "effect/Effect";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import {
   computeRunAttribution,
+  COMPUTE_BRIDGE_LOSS_PREFIXES,
+  type ComputeLossReason,
   type ComputeRunFailureFacts,
 } from "../../telemetry/FailureAttribution.ts";
 import { makeComputeOutputAnalytics } from "../../telemetry/ComputeOutputAnalytics.ts";
@@ -142,6 +144,19 @@ const IDLE_SWEEP_MINIMUM_MS = 1_000;
 const SERVER_RESTART_REASON = "The server restarted while this session was running.";
 const TRANSPORT_CLOSED_REASON = "The runtime stopped without saying why.";
 const TRANSPORT_FAILED_REASON = "The connection to the runtime failed.";
+const ADMISSION_TIMEOUT_REASON =
+  "Execution admission timed out; the runtime was closed to avoid uncertain execution.";
+const PERSISTENCE_FAILED_REASON = "Unable to persist compute session state.";
+
+/** Why a run was lost, read from Scient's own fixed reasons; anything else is `exited`. */
+function computeLossReason(failureReason: string | null | undefined): ComputeLossReason {
+  if (failureReason === SERVER_RESTART_REASON) return "server-restart";
+  if (failureReason === TRANSPORT_FAILED_REASON) return "transport-failed";
+  if (failureReason === ADMISSION_TIMEOUT_REASON) return "admission-timeout";
+  if (failureReason === PERSISTENCE_FAILED_REASON) return "persistence-failed";
+  const bridge = COMPUTE_BRIDGE_LOSS_PREFIXES.find(([prefix]) => failureReason?.startsWith(prefix));
+  return bridge?.[1] ?? "exited";
+}
 const RESTART_DETAIL = "The session was restarted before this ran.";
 const STOP_DETAIL = "The session was stopped before this ran.";
 const INTERRUPT_TIMEOUT_DETAIL = "The runtime did not answer an interrupt.";
@@ -1106,17 +1121,11 @@ const make = Effect.gen(function* () {
             ? { kind: "runtime-reported", errorName: result.diagnostics[0]?.errorName }
             : { kind: "not-admitted" }
           : result.status === "lost"
-            ? result.startedAt === null
+            ? // An admission that timed out never started, but the runtime did not fail to start.
+              result.startedAt === null &&
+              computeLossReason(result.failureReason) !== "admission-timeout"
               ? { kind: "runtime-start" }
-              : {
-                  kind: "lost",
-                  reason:
-                    result.failureReason === SERVER_RESTART_REASON
-                      ? "server-restart"
-                      : result.failureReason === TRANSPORT_FAILED_REASON
-                        ? "transport-failed"
-                        : "exited",
-                }
+              : { kind: "lost", reason: computeLossReason(result.failureReason) }
             : null;
     return {
       actor: actor === undefined ? ("user" as const) : ("agent" as const),
@@ -2069,10 +2078,7 @@ const make = Effect.gen(function* () {
                 Effect.timeoutOrElse({
                   duration: "5 seconds",
                   orElse: () =>
-                    endSessionUnderLease(
-                      live,
-                      "Execution admission timed out; the runtime was closed to avoid uncertain execution.",
-                    ).pipe(
+                    endSessionUnderLease(live, ADMISSION_TIMEOUT_REASON).pipe(
                       Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
                       Effect.andThen(
                         Effect.fail(
@@ -2216,7 +2222,7 @@ const make = Effect.gen(function* () {
   const failClosedOnPersistenceError = (live: LiveComputeSession, error: ComputeOperationError) =>
     error.reason !== "persistence-failed"
       ? Effect.void
-      : endSessionUnderLease(live, "Unable to persist compute session state.").pipe(
+      : endSessionUnderLease(live, PERSISTENCE_FAILED_REASON).pipe(
           Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
           Effect.ignore,
         );

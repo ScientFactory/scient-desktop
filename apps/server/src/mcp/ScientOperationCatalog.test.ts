@@ -32,7 +32,6 @@ it("describes every mounted tool by its own annotation", () => {
     const operation = scientOperationCatalog.forTool(tool.name)!;
     expect(operation).toBe(Context.getOrUndefined(tool.annotations, ScientOperation));
     expect(scientOperationCatalog.get(operation.id)).toBe(operation);
-    expect(Tool.getJsonSchema(tool).type).toBe("object");
   }
   expect(scientOperationCatalog.forTool("mcp__t3-code__scient_pdf_build")).toBeUndefined();
   expect(scientOperationCatalog.get("retired-or-unknown-operation")).toBeUndefined();

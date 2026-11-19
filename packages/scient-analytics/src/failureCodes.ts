@@ -48,7 +48,26 @@ const OMP_CODES = new Set([
   "rpc_failed",
 ]);
 
-/** Claude Agent SDK result subtypes, process exits, and Scient's own Claude codes. */
+/** The Claude Agent SDK's closed assistant-message errors. */
+const CLAUDE_ASSISTANT_ERRORS = [
+  "authentication_failed",
+  "oauth_org_not_allowed",
+  "account_on_hold",
+  "verification_required",
+  "billing_error",
+  "rate_limit",
+  "overloaded",
+  "invalid_request",
+  "model_not_found",
+  "server_error",
+  "max_output_tokens",
+  "cloud_credential_error",
+];
+
+/**
+ * Claude Agent SDK result subtypes and terminal reasons, its assistant errors (as
+ * `assistant_<error>`), process exits, and Scient's own Claude codes.
+ */
 const CLAUDE_CODES = new Set([
   "error_max_turns",
   "error_during_execution",
@@ -58,6 +77,30 @@ const CLAUDE_CODES = new Set([
   "process_exited_nonzero",
   "claude_mod_ui_unsupported",
   "compaction_failed",
+  "claude_request_unanswered",
+  "claude_stream_ended",
+  "claude_query_failed",
+  "sdk_result_error",
+  // TerminalReason, minus `completed`.
+  "blocking_limit",
+  "rapid_refill_breaker",
+  "prompt_too_long",
+  "image_error",
+  "model_error",
+  "api_error",
+  "malformed_tool_use_exhausted",
+  "aborted_streaming",
+  "aborted_tools",
+  "stop_hook_prevented",
+  "hook_stopped",
+  "tool_deferred",
+  "max_turns",
+  "background_requested",
+  "budget_exhausted",
+  "structured_output_retry_exhausted",
+  "tool_deferred_unavailable",
+  "turn_setup_failed",
+  ...CLAUDE_ASSISTANT_ERRORS.map((error) => `assistant_${error}`),
 ]);
 
 /** Codex app-server error variants. */

@@ -1337,17 +1337,25 @@ textarea.scient-markdown-math-source {
 .scient-markdown-document [data-scient-result-value][data-result-state="unrecorded"]::after {
   display: none;
 }
-.scient-markdown-document .scient-result[data-result-state]:not([data-scient-result-value]) img {
+/* Figures and tables show their state as an outline: a figure on its image, a table on the
+   wrapper that scrolls it, which would clip an outline drawn on the table. */
+.scient-markdown-document .scient-result[data-result-state]:not([data-scient-result-value]) img,
+.scient-markdown-document
+  .scient-result[data-result-state]:not([data-scient-result-value]):has(> table) {
   outline: 1px dashed var(--warning);
   outline-offset: 3px;
 }
 .scient-markdown-document
   .scient-result[data-result-state="newer"]:not([data-scient-result-value])
-  img {
+  img,
+.scient-markdown-document
+  .scient-result[data-result-state="newer"]:not([data-scient-result-value]):has(> table) {
   outline-color: var(--info);
 }
 .scient-markdown-document
   .scient-result[data-result-state="unrecorded"]:not([data-scient-result-value])
-  img {
+  img,
+.scient-markdown-document
+  .scient-result[data-result-state="unrecorded"]:not([data-scient-result-value]):has(> table) {
   outline: none;
 }

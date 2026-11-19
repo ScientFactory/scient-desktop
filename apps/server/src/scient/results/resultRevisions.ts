@@ -20,6 +20,8 @@ import { ComputeResultRevision as ComputeResultRevisionSchema } from "@t3tools/c
 import { readResultValues, resultValueAt } from "@t3tools/shared/computeResults";
 import * as Schema from "effect/Schema";
 
+import { parseCsv } from "./latexOutputs.ts";
+
 const MAXIMUM_OUTPUT_FILES = 64;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_VALUES_FILE_BYTES = 4 * 1024 * 1024;
@@ -85,6 +87,12 @@ function outputKind(name: string): { kind: ComputeResultOutputKind; mediaType: s
       return { kind: "figure", mediaType: "image/jpeg" };
     case ".svg":
       return { kind: "figure", mediaType: "image/svg+xml" };
+    case ".pdf":
+      return { kind: "figure", mediaType: "application/pdf" };
+    case ".csv":
+      return { kind: "table", mediaType: "text/csv" };
+    case ".tex":
+      return { kind: "latex", mediaType: "text/x-tex" };
     default:
       return { kind: "file", mediaType: "application/octet-stream" };
   }
@@ -374,10 +382,20 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     revision: ComputeResultRevision,
     outputName: string,
     pointer: string | null,
-  ): Promise<{ value: string | null; figure: boolean }> => {
+  ): Promise<{
+    value: string | null;
+    figure: boolean;
+    table?: ReadonlyArray<ReadonlyArray<string>> | null;
+  }> => {
     const output = revision.outputs.find((candidate) => candidate.name === outputName);
     if (output === undefined) return { value: null, figure: false };
     if (output.kind === "figure") return { value: null, figure: pointer === null };
+    if (output.kind === "table") {
+      if (pointer !== null || output.pruned === true) return { value: null, figure: false };
+      const path = revisionOutputPath(layout, projectId, revision.revision, output.name);
+      const text = path === null ? null : await NodeFSP.readFile(path, "utf8").catch(() => null);
+      return { value: null, figure: false, table: text === null ? null : parseCsv(text) };
+    }
     if (output.kind !== "values" || pointer === null) return { value: null, figure: false };
     const key = `${revision.revision}/${output.name}`;
     let text = valuesText.get(key);
@@ -426,6 +444,12 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
         figures: latest.outputs
           .filter((output) => output.kind === "figure" && output.pruned !== true)
           .map((output) => output.name),
+        tables: latest.outputs
+          .filter(
+            (output) =>
+              (output.kind === "table" || output.kind === "latex") && output.pruned !== true,
+          )
+          .map((output) => output.name),
         revisions: revisions.filter((candidate) => candidate.script.path === latest.script.path)
           .length,
       });
@@ -443,5 +467,15 @@ export function makeResultsReader(layout: ResultsLayout, projectId: string, root
     return path === null ? null : { path, sha256: output.sha256 };
   };
 
-  return { resolve, list, figure };
+  /** A stored output's file, for any kind, or null when it is unknown or pruned. */
+  const outputFile = async (revision: ComputeResultRevision, outputName: string) => {
+    const output = revision.outputs.find((candidate) => candidate.name === outputName);
+    if (output === undefined || output.pruned === true) return null;
+    const path = revisionOutputPath(layout, projectId, revision.revision, output.name);
+    return path === null ? null : { path, output };
+  };
+
+  return { resolve, list, figure, revisions: all, summary, outputFile };
 }
+
+export type ResultsReader = ReturnType<typeof makeResultsReader>;

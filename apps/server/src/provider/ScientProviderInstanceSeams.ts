@@ -13,6 +13,7 @@ import type {
   ProviderStorePage,
   ProviderStoreSearchInput,
   ProviderAuthorizationUrlKind,
+  ProviderConnectionFailureReason,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
   ProviderRuntimeOperation,
@@ -253,6 +254,8 @@ export interface ProviderConnectionActionFailure {
   readonly signInMayBeRemoved?: boolean | undefined;
   /** The provider accepted the sign-in; the failure came while finishing its setup. */
   readonly afterSignIn?: boolean | undefined;
+  /** Why a sign-in failed, set where the failure is known. */
+  readonly failureReason?: ProviderConnectionFailureReason | undefined;
 }
 
 export interface ProviderConnectionAttempt {
@@ -288,6 +291,12 @@ export interface ProviderConnectionAttempt {
     | undefined;
   readonly waitForCompletion: Effect.Effect<void, ProviderConnectionActionFailure>;
   readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
+  /**
+   * Offered only where the provider's own account check is authoritative: a fresh
+   * check finding the account connected finishes the flow even while the provider's
+   * process still runs. Stops that process; the manager's final verification still decides.
+   */
+  readonly finishWhenAccountConnected?: Effect.Effect<void> | undefined;
 }
 
 /**

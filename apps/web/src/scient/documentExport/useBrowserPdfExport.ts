@@ -13,7 +13,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { browserPdfExportEnvironment } from "~/state/browserPdfExport";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { beginScientUiOperation } from "../analytics/client";
-import type { FinishScientUiOperation } from "../analytics/clientGate";
+import type { FinishScientUiOperation, ScientUiFailureCategory } from "../analytics/clientGate";
 
 import {
   browserExportLogicalDocumentKey,
@@ -76,6 +76,8 @@ function exportBrowserPdf(
     );
 
     let finish: FinishScientUiOperation = () => {};
+    // The step running when a failure is thrown; analytics names it, never the error.
+    let step: ScientUiFailureCategory = "render-failed";
     try {
       const result = await runBrowserPdfExport(
         `${target.threadRef.environmentId}:${logicalDocumentKey}`,
@@ -104,9 +106,16 @@ function exportBrowserPdf(
                 })
               : await (async () => {
                   const bridge = previewBridge;
-                  if (!bridge) throw new Error("The desktop Browser is unavailable.");
+                  if (!bridge) {
+                    step = "renderer-unavailable";
+                    throw new Error("The desktop Browser is unavailable.");
+                  }
                   const artifact = await bridge.exportPdf(target.runtimeTabId);
-                  if (!isCurrent()) throw new Error("The HTML source changed during PDF export.");
+                  if (!isCurrent()) {
+                    step = "source-changed";
+                    throw new Error("The HTML source changed during PDF export.");
+                  }
+                  step = "publication-failed";
                   return publishBrowserPdfExport({
                     environmentId: target.threadRef.environmentId,
                     input: {
@@ -122,10 +131,12 @@ function exportBrowserPdf(
                   });
                 })();
           if (published._tag === "Failure") throw squashAtomCommandFailure(published);
+          step = "publication-failed";
           if (published.value.source._tag !== "generated-pdf") {
             throw new Error("The PDF export server returned a non-generated source.");
           }
           if (!isCurrent()) {
+            step = "source-changed";
             throw new Error("The HTML source changed while the PDF was being published.");
           }
           return published.value;
@@ -135,9 +146,11 @@ function exportBrowserPdf(
         throw new Error("The PDF export server returned a non-generated source.");
       }
       if (!isCurrent()) {
+        step = "source-changed";
         throw new Error("The HTML source changed before the PDF could be presented.");
       }
 
+      step = "delivery-failed";
       const surface = scientGeneratedPdfSurface(result.source);
       if (target.activate) {
         useRightPanelStore.getState().openScient(target.threadRef, surface);
@@ -148,7 +161,7 @@ function exportBrowserPdf(
       finish("completed");
       return result;
     } catch (error) {
-      finish("failed");
+      finish("failed", step);
       throw error;
     }
   })(target);

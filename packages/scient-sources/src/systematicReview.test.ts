@@ -16,6 +16,7 @@ import {
   listScientSystematicReviews,
   readScientSystematicReview,
 } from "./systematicReviewStore.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -26,10 +27,8 @@ afterEach(async () => {
 });
 
 function candidate(index: number, title: string, year: number): ScientSourceCandidate {
-  return {
+  return sourceCandidate({
     sourceKey: `S${index}`,
-    type: "article",
-    customType: null,
     title,
     creators: [
       { creatorType: "author", givenName: "Ada", familyName: `Author${index}`, literalName: null },
@@ -37,21 +36,7 @@ function candidate(index: number, title: string, year: number): ScientSourceCand
     issuedRaw: String(year),
     issuedYear: year,
     identifiers: [{ scheme: "doi", value: `10.1000/review-${index}` }],
-    abstract: null,
-    containerTitle: null,
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
-    pdfAvailable: false,
-    pdfFileName: null,
-    pdfAttachmentCount: 0,
-  };
+  });
 }
 
 async function project(titles: ReadonlyArray<readonly [string, number]>) {

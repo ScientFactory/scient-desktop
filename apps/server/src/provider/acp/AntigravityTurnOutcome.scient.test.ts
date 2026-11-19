@@ -78,6 +78,8 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
             'Antigravity could not start the tool server "ct-crash", so it stopped this turn: CT Crash could not start: Error: CT Crash: config file ct-crash.conf not found.',
           code: "mcp_load_failed",
           retryable: false,
+          // Neither delivered by Scient nor in the profile's own configuration.
+          toolServerOwner: "unknown",
         },
       );
       // regression: the shown and stored text kept paths, addresses and keys from the chain.
@@ -148,6 +150,63 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
         code: "harness_error",
         retryable: null,
       });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("says whose tool server failed: Scient's, a connector, or the user's own", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "e6aba774-5472-4277-b6ee-27b2e05570a8";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      yield* fs.makeDirectory(path.join(profileDirectory, "config"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(profileDirectory, "config", "mcp_config.json"),
+        JSON.stringify({ mcpServers: { "my-tools": {}, shared: {} } }),
+      );
+      const failedServer = (server: string, detail: string) =>
+        Effect.gen(function* () {
+          const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId, {
+            connectorServerNames: new Set(["lab-notes", "shared"]),
+          });
+          const database = new NodeSqlite.DatabaseSync(path.join(conversations, `${sessionId}.db`));
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+            );
+            const insert = database.prepare(
+              "INSERT INTO steps (step_type, step_payload) VALUES (?, ?)",
+            );
+            insert.run(USER_INPUT, Buffer.from("Run the fixture."));
+            insert.run(
+              ERROR_MESSAGE,
+              errorStep(`MCP load failed for ${server}: calling "initialize": ${detail}`),
+            );
+          } finally {
+            database.close();
+          }
+          return (yield* check({ stopReason: "end_turn" }))?.failure;
+        });
+
+      const scient = yield* failedServer("scient", "Scient MCP endpoint responded with HTTP 401.");
+      assert.strictEqual(scient?.toolServerOwner, "scient");
+      assert.strictEqual(scient?.httpStatus, 401);
+      assert.strictEqual(scient?.code, "mcp_load_failed");
+      assert.strictEqual(
+        (yield* failedServer("lab-notes", "Lab Notes could not start."))?.toolServerOwner,
+        "connector",
+      );
+      assert.strictEqual(
+        (yield* failedServer("my-tools", "spawn ENOENT"))?.toolServerOwner,
+        "user",
+      );
+      // A name two sources share proves nothing.
+      assert.strictEqual(
+        (yield* failedServer("shared", "spawn ENOENT"))?.toolServerOwner,
+        "unknown",
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

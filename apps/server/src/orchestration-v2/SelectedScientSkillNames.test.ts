@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
-import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -107,7 +107,7 @@ const providerTextFor = (text: string, selectedScientSkillNames: ReadonlyArray<s
       capabilities: new Set(["skills:read"]),
       connectors: [],
     });
-    return yield* prepareScientV2SkillTurn({
+    const prepared = yield* prepareScientV2SkillScope({
       threadId,
       driver: ProviderDriverKind.make("codex"),
       mcpSessionInjection: true,
@@ -119,6 +119,7 @@ const providerTextFor = (text: string, selectedScientSkillNames: ReadonlyArray<s
         previous === undefined ? mcpSessions.clear(threadId) : mcpSessions.set(previous),
       ),
     );
+    return prepared.text;
   }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner));
 
 it.effect(
@@ -229,7 +230,7 @@ it.effect(
         capabilities: new Set(["skills:read"]),
         connectors: [],
       });
-      const text = yield* prepareScientV2SkillTurn({
+      const prepared = yield* prepareScientV2SkillScope({
         threadId,
         driver: ProviderDriverKind.make("opencode"),
         mcpSessionInjection: false,
@@ -237,7 +238,7 @@ it.effect(
         text: "User request",
         selectedScientSkillNames: [explicit.name],
       }).pipe(Effect.ensuring(mcpSessions.clear(threadId)));
-      assert.equal(text, "User request");
+      assert.equal(prepared.text, "User request");
     }).pipe(
       Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner),
       Effect.provide(McpProviderSessions.layer),

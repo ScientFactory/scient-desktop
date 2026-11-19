@@ -23,6 +23,7 @@ import {
   readScientSourceRecord,
   removeScientSource,
 } from "./store.ts";
+import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
 const fixtures: string[] = [];
 
@@ -48,30 +49,14 @@ async function fixture() {
 const ada = { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null };
 
 function candidate(title: string): ScientSourceCandidate {
-  return {
+  return sourceCandidate({
     sourceKey: title,
-    type: "article",
-    customType: null,
     title,
     creators: [ada],
     issuedRaw: "2020",
     issuedYear: 2020,
-    identifiers: [],
     abstract: `Abstract of ${title}.`,
-    containerTitle: null,
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
-    pdfAvailable: false,
-    pdfFileName: null,
-    pdfAttachmentCount: 0,
-  };
+  });
 }
 
 async function add(

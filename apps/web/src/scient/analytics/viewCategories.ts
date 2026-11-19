@@ -52,13 +52,10 @@ const SETTINGS_PAGES: ReadonlySet<string> = new Set(
 );
 
 /**
- * The section reported for every settings page, from the sidebar's own list, so
- * a new page is never reported as "other". The analytics contract must name
- * each one; a test checks it does.
+ * The section reported for a settings page. Pages come from the sidebar's own
+ * list, so a new page is never reported as "other"; a test checks each is sent
+ * by name.
  */
-export const SETTINGS_ANALYTICS_SECTIONS: ReadonlySet<string> = new Set(
-  [...SETTINGS_PAGES].map((page) => CONTRACT_SECTION_BY_PAGE[page] ?? page),
-);
 export function settingsCategory(pathname: string): string | null {
   if (!pathname.startsWith("/settings/")) return null;
   const page = pathname.split("/")[2] ?? "";

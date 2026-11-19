@@ -8,7 +8,6 @@ import {
   zoteroDescendantCollectionKeys,
   zoteroItemMaterial,
   zoteroItemToCandidate,
-  zoteroItemWithChildrenToCandidate,
 } from "./ZoteroItems.ts";
 
 describe("Zotero items", () => {
@@ -80,7 +79,7 @@ describe("Zotero items", () => {
       library: { type: "user", id: 0 },
       data: { key: "ABCD2345", version: 7, itemType: "journalArticle", title: "A study" },
     };
-    const candidate = zoteroItemWithChildrenToCandidate(item, [
+    const { candidate } = zoteroItemMaterial(item, [
       {
         key: "PDF23456",
         version: 1,

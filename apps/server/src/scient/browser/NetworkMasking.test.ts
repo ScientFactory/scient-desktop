@@ -1,14 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  type CheckedBody,
   checkBody,
   knownMasker,
-  maskBody,
+  type MaskContext,
   maskHeaders,
-  maskKnown,
   maskUrl,
 } from "./NetworkMasking.ts";
 import { adversarialMaskingInputs, longKnownValue } from "./NetworkMasking.test-fixtures.ts";
+
+/** The redacted text of a body `checkBody` shows; a body it leaves out fails the test. */
+const shown = (checked: CheckedBody): string => {
+  if (!("text" in checked)) throw new Error(`The body was left out: ${checked.leftOut}`);
+  return checked.text;
+};
 
 describe("network study masking", () => {
   it("hides cookies, authorization and token-looking values, and keeps the rest readable", () => {
@@ -41,16 +47,20 @@ describe("network study masking", () => {
     );
     expect(
       JSON.parse(
-        maskBody('{"user":{"name":"Ada","sesskey":"k1"},"courses":[1,2]}', "application/json")!,
+        shown(
+          checkBody('{"user":{"name":"Ada","sesskey":"k1"},"courses":[1,2]}', "application/json"),
+        ),
       ),
     ).toEqual({ user: { name: "Ada", sesskey: "<hidden 2 chars>" }, courses: [1, 2] });
-    expect(maskBody("username=ada&password=hunter22", "application/x-www-form-urlencoded")).toBe(
-      "username=ada&password=%3Chidden+8+chars%3E",
-    );
+    expect(
+      checkBody("username=ada&password=hunter22", "application/x-www-form-urlencoded"),
+    ).toEqual({
+      text: "username=ada&password=%3Chidden+8+chars%3E",
+    });
     // Repeated fields stay repeated, each hidden.
-    expect(maskBody("token=one-a&token=two-b&x=1", "application/x-www-form-urlencoded")).toBe(
-      "token=%3Chidden+5+chars%3E&token=%3Chidden+5+chars%3E&x=1",
-    );
+    expect(checkBody("token=one-a&token=two-b&x=1", "application/x-www-form-urlencoded")).toEqual({
+      text: "token=%3Chidden+5+chars%3E&token=%3Chidden+5+chars%3E&x=1",
+    });
   });
 
   it("hides secrets in multipart, HTML and script bodies and in URL headers, keeping their shape", () => {
@@ -71,12 +81,12 @@ describe("network study masking", () => {
       "--XyZ--",
       "",
     ].join("\r\n");
-    const maskedForm = maskBody(multipart, "multipart/form-data; boundary=XyZ");
+    const maskedForm = shown(checkBody(multipart, "multipart/form-data; boundary=XyZ"));
     expect(maskedForm).toContain("\r\nada\r\n");
     expect(maskedForm).not.toContain("hunter2-secret");
     expect(maskedForm).not.toContain("private notes");
     expect(maskedForm).toContain('name="password"\r\n\r\n<hidden 14 chars>');
-    expect(maskBody(multipart, "multipart/form-data")).toBeUndefined();
+    expect(checkBody(multipart, "multipart/form-data")).toEqual({ leftOut: "unparsed" });
 
     const page = [
       '<meta name="csrf-token" content="meta-csrf-value">',
@@ -88,7 +98,7 @@ describe("network study masking", () => {
       "var api_token = 'script-token-value';</script>",
       '<a href="https://moodle.test/login?access_token=link-token-value&next=home">x</a>',
     ].join("\n");
-    const maskedPage = maskBody(page, "text/html; charset=utf-8");
+    const maskedPage = shown(checkBody(page, "text/html; charset=utf-8"));
     for (const secret of [
       "meta-csrf-value",
       "hidden-sesskey-value",
@@ -111,14 +121,16 @@ describe("network study masking", () => {
 
   it("hides Codex's short secrets in every format, keeping names and plain values", () => {
     const secret = "short-secret";
-    const html = maskBody(
-      [
-        "<form><input type=hidden name=sesskey value=short-secret>",
-        "<input type=hidden name=courseid value=7>",
-        '<textarea name="csrf">short-secret</textarea></form>',
-      ].join("\n"),
-      "text/html",
-    )!;
+    const html = shown(
+      checkBody(
+        [
+          "<form><input type=hidden name=sesskey value=short-secret>",
+          "<input type=hidden name=courseid value=7>",
+          '<textarea name="csrf">short-secret</textarea></form>',
+        ].join("\n"),
+        "text/html",
+      ),
+    );
     expect(html).not.toContain(secret);
     expect(html).toContain("name=courseid value=7");
     expect(html).toContain('<textarea name="csrf">');
@@ -131,38 +143,41 @@ describe("network study masking", () => {
     expect(location.startsWith("/cb?")).toBe(true);
     expect(location).toContain("state=x");
 
-    const multipart = maskBody(
-      "--b\r\nContent-Disposition: form-data; name=password\r\n\r\nshort-secret\r\n--b--\r\n",
-      "multipart/form-data; boundary=b",
-    )!;
+    const multipart = shown(
+      checkBody(
+        "--b\r\nContent-Disposition: form-data; name=password\r\n\r\nshort-secret\r\n--b--\r\n",
+        "multipart/form-data; boundary=b",
+      ),
+    );
     expect(multipart).not.toContain(secret);
     expect(multipart).toContain("name=password");
 
-    const xml = maskBody(
-      "<auth><user>ada</user><token>short-secret</token></auth>",
-      "application/xml",
-    )!;
+    const xml = shown(
+      checkBody("<auth><user>ada</user><token>short-secret</token></auth>", "application/xml"),
+    );
     expect(xml).not.toContain(secret);
     expect(xml).toContain("<user>ada</user>");
 
-    const text = maskBody("user=ada\npassword=short-secret\n", "text/plain")!;
+    const text = shown(checkBody("user=ada\npassword=short-secret\n", "text/plain"));
     expect(text).not.toContain(secret);
     expect(text).toContain("user=ada");
   });
 
   it("hides every value Scient knows is secret for the request, wherever it appears", () => {
     const context = { secrets: ["c00kieval", "ya29.TOKEN-abc"], base: "https://app.test/" };
-    const page = maskBody("<p>Welcome back c00kieval</p>", "text/html", context)!;
+    const page = shown(checkBody("<p>Welcome back c00kieval</p>", "text/html", context));
     expect(page).not.toContain("c00kieval");
     expect(page).toContain("<p>Welcome back ");
-    const json = maskBody('{"echo":"ya29.TOKEN-abc","n":1}', "application/json", context)!;
+    const json = shown(checkBody('{"echo":"ya29.TOKEN-abc","n":1}', "application/json", context));
     expect(json).not.toContain("ya29.TOKEN-abc");
     expect(JSON.parse(json)).toMatchObject({ n: 1 });
     expect(maskHeaders({ "x-debug": "sent c00kieval" }, context)["x-debug"]).not.toContain(
       "c00kieval",
     );
     // A format Scient cannot parse is left out rather than shown raw.
-    expect(maskBody("\u0000\u0001raw", "application/octet-stream", context)).toBeUndefined();
+    expect(checkBody("\u0000\u0001raw", "application/octet-stream", context)).toEqual({
+      leftOut: "unparsed",
+    });
   });
 
   it("hides a known secret in every listed encoding, in URLs, headers and bodies", () => {
@@ -175,34 +190,40 @@ describe("network study masking", () => {
       "Ω-secret",
     ];
     const context = { secrets, base: "https://app.test/" };
+    // NetworkStudy shows a URL as maskUrl, then the request's known values hidden.
+    const known = knownMasker(secrets);
+    const knownUrl = (url: string): CheckedBody => {
+      const masked = known(maskUrl(url));
+      return masked === undefined ? { leftOut: "too-costly" } : { text: masked };
+    };
     for (const secret of secrets) {
       const forms = writtenForms(secret);
       for (const [label, form] of forms) {
-        const carriers: Array<[string, string | undefined]> = [
-          ["text", maskBody(`before ${form} after`, "text/plain", context)],
+        const carriers: Array<[string, CheckedBody]> = [
+          ["text", checkBody(`before ${form} after`, "text/plain", context)],
           [
             "html",
-            maskBody(
+            checkBody(
               `<p>${form}</p><a title="${form}" href="/x?v=${form}">x</a>`,
               "text/html",
               context,
             ),
           ],
           ["json", jsonCarrier(form, context)],
-          ["form", maskBody(`a=1&v=${form}`, "application/x-www-form-urlencoded", context)],
+          ["form", checkBody(`a=1&v=${form}`, "application/x-www-form-urlencoded", context)],
           [
             "multipart",
-            maskBody(
+            checkBody(
               `--b\r\nContent-Disposition: form-data; name=note\r\n\r\n${form}\r\n--b--\r\n`,
               "multipart/form-data; boundary=b",
               context,
             ),
           ],
-          ["header", maskHeaders({ "x-echo": `sent ${form}` }, context)["x-echo"]],
-          ["url", maskKnown(maskUrl(`https://app.test/p/${form}?q=${form}#${form}`), context)],
+          ["header", { text: maskHeaders({ "x-echo": `sent ${form}` }, context)["x-echo"]! }],
+          ["url", knownUrl(`https://app.test/p/${form}?q=${form}#${form}`)],
         ];
-        for (const [carrier, output] of carriers) {
-          if (output === undefined) continue;
+        for (const [carrier, checked] of carriers) {
+          const output = shown(checked);
           for (const [otherLabel, other] of forms)
             expect(output.includes(other), `${label} in ${carrier} shows ${otherLabel}`).toBe(
               false,
@@ -212,20 +233,28 @@ describe("network study masking", () => {
       }
     }
     // A text cut at its limit hides a value cut off at its end.
-    const known = knownMasker(secrets);
     expect(known("ends with short-sec", true)).toBe("ends with <hidden 9 chars>");
     expect(known("ends with short-sec")).toBe("ends with short-sec");
+    // Every copy is hidden, however written; past its work budget the body is left out, not
+    // shown with copies unchecked.
+    const echoed = "short-secret, again short-secret, and short%2Dsecret";
+    expect(checkBody(echoed, "text/plain")).toEqual({ text: echoed });
+    expect(checkBody(echoed, "text/plain", context)).toEqual({
+      text: "<hidden 12 chars>, again <hidden 12 chars>, and <hidden 12 chars>",
+    });
+    expect(checkBody(echoed, "text/plain", context, { workBudget: 10 })).toEqual({
+      leftOut: "too-costly",
+    });
   });
 
   it("leaves out markup and JSON nested past the limits, without running out of stack", () => {
     const deepXml = `${"<token>".repeat(5000)}x${"</token>".repeat(5000)}`;
-    expect(maskBody(deepXml, "application/xml")).toBeUndefined();
     expect(checkBody(deepXml, "application/xml")).toEqual({ leftOut: "too-deep" });
     const deepJson = `${"[".repeat(100_000)}${"]".repeat(100_000)}`;
     expect(checkBody(deepJson, "application/json")).toEqual({ leftOut: "too-deep" });
     // Ordinary elements nest as deep as they like; nothing is kept for them.
     const deepHtml = `${"<div>".repeat(5000)}<input type=password value=deep-pass>${"</div>".repeat(5000)}`;
-    const masked = maskBody(deepHtml, "text/html")!;
+    const masked = shown(checkBody(deepHtml, "text/html"));
     expect(masked).not.toContain("deep-pass");
     expect(masked.startsWith("<div><div>")).toBe(true);
   });
@@ -240,9 +269,12 @@ describe("network study masking", () => {
 
   it("hides known values written with any named HTML reference", () => {
     const context = { secrets: ["café-secret", "Ω-secret"] };
-    const page = maskBody("<p>caf&eacute;-secret and &Omega;-secret</p>", "text/html", context)!;
-    expect(page).toBe("<p><hidden 11 chars> and <hidden 8 chars></p>");
-    expect(maskBody("caf&eacute-secret", "text/plain", context)).toBe("<hidden 11 chars>");
+    expect(checkBody("<p>caf&eacute;-secret and &Omega;-secret</p>", "text/html", context)).toEqual(
+      { text: "<p><hidden 11 chars> and <hidden 8 chars></p>" },
+    );
+    expect(checkBody("caf&eacute-secret", "text/plain", context)).toEqual({
+      text: "<hidden 11 chars>",
+    });
   });
 
   it("matches long known values in linear work, and leaves out a body past its budget", () => {
@@ -298,6 +330,8 @@ const writtenForms = (secret: string): ReadonlyArray<readonly [string, string]> 
     ["percent", uri],
     ["percent lower", uri.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase())],
     ["form", uri.replaceAll("%20", "+")],
+    // encodeURI keeps a literal `+`, which only the plain percent reading leaves as written.
+    ["percent uri", encodeURI(secret)],
     [
       "percent all",
       each(
@@ -361,12 +395,12 @@ const base64Shows = (text: string, secret: string) => {
 };
 
 /** `form` written inside a JSON string, when it is valid JSON there. */
-const jsonCarrier = (form: string, context: { secrets: ReadonlyArray<string>; base: string }) => {
+const jsonCarrier = (form: string, context: MaskContext) => {
   const body = `{"v":"${form}","n":1}`;
   try {
     JSON.parse(body);
   } catch {
-    return maskBody(JSON.stringify({ v: form, n: 1 }), "application/json", context);
+    return checkBody(JSON.stringify({ v: form, n: 1 }), "application/json", context);
   }
-  return maskBody(body, "application/json", context);
+  return checkBody(body, "application/json", context);
 };

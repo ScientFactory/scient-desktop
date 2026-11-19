@@ -108,6 +108,16 @@ function snapshot(provider: ServerProvider): Snapshot {
               : connection.status === "failed" || connection.status === "cancelled"
                 ? connection.status
                 : null,
+          details: {
+            ...(connection.status === "failed"
+              ? { failureReason: connection.failureReason ?? "unknown" }
+              : {}),
+            // Later snapshots drop the page; `observe` keeps the one it waited on.
+            ...(connection.status === "waiting_for_browser" ||
+            connection.status === "waiting_for_device_code"
+              ? { signInPage: connection.authorizationUrlKind ?? "none" }
+              : {}),
+          },
         }
       : null,
     update:
@@ -155,8 +165,27 @@ function lifecycleEvent(
       // The UI message is deliberately not inspected: it can contain paths,
       // credentials, provider output, or URLs. The owner sets the typed class.
       ...(next.outcome === "failed" ? { failureClass: next.failureClass ?? "unknown" } : {}),
+      // A sign-in that ended before it waited on any page waited on none.
+      ...(next.action === "sign-in" && next.outcome !== null ? { signInPage: "none" } : {}),
       ...next.details,
     },
+  };
+}
+
+/** A sign-in reports the page it waited on, which its later snapshots no longer carry. */
+function keepSignInPage(before: Snapshot | undefined, next: Snapshot): Snapshot {
+  const page = before?.connection?.details?.signInPage;
+  if (
+    page === undefined ||
+    next.connection === null ||
+    next.connection.key !== before?.connection?.key ||
+    next.connection.details?.signInPage !== undefined
+  ) {
+    return next;
+  }
+  return {
+    ...next,
+    connection: { ...next.connection, details: { ...next.connection.details, signInPage: page } },
   };
 }
 
@@ -219,7 +248,7 @@ export function createProviderLifecycleAnalyticsMapper() {
       present.add(id);
       if (provider.probePending) continue;
       const before = previous.get(id);
-      const next = snapshot(provider);
+      const next = keepSignInPage(before, snapshot(provider));
       previous.set(id, next);
       const driver = String(provider.driver);
       if (before) {

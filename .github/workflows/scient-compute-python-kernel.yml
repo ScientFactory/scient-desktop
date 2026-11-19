@@ -20,6 +20,11 @@ on:
       managed_python:
         type: boolean
         default: true
+      # Only the Compute product case changed: run it alone, on Linux with Python 3.12.
+      # Every real-kernel run includes it.
+      python_product:
+        type: boolean
+        default: false
       # `linux` when only broad inputs (dependencies, configuration, workspace
       # code) changed; see compute-ci-gate.mjs. Anything else runs all four.
       platforms:
@@ -183,7 +188,7 @@ jobs:
         run: vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
-    if: ${{ inputs.real_kernel }}
+    if: ${{ inputs.real_kernel || inputs.python_product }}
     name: Real kernel / ${{ matrix.runner }}${{ matrix.python != 'both' && format(' / Python {0}', matrix.python) || '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -192,7 +197,7 @@ jobs:
       # Macs run both versions in one job: their runner slots are the scarcest. Windows, where
       # setup is cheap beside the two suites, runs each version on its own runner.
       matrix:
-        include: ${{ fromJSON(inputs.platforms == 'linux' && '[{"runner":"ubuntu-24.04","python":"both"}]' || '[{"runner":"ubuntu-24.04","python":"both"},{"runner":"macos-15","python":"both"},{"runner":"macos-15-intel","python":"both"},{"runner":"windows-2025","python":"3.10"},{"runner":"windows-2025","python":"3.12"}]') }}
+        include: ${{ fromJSON(!inputs.real_kernel && '[{"runner":"ubuntu-24.04","python":"3.12"}]' || inputs.platforms == 'linux' && '[{"runner":"ubuntu-24.04","python":"both"}]' || '[{"runner":"ubuntu-24.04","python":"both"},{"runner":"macos-15","python":"both"},{"runner":"macos-15-intel","python":"both"},{"runner":"windows-2025","python":"3.10"},{"runner":"windows-2025","python":"3.12"}]') }}
     defaults:
       run:
         shell: bash
@@ -295,7 +300,7 @@ jobs:
       # plan's executable, so resolving it once here is what makes the kernel
       # under test the interpreter this step set up.
       - name: Run the real-kernel integration suite on Python 3.12
-        if: ${{ matrix.python == 'both' || matrix.python == '3.12' }}
+        if: ${{ inputs.real_kernel && (matrix.python == 'both' || matrix.python == '3.12') }}
         working-directory: apps/server
         env:
           # Headless runners have no display, and a figure that opened a window
@@ -310,6 +315,24 @@ jobs:
             src/scient/compute/PythonComputeService.integration.test.ts \
             src/scient/compute/FreshCompute.integration.test.ts \
             src/preview/PortScannerPythonCompute.integration.test.ts
+
+      # The gateway, durable service and a real kernel together: saved, dirty and restored
+      # source, retained figure bytes, and a relocated workspace refused. Linux only; the
+      # kernel suites above cover each platform and interpreter.
+      - name: Run the Compute product case on Python 3.12
+        if: ${{ runner.os == 'Linux' && (matrix.python == 'both' || matrix.python == '3.12') }}
+        working-directory: apps/server
+        env:
+          MPLBACKEND: Agg
+        run: |
+          set -euo pipefail
+          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export SCIENT_TEST_PYTHON
+          report="$RUNNER_TEMP/compute-product.json"
+          vp test run src/scient/compute/ComputeProduct.integration.test.ts \
+            --reporter=default --reporter=json --outputFile.json="$report"
+          # The suite skips without SCIENT_TEST_PYTHON; a skip must not pass as a run.
+          node -e 'const r = require(process.argv[1]); if (r.numPassedTests !== 1 || r.numTotalTests !== 1) { console.error("Expected exactly one Compute product case to run", r.numPassedTests, r.numTotalTests); process.exit(1); }' "$report"
 
   real_languages:
     if: ${{ inputs.real_kernel }}

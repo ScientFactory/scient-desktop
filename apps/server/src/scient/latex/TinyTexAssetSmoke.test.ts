@@ -35,9 +35,17 @@ import {
   managedLatexPaths,
 } from "./managedLatexInstall.ts";
 import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
+import {
+  compilesNestedRootFromFragment,
+  popplerHas,
+  rebuildsEditedSource,
+} from "./latexRealEngine.testkit.ts";
 
 const RUN_ASSET_SMOKE = process.env.SCIENT_TINYTEX_ASSET_SMOKE === "1";
 const SYNCTEX_RUNTIME = process.env.SCIENT_SYNCTEX_RUNTIME;
+// Set on one leg: the build service's nested-root and edit/rebuild scenarios against the payload
+// just verified, which no other lane has.
+const RUN_REAL_ENGINE = process.env.SCIENT_LATEX_REAL_ENGINE_QUALIFICATION === "1";
 const SYSTEM_ROOT = process.env.SystemRoot ?? "C:\\Windows";
 const PROGRAM_DATA = process.env.ProgramData ?? "C:\\ProgramData";
 const SMOKE_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -573,6 +581,8 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         (temporaryRoot) =>
           Effect.gen(function* () {
             const downloaded = yield* Effect.promise(() => downloadPinnedAsset(temporaryRoot));
+            if (downloaded === null && RUN_REAL_ENGINE)
+              return yield* Effect.die("The real-engine scenarios need a TinyTeX asset here");
             if (downloaded === null) return;
             // First, and on its own: it is the path a Windows 10 tar cannot take.
             if (HOST_PLATFORM === "win32") {
@@ -582,8 +592,21 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
             const native = yield* Effect.promise(() =>
               verifyNativeAsset(temporaryRoot, downloaded),
             );
+            if (native === null && RUN_REAL_ENGINE)
+              return yield* Effect.die("The real-engine scenarios need SCIENT_SYNCTEX_RUNTIME");
             if (native === null) return;
             yield* brokenFirstOnPath(temporaryRoot, native);
+            if (RUN_REAL_ENGINE) {
+              expect(popplerHas("pdftotext"), "the round trip reads PDFs with pdftotext").toBe(
+                true,
+              );
+              const engine = {
+                engineBinDirectory: native.binDirectory,
+                syncTexNavigatorPath: SYNCTEX_RUNTIME!,
+              };
+              yield* compilesNestedRootFromFragment(engine);
+              yield* rebuildsEditedSource(engine);
+            }
           }),
         (temporaryRoot) =>
           Effect.promise(() => NodeFSP.rm(temporaryRoot, { recursive: true, force: true })),

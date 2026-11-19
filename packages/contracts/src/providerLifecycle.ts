@@ -95,6 +95,53 @@ export const ProviderAuthorizationUrlKind = Schema.Literals(["primary", "manual_
 export type ProviderAuthorizationUrlKind = typeof ProviderAuthorizationUrlKind.Type;
 
 /**
+ * Why a sign-in failed, set where the failure is known, never read from its message.
+ * `timeout` is a deadline Scient set; `verification` an accepted account Scient could not
+ * confirm; `post_signin_setup` a failure after the provider accepted the sign-in.
+ */
+export const ProviderConnectionFailureReason = Schema.Literals([
+  "start_failed",
+  "no_signin_page",
+  "invalid_response",
+  "timeout",
+  "provider_failed",
+  "provider_exited",
+  "verification",
+  "post_signin_setup",
+  "flow_stopped",
+  "unknown",
+]);
+export type ProviderConnectionFailureReason = typeof ProviderConnectionFailureReason.Type;
+
+const connectionFailureReasons = new WeakMap<object, ProviderConnectionFailureReason>();
+
+/**
+ * Records why a sign-in failed on the error that says so, where the failure is
+ * known, for errors whose own type has no field for it. The first mark wins.
+ */
+export function markProviderConnectionFailure<E>(
+  reason: ProviderConnectionFailureReason,
+  error: E,
+): E {
+  if (typeof error === "object" && error !== null && !connectionFailureReasons.has(error)) {
+    connectionFailureReasons.set(error, reason);
+  }
+  return error;
+}
+
+/** The reason marked on an error, or on the first marked error among `errors`. */
+export function providerConnectionFailureReason(
+  ...errors: ReadonlyArray<unknown>
+): ProviderConnectionFailureReason | undefined {
+  for (const error of errors) {
+    if (typeof error !== "object" || error === null) continue;
+    const reason = connectionFailureReasons.get(error);
+    if (reason !== undefined) return reason;
+  }
+  return undefined;
+}
+
+/**
  * Opaque, client-generated id of one start request. It lets the client that
  * started a sign-in recognize its operation in streamed snapshots, so it can
  * open the sign-in page even if the start command's reply never arrives.
@@ -137,6 +184,8 @@ export const ProviderConnectionOperation = Schema.Struct({
    * a submission echoes this so an answer typed for an earlier one is refused.
    */
   questionId: Schema.optionalKey(ProviderConnectionQuestionId),
+  /** Why a failed operation failed. */
+  failureReason: ForwardCompatibleOptional(ProviderConnectionFailureReason),
 });
 export type ProviderConnectionOperation = typeof ProviderConnectionOperation.Type;
 

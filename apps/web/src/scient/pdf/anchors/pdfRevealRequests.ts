@@ -80,10 +80,6 @@ export function claimPdfReveal(documentKey: string, id: number, owner: object): 
   return true;
 }
 
-export function ownsPdfReveal(documentKey: string, id: number, owner: object): boolean {
-  return requests.get(documentKey)?.id === id && owners.get(documentKey) === owner;
-}
-
 /** Completes the request: shown, or reported as not showable. */
 export function takePdfReveal(documentKey: string, id: number): boolean {
   if (requests.get(documentKey)?.id !== id) return false;

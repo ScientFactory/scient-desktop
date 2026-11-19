@@ -10,6 +10,7 @@ import type { ComputeCaptureSummary } from "../scient/compute/ComputeCaptureStat
 import {
   captureRejectionAttribution,
   latexBuildAttribution,
+  pdfExportAttribution,
   type FailureAttribution,
 } from "./FailureAttribution.ts";
 
@@ -108,7 +109,11 @@ export const observeAnalyticsEffect = Effect.fn("OperationAnalytics.observeAnaly
     if (!(yield* ScientAnalyticsAvailability).available) return yield* effect;
     const startedAt = yield* Clock.currentTimeMillis;
     const record = Effect.fn("OperationAnalytics.record")(
-      function* (outcome: "started" | "completed" | "failed" | "cancelled", durationMs?: number) {
+      function* (
+        outcome: "started" | "completed" | "failed" | "cancelled",
+        durationMs?: number,
+        attribution?: FailureAttribution,
+      ) {
         if (measurement.kind === "server-startup") {
           yield* analytics.record("app.health", {
             component: "server",
@@ -129,6 +134,7 @@ export const observeAnalyticsEffect = Effect.fn("OperationAnalytics.observeAnaly
             trigger: measurement.trigger,
             durationMs,
             reviewRequired: true,
+            ...attribution,
           });
         }
       },
@@ -139,13 +145,25 @@ export const observeAnalyticsEffect = Effect.fn("OperationAnalytics.observeAnaly
       Effect.onExit((exit) =>
         Effect.gen(function* () {
           const finishedAt = yield* Clock.currentTimeMillis;
+          const outcome = Exit.isSuccess(exit)
+            ? "completed"
+            : Cause.hasInterruptsOnly(exit.cause)
+              ? "cancelled"
+              : "failed";
+          // A failed export says why from its typed error code; never its message.
+          const error =
+            outcome === "failed" && Exit.isFailure(exit)
+              ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+              : undefined;
           yield* record(
-            Exit.isSuccess(exit)
-              ? "completed"
-              : Cause.hasInterruptsOnly(exit.cause)
-                ? "cancelled"
-                : "failed",
+            outcome,
             finishedAt - startedAt,
+            measurement.kind === "pdf-export" && typeof error === "object" && error !== null
+              ? (pdfExportAttribution((error as { readonly code?: unknown }).code) ?? {
+                  failureOwner: "unknown",
+                  failureCategory: "unknown",
+                })
+              : undefined,
           );
         }).pipe(Effect.ignoreCause()),
       ),
