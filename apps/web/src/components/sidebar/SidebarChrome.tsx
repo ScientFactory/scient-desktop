@@ -55,7 +55,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
 import { APP_BASE_NAME } from "../../branding";
-import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
+import { ScientReleaseCard } from "../../scient/releaseNotes/ScientReleaseNotes";
 import { requestConversationImport } from "../../scient/conversationImport/requests";
 // SCIENT-FORK:START — Scient Cloud conversations.
 import { useCloudConversationsAvailable } from "../../scient/cloud/cloudConversationsAvailable";
@@ -439,7 +439,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">
-        <ScientReleaseNotes />
+        <ScientReleaseCard />
         <SidebarProviderUpdatePill />
         <SidebarUpdateArchitectureWarning />
       </div>

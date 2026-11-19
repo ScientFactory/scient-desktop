@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ArrowRightIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ScientSymbol } from "../../components/ScientSymbol";
 import { Button } from "../../components/ui/button";
@@ -17,11 +17,15 @@ import {
   type ScientReleaseNote,
 } from "./model";
 import { useReleaseHistoryRequests } from "./releaseHistoryRequests";
-import { useScientReleaseNotes } from "./useScientReleaseNotes";
+import { useScientReleaseNotes, type ScientReleaseNotesController } from "./useScientReleaseNotes";
 
 type ReleaseView = "release" | "history";
 
-export function ScientReleaseNotes() {
+// One controller for the whole app: the sidebar card and the dialog must share their state.
+const ScientReleaseNotesContext = createContext<ScientReleaseNotesController | null>(null);
+
+/** Owns the release notes state. Mount it above both the sidebar and the app-wide dialog hosts. */
+export function ScientReleaseNotesProvider({ children }: { readonly children: ReactNode }) {
   const controller = useScientReleaseNotes();
   const requestId = useReleaseHistoryRequests((state) => state.requestId);
   const [handledRequestId, setHandledRequestId] = useState(requestId);
@@ -29,26 +33,48 @@ export function ScientReleaseNotes() {
     setHandledRequestId(requestId);
     controller.openHistory();
   }
-  if (!controller.current) return null;
-
   return (
-    <>
-      {controller.isCardVisible ? (
-        <ScientReleaseNotesCard
-          release={controller.current}
-          onDismiss={controller.dismissCard}
-          onOpen={controller.openDialog}
-        />
-      ) : null}
-      <ScientReleaseNotesDialog
-        current={controller.current}
-        installedVersion={controller.installedVersion}
-        history={controller.history}
-        initialView={controller.dialogView}
-        open={controller.isDialogOpen}
-        onOpenChange={controller.setDialogOpen}
-      />
-    </>
+    <ScientReleaseNotesContext.Provider value={controller}>
+      {children}
+    </ScientReleaseNotesContext.Provider>
+  );
+}
+
+function useScientReleaseNotesController(): ScientReleaseNotesController {
+  const controller = useContext(ScientReleaseNotesContext);
+  if (!controller) throw new Error("ScientReleaseNotesProvider is missing from the app root.");
+  return controller;
+}
+
+/** The upgrade card, shown in the sidebar until the user dismisses it. */
+export function ScientReleaseCard() {
+  const controller = useScientReleaseNotesController();
+  if (!controller.current || !controller.isCardVisible) return null;
+  return (
+    <ScientReleaseNotesCard
+      release={controller.current}
+      onDismiss={controller.dismissCard}
+      onOpen={controller.openDialog}
+    />
+  );
+}
+
+/** The release notes dialog. Mounted at app level, so it stays open when the sidebar closes. */
+export function ScientReleaseNotesDialogHost() {
+  const controller = useScientReleaseNotesController();
+  const opener = useReleaseHistoryRequests((state) => state.opener);
+  if (!controller.current) return null;
+  // Only a window opened from About gives focus back to the About button; the card's window keeps its default.
+  return (
+    <ScientReleaseNotesDialog
+      current={controller.current}
+      installedVersion={controller.installedVersion}
+      history={controller.history}
+      initialView={controller.dialogView}
+      returnFocusTo={controller.dialogView === "history" ? opener : null}
+      open={controller.isDialogOpen}
+      onOpenChange={controller.setDialogOpen}
+    />
   );
 }
 
@@ -104,6 +130,7 @@ function ScientReleaseNotesDialog({
   installedVersion,
   history,
   initialView,
+  returnFocusTo,
   open,
   onOpenChange,
 }: {
@@ -111,11 +138,14 @@ function ScientReleaseNotesDialog({
   readonly installedVersion: string;
   readonly history: readonly ScientReleaseNote[];
   readonly initialView: ReleaseView;
+  readonly returnFocusTo: HTMLElement | null;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const [view, setView] = useState<ReleaseView>(initialView);
   const [selected, setSelected] = useState(current);
+  // "Back to this release" needs a release to go back to: the card's note, or one picked from the list.
+  const [hasRelease, setHasRelease] = useState(initialView === "release");
   const titleRef = useRef<HTMLHeadingElement>(null);
 
   const [previousPresentation, setPreviousPresentation] = useState({
@@ -132,6 +162,7 @@ function ScientReleaseNotesDialog({
     if (open) {
       setSelected(current);
       setView(initialView);
+      setHasRelease(initialView === "release");
     }
   }
 
@@ -151,9 +182,11 @@ function ScientReleaseNotesDialog({
         padding="none"
         className="max-w-[34rem] overflow-hidden max-sm:max-h-[calc(100dvh-3rem)]"
         finalFocus={() =>
-          document.querySelector<HTMLElement>(
-            "[data-sidebar='footer'] [data-sidebar='menu-button']",
-          ) ?? false
+          returnFocusTo?.isConnected
+            ? returnFocusTo
+            : (document.querySelector<HTMLElement>(
+                "[data-sidebar='footer'] [data-sidebar='menu-button']",
+              ) ?? false)
         }
         initialFocus={titleRef}
       >
@@ -161,6 +194,7 @@ function ScientReleaseNotesDialog({
           release={selected}
           titleRef={titleRef}
           view={view}
+          canReturnToRelease={hasRelease}
           onBack={() => setView("release")}
         />
 
@@ -180,6 +214,7 @@ function ScientReleaseNotesDialog({
               releases={history}
               onSelect={(release) => {
                 setSelected(release);
+                setHasRelease(true);
                 setView("release");
               }}
             />
@@ -208,11 +243,13 @@ function ScientReleaseDialogHeader({
   release,
   titleRef,
   view,
+  canReturnToRelease,
   onBack,
 }: {
   readonly release: ScientReleaseNote;
   readonly titleRef: React.RefObject<HTMLHeadingElement | null>;
   readonly view: ReleaseView;
+  readonly canReturnToRelease: boolean;
   readonly onBack: () => void;
 }) {
   return (
@@ -235,9 +272,16 @@ function ScientReleaseDialogHeader({
         </div>
       ) : (
         <div className="relative flex h-full w-full items-center gap-2 px-3 pr-14">
-          <Button aria-label="Back to this release" size="icon-sm" variant="ghost" onClick={onBack}>
-            <ArrowLeftIcon />
-          </Button>
+          {canReturnToRelease ? (
+            <Button
+              aria-label="Back to this release"
+              size="icon-sm"
+              variant="ghost"
+              onClick={onBack}
+            >
+              <ArrowLeftIcon />
+            </Button>
+          ) : null}
           <div>
             <DialogTitle size="large" ref={titleRef} tabIndex={-1}>
               Release history
@@ -343,7 +387,7 @@ function ScientReleaseHistory({
         return (
           <div key={release.version} role="listitem">
             <button
-              aria-label={`Read release notes for Scient ${formatScientReleaseVersion(release.version)}`}
+              aria-label={`Read release notes for Scient ${formatScientReleaseVersion(release.version)}${isCurrent ? ", current version" : ""}`}
               className={
                 isCurrent
                   ? "block w-full cursor-pointer bg-[linear-gradient(90deg,color-mix(in_srgb,var(--scient-warm-white)_74%,white)_0%,transparent_100%)] px-5 py-4 text-left outline-none transition-colors hover:bg-[color-mix(in_srgb,var(--scient-warm-white)_55%,white)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)] dark:bg-[linear-gradient(90deg,color-mix(in_srgb,var(--scient-burgundy)_12%,transparent)_0%,transparent_100%)]"

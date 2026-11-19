@@ -6,7 +6,21 @@ import { page } from "vitest/browser";
 
 import { SCIENT_RELEASE_NOTES } from "./catalog";
 import { requestReleaseHistory } from "./releaseHistoryRequests";
-import { ScientReleaseNotes } from "./ScientReleaseNotes";
+import {
+  ScientReleaseCard,
+  ScientReleaseNotesDialogHost,
+  ScientReleaseNotesProvider,
+} from "./ScientReleaseNotes";
+
+// Mounts the pieces the way the app does: the card in the sidebar, the dialog at app level.
+function ScientReleaseNotes() {
+  return (
+    <ScientReleaseNotesProvider>
+      <ScientReleaseCard />
+      <ScientReleaseNotesDialogHost />
+    </ScientReleaseNotesProvider>
+  );
+}
 
 // Exercise the real dialog with synthetic upgrade state, without a live profile.
 vi.mock("./useScientReleaseNotes", async () => {

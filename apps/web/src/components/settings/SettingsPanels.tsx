@@ -2457,15 +2457,17 @@ export function AboutSettingsPanel() {
             />
           </>
         )}
+        {/* SCIENT-FORK:START — opens the version list of the What's new window. */}
         <SettingsRow
-          title="Release history"
-          description="Read what is new in each Scient version."
+          title={gt("Release history")}
+          description={gt("Read what is new in each Scient version.")}
           control={
             <Button size="sm" variant="outline" onClick={requestReleaseHistory}>
-              Release history
+              <T>Release history</T>
             </Button>
           }
         />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       {/* SCIENT-FORK: the external privacy-policy row is withheld. */}
