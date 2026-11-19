@@ -331,11 +331,10 @@ export function makeResultOperations(input: {
     },
   });
 
-  const documentText = (root: string, documentPath: string) =>
-    input.workspace.readFile({ cwd: root, relativePath: documentPath }).pipe(
-      Effect.map((file) => file.contents),
-      Effect.mapError(failure(`${documentPath} could not be read.`)),
-    );
+  const documentFile = (root: string, documentPath: string) =>
+    input.workspace
+      .readFile({ cwd: root, relativePath: documentPath })
+      .pipe(Effect.mapError(failure(`${documentPath} could not be read.`)));
 
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -349,7 +348,7 @@ export function makeResultOperations(input: {
     readonly pointer: string | null;
   }) {
     const resultsProject = yield* project(request.cwd);
-    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const { contents: text } = yield* documentFile(resultsProject.root, request.documentPath);
     const placedAt = yield* now;
     return yield* input.results.placements(
       resultsProject,
@@ -377,14 +376,15 @@ export function makeResultOperations(input: {
     } | null;
   }) {
     const resultsProject = yield* project(request.cwd);
-    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const file = yield* documentFile(resultsProject.root, request.documentPath);
     return yield* input.results.placements(
       resultsProject,
       projectFiles(resultsProject.root),
       (context) =>
         placementStatus(context, {
           documentPath: request.documentPath,
-          documentText: text,
+          documentText: file.contents,
+          documentTruncated: file.truncated,
           build: request.build,
         }),
     );
@@ -398,7 +398,7 @@ export function makeResultOperations(input: {
     readonly replaceEdited: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
   }) {
     const resultsProject = yield* project(request.cwd);
-    const text = yield* documentText(resultsProject.root, request.documentPath);
+    const file = yield* documentFile(resultsProject.root, request.documentPath);
     const updatedAt = yield* now;
     return yield* input.results.placements(
       resultsProject,
@@ -406,7 +406,8 @@ export function makeResultOperations(input: {
       (context) =>
         updatePlacedFiles(context, {
           documentPath: request.documentPath,
-          documentText: text,
+          documentText: file.contents,
+          documentTruncated: file.truncated,
           script: request.scriptPath,
           toRevision: request.toRevision,
           replaceEdited: request.replaceEdited,

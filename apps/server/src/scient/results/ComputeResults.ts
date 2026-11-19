@@ -244,7 +244,14 @@ const make = Effect.gen(function* () {
     use: (context: PlacementContext) => Promise<A>,
   ) =>
     Effect.tryPromise({
-      try: () => use({ layout, projectId: project.projectId, reader: reader(project), files }),
+      try: () =>
+        use({
+          layout,
+          projectId: project.projectId,
+          reader: reader(project),
+          files,
+          projectRoot: project.root,
+        }),
       catch: (cause) =>
         isPlacementRefusal(cause)
           ? new ComputeResultsError({ message: cause.message })
