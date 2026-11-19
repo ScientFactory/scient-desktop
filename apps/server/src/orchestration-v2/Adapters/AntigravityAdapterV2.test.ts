@@ -1517,8 +1517,10 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
   );
 
   it.effect.each([
-    // session/cancel ends the agent's commands, so only Stop may send it.
-    { ending: "Stop", cancels: 1, status: "interrupted" },
+    // session/cancel ends the agent's commands, so only Stop may end them.
+    // SCIENT-FORK: Scient's Stop ends Antigravity's whole process group, commands included,
+    // instead of sending session/cancel first.
+    { ending: "Stop", cancels: 0, status: "interrupted" },
     { ending: "a new message", cancels: 0, status: "interrupted" },
     { ending: "the agent exiting", cancels: 0, status: "failed" },
   ] as const)(

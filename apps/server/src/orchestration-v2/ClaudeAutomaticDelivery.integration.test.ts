@@ -1244,7 +1244,9 @@ it.effect.each([
       if (outcome === "the Claude process exits") {
         const requeued = yield* watch(
           (event) =>
-            event.type === "run.updated" &&
+            // SCIENT-FORK: Scient's terminal queue hold applies first, so the requeued steer's run
+            // is created already held instead of updated to held.
+            (event.type === "run.updated" || event.type === "run.created") &&
             event.payload.userMessageId === steerId &&
             event.payload.status === "queued",
         );

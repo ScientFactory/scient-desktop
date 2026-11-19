@@ -4538,10 +4538,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           )
             return false;
           for (const subagent of context.subagents.values()) {
-            if (
-              flavor.subagentsIdleOnTurnCompletion !== true &&
-              acpSubagentStatusBlocksTurnSettlement(subagent.task.status)
-            ) {
+            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
               return true;
             }
           }

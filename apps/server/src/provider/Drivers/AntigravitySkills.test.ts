@@ -193,6 +193,11 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           path.join(plugins, plugin, "skills", `${plugin}-skill`),
           `---\nname: ${plugin}-skill\ndescription: From ${plugin}.\n---\n`,
         );
+        // SCIENT-FORK: Antigravity plugins carry a manifest; Scient namespaces skills by its name.
+        yield* fileSystem.writeFileString(
+          path.join(plugins, plugin, "plugin.json"),
+          JSON.stringify({ name: plugin }),
+        );
       }
       yield* fileSystem.writeFileString(
         path.join(profileDirectory, "config", "config.json"),
@@ -203,7 +208,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
 
       assert.deepEqual(
         (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
-        ["demo-skill"],
+        ["demo:demo-skill"],
       );
     }),
   );

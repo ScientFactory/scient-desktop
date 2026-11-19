@@ -1144,6 +1144,8 @@ function makeLocalCommandHarness(input: {
         },
         turns: {
           ...CodexProviderCapabilitiesV2.turns,
+          exposesNativeTurnId:
+            input.exposesNativeTurnId ?? CodexProviderCapabilitiesV2.turns.exposesNativeTurnId,
           ...(input.nativeGoals === undefined ? {} : { supportsNativeGoals: input.nativeGoals }),
         },
       },
@@ -2754,6 +2756,24 @@ effectIt.effect.each(["before-start", "during-fork"] as const)(
       };
       harness.getThreadRecords.mockImplementation((id) =>
         Effect.succeed(id === parentThreadId ? parent : harness.projection()),
+      );
+      // SCIENT-FORK: Scient's bounded portable fork reads the parent's history by run id.
+      harness.getContextHistoryCandidates.mockImplementation((threadId, runIds) =>
+        Effect.succeed(
+          threadId !== parentThreadId
+            ? []
+            : parent.turnItems
+                .filter((item) => runIds === undefined || runIds.includes(item.runId))
+                .map((item) => ({
+                  sourceOnly: true as const,
+                  id: item.id,
+                  threadId: item.threadId,
+                  runId: item.runId,
+                  nodeId: item.nodeId,
+                  type: item.type,
+                  partialSnapshot: false,
+                })),
+        ),
       );
       harness.forkThread.mockImplementation(() =>
         Effect.sync(() => {

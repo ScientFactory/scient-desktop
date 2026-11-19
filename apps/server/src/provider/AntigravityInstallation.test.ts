@@ -2025,6 +2025,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
                       method: "rename",
                       pathOrDescriptor: source,
                       description: "EPERM: operation not permitted, rename",
+                      // SCIENT-FORK: Node's EPERM carries its code, which Scient's installer retry reads.
+                      cause: Object.assign(new Error("EPERM: operation not permitted, rename"), {
+                        code: "EPERM",
+                      }),
                     }),
                   ),
                 ),
@@ -2035,7 +2039,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* installation.start;
       const terminal = yield* terminalState(installation).pipe(Effect.forkChild);
       yield* Deferred.await(releaseRenameDenied);
-      yield* TestClock.adjust("30 seconds");
+      // SCIENT-FORK: Scient's installer retry has a 15 s wall-clock budget, so time passes in steps.
+      for (let second = 0; second < 30; second++) yield* TestClock.adjust("1 second");
       expect(yield* Fiber.join(terminal)).toMatchObject({
         phase: "succeeded",
         installedVersion: "fixture-new",

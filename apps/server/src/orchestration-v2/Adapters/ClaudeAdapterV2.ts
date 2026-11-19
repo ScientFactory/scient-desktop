@@ -9885,7 +9885,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // so the orchestrator sends it as the next turn.
           const droppedSteers = [...input.context.pendingSteers];
           input.context.pendingSteers.clear();
-          const currentQuery = yield* Ref.get(queryContext);
+          // SCIENT-FORK:START — an exiting query stays reserved here until its cleanup ends, and
+          // it can no longer read a steer either.
+          const reservedOrLive = yield* Ref.get(queryContext);
+          const currentQuery = reservedOrLive?.stopCloseReserved === true ? null : reservedOrLive;
+          // SCIENT-FORK:END
           for (const [, { messageId, liveQuery }] of droppedSteers) {
             if (input.status !== "interrupted" && liveQuery !== currentQuery) continue;
             yield* emitSteerStatus(

@@ -502,24 +502,20 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     assert.deepStrictEqual(commands, [
       // Local status first reads whether config hides untracked files.
       { args: ["config", "--get", "status.showUntrackedFiles"] },
-      { args: ["rev-parse", "--git-path", "index"], language: "C" },
-      { args: ["rev-parse", "--git-common-dir"], language: "C" },
-      { args: ["status", "--porcelain=2", "--branch", "-z"], language: "C" },
-      { args: ["diff-index", "-M", "--numstat", "-z", "HEAD", "--"], language: "C" },
-      // Status lookups that run beside `git status` are discarded for a non-repository.
+      // One batched path lookup finds the index, common dir and root; a non-repository ends here.
       {
         args: [
           "rev-parse",
-          "--verify",
-          "--quiet",
-          "--symbolic-full-name",
-          "refs/remotes/origin/HEAD",
+          "--path-format=absolute",
+          "--git-path",
+          "index",
+          "--git-common-dir",
+          "--show-toplevel",
         ],
+        language: "C",
       },
-      { args: ["remote"] },
-      // Without origin/HEAD, the default branch lookup lists remotes for another one.
-      { args: ["remote"] },
       { args: ["rev-parse", "--symbolic-full-name", "HEAD"], language: "C" },
+      { args: ["rev-parse", "--git-common-dir"], language: "C" },
     ]);
   }).pipe(Effect.provide(layer));
 });

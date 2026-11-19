@@ -294,6 +294,9 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     for (const entry of entries.toSorted()) {
       if (disabled.has(entry)) continue;
       const pluginDirectory = path.join(directory, entry);
+      // A stray file such as .DS_Store is not a plugin; reading beneath it would fail the scan.
+      const entryInfo = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
+      if (entryInfo?.type !== "Directory") continue;
       const manifestPath = path.join(pluginDirectory, "plugin.json");
       // A JSON manifest has no `---` markers, so the frontmatter reader reads all of it.
       const manifestContents = yield* readSkillFrontmatter(manifestPath, budget);
