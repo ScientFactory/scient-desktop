@@ -981,8 +981,7 @@ describe("EnvironmentProviderSettings account email", () => {
     const toggle = page.getByRole("button", { name: "Toggle account email visibility" });
     const button = toggle.element() as HTMLButtonElement;
 
-    await act(() => button.click());
-    for (const animation of button.getAnimations()) animation.finish();
+    // SCIENT-FORK: Scient's provider card shows the account email revealed by default.
     await expect.element(toggle).toHaveTextContent(email);
 
     await act(() => button.click());
