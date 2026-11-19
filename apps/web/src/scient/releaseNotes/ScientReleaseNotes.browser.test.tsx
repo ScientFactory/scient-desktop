@@ -5,6 +5,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 import { SCIENT_RELEASE_NOTES } from "./catalog";
+import { formatScientReleaseVersion } from "./model";
 import { requestReleaseHistory } from "./releaseHistoryRequests";
 import {
   ScientReleaseCard,
@@ -212,3 +213,38 @@ function _createFixture() {
   };
 }
 type _Fixture = ReturnType<typeof _createFixture>;
+
+// Screen readers hear the installed version's row as current; the visible badge alone is not enough.
+it("names the installed version's row as the current version", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<ScientReleaseNotes />);
+
+  requestReleaseHistory();
+
+  const dialog = page.getByRole("dialog");
+  await expect.element(dialog).toBeVisible();
+  await expect
+    .element(
+      dialog.getByRole("button", {
+        name: `Read release notes for Scient ${formatScientReleaseVersion(SCIENT_RELEASE_NOTES[0].version)}, current version`,
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(
+      dialog.getByRole("button", {
+        name: `Read release notes for Scient ${formatScientReleaseVersion(SCIENT_RELEASE_NOTES[1].version)}`,
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect.element(dialog).not.toBeInTheDocument();
+});

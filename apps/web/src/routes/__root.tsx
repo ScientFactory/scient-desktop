@@ -23,10 +23,12 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
 import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
+// SCIENT-FORK:START — the What's new state and dialog, shared by the sidebar card and About.
 import {
   ScientReleaseNotesDialogHost,
   ScientReleaseNotesProvider,
 } from "../scient/releaseNotes/ScientReleaseNotes";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
 import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
 // SCIENT-FORK:END
@@ -292,6 +294,8 @@ function RootRouteBranch() {
 
   // Hosted clients retain upstream connection onboarding. ScientGettingStartedGate
   // owns local assisted setup; a second first-run wizard must not intercept it.
+  // SCIENT-FORK: the release notes provider wraps both shells, so the sidebar card and the
+  // app-level What's new dialog share one state.
   return (
     <ScientReleaseNotesProvider>
       <ChatGptWelcomeCoordinator />

@@ -106,3 +106,46 @@ it("gives focus back to the About button when the history closes", async () => {
     host.remove();
   }
 });
+
+// Going back to the list must start at its top, not at the scroll position of the release view.
+it("shows the top of the version list again after a release was opened", async () => {
+  const stack = new AsyncDisposableStack();
+  const host = document.createElement("div");
+  document.body.append(host);
+  let root: Screen | undefined;
+  try {
+    root = stack.use(await _fixtureRender(null, { container: host, router: false }));
+    await root.rerender(
+      <ScientReleaseNotesProvider>
+        <ScientReleaseNotesDialogHost />
+        <button type="button" onClick={requestReleaseHistory}>
+          About
+        </button>
+      </ScientReleaseNotesProvider>,
+    );
+
+    await page.getByRole("button", { name: "About", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect.element(dialog).toBeVisible();
+    const viewportOf = () =>
+      document.querySelector<HTMLElement>('[role="dialog"] [data-slot="scroll-area-viewport"]')!;
+    viewportOf().scrollTop = viewportOf().scrollHeight;
+    await expect.poll(() => viewportOf().scrollTop).toBeGreaterThan(0);
+
+    await dialog
+      .getByRole("button", {
+        name: `Read release notes for Scient ${formatScientReleaseVersion(SCIENT_RELEASE_NOTES[1].version)}`,
+        exact: true,
+      })
+      .click();
+    // The footer button returns to the list, as in the recording.
+    await dialog.getByRole("button", { name: "Release history", exact: true }).click();
+
+    await expect.poll(() => viewportOf().scrollTop).toBe(0);
+    // The list is the same view whichever way it was reached: no way back, its rows open the versions.
+    await expect.element(dialog.getByRole("button", { name: /back/i })).not.toBeInTheDocument();
+  } finally {
+    await root?.unmount();
+    host.remove();
+  }
+});

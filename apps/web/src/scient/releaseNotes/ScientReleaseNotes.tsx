@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ArrowRightIcon, XIcon } from "lucide-react";
+import { ArrowRightIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ScientSymbol } from "../../components/ScientSymbol";
@@ -144,8 +144,6 @@ function ScientReleaseNotesDialog({
 }) {
   const [view, setView] = useState<ReleaseView>(initialView);
   const [selected, setSelected] = useState(current);
-  // "Back to this release" needs a release to go back to: the card's note, or one picked from the list.
-  const [hasRelease, setHasRelease] = useState(initialView === "release");
   const titleRef = useRef<HTMLHeadingElement>(null);
 
   const [previousPresentation, setPreviousPresentation] = useState({
@@ -162,7 +160,6 @@ function ScientReleaseNotesDialog({
     if (open) {
       setSelected(current);
       setView(initialView);
-      setHasRelease(initialView === "release");
     }
   }
 
@@ -190,15 +187,11 @@ function ScientReleaseNotesDialog({
         }
         initialFocus={titleRef}
       >
-        <ScientReleaseDialogHeader
-          release={selected}
-          titleRef={titleRef}
-          view={view}
-          canReturnToRelease={hasRelease}
-          onBack={() => setView("release")}
-        />
+        <ScientReleaseDialogHeader release={selected} titleRef={titleRef} view={view} />
 
+        {/* Keyed by view: each view starts at its top instead of keeping the other view's scroll. */}
         <DialogPanel
+          key={view}
           padding={view === "release" ? "compact" : "none"}
           scrollAreaClassName={
             view === "release"
@@ -214,7 +207,6 @@ function ScientReleaseNotesDialog({
               releases={history}
               onSelect={(release) => {
                 setSelected(release);
-                setHasRelease(true);
                 setView("release");
               }}
             />
@@ -222,10 +214,10 @@ function ScientReleaseNotesDialog({
         </DialogPanel>
 
         <DialogFooter className="sm:justify-between">
+          {/* A version links to the list; the list has no way back, its rows open the versions. */}
           {view === "release" ? (
             <Button size="sm" variant="ghost" onClick={() => setView("history")}>
               Release history
-              <ArrowRightIcon />
             </Button>
           ) : (
             <span aria-hidden />
@@ -243,14 +235,10 @@ function ScientReleaseDialogHeader({
   release,
   titleRef,
   view,
-  canReturnToRelease,
-  onBack,
 }: {
   readonly release: ScientReleaseNote;
   readonly titleRef: React.RefObject<HTMLHeadingElement | null>;
   readonly view: ReleaseView;
-  readonly canReturnToRelease: boolean;
-  readonly onBack: () => void;
 }) {
   return (
     <div className="relative h-20" data-slot="dialog-header">
@@ -271,17 +259,7 @@ function ScientReleaseDialogHeader({
           </div>
         </div>
       ) : (
-        <div className="relative flex h-full w-full items-center gap-2 px-3 pr-14">
-          {canReturnToRelease ? (
-            <Button
-              aria-label="Back to this release"
-              size="icon-sm"
-              variant="ghost"
-              onClick={onBack}
-            >
-              <ArrowLeftIcon />
-            </Button>
-          ) : null}
+        <div className="relative flex h-full w-full items-center px-5 pr-14">
           <div>
             <DialogTitle size="large" ref={titleRef} tabIndex={-1}>
               Release history
