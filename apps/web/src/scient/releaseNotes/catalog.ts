@@ -36,7 +36,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "languages-0631",
         title: "Use Scient in ten languages",
         description:
-          "Choose English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or Swedish in Settings → General → Display → Language, or follow your system default. Desktop menus and dialogs follow the same choice. Scient’s own panels, such as Library, Compute, documents, Overleaf and Accounts, remain in English for now.",
+          "Choose English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or Swedish in Settings → General → Display → Language, or follow your system default. Desktop menus, dialogs and Scient’s own panels, such as Library, Compute, documents, Overleaf and Accounts, follow the same choice.",
       },
       {
         id: "updates-0631",
