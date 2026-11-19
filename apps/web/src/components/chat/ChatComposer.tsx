@@ -2450,7 +2450,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const submitComposerRef = useRef<
-    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
+    (
+      dispatchMode?: ComposerDispatchMode,
+      submissionIntent?: ComposerSubmissionIntent,
+      // SCIENT-FORK:START — a held send keeps its steer request.
+      options?: { steer?: boolean },
+      // SCIENT-FORK:END
+    ) => void
   >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
@@ -2463,7 +2469,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ) => {
     if (voiceInputActive) {
       event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent, options));
       return false;
     }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
@@ -2473,7 +2479,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Sending now would leave a still-compressing image out of the turn, so wait for it.
     if (
       activeThreadId &&
-      submitAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent))
+      submitAfterPreparingImages(() =>
+        submitComposerRef.current(dispatchMode, submissionIntent, options),
+      )
     ) {
       event?.preventDefault();
       return false;
@@ -2584,7 +2592,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
   useLayoutEffect(() => {
-    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
+    submitComposerRef.current = (mode, intent, options) =>
+      submitComposerStable(undefined, mode, intent, options);
   }, [submitComposerStable]);
   useDictationSubmissionShortcut({
     enabled: voiceInputActive && !speechInput.preparing,
