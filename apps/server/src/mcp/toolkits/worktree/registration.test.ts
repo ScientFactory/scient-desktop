@@ -24,6 +24,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import * as WorkspaceBindingResolver from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as GitManager from "../../../git/GitManager.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -74,6 +75,8 @@ const StubServicesLive = Layer.mergeAll(
   AccountsTestkit.layer,
   // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
+  // T3's pull request tools read the checkout through GitManager.
+  Layer.mock(GitManager.GitManager)({}),
   Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),

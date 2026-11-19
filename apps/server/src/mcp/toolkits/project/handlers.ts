@@ -5,6 +5,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
+  type Project as ProjectRecord,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
@@ -212,6 +213,25 @@ const mutation = Effect.gen(function* () {
     });
   return yield* Project.ProjectService;
 });
+
+/** Settings, not the project record, hold the project default model that new threads use. */
+const withSavedDefaultModel = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.flatMap((service) => service.getSettings),
+    Effect.mapError(unavailable),
+  );
+  return (project: ProjectRecord) => {
+    const resolved = resolveProjectSettings(settings, project.id, project);
+    return {
+      ...project,
+      defaultModelSelection:
+        resolved.sources.defaultModelSelection === "project"
+          ? resolved.settings.defaultModelSelection
+          : null,
+    };
+  };
+});
+
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   scient_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
@@ -458,9 +478,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       const projects = yield* access;
       // Identities are resolved: linked environments find this side's project by repository.
-      return yield* projects
+      const page = yield* projects
         .listPage({ cursor: input.cursor ?? 0, limit: input.limit ?? 20 })
         .pipe(Effect.mapError(unavailable));
+      return { ...page, projects: page.projects.map(yield* withSavedDefaultModel) };
     }),
   ),
   scient_project_read: McpToolAccess.reads((input) =>
@@ -472,7 +493,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      return result.value;
+      return (yield* withSavedDefaultModel)(result.value);
     }),
   ),
   scient_project_create: McpToolAccess.writesEnvironment(
@@ -526,9 +547,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   scient_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      return yield* projects
+      const updated = yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
+      return (yield* withSavedDefaultModel)(updated);
     }),
   ),
   scient_project_delete: McpToolAccess.writesEnvironment((input) =>

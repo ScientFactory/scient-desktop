@@ -493,7 +493,7 @@ export const AntigravityDriver: ScientProviderDriver<
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
-      discoverGlobalSkills: discoverAntigravitySkills({ userHome }).pipe(
+      discoverGlobalSkills: discoverAntigravitySkills({ userHome, profileDirectory }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.mapError((cause) => cause.message),
@@ -529,12 +529,12 @@ export const AntigravityDriver: ScientProviderDriver<
       ),
       profileDirectory,
       onSessionStarted: provider.onSessionStarted,
-      onSessionEvent: (event) => {
+      onSessionEvent: (event, cwd) => {
         if (event._tag === "ConfigOptionsUpdated") {
           return provider.onConfigOptionsUpdated(event.configOptions);
         }
         return event._tag === "AvailableCommandsUpdated"
-          ? provider.onAvailableCommands(event.availableCommands)
+          ? provider.onAvailableCommands(event.availableCommands, cwd)
           : Effect.void;
       },
       continuationRequests,
@@ -629,7 +629,7 @@ export const AntigravityDriver: ScientProviderDriver<
       snapshotForCwd: (cwd) =>
         !enabled
           ? provider.snapshot.getSnapshot
-          : discoverAntigravitySkills({ cwd, userHome }).pipe(
+          : discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
               Effect.flatMap((skills) => provider.snapshotForCwd(cwd, skills)),

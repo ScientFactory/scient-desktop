@@ -53,6 +53,15 @@ const PluginManifest = Schema.fromJsonString(
   }),
 );
 const decodePluginManifest = Schema.decodeUnknownOption(PluginManifest);
+const decodePluginPreferences = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
+    }),
+  ),
+);
 
 /** Global plugins loaded by Antigravity 2.0 and the standalone IDE. */
 function antigravityUserPluginDirectory(path: Path.Path, geminiHome: string): string {
@@ -182,6 +191,8 @@ const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd?: string;
   readonly userHome: string;
+  /** The instance's GEMINI_HOME, where agy loads plugins from. */
+  readonly profileDirectory: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
   AntigravitySkillsProbeError,
@@ -266,6 +277,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 
   const scanPluginDirectory = Effect.fn("scanAntigravityPluginDirectory")(function* (
     directory: string,
+    disabled: ReadonlySet<string> = new Set(),
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
     if (info?.type !== "Directory") return;
@@ -280,6 +292,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     budget.remainingEntries -= entries.length;
 
     for (const entry of entries.toSorted()) {
+      if (disabled.has(entry)) continue;
       const pluginDirectory = path.join(directory, entry);
       const manifestPath = path.join(pluginDirectory, "plugin.json");
       // A JSON manifest has no `---` markers, so the frontmatter reader reads all of it.
@@ -296,6 +309,29 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   for (const root of roots) {
     yield* scanDirectory(root.directory, root.scope, true);
   }
+  // SCIENT-FORK:START — the instance profile is where agy loads plugins; Scient keeps each
+  // plugin's manifest namespace there too and skips plugins its config turns off.
+  const profilePlugins = path.join(input.profileDirectory, "config", "plugins");
+  const configPath = path.join(input.profileDirectory, "config", "config.json");
+  const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath);
+  if (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES)) {
+    return yield* new AntigravitySkillsProbeError({
+      reason: "scan-budget-exhausted",
+      path: configPath,
+    });
+  }
+  const config =
+    configInfo?.type === "File"
+      ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath)
+      : undefined;
+  const preferences = config === undefined ? undefined : decodePluginPreferences(config);
+  const disabledPlugins = new Set(
+    Object.entries(
+      (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
+    ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
+  );
+  yield* scanPluginDirectory(profilePlugins, disabledPlugins);
+  // SCIENT-FORK:END
   yield* scanPluginDirectory(globalPlugins);
   if (input.cwd) {
     yield* scanPluginDirectory(path.resolve(input.cwd, ".agents", "plugins"));

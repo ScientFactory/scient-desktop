@@ -191,9 +191,10 @@ export const makeAcpRegistryManagedRuntimeActions = Effect.fn(
               status: "installing",
               message: "Installing the exact ACP Registry package version.",
             });
+            // Installing only needs the package; the scope releases resolve's per-launch temp folder.
             yield* catalog
               .resolve(input.settings, input.cwd, input.environment)
-              .pipe(Effect.mapError(actionFailure));
+              .pipe(Effect.scoped, Effect.mapError(actionFailure));
           }
         }),
       )

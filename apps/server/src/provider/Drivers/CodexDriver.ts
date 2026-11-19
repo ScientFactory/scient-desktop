@@ -65,6 +65,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
+  codexHomeLaunchArgs,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -270,6 +271,7 @@ export const CodexDriver: ScientProviderDriver<
         yield* HostProcess.HomeDirectory,
       ),
       homePath: homeLayout.effectiveHomePath ?? "",
+      launchArgs: codexHomeLaunchArgs(pathService, homeLayout, config.launchArgs),
     } satisfies CodexSettings;
     // SCIENT-FORK: Scient-managed Codex runtimes are updated by Scient, not by the native updater.
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(

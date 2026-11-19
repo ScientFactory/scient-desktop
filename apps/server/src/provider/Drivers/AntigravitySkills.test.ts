@@ -30,6 +30,7 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
   return {
     cwd: path.join(temporaryDirectory, "workspace"),
     userHome: path.join(temporaryDirectory, "home"),
+    profileDirectory: path.join(temporaryDirectory, "profile"),
   };
 });
 
@@ -47,15 +48,21 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         "---\nname: project-review\n---\n",
       );
 
-      assert.deepEqual(yield* discoverAntigravitySkills({ userHome: input.userHome }), [
-        {
-          name: "global-review",
-          description: "Review everywhere.",
-          path: globalPath,
-          scope: "user",
-          enabled: true,
-        },
-      ]);
+      assert.deepEqual(
+        yield* discoverAntigravitySkills({
+          userHome: input.userHome,
+          profileDirectory: input.profileDirectory,
+        }),
+        [
+          {
+            name: "global-review",
+            description: "Review everywhere.",
+            path: globalPath,
+            scope: "user",
+            enabled: true,
+          },
+        ],
+      );
     }),
   );
 
@@ -171,6 +178,33 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
+    }),
+  );
+
+  it.effect("reads skills from enabled plugins in the instance's Antigravity profile", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const profileDirectory = path.join(workspace.userHome, "t3", "providers", "antigravity", "p");
+      const plugins = path.join(profileDirectory, "config", "plugins");
+      for (const plugin of ["demo", "off"]) {
+        yield* writeSkill(
+          path.join(plugins, plugin, "skills", `${plugin}-skill`),
+          `---\nname: ${plugin}-skill\ndescription: From ${plugin}.\n---\n`,
+        );
+      }
+      yield* fileSystem.writeFileString(
+        path.join(profileDirectory, "config", "config.json"),
+        JSON.stringify({ plugins: { off: { enabled: false } } }),
+      );
+      yield* fileSystem.writeFileString(path.join(plugins, ".DS_Store"), "x");
+      const input = { ...workspace, profileDirectory };
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
+        ["demo-skill"],
+      );
     }),
   );
 

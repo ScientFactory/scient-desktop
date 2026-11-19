@@ -1,5 +1,6 @@
 import {
   AuthRelayReadScope,
+  AuthRelayConfigureScope,
   AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
@@ -15,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 // SCIENT-FORK:END
 import * as HttpEffect from "effect/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
@@ -26,7 +27,6 @@ import { ServerSettingsService } from "../serverSettings.ts";
 // SCIENT-FORK:END
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
-import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
@@ -193,32 +193,29 @@ export const layer = HttpApiBuilder.group(
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
-          yield* requireEnvironmentScope(AuthRelayWriteScope);
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          const proof = yield* toHttpError(cloudLink.linkProof(payload));
           yield* appendCloudCredentialResponseHeaders;
           return proof;
         }),
       )
       .handle("relayConfig", ({ payload }) =>
-        requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(
-            // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
-            applyWhileOn(
-              // SCIENT-FORK:END
-              toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload)),
-              // SCIENT-FORK:START
-            ),
-            // SCIENT-FORK:END
-          ),
-        ),
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+          return yield* applyWhileOn(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload)));
+          // SCIENT-FORK:END
+        }),
       )
       .handle("linkState", () =>
         Effect.gen(function* () {
           const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
           const state = yield* toHttpError(cloudLink.linkState());
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          return { ...state, linkableHere: canLinkHere(request, principal.subject) };
+          // Linking also writes relay preferences, so configure alone cannot finish it.
+          const linkableHere =
+            principal.scopes.has(AuthRelayConfigureScope) &&
+            principal.scopes.has(AuthRelayWriteScope);
+          return { ...state, linkableHere };
         }),
       )
       .handle("checkReachability", () =>
@@ -235,6 +232,13 @@ export const layer = HttpApiBuilder.group(
       .handle("preferences", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.updatePreferences(payload))),
+        ),
+      )
+      .handle("liveActivityPreference", ({ payload }) =>
+        requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          Effect.andThen(
+            toHttpError(cloudLink.updateLiveActivityPreference(payload.liveActivitiesEnabled)),
+          ),
         ),
       )
       .handle("health", ({ payload }) =>

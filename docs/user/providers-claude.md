@@ -155,6 +155,15 @@ remaining wait when Claude reports a reset time. Claude may keep the turn open u
 reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
 when its displayed wait began.
 
+## Steering
+
+A steer waits until Claude finishes the tool calls it is running, then Claude reads it
+in the same turn. The message shows as unread until then. If Claude drops it before
+reading it, the message is sent as the next turn, after any messages queued before it.
+If Claude exits or the server restarts first, the message waits in the queue in that
+same place until you resume it. If you press Stop, Scient shows a notice with the text
+of any steer Claude had not read.
+
 ## Where Claude Skills Are Loaded
 
 Scient looks for local Claude skills in the Claude config directory's `skills` folder and

@@ -93,6 +93,10 @@ Linux, and x64 and ARM64 Windows. Intel macOS is not yet an approved target for
 Scient-managed ACP installation; existing legacy `agy` installations remain usable there, or the
 Mac can connect to a supported remote environment.
 
+On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
+variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
+path; keep `localharness_external.exe` beside that executable.
+
 Scient's update catalog treats official ACP and legacy `agy` as separate
 release families. When a newer ACP release has passed download, archive,
 native-startup, activation, and removal qualification on its supported target,

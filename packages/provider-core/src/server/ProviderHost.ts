@@ -52,6 +52,11 @@ export class ProviderHost extends Context.Service<
     // SCIENT-FORK:START — strict host admission counts the complete captured context.
     readonly preserveAttachmentContext?: boolean;
     // SCIENT-FORK:END
+    /**
+     * Counts a running agent for local server discovery, so listeners carrying its
+     * T3CODE_THREAD_ID show under its thread. Call the returned function when it stops.
+     */
+    readonly trackAgent?: () => () => void;
     readonly credentials: (
       namespace: string,
       bindingId: string,
