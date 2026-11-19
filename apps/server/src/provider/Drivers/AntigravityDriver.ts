@@ -15,6 +15,8 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK: one catalog read at a time per instance.
+import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -569,6 +571,10 @@ export const AntigravityDriver: ScientProviderDriver<
     });
     // SCIENT-FORK:END
 
+    // SCIENT-FORK:START — a read started before a runtime install must not publish its older
+    // list after the post-install read, so catalog reads take turns.
+    const refreshGate = yield* Semaphore.make(1);
+    // SCIENT-FORK:END
     const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
       function* () {
         const processScope = yield* Scope.make();
@@ -649,7 +655,8 @@ export const AntigravityDriver: ScientProviderDriver<
       auth: authFlow.controller,
       connectionActions,
       managedRuntimeActions,
-      refreshModels,
+      // SCIENT-FORK: catalog reads take turns (see refreshGate).
+      refreshModels: () => refreshGate.withPermits(1)(refreshModels()),
     } satisfies ScientProviderInstance;
   }),
 };
