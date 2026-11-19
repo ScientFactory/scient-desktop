@@ -1,4 +1,7 @@
 import type { RestingComposerControlsMeasurement } from "../composerFooterLayout";
+// SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+import { measureModelNameFit } from "../../scient/modelPicker/modelNameFit";
+// SCIENT-FORK:END
 
 function elementOuterWidth(element: HTMLElement): number {
   const width = element.getBoundingClientRect().width;
@@ -89,16 +92,25 @@ export function measureRestingComposerControls(
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map(controlBlockWidths);
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  const modelNameFit = picker ? measureModelNameFit(picker) : undefined;
+  // SCIENT-FORK:END
   return {
     gap,
     naturalFixedWidth:
       (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+      separatorAndGapWidth +
+      // SCIENT-FORK:START — an icon-only picker still counts the name it hides.
+      (modelNameFit?.hiddenWidth ?? 0),
+    // SCIENT-FORK:END
     minimumFixedWidth:
       (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
       separatorAndGapWidth,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,
+    // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+    modelNameTruncatableWidth: modelNameFit?.truncatableWidth,
+    // SCIENT-FORK:END
   };
 }
