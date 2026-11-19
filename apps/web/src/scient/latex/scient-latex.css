@@ -344,7 +344,7 @@
   font-size: 10px;
   line-height: 1.45;
 }
-.scient-latex-document-navigation nav[aria-label="Document outline"] button {
+.scient-latex-document-navigation nav[data-document-outline] button {
   display: block;
   width: 100%;
   overflow: hidden;
@@ -358,10 +358,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.scient-latex-document-navigation nav[aria-label="Document outline"] button:hover {
+.scient-latex-document-navigation nav[data-document-outline] button:hover {
   background: var(--accent);
 }
-.scient-latex-document-navigation nav[aria-label="Document outline"] button[aria-current="page"] {
+.scient-latex-document-navigation nav[data-document-outline] button[aria-current="page"] {
   background: var(--accent);
   color: var(--accent-foreground);
 }

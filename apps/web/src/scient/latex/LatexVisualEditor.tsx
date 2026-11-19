@@ -4377,6 +4377,7 @@ function LatexRichPreviewView({
                   <dt>
                     {descriptionEditable ? (
                       <input
+                        data-description-item-label=""
                         // oxlint-disable-next-line t3code/no-untranslated-copy -- identifies the field: latexVisualObjectSourceRange.ts matches this English label
                         aria-label={`Description item ${index + 1} label`}
                         onKeyDown={(event) => descriptionKeyDown(event, index, "label")}
@@ -6552,7 +6553,13 @@ function LatexVisualEditorReady(
   const cancelToolbarRefresh = useRef<(() => void) | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending toolbar refresh on unmount
   useEffect(() => () => cancelToolbarRefresh.current?.(), []);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [noticeState, setNotice] = useState<
+    string | { readonly kind: "image-upload"; readonly id: string } | null
+  >(null);
+  const notice =
+    noticeState !== null && typeof noticeState !== "string"
+      ? gt("Adding image to the project…")
+      : noticeState;
   const canEditRoot = props.canEditRoot === true;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring the source-edit projection functions for the editor to call
   useLayoutEffect(() => {
@@ -7476,7 +7483,7 @@ function LatexVisualEditorReady(
         false,
       ),
     );
-    setNotice(gt("Adding image to the project…"));
+    setNotice({ kind: "image-upload", id });
     void uploadLatexImage(environmentId, { cwd, documentRelativePath: documentPath, file }).then(
       (uploaded) => {
         const current = editorRef.current;
@@ -7510,7 +7517,9 @@ function LatexVisualEditorReady(
           );
         else
           setNotice((previous) =>
-            previous === gt("Adding image to the project…") ? null : previous,
+            previous !== null && typeof previous !== "string" && previous.id === id
+              ? null
+              : previous,
           );
       },
       () => {
@@ -8456,9 +8465,7 @@ function LatexVisualEditorReady(
         if (!(editor.state.selection instanceof NodeSelection)) return;
         const element = editor.view.nodeDOM(editor.state.selection.from);
         if (element instanceof HTMLElement)
-          element
-            .querySelector<HTMLInputElement>('input[aria-label={gt("Description item 1 label")}]')
-            ?.focus();
+          element.querySelector<HTMLInputElement>("input[data-description-item-label]")?.focus();
       });
     }
     if (!changed)
@@ -10837,7 +10844,7 @@ function LatexVisualEditorReady(
                                       gt("LaTeX document")}
                                   </span>
                                 </div>
-                                <nav aria-label={gt("Document outline")}>
+                                <nav data-document-outline="" aria-label={gt("Document outline")}>
                                   <div className="scient-latex-navigation-heading">
                                     <T>Outline</T>
                                   </div>

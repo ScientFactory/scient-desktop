@@ -28,6 +28,7 @@ type DiagramAction = "copy-source" | "copy-recovered-source" | "copy-png" | "dow
 
 interface MermaidDiagramDialogProps {
   readonly actionMessage: string | null;
+  readonly copiedKind: string | null;
   readonly activeAction: DiagramAction;
   readonly onCopyPng: () => void;
   readonly onCopySource: () => void;
@@ -51,6 +52,7 @@ function intrinsicSvgWidth(svg: string): number {
 export function MermaidDiagramDialog({
   actionMessage,
   activeAction,
+  copiedKind,
   onCopyPng,
   onCopySource,
   onCopyRecoveredSource,
@@ -174,12 +176,12 @@ export function MermaidDiagramDialog({
               <MenuPopup align="end" className="min-w-48">
                 {onCopyRecoveredSource ? (
                   <MenuItem disabled={activeAction != null} onClick={onCopyRecoveredSource}>
-                    {actionMessage === gt("Recovered source copied") ? <CheckIcon /> : <CopyIcon />}
+                    {copiedKind === "recovered-source" ? <CheckIcon /> : <CopyIcon />}
                     <T>Copy recovered source</T>
                   </MenuItem>
                 ) : null}
                 <MenuItem disabled={activeAction != null} onClick={onCopySource}>
-                  {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                  {copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                   {activeAction === "copy-source"
                     ? gt("Copying source…")
                     : onCopyRecoveredSource
@@ -191,7 +193,7 @@ export function MermaidDiagramDialog({
                   <T>Download SVG</T>
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onCopyPng}>
-                  {actionMessage === gt("Image copied") ? <CheckIcon /> : <ImageIcon />}
+                  {copiedKind === "image" ? <CheckIcon /> : <ImageIcon />}
                   {activeAction === "copy-png" ? gt("Copying image…") : gt("Copy image")}
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onDownloadPng}>

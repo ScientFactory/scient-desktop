@@ -8,7 +8,7 @@ import {
   ImageIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -58,13 +58,18 @@ export function VegaLiteChartDialog({
   title,
 }: VegaLiteChartDialogProps) {
   const gt = useGT();
+  const messages = useMessages();
   const controllerRef = useRef<VegaLiteViewController | null>(null);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousOpenRef = useRef(open);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<DialogAction>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    readonly message: string;
+    readonly copiedKind?: "source";
+  } | null>(null);
+  const actionMessage = actionNotice === null ? null : messages(actionNotice.message);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the action-message timer on unmount
   useEffect(
@@ -80,17 +85,17 @@ export function VegaLiteChartDialog({
       setStatus("loading");
       setErrorMessage(null);
       setActiveAction(null);
-      setActionMessage(null);
+      setActionNotice(null);
     }
     previousOpenRef.current = open;
   }, [open]);
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, copiedKind?: "source") => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
-    setActionMessage(message);
+    setActionNotice({ message, ...(copiedKind ? { copiedKind } : {}) });
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
-      setActionMessage(null);
+      setActionNotice(null);
     }, 1_500);
   };
 
@@ -99,7 +104,7 @@ export function VegaLiteChartDialog({
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
-    setActionMessage(message);
+    setActionNotice({ message });
   };
 
   const runControllerAction = (
@@ -126,7 +131,7 @@ export function VegaLiteChartDialog({
 
   const handleCopySource = () => {
     if (navigator.clipboard?.writeText == null) {
-      showPersistentMessage(gt("Clipboard access is unavailable."));
+      showPersistentMessage(msg("Clipboard access is unavailable."));
       return;
     }
     if (activeAction != null) return;
@@ -134,12 +139,12 @@ export function VegaLiteChartDialog({
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(gt("Source copied"));
+        showTransientMessage(msg("Source copied"), "source");
       },
       (cause: unknown) => {
         console.error("[scient-visualizations] Unable to copy expanded chart source", cause);
         setActiveAction(null);
-        showPersistentMessage(gt("Unable to copy the chart source."));
+        showPersistentMessage(msg("Unable to copy the chart source."));
       },
     );
   };
@@ -149,7 +154,7 @@ export function VegaLiteChartDialog({
       downloadVegaLiteSource(source, exportTitle);
     } catch (cause) {
       console.error("[scient-visualizations] Unable to download expanded chart source", cause);
-      showPersistentMessage(gt("Unable to download the Vega-Lite source."));
+      showPersistentMessage(msg("Unable to download the Vega-Lite source."));
     }
   };
 
@@ -165,8 +170,8 @@ export function VegaLiteChartDialog({
     runControllerAction(
       "reset",
       (controller) => controller.reset(),
-      gt("View reset"),
-      gt("Unable to reset the chart view."),
+      msg("View reset"),
+      msg("Unable to reset the chart view."),
     );
   };
 
@@ -220,7 +225,7 @@ export function VegaLiteChartDialog({
             </Tooltip>
             <MenuPopup align="end" className="min-w-52">
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                {actionNotice?.copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                 {activeAction === "copy-source" ? gt("Copying source…") : gt("Copy source")}
               </MenuItem>
               <MenuItem disabled={activeAction != null} onClick={handleDownloadSource}>
@@ -234,7 +239,7 @@ export function VegaLiteChartDialog({
                     "download-svg",
                     (controller) => downloadVegaLiteSvg(controller, exportTitle),
                     null,
-                    gt("Unable to create the SVG image."),
+                    msg("Unable to create the SVG image."),
                   )
                 }
               >
@@ -247,8 +252,8 @@ export function VegaLiteChartDialog({
                   runControllerAction(
                     "copy-png",
                     copyVegaLitePng,
-                    gt("Image copied"),
-                    gt("Copy image is unavailable. You can download the PNG instead."),
+                    msg("Image copied"),
+                    msg("Copy image is unavailable. You can download the PNG instead."),
                   )
                 }
               >
@@ -262,7 +267,7 @@ export function VegaLiteChartDialog({
                     "download-png",
                     (controller) => downloadVegaLitePng(controller, exportTitle),
                     null,
-                    gt("Unable to create the PNG image."),
+                    msg("Unable to create the PNG image."),
                   )
                 }
               >

@@ -8,7 +8,7 @@ import {
   FileImageIcon,
   ImageIcon,
 } from "lucide-react";
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -58,6 +58,7 @@ export function PlotlyChartDialog({
   title,
 }: PlotlyChartDialogProps) {
   const gt = useGT();
+  const messages = useMessages();
   const controllerRef = useRef<PlotlyViewController | null>(null);
   const [controller, setController] = useState<PlotlyViewController | null>(null);
   const [initialInteractionMode, setInitialInteractionMode] = useState<
@@ -67,7 +68,11 @@ export function PlotlyChartDialog({
   const [status, setStatus] = useState<"error" | "loading" | "ready">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<DialogAction>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    readonly message: string;
+    readonly copiedKind?: "source";
+  } | null>(null);
+  const actionMessage = actionNotice === null ? null : messages(actionNotice.message);
   const [retryVersion, setRetryVersion] = useState(0);
   const { active: dialogActive, ref: dialogRef } = usePlotlyViewportActivity(
     parsed.hasWebGl,
@@ -89,12 +94,12 @@ export function PlotlyChartDialog({
     if (open) setStatus("loading");
   }
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, copiedKind?: "source") => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
-    setActionMessage(message);
+    setActionNotice({ message, ...(copiedKind ? { copiedKind } : {}) });
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
-      setActionMessage(null);
+      setActionNotice(null);
     }, 1_500);
   };
 
@@ -103,7 +108,7 @@ export function PlotlyChartDialog({
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
-    setActionMessage(message);
+    setActionNotice({ message });
   };
 
   const runControllerAction = (
@@ -131,18 +136,18 @@ export function PlotlyChartDialog({
   const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
-      showPersistentMessage(gt("Clipboard access is unavailable."));
+      showPersistentMessage(msg("Clipboard access is unavailable."));
       return;
     }
     setActiveAction("copy-source");
     void navigator.clipboard.writeText(source).then(
       () => {
         setActiveAction(null);
-        showTransientMessage(gt("Source copied"));
+        showTransientMessage(msg("Source copied"), "source");
       },
       () => {
         setActiveAction(null);
-        showPersistentMessage(gt("Unable to copy the Plotly source."));
+        showPersistentMessage(msg("Unable to copy the Plotly source."));
       },
     );
   });
@@ -195,7 +200,7 @@ export function PlotlyChartDialog({
             </Tooltip>
             <MenuPopup align="end" className="min-w-56">
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === gt("Source copied") ? <CheckIcon /> : <CopyIcon />}
+                {actionNotice?.copiedKind === "source" ? <CheckIcon /> : <CopyIcon />}
                 {activeAction === "copy-source" ? gt("Copying source…") : gt("Copy source")}
               </MenuItem>
               <MenuItem onClick={() => downloadPlotlySource(source, title)}>
@@ -208,8 +213,8 @@ export function PlotlyChartDialog({
                   runControllerAction(
                     "download-svg",
                     (controller) => downloadPlotlySvg(controller, title),
-                    parsed.hasWebGl ? gt("SVG downloaded; WebGL layers are rasterized") : null,
-                    gt("Unable to create the SVG image."),
+                    parsed.hasWebGl ? msg("SVG downloaded; WebGL layers are rasterized") : null,
+                    msg("Unable to create the SVG image."),
                   )
                 }
               >
@@ -222,8 +227,8 @@ export function PlotlyChartDialog({
                   runControllerAction(
                     "copy-png",
                     copyPlotlyPng,
-                    gt("Image copied"),
-                    gt("Copy image is unavailable. You can download the PNG instead."),
+                    msg("Image copied"),
+                    msg("Copy image is unavailable. You can download the PNG instead."),
                   )
                 }
               >
@@ -237,7 +242,7 @@ export function PlotlyChartDialog({
                     "download-png",
                     (controller) => downloadPlotlyPng(controller, title),
                     null,
-                    gt("Unable to create the PNG image."),
+                    msg("Unable to create the PNG image."),
                   )
                 }
               >

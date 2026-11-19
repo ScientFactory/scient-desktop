@@ -34,7 +34,6 @@ import {
   VisualCardMenuPopup,
   VisualCardToolbarMenuItems,
 } from "../presentation/VisualCardToolbar";
-import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { readLocalApi } from "~/localApi";
@@ -146,7 +145,7 @@ function ImageActionButton({
 }
 
 function InlineImageActionsMenu(props: {
-  readonly actionMessage: string | null;
+  readonly copiedKind?: Exclude<ImageAction, null> | undefined;
   readonly activeAction: ImageAction;
   readonly background: InlineImageBackground;
   readonly compact?: boolean;
@@ -209,7 +208,7 @@ function InlineImageActionsMenu(props: {
           {props.activeAction === "download" ? gt("Preparing download…") : gt("Download original")}
         </MenuItem>
         <MenuItem disabled={props.activeAction != null} onClick={props.onCopyPath}>
-          {props.actionMessage === gt("Path copied") ? <CheckIcon /> : <CopyIcon />}
+          {props.copiedKind === "copy-path" ? <CheckIcon /> : <CopyIcon />}
           <T>Copy relative path</T>
         </MenuItem>
         {props.onOpenFile ? (
@@ -237,6 +236,7 @@ function InlineImageActionsMenu(props: {
 
 function InlineImageDialog(props: {
   readonly actionMessage: string | null;
+  readonly copiedKind?: Exclude<ImageAction, null> | undefined;
   readonly activeAction: ImageAction;
   readonly alt: string;
   readonly background: InlineImageBackground;
@@ -296,7 +296,7 @@ function InlineImageDialog(props: {
               </TooltipPopup>
             </Tooltip>
             <InlineImageActionsMenu
-              actionMessage={props.actionMessage}
+              copiedKind={props.copiedKind}
               activeAction={props.activeAction}
               background={props.background}
               hasImage
@@ -370,7 +370,12 @@ export function ScientInlineWorkspaceImage(props: {
   const autoRetriedRef = useRef<string | null>(null);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeAction, setActiveAction] = useState<ImageAction>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    readonly message: string;
+    readonly copiedKind?: Exclude<ImageAction, null>;
+  } | null>(null);
+  const messages = useMessages();
+  const actionMessage = actionNotice === null ? null : messages(actionNotice.message);
   const [background, setBackground] = useState<InlineImageBackground>("automatic");
   const [expanded, setExpanded] = useState(false);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -409,12 +414,12 @@ export function ScientInlineWorkspaceImage(props: {
     setFailedUrl(null);
   }
 
-  const showTransientMessage = (message: string) => {
+  const showTransientMessage = (message: string, copiedKind: Exclude<ImageAction, null>) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
-    setActionMessage(message);
+    setActionNotice({ message, copiedKind });
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
-      setActionMessage(null);
+      setActionNotice(null);
     }, 1_500);
   };
 
@@ -423,7 +428,7 @@ export function ScientInlineWorkspaceImage(props: {
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
-    setActionMessage(message);
+    setActionNotice({ message });
   };
 
   const handleImageError = () => {
@@ -446,7 +451,7 @@ export function ScientInlineWorkspaceImage(props: {
     autoRetriedRef.current = null;
     setFailedUrl(null);
     setLoadedUrl(null);
-    setActionMessage(null);
+    setActionNotice(null);
     asset.refresh();
   };
 
@@ -461,7 +466,7 @@ export function ScientInlineWorkspaceImage(props: {
     void operation().then(
       () => {
         setActiveAction(null);
-        if (successMessage) showTransientMessage(successMessage);
+        if (successMessage) showTransientMessage(successMessage, action);
       },
       (cause: unknown) => {
         console.error("[scient-images] Inline image action failed", action, cause);
@@ -473,14 +478,14 @@ export function ScientInlineWorkspaceImage(props: {
 
   const handleCopyPath = () => {
     if (!navigator.clipboard?.writeText) {
-      showPersistentMessage(m(msg("Clipboard access is unavailable.")));
+      showPersistentMessage(msg("Clipboard access is unavailable."));
       return;
     }
     runAction(
       "copy-path",
       () => navigator.clipboard.writeText(props.image.relativePath),
-      m(msg("Path copied")),
-      m(msg("Unable to copy the image path.")),
+      msg("Path copied"),
+      msg("Unable to copy the image path."),
     );
   };
 
@@ -499,8 +504,8 @@ export function ScientInlineWorkspaceImage(props: {
             asset: { environmentId: props.threadRef.environmentId, resource },
           }),
         ),
-      m(msg("Image copied")),
-      m(msg("Unable to copy the image.")),
+      msg("Image copied"),
+      msg("Unable to copy the image."),
     );
   };
 
@@ -517,7 +522,7 @@ export function ScientInlineWorkspaceImage(props: {
           props.image.fileName,
         ),
       null,
-      m(msg("Unable to download the image.")),
+      msg("Unable to download the image."),
     );
   };
 
@@ -630,7 +635,7 @@ export function ScientInlineWorkspaceImage(props: {
               </ImageActionButton>
             ) : null}
             <InlineImageActionsMenu
-              actionMessage={actionMessage}
+              copiedKind={actionNotice?.copiedKind}
               activeAction={activeAction}
               background={background}
               compact
@@ -727,6 +732,7 @@ export function ScientInlineWorkspaceImage(props: {
       {url != null && !props.filePresentation ? (
         <InlineImageDialog
           actionMessage={actionMessage}
+          copiedKind={actionNotice?.copiedKind}
           activeAction={activeAction}
           alt={props.image.alt}
           background={background}

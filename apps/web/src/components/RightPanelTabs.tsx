@@ -2014,6 +2014,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
+            data-panel-tabs-scroll=""
             aria-label={gt("Scroll panel tabs")}
           >
             <Tooltip>

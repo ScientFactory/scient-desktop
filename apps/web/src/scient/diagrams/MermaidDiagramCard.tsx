@@ -571,6 +571,7 @@ export function MermaidDiagramCard({
       {readyResult != null ? (
         <MermaidDiagramDialog
           actionMessage={actionMessage}
+          copiedKind={copiedKind}
           activeAction={activeAction === "copy-repair" ? null : activeAction}
           onCopyPng={handleCopyPng}
           onCopySource={handleCopySource}

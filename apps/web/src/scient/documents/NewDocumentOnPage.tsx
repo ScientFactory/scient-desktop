@@ -352,6 +352,7 @@ function NameLine(props: {
     <div className="scient-new-document-name">
       <input
         ref={field}
+        data-document-name=""
         aria-label={gt("Document name")}
         placeholder={gt("Document name")}
         value={value}
