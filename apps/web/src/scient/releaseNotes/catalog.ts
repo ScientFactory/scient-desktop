@@ -9,6 +9,64 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.31",
+    publishedAt: "2026-11-19",
+    format: "paragraphs",
+    headline: "Linked results for your papers, issues, and ten languages.",
+    highlights: [
+      {
+        id: "linked-results-markdown-0631",
+        title: "Link numbers, tables and figures to your runs",
+        description:
+          "Run a saved script fresh, then use Insert ▸ Result to place values, CSV tables or figures in a Markdown paper, tied to that run. When the script or a file a Python run read changes, affected results are marked with the cause. Re-run and update every result from that script in one undoable step, or ask an agent to check them. Outputs stay plain Markdown for Word and PDF export; run records stay on this computer.",
+      },
+      {
+        id: "linked-results-latex-0631",
+        title: "Keep LaTeX papers in sync with your analysis",
+        description:
+          "Insert ▸ Result writes ordinary LaTeX macros, booktabs tables and figure files beside your paper, so it still compiles anywhere, including Overleaf. A status badge beside the build bar shows whether the PDF matches your latest runs and what an update will change, with Re-run, Update files and Undo update. Macros used in included chapters are checked before updating.",
+      },
+      {
+        id: "issues-0631",
+        title: "Track and link issues beside your conversations",
+        description:
+          "Open the new Issues page for GitHub, GitLab, Azure DevOps, Forgejo and Linear projects. Filter, sort and save reusable views, read and comment on issues, edit labels and assignees, and hover issue links in chat for previews. Link issues alongside pull requests in Linked items so both you and your agents keep them in context.",
+      },
+      {
+        id: "languages-0631",
+        title: "Use Scient in ten languages",
+        description:
+          "Choose English, Chinese, French, German, Japanese, Korean, Portuguese (Brazil), Russian, Spanish or Swedish in Settings → General → Display → Language, or follow your system default. Desktop menus and dialogs follow the same choice. Scient’s own panels, such as Library, Compute, documents, Overleaf and Accounts, remain in English for now.",
+      },
+      {
+        id: "updates-0631",
+        title: "Keep working while updates prepare",
+        description:
+          "Choosing Restart now saves open workspaces and shows progress right beside the update control, with Retry if anything interrupts. On macOS, Scient prepares and verifies the downloaded update while you keep working, then runs a final save so edits made in the meantime are kept. Unreadable update feeds no longer stall on checking.",
+      },
+      {
+        id: "agents-chat-0631",
+        title: "Edit earlier messages and keep context together",
+        description:
+          "Edit from here now rewinds Cursor sessions and restarts Antigravity with your kept conversation, and checkpoint rollbacks keep history for ACP agents. Side chats started with /side keep your attachments and context, pressing Enter while an image compresses sends once it is ready, and failed sends or steers explain why.",
+      },
+      {
+        id: "previews-0631",
+        title: "Inspect remote localhost pages locally",
+        description:
+          "When connected to another computer in the desktop app, localhost preview tabs you open render locally through a tunnel, so the element picker, screenshots and annotations work just as they do locally. Preview pages ask before reading your location, and edited HTML files open fresh from Files without flashing white.",
+      },
+      {
+        id: "windows-signin-0631",
+        title: "More reliable Windows installs and Claude sign-in",
+        description:
+          "On Windows, the installer now protects custom per-user folders so saving files works reliably, file reads no longer fail when the native helper is unavailable, and you can drag file pills into Explorer. Claude sign-in now completes as soon as the account connects instead of timing out if its login process stays open.",
+      },
+    ],
+    alsoIncluded:
+      "The Fork this chat card returns with an editable title and worktree switch, alongside /fork-worktree. Choose an fx backend per thread, use Full access on fx 0.0.14+, and update fx in Settings. Save Pull request views, unassign default shortcuts, set a terminal shell, usage retention or sparse worktrees, and get faster Find in thread, safer one-time tasks and further fixes.",
+  },
+  {
     version: "0.6.30",
     publishedAt: "2026-11-17",
     format: "paragraphs",
