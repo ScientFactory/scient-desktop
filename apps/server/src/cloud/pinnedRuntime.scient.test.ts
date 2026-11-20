@@ -29,15 +29,20 @@ const LIVE_PID = String(process.pid);
  * executable reads once, then nothing else of it does: one that exited, or one still
  * running whose /proc entry is gone too (as hidepid hides it).
  */
-const withProc = (real: FileSystem.FileSystem, next: "exits" | "stays unreadable") => {
+type Next = "exits" | "stays unreadable" | "exits, in another namespace's /proc";
+
+const withProc = (real: FileSystem.FileSystem, next: Next) => {
   let executableReads = 0;
-  const pid = next === "exits" ? EXITED_PID : LIVE_PID;
+  const pid = next === "stays unreadable" ? LIVE_PID : EXITED_PID;
   const unreadable = (path: string) => Effect.fail(missing(path));
   return FileSystem.FileSystem.of({
     ...real,
     readDirectory: (path, options) =>
       path === "/proc" ? Effect.succeed(["1", "self", pid]) : real.readDirectory(path, options),
     readLink: (path) => {
+      if (path === "/proc/self") {
+        return Effect.succeed(next === "exits, in another namespace's /proc" ? "1" : LIVE_PID);
+      }
       if (path === "/proc/1/exe") return Effect.succeed("/usr/lib/systemd/systemd");
       if (path === "/proc/1/cwd") return Effect.succeed("/");
       if (path === `/proc/${pid}/exe`) {
@@ -57,7 +62,7 @@ const withProc = (real: FileSystem.FileSystem, next: "exits" | "stays unreadable
 };
 
 it.layer(NodeServices.layer)("prunePinnedRuntimes on Linux", (it) => {
-  const prune = (next: "exits" | "stays unreadable") =>
+  const prune = (next: Next) =>
     Effect.gen(function* () {
       const real = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -88,6 +93,12 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes on Linux", (it) => {
   it.effect("prunes nothing while a running process cannot be read", () =>
     Effect.gen(function* () {
       assert.deepEqual(yield* prune("stays unreadable"), []);
+    }),
+  );
+
+  it.effect("prunes nothing when /proc's ids are not this server's to check", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* prune("exits, in another namespace's /proc"), []);
     }),
   );
 });

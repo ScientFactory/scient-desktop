@@ -617,14 +617,21 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
           // One that exited runs nothing; a busy machine always has some. Only the kernel's
           // "no such process" proves it: /proc can hide a live one (hidepid), and a zombie,
           // a leader whose threads live on or a reused id still answer, leaving the list unknown.
-          const exited = yield* Effect.sync(() => {
-            try {
-              process.kill(Number(pid), 0);
-              return false;
-            } catch (error) {
-              return (error as NodeJS.ErrnoException).code === "ESRCH";
-            }
-          });
+          // The ids are this server's only when /proc is its own PID namespace's.
+          const ownProc = yield* fs.readLink("/proc/self").pipe(
+            Effect.map((self) => self === String(process.pid)),
+            Effect.orElseSucceed(() => false),
+          );
+          const exited =
+            ownProc &&
+            (yield* Effect.sync(() => {
+              try {
+                process.kill(Number(pid), 0);
+                return false;
+              } catch (error) {
+                return (error as NodeJS.ErrnoException).code === "ESRCH";
+              }
+            }));
           if (exited) continue;
           return Option.none<string>();
         }
