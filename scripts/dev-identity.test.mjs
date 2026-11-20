@@ -7,7 +7,7 @@ import * as NodeSqlite from "node:sqlite";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
-  activeCookieDatabase,
+  cookieDatabasePath,
   captureIdentity,
   DEV_IDENTITY_ENV,
   DEV_IDENTITY_MARKER,
@@ -745,7 +745,7 @@ describe("what a copy must not carry over", () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
     const checkout = NodePath.join(root, "scient-desktop-identity");
-    NodeFS.mkdirSync(checkout);
+    write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), "");
     setupHomeCheckout({ repoRoot: root, checkout, home, run: () => {} });
     assert.equal(vaultProtection(home.stateDir), "file");
     assert.equal(ensurePortableVault(home.stateDir), false);
@@ -798,7 +798,7 @@ describe("setupHomeCheckout", () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
     const checkout = NodePath.join(root, "scient-desktop-identity");
-    NodeFS.mkdirSync(checkout);
+    write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), "");
     const calls = [];
     setupHomeCheckout({ repoRoot: root, checkout, home, run: (...args) => calls.push(args) });
     assert.deepEqual(calls, []);
@@ -944,10 +944,15 @@ describe("code review guards", () => {
     const target = NodePath.join(root, "candidate", "scient-next-dev");
     write(NodePath.join(target, "secrets", "accounts-state.bin"), "old");
     write(NodePath.join(target, "settings.json"), "{}");
-    // The staged settings file cannot be created, after the secrets were staged.
-    NodeFS.mkdirSync(NodePath.join(target, "settings.json.dev-identity-staged"));
-    const error = await importDevIdentity({ targetStateDir: target, home }).catch((cause) => cause);
-    assert.ok(error instanceof Error);
+    // The connectors folder cannot be staged, after the secrets were staged.
+    NodeFS.chmodSync(target, 0o500);
+    let result;
+    try {
+      result = await importDevIdentity({ targetStateDir: target, home });
+    } finally {
+      NodeFS.chmodSync(target, 0o700);
+    }
+    assert.equal(result.status, "copy-failed");
     assert.equal(
       NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-state.bin"), "utf8"),
       "old",
@@ -958,6 +963,93 @@ describe("code review guards", () => {
       ),
       [],
     );
+    assert.equal(NodeFS.existsSync(NodePath.join(target, "dev-identity-journal.json")), false);
+  });
+
+  it("finishes a copy that stopped while publishing, before the app opens its vault", async () => {
+    const root = scratch();
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    const secrets = NodePath.join(target, "secrets");
+    write(NodePath.join(secrets, "accounts-master-key.bin"), "old-key");
+    write(NodePath.join(secrets, "accounts-master-key.bin.dev-identity-staged"), "new-key");
+    write(NodePath.join(secrets, "accounts-vault.bin.dev-identity-staged"), "new-sentinel");
+    write(NodePath.join(secrets, "accounts-vault.bin"), "new-sentinel-already-moved");
+    write(NodePath.join(secrets, "custom-model-old.bin"), "stale");
+    write(
+      NodePath.join(target, "dev-identity-journal.json"),
+      JSON.stringify({
+        writes: [
+          {
+            staged: NodePath.join(secrets, "accounts-master-key.bin.dev-identity-staged"),
+            path: NodePath.join(secrets, "accounts-master-key.bin"),
+          },
+          {
+            staged: NodePath.join(secrets, "accounts-vault.bin.dev-identity-staged"),
+            path: NodePath.join(secrets, "accounts-vault.bin"),
+          },
+        ],
+        removals: [NodePath.join(secrets, "custom-model-old.bin")],
+      }),
+    );
+    const result = await importDevIdentity({
+      targetStateDir: target,
+      home: homeAt(NodePath.join(root, "no-home")),
+    });
+    assert.equal(result.status, "no-home");
+    assert.equal(
+      NodeFS.readFileSync(NodePath.join(secrets, "accounts-master-key.bin"), "utf8"),
+      "new-key",
+    );
+    assert.equal(
+      NodeFS.readFileSync(NodePath.join(secrets, "accounts-vault.bin"), "utf8"),
+      "new-sentinel",
+    );
+    assert.equal(NodeFS.existsSync(NodePath.join(secrets, "custom-model-old.bin")), false);
+    assert.equal(NodeFS.existsSync(NodePath.join(target, "dev-identity-journal.json")), false);
+
+    write(NodePath.join(target, "dev-identity-journal.json"), "{broken");
+    const error = await importDevIdentity({
+      targetStateDir: target,
+      home: homeAt(NodePath.join(root, "no-home")),
+    }).catch((cause) => cause);
+    assert.equal(error?.fatal, true);
+  });
+
+  it("refuses a dev app whose secrets folder is a link elsewhere", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const elsewhere = NodePath.join(root, "elsewhere");
+    NodeFS.mkdirSync(elsewhere);
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    NodeFS.mkdirSync(target, { recursive: true });
+    NodeFS.symlinkSync(elsewhere, NodePath.join(target, "secrets"));
+    const error = await importDevIdentity({ targetStateDir: target, home }).catch((cause) => cause);
+    assert.equal(error?.fatal, true);
+    assert.deepEqual(NodeFS.readdirSync(elsewhere), []);
+  });
+
+  it("refuses a snapshot whose settings name a stored secret that is missing", () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const redacted = "\u2022\u2022\u2022\u2022\u2022\u2022";
+    write(
+      NodePath.join(home.stateDir, "settings.json"),
+      JSON.stringify({
+        sourceControlHosts: { github: { token: { "GitHub.com ": redacted } } },
+        textGenerators: { tg: { apiKey: redacted } },
+        providerInstances: { claude: { driver: "claudeAgent", config: { apiKey: redacted } } },
+      }),
+    );
+    assert.equal(captureIdentity(home.stateDir, { attempts: 1 }), undefined);
+    const b = (value) => Buffer.from(value).toString("base64url");
+    for (const name of [
+      `source-control-${b("github")}-${b("token")}-${b("github.com")}`,
+      `text-generator-${b("tg")}-${b("apiKey")}`,
+      `provider-config-${b("claude")}-${b("claudeAgent")}-${b("apiKey")}`,
+    ]) {
+      write(NodePath.join(home.stateDir, "secrets", `${name}.bin`), "value");
+    }
+    assert.ok(captureIdentity(home.stateDir, { attempts: 1 }));
   });
 
   it("keeps plain install keys that happen to start with 0xff when the vault key changes", async () => {
@@ -1033,7 +1125,7 @@ describe("code review guards", () => {
     makeCookieDatabase(NodePath.join(partition, "Network", "Cookies"), [
       { host: ".example.org", name: "session", value: "migrated" },
     ]);
-    write(NodePath.join(partition, "NetworkDataMigrated"), "");
+    write(NodePath.join(partition, "Network", "NetworkDataMigrated"), "");
     // A stale pre-migration jar Chromium no longer opens.
     makeCookieDatabase(NodePath.join(partition, "Cookies"), [
       { host: ".example.org", name: "session", value: "stale" },
@@ -1051,10 +1143,42 @@ describe("code review guards", () => {
       "Partitions",
       previewPartitionDirectory(environmentId),
     );
-    assert.equal(activeCookieDatabase(targetPartition), NodePath.join(targetPartition, "Cookies"));
+    assert.equal(cookieDatabasePath(targetPartition), NodePath.join(targetPartition, "Cookies"));
     assert.deepEqual(readCookies(NodePath.join(targetPartition, "Cookies")), [
       { name: "session", value: "migrated", sealed: 0 },
     ]);
     assert.deepEqual(NodeFS.readdirSync(NodePath.join(partition, "Network")).sort(), sourceFiles);
+  });
+});
+
+describe("cookie jar placement", () => {
+  it("writes into Network/ when the target profile has already migrated there", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const homeEnvironment = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    makeCookieDatabase(
+      NodePath.join(
+        home.stateDir,
+        "electron-userdata",
+        "Partitions",
+        previewPartitionDirectory(homeEnvironment),
+        "Cookies",
+      ),
+      [{ host: ".example.org", name: "session", value: "home" }],
+    );
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "environment-id"), "cccccccc-cccc-4ccc-8ccc-cccccccccccc\n");
+    const partition = NodePath.join(
+      target,
+      "electron-userdata",
+      "Partitions",
+      previewPartitionDirectory("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+    );
+    write(NodePath.join(partition, "Network", "NetworkDataMigrated"), "");
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(readCookies(NodePath.join(partition, "Network", "Cookies")), [
+      { name: "session", value: "home", sealed: 0 },
+    ]);
+    assert.equal(NodeFS.existsSync(NodePath.join(partition, "Cookies")), false);
   });
 });

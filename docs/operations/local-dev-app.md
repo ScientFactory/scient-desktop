@@ -285,7 +285,8 @@ pnpm dev:identity seed      # optional, once: copy from the installed Scient app
 cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
 ```
 
-- `setup` creates a detached worktree at `origin/main`, named so the app shows as
+- `setup` creates a detached worktree at `origin/main` (`--ref` picks another commit
+  that has `scripts/dev-identity.mjs`), named so the app shows as
   `Scient (Dev) · identity`. Its `.scient-next` is a link to
   `~/.scient-next/dev-identity`, so removing or recreating that checkout keeps
   the home. To update it, check out a newer `origin/main` there and restart it.
@@ -312,7 +313,10 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
 - The home may keep running: its files are read as one snapshot, read again if
   it saves partway through. A candidate changes nothing until every replacement
   file is ready; if the home never settles, the candidate starts with the
-  identity it already had and says so.
+  identity it already had and says so. The copy records its steps before it
+  publishes them, so a copy cut off partway is finished on the next start; if it
+  cannot be finished, or a candidate's data folder links into the home or the
+  installed app, the candidate does not start.
 - A connector whose sign-in renews itself can be renewed by any app holding the
   copy. If a candidate renews it, the home may need to sign in to that connector
   again; candidates started afterwards copy the new sign-in.

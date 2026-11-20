@@ -857,7 +857,8 @@ export function shareDevelopmentVoiceRuntime({
 
 /**
  * Copies the owner's dev identity (accounts, models, sign-ins) into this checkout's app. Loaded on
- * demand: the stable controller ships this launcher without the identity module.
+ * demand: the stable controller ships this launcher without the identity module. A copy that
+ * failed before changing anything only logs; one that left the app's data unsafe stops the start.
  */
 export async function shareDevelopmentIdentity(
   paths,
@@ -875,6 +876,7 @@ export async function shareDevelopmentIdentity(
       targetStateDir: NodePath.join(paths.stateRoot, "scient-next-dev"),
     });
   } catch (error) {
+    if (error?.fatal) throw error;
     writeLine(
       `Could not copy your dev identity (${error instanceof Error ? error.message : String(error)}); this dev app starts with the identity it already had.`,
     );
@@ -883,6 +885,11 @@ export async function shareDevelopmentIdentity(
   if (result.status === "home-seeding") {
     throw new Error(
       "pnpm dev:identity seed is filling this identity home; start it again when the seed finishes.",
+    );
+  }
+  if (result.status === "refused-target") {
+    throw new Error(
+      "This dev app's data folder points into the identity home or the installed app; move it aside before starting.",
     );
   }
   const line = identity.describeImport(result);

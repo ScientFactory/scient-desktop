@@ -12,8 +12,9 @@ import * as NodeURL from "node:url";
 
 export const DEV_IDENTITY_ENV = "SCIENT_DEV_IDENTITY";
 export const DEV_IDENTITY_MARKER = "dev-identity.json";
+const JOURNAL = "dev-identity-journal.json";
 const HOME_RECORD = "dev-identity-home.json";
-const SEED_LOCK = "dev-identity-seed.lock";
+const HOME_LOCK = "dev-identity.lock";
 const HOME_CHECKOUT_NAME = "scient-desktop-identity";
 const STATE_SUBDIR = "scient-next-dev";
 const PREVIEW_PARTITION_DIR_PREFIX = "scient-next-preview-";
@@ -25,7 +26,9 @@ const ACCOUNTS_STATE = "accounts-state";
 const SEALED = 0xff;
 const SECRET_REDACTED = "••••••";
 const CAPTURE_ATTEMPTS = 5;
+const COOKIE_COPY_ATTEMPTS = 3;
 const STAGED_SUFFIX = ".dev-identity-staged";
+const OLD_SUFFIX = ".dev-identity-old";
 
 /**
  * Secret records that are the owner's identity, never the install's. Each family is replaced as a
@@ -68,6 +71,17 @@ const LOCAL_ACCOUNTS_KEYS = ["senders", "senderKeys", "profileChoices"];
 const LOCAL_PROFILE_KEYS = ["send", "sharedWith", "received"];
 /** Folders and files copied once, when a dev app starts for the first time. */
 const PROFILE_PATHS = ["keybindings.json", "themes", "skills", "personal-skills.json"];
+/** Folders under a state directory the copy writes into; none may be a link elsewhere. */
+const WRITTEN_DIRS = ["secrets", "connectors", "electron-userdata", "electron-userdata/Partitions"];
+
+/** A failure after the target started changing; the dev app must not start on it. */
+export class DevIdentityFatalError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "DevIdentityFatalError";
+    this.fatal = true;
+  }
+}
 
 export function resolveDevIdentityHome(homeDir = NodeOS.homedir()) {
   const root = NodePath.join(homeDir, ".scient-next", "dev-identity");
@@ -78,6 +92,15 @@ const exists = (path) => {
   try {
     NodeFS.lstatSync(path);
     return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+};
+
+const isLink = (path) => {
+  try {
+    return NodeFS.lstatSync(path).isSymbolicLink();
   } catch (error) {
     if (error?.code === "ENOENT") return false;
     throw error;
@@ -126,13 +149,56 @@ const jsonBytes = (value) => `${JSON.stringify(value, null, 2)}\n`;
 function writeFileAtomic(path, data, mode = 0o600) {
   NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${NodeCrypto.randomBytes(4).toString("hex")}.tmp`;
-  NodeFS.writeFileSync(temporary, data, { mode });
+  NodeFS.writeFileSync(temporary, data, { mode, flag: "wx" });
   NodeFS.renameSync(temporary, path);
 }
 
+/** Moves one staged file or folder into place; safe to repeat after an interruption. */
+function publish({ staged, path, tree }) {
+  if (!exists(staged)) return;
+  if (tree && exists(path)) {
+    NodeFS.rmSync(`${path}${OLD_SUFFIX}`, { recursive: true, force: true });
+    NodeFS.renameSync(path, `${path}${OLD_SUFFIX}`);
+  }
+  NodeFS.renameSync(staged, path);
+  if (tree) NodeFS.rmSync(`${path}${OLD_SUFFIX}`, { recursive: true, force: true });
+}
+
+function applyJournal(journalPath, journal) {
+  for (const write of journal.writes) publish(write);
+  for (const path of journal.removals) NodeFS.rmSync(path, { recursive: true, force: true });
+  NodeFS.rmSync(journalPath, { force: true });
+}
+
 /**
- * Changes staged beside their targets, published only once every one is written. A failure while
- * staging leaves the target exactly as it was.
+ * Finishes a copy that stopped after it began publishing. The journal is written only once every
+ * replacement is staged, so finishing it always ends on the complete new set.
+ */
+export function recoverInterruptedCopy(stateDir) {
+  const journalPath = NodePath.join(stateDir, JOURNAL);
+  const journal = readJsonObject(journalPath);
+  if (journal === undefined) {
+    if (exists(journalPath)) {
+      throw new DevIdentityFatalError(
+        `${journalPath} is unreadable; this app's identity copy cannot be finished.`,
+      );
+    }
+    return false;
+  }
+  try {
+    applyJournal(journalPath, journal);
+  } catch (error) {
+    throw new DevIdentityFatalError(
+      `Could not finish the interrupted identity copy in ${stateDir}.`,
+      { cause: error },
+    );
+  }
+  return true;
+}
+
+/**
+ * Changes staged beside their targets. Nothing is published until every one is written; then a
+ * journal records the set, so an interruption is finished on the next start.
  */
 class StagedChanges {
   #writes = [];
@@ -141,7 +207,8 @@ class StagedChanges {
   write(path, data, mode = 0o600) {
     NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true, mode: 0o700 });
     const staged = `${path}${STAGED_SUFFIX}`;
-    NodeFS.writeFileSync(staged, data, { mode });
+    NodeFS.rmSync(staged, { recursive: true, force: true });
+    NodeFS.writeFileSync(staged, data, { mode, flag: "wx" });
     NodeFS.chmodSync(staged, mode);
     this.#writes.push({ staged, path });
   }
@@ -149,7 +216,7 @@ class StagedChanges {
   copyTree(source, destination) {
     const staged = `${destination}${STAGED_SUFFIX}`;
     NodeFS.rmSync(staged, { recursive: true, force: true });
-    NodeFS.cpSync(source, staged, { recursive: true });
+    NodeFS.cpSync(source, staged, { recursive: true, errorOnExist: true, force: false });
     this.#writes.push({ staged, path: destination, tree: true });
   }
 
@@ -157,11 +224,16 @@ class StagedChanges {
     this.#removals.push(path);
   }
 
-  commit() {
-    for (const path of this.#removals) NodeFS.rmSync(path, { recursive: true, force: true });
-    for (const { staged, path, tree } of this.#writes) {
-      if (tree) NodeFS.rmSync(path, { recursive: true, force: true });
-      NodeFS.renameSync(staged, path);
+  commit(stateDir) {
+    const journalPath = NodePath.join(stateDir, JOURNAL);
+    const journal = { writes: this.#writes, removals: this.#removals };
+    writeFileAtomic(journalPath, jsonBytes(journal));
+    try {
+      applyJournal(journalPath, journal);
+    } catch (error) {
+      throw new DevIdentityFatalError(`Could not finish the identity copy in ${stateDir}.`, {
+        cause: error,
+      });
     }
   }
 
@@ -263,18 +335,47 @@ function identitySecretNames(secretsDir, settings) {
 
 const base64url = (value) => Buffer.from(value, "utf8").toString("base64url");
 
-/** Slots settings point at by name rather than by id: redacted provider environment values. */
-function derivedSecretNames(settings) {
+/**
+ * The slot each stored secret in settings lives in, named as `settingsSecrets.ts` names them. A
+ * stored secret shows in settings as the redaction marker, alone or per server host.
+ */
+export function derivedSecretNames(settings) {
   const names = [];
-  const instances = settings?.providerInstances;
-  if (instances === null || typeof instances !== "object") return names;
-  for (const [id, instance] of Object.entries(instances)) {
+  const fields = (group, slot) => {
+    if (group === null || typeof group !== "object" || Array.isArray(group)) return;
+    for (const [field, value] of Object.entries(group)) {
+      if (value === SECRET_REDACTED) names.push(`${slot(field, null)}.bin`);
+      else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        for (const [host, entry] of Object.entries(value)) {
+          if (entry === SECRET_REDACTED) {
+            names.push(`${slot(field, host.trim().toLowerCase())}.bin`);
+          }
+        }
+      }
+    }
+  };
+  const withHost = (base, host) => (host === null ? base : `${base}-${base64url(host)}`);
+  for (const [id, instance] of Object.entries(settings?.providerInstances ?? {})) {
+    const driver = typeof instance?.driver === "string" ? instance.driver : "";
+    fields(instance?.config, (field, host) =>
+      withHost(`provider-config-${base64url(id)}-${base64url(driver)}-${base64url(field)}`, host),
+    );
     for (const variable of Array.isArray(instance?.environment) ? instance.environment : []) {
       if (typeof variable?.name !== "string") continue;
       if (variable.valueRedacted === true || variable.value === SECRET_REDACTED) {
         names.push(`provider-env-${base64url(id)}-${base64url(variable.name)}.bin`);
       }
     }
+  }
+  for (const [kind, group] of Object.entries(settings?.sourceControlHosts ?? {})) {
+    fields(group, (field, host) =>
+      withHost(`source-control-${base64url(kind)}-${base64url(field)}`, host),
+    );
+  }
+  for (const [id, generator] of Object.entries(settings?.textGenerators ?? {})) {
+    fields(generator, (field, host) =>
+      withHost(`text-generator-${base64url(id)}-${base64url(field)}`, host),
+    );
   }
   return names;
 }
@@ -310,8 +411,10 @@ export function ensurePortableVault(stateDir) {
   const secrets = NodePath.join(stateDir, "secrets");
   if (exists(NodePath.join(secrets, `${ACCOUNTS_STATE}.bin`))) return false;
   const vault = makePortableVault();
-  writeFileAtomic(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`), vault.key);
-  writeFileAtomic(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`), vault.sentinel);
+  const changes = new StagedChanges();
+  changes.write(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`), vault.key);
+  changes.write(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`), vault.sentinel);
+  changes.commit(stateDir);
   return true;
 }
 
@@ -418,9 +521,10 @@ export function captureIdentity(
 
 /**
  * Stages a captured identity's secrets for a target, re-encrypting each record when `targetKey` is
- * a new key. The Accounts document is rewritten without the source install's local state.
+ * a new key; a record that cannot be re-encrypted stops the copy. The Accounts document is
+ * rewritten without the source install's local state.
  */
-function stageSecrets({ changes, capture, targetStateDir, targetKey, onSkip = () => {} }) {
+function stageSecrets({ changes, capture, targetStateDir, targetKey }) {
   const targetSecrets = NodePath.join(targetStateDir, "secrets");
   NodeFS.mkdirSync(targetSecrets, { recursive: true, mode: 0o700 });
   const previousKey = readBytes(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`));
@@ -451,9 +555,8 @@ function stageSecrets({ changes, capture, targetStateDir, targetKey, onSkip = ()
       } else if (targetKey !== undefined) {
         output = reencryptSecret(name, bytes, sourceKey, targetKey);
       }
-    } catch {
-      onSkip(name.replace(/\.bin$/u, ""));
-      continue;
+    } catch (error) {
+      throw new Error(`${name.replace(/\.bin$/u, "")} could not be decrypted.`, { cause: error });
     }
     if (output === undefined) continue;
     removed.delete(name);
@@ -509,11 +612,11 @@ function stageConnectors({ changes, capture, targetStateDir, sourceDirs, targetD
 /** Profiles the target lacks are added by id; its default stays unless it has none that resolves. */
 function stageClientSettings({ changes, sourceStateDir, targetStateDir, firstStart }) {
   const source = readJsonObject(NodePath.join(sourceStateDir, "client-settings.json"));
-  if (source === undefined) return;
+  if (source === undefined) return undefined;
   const targetPath = NodePath.join(targetStateDir, "client-settings.json");
   if (firstStart) {
     changes.write(targetPath, jsonBytes(source), 0o644);
-    return;
+    return source;
   }
   const target = readJsonObject(targetPath) ?? {};
   const profiles = Array.isArray(target.browserProfiles) ? [...target.browserProfiles] : [];
@@ -528,6 +631,7 @@ function stageClientSettings({ changes, sourceStateDir, targetStateDir, firstSta
     next.browserDefaultProfileId = source.browserDefaultProfileId;
   }
   changes.write(targetPath, jsonBytes(next), 0o644);
+  return next;
 }
 
 /** Same bytes BrowserSession hashes: a backslash is escaped, and so is a lone UTF-16 surrogate. */
@@ -569,8 +673,8 @@ function ensureEnvironmentId(stateDir) {
   return readEnvironmentId(stateDir);
 }
 
-const browserProfileIds = (clientSettingsPath) => {
-  const profiles = readJsonObject(clientSettingsPath)?.browserProfiles;
+const browserProfileIds = (clientSettings) => {
+  const profiles = clientSettings?.browserProfiles;
   return Array.isArray(profiles)
     ? profiles.map((profile) => profile?.id).filter((id) => typeof id === "string")
     : [];
@@ -589,46 +693,57 @@ export function mapPreviewPartitions({ sourceEnvironmentId, targetEnvironmentId,
 }
 
 /**
- * The cookie jar Chromium opens in a partition: under `Network/` once its network data has been
- * migrated there, at the partition root before that.
+ * Where Chromium keeps a partition's cookie jar: under `Network/` once the checkpoint
+ * `Network/NetworkDataMigrated` exists, at the partition root before that.
  */
-export function activeCookieDatabase(partitionDir) {
-  const migrated = NodePath.join(partitionDir, "Network", "Cookies");
-  const root = NodePath.join(partitionDir, "Cookies");
-  if (exists(NodePath.join(partitionDir, "NetworkDataMigrated"))) {
-    return exists(migrated) ? migrated : undefined;
-  }
-  if (exists(root)) return root;
-  return exists(migrated) ? migrated : undefined;
+export function cookieDatabasePath(partitionDir) {
+  return exists(NodePath.join(partitionDir, "Network", "NetworkDataMigrated"))
+    ? NodePath.join(partitionDir, "Network", "Cookies")
+    : NodePath.join(partitionDir, "Cookies");
 }
 
 /**
- * A standalone copy of a cookie jar. The jar and its journal are copied first, so SQLite never
- * creates files beside the source, then settled into one file.
+ * A standalone, checked copy of a cookie jar. The jar and its journal are copied privately first,
+ * so SQLite never creates files beside the source; a copy taken mid-write is taken again.
  */
-async function snapshotCookieDatabase(sourcePath, stagingDir) {
-  NodeFS.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
-  const copy = NodePath.join(stagingDir, "Cookies.source");
-  for (const suffix of ["", "-journal", "-wal"]) {
-    const from = `${sourcePath}${suffix}`;
-    if (exists(from)) NodeFS.copyFileSync(from, `${copy}${suffix}`);
+async function snapshotCookieDatabase(sourcePath) {
+  for (let attempt = 0; attempt < COOKIE_COPY_ATTEMPTS; attempt += 1) {
+    const stagingDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dev-identity-cookies-"));
+    try {
+      const copy = NodePath.join(stagingDir, "Cookies.source");
+      for (const suffix of ["", "-journal", "-wal"]) {
+        const from = `${sourcePath}${suffix}`;
+        if (exists(from)) NodeFS.copyFileSync(from, `${copy}${suffix}`);
+      }
+      const staged = NodePath.join(stagingDir, "Cookies");
+      const source = new NodeSqlite.DatabaseSync(copy);
+      try {
+        await NodeSqlite.backup(source, staged);
+      } finally {
+        source.close();
+      }
+      const check = new NodeSqlite.DatabaseSync(staged, { readOnly: true });
+      let healthy;
+      try {
+        healthy = check.prepare("PRAGMA quick_check").get()?.quick_check === "ok";
+      } finally {
+        check.close();
+      }
+      if (healthy) return { stagingDir, staged };
+    } catch {
+      // A jar caught mid-write; the next attempt copies it again.
+    }
+    NodeFS.rmSync(stagingDir, { recursive: true, force: true });
+    sleep(100 * (attempt + 1));
   }
-  const staged = NodePath.join(stagingDir, "Cookies");
-  const source = new NodeSqlite.DatabaseSync(copy);
-  try {
-    await NodeSqlite.backup(source, staged);
-  } finally {
-    source.close();
-  }
-  NodeFS.chmodSync(staged, 0o600);
-  return staged;
+  return undefined;
 }
 
 /**
- * Copies website sign-ins into profiles that have no cookies yet in the target. A profile the
- * target already signed into keeps its own. A new profile's jar goes where Chromium opens it.
+ * Stages website sign-ins for profiles that have no cookie jar yet in the target. A profile the
+ * target already signed into keeps its own. Returns the profiles staged and those skipped.
  */
-async function copyWebsiteSignIns({ source, target, profileIds, decrypt }) {
+async function stageWebsiteSignIns({ changes, source, target, profileIds, decrypt }) {
   const sourcePartitions = NodePath.join(source.userData, "Partitions");
   let entries;
   try {
@@ -636,7 +751,7 @@ async function copyWebsiteSignIns({ source, target, profileIds, decrypt }) {
       name.startsWith(PREVIEW_PARTITION_DIR_PREFIX),
     );
   } catch (error) {
-    if (error?.code === "ENOENT") return [];
+    if (error?.code === "ENOENT") return { copied: [], skipped: [] };
     throw error;
   }
   const mapping = mapPreviewPartitions({
@@ -645,29 +760,29 @@ async function copyWebsiteSignIns({ source, target, profileIds, decrypt }) {
     profileIds,
   });
   const copied = [];
+  const skipped = [];
   for (const name of entries) {
-    const from = activeCookieDatabase(NodePath.join(sourcePartitions, name));
-    if (from === undefined) continue;
+    const from = cookieDatabasePath(NodePath.join(sourcePartitions, name));
+    if (!exists(from)) continue;
     const targetName = mapping.get(name) ?? name;
     const targetDir = NodePath.join(target.userData, "Partitions", targetName);
-    if (activeCookieDatabase(targetDir) !== undefined) continue;
-    const to = exists(NodePath.join(targetDir, "NetworkDataMigrated"))
-      ? NodePath.join(targetDir, "Network", "Cookies")
-      : NodePath.join(targetDir, "Cookies");
-    const stagingDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dev-identity-cookies-"));
+    if (isLink(targetDir)) throw new Error(`${targetDir} is a link; nothing was copied into it.`);
+    const to = cookieDatabasePath(targetDir);
+    if (exists(to)) continue;
+    const snapshot = await snapshotCookieDatabase(from);
+    if (snapshot === undefined) {
+      skipped.push(targetName);
+      continue;
+    }
     try {
-      const staged = await snapshotCookieDatabase(from, stagingDir);
-      if (decrypt) decryptCookieDatabase(staged, decrypt);
-      NodeFS.mkdirSync(NodePath.dirname(to), { recursive: true, mode: 0o700 });
-      NodeFS.copyFileSync(staged, `${to}${STAGED_SUFFIX}`);
-      NodeFS.chmodSync(`${to}${STAGED_SUFFIX}`, 0o600);
-      NodeFS.renameSync(`${to}${STAGED_SUFFIX}`, to);
+      if (decrypt) decryptCookieDatabase(snapshot.staged, decrypt);
+      changes.write(to, NodeFS.readFileSync(snapshot.staged));
     } finally {
-      NodeFS.rmSync(stagingDir, { recursive: true, force: true });
+      NodeFS.rmSync(snapshot.stagingDir, { recursive: true, force: true });
     }
     copied.push(targetName);
   }
-  return copied;
+  return { copied, skipped };
 }
 
 const homeCheckout = (home) => {
@@ -699,10 +814,67 @@ const processIsAlive = (pid) => {
   }
 };
 
-/** Whether a seed is filling the home right now; the home app must not start under it. */
-export function seedIsRunning(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
-  const pid = Number.parseInt(readText(NodePath.join(home.root, SEED_LOCK)) ?? "", 10);
-  return Number.isInteger(pid) && pid > 0 && isAlive(pid);
+const lockOwner = (path) => {
+  const pid = Number.parseInt(readText(path) ?? "", 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+};
+
+/** Whether a seed or setup holds the home now; the home app must not start under it. */
+export function homeIsLocked(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
+  const pid = lockOwner(NodePath.join(home.root, HOME_LOCK));
+  return pid !== undefined && isAlive(pid);
+}
+
+/**
+ * Holds the home for one seed or setup. A dead owner's lock is set aside by renaming it, and only
+ * if it still names that owner, so two processes cannot both take a stale lock.
+ */
+export function acquireHomeLock(home, isAlive = processIsAlive) {
+  NodeFS.mkdirSync(home.root, { recursive: true, mode: 0o700 });
+  const path = NodePath.join(home.root, HOME_LOCK);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      NodeFS.writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o600 });
+      return () => {
+        if (lockOwner(path) === process.pid) NodeFS.rmSync(path, { force: true });
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const owner = lockOwner(path);
+      if (owner !== undefined && isAlive(owner)) {
+        throw new Error("Another seed or setup is using the dev identity home.", { cause: error });
+      }
+      const aside = `${path}.stale-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
+      try {
+        NodeFS.renameSync(path, aside);
+      } catch (renameError) {
+        if (renameError?.code !== "ENOENT") throw renameError;
+        continue;
+      }
+      // Another process may have replaced the stale lock just before the rename: put it back.
+      const taken = lockOwner(aside);
+      if (taken !== owner) {
+        try {
+          NodeFS.linkSync(aside, path);
+        } catch {
+          // The rightful owner's lock is gone; its holder finishes without it.
+        }
+      }
+      NodeFS.rmSync(aside, { force: true });
+    }
+  }
+  throw new Error("Could not lock the dev identity home.");
+}
+
+/** No folder the copy writes into may be a link that leads outside the target. */
+function assertPlainTarget(stateDir) {
+  const real = realpathOrSelf(stateDir);
+  for (const relative of WRITTEN_DIRS) {
+    const path = NodePath.join(stateDir, relative);
+    if (isLink(path) || (exists(path) && !inside(realpathOrSelf(path), real))) {
+      throw new DevIdentityFatalError(`${path} leads outside ${stateDir}; nothing was copied.`);
+    }
+  }
 }
 
 /** Whether a target path is, or lies inside, the home or the installed app's state. */
@@ -713,10 +885,14 @@ function isProtectedTarget(targetStateDir, home, installed) {
   return roots.some((root) => inside(target, root) || inside(parent, root) || inside(root, target));
 }
 
+const isHomeTarget = (targetStateDir, home) =>
+  realpathOrSelf(NodePath.dirname(targetStateDir)) === realpathOrSelf(home.root) &&
+  NodePath.basename(targetStateDir) === STATE_SUBDIR;
+
 /**
  * Copies the home's identity into a dev app that is about to start. Runs while no app of that
- * checkout is running; the home may be running, so its files are read as one snapshot, and
- * nothing in the target changes until every replacement is ready.
+ * checkout is running; the home may be running, so its files are read as one snapshot. Nothing
+ * in the target changes until every replacement is staged, and an interrupted copy is finished.
  */
 export async function importDevIdentity({
   targetStateDir,
@@ -725,20 +901,22 @@ export async function importDevIdentity({
   environment = process.env,
   now = () => new Date(),
 } = {}) {
-  if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
-  if (isProtectedTarget(targetStateDir, home, installed)) {
-    const isHome =
-      realpathOrSelf(NodePath.dirname(targetStateDir)) === realpathOrSelf(home.root) &&
-      NodePath.basename(targetStateDir) === STATE_SUBDIR;
-    if (!isHome) return { status: "refused-target" };
-    return { status: seedIsRunning(home) ? "home-seeding" : "home" };
+  if (isHomeTarget(targetStateDir, home)) {
+    if (homeIsLocked(home)) return { status: "home-seeding" };
+    // A seed that stopped while publishing is finished before the home opens its vault.
+    recoverInterruptedCopy(home.stateDir);
+    return { status: "home" };
   }
+  if (isProtectedTarget(targetStateDir, home, installed)) return { status: "refused-target" };
+  assertPlainTarget(targetStateDir);
+  recoverInterruptedCopy(targetStateDir);
+  if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
   if (!exists(home.stateDir)) return { status: "no-home" };
   const protection = vaultProtection(home.stateDir);
   if (protection !== "file" && protection !== "none") {
     return { status: "home-vault-not-portable", protection };
   }
-  if (seedIsRunning(home)) return { status: "home-busy" };
+  if (homeIsLocked(home)) return { status: "home-busy" };
   const capture = captureIdentity(home.stateDir);
   if (capture === undefined) return { status: "home-busy" };
   const firstStart =
@@ -749,48 +927,58 @@ export async function importDevIdentity({
 
   const changes = new StagedChanges();
   let secrets = [];
+  let websites = { copied: [], skipped: [] };
   try {
     if (protection === "file") secrets = stageSecrets({ changes, capture, targetStateDir });
     stageSettings({ changes, capture, targetStateDir, ...paths, fullProfile: firstStart });
     stageConnectors({ changes, capture, targetStateDir, ...paths });
-    stageClientSettings({ changes, sourceStateDir: home.stateDir, targetStateDir, firstStart });
+    const clientSettings = stageClientSettings({
+      changes,
+      sourceStateDir: home.stateDir,
+      targetStateDir,
+      firstStart,
+    });
     if (firstStart) {
       for (const path of PROFILE_PATHS) {
         const from = NodePath.join(home.stateDir, path);
         if (exists(from)) changes.copyTree(from, NodePath.join(targetStateDir, path));
       }
     }
+    const homeEnvironmentId = readEnvironmentId(home.stateDir);
+    if (homeEnvironmentId !== undefined) {
+      websites = await stageWebsiteSignIns({
+        changes,
+        source: {
+          userData: NodePath.join(home.stateDir, "electron-userdata"),
+          environmentId: homeEnvironmentId,
+        },
+        target: {
+          userData: NodePath.join(targetStateDir, "electron-userdata"),
+          environmentId: ensureEnvironmentId(targetStateDir),
+        },
+        profileIds: browserProfileIds(
+          clientSettings ?? readJsonObject(NodePath.join(targetStateDir, "client-settings.json")),
+        ),
+      });
+    }
   } catch (error) {
     changes.abort();
-    throw error;
+    return {
+      status: "copy-failed",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
-  changes.commit();
-
-  const homeEnvironmentId = readEnvironmentId(home.stateDir);
-  const websites =
-    homeEnvironmentId === undefined
-      ? []
-      : await copyWebsiteSignIns({
-          source: {
-            userData: NodePath.join(home.stateDir, "electron-userdata"),
-            environmentId: homeEnvironmentId,
-          },
-          target: {
-            userData: NodePath.join(targetStateDir, "electron-userdata"),
-            environmentId: ensureEnvironmentId(targetStateDir),
-          },
-          profileIds: browserProfileIds(NodePath.join(targetStateDir, "client-settings.json")),
-        });
-
   const summary = {
     status: "imported",
     importedAt: now().toISOString(),
     home: home.root,
     firstStart,
     secrets: secrets.length,
-    websiteProfiles: websites.length,
+    websiteProfiles: websites.copied.length,
+    websiteProfilesSkipped: websites.skipped.length,
   };
-  writeFileAtomic(NodePath.join(targetStateDir, DEV_IDENTITY_MARKER), jsonBytes(summary), 0o644);
+  changes.write(NodePath.join(targetStateDir, DEV_IDENTITY_MARKER), jsonBytes(summary), 0o644);
+  changes.commit(targetStateDir);
   return summary;
 }
 
@@ -801,6 +989,10 @@ export function describeImport(result) {
         result.websiteProfiles > 0
           ? `, website sign-ins for ${String(result.websiteProfiles)} browser profile${result.websiteProfiles === 1 ? "" : "s"}`
           : ""
+      }${
+        result.websiteProfilesSkipped > 0
+          ? ` (${String(result.websiteProfilesSkipped)} busy profile${result.websiteProfilesSkipped === 1 ? "" : "s"} left for next start)`
+          : ""
       }.`;
     case "no-home":
       return "No dev identity home yet (pnpm dev:identity setup); this dev app starts with its own accounts.";
@@ -808,8 +1000,8 @@ export function describeImport(result) {
       return "The dev identity home keeps its accounts key in the Keychain, which other dev apps cannot open; run pnpm dev:identity seed to move it to a shared key. Starting with this app's own accounts.";
     case "home-busy":
       return "The dev identity home was changing while it was being copied; this dev app starts with the identity it already had. Restart it to try again.";
-    case "refused-target":
-      return "This dev app's data folder points into the identity home or the installed app, so nothing was copied into it.";
+    case "copy-failed":
+      return `Could not copy your dev identity (${result.reason}); this dev app starts with the identity it already had.`;
     case "disabled":
       return `${DEV_IDENTITY_ENV}=off: this dev app keeps its own accounts.`;
     default:
@@ -894,29 +1086,23 @@ export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = proc
   return exists(NodePath.join(home.root, "local-dev-app-runner", "state.json"));
 }
 
-/** Holds the home for one seed: the home app refuses to start while this lock is live. */
-function acquireSeedLock(home, isAlive) {
-  NodeFS.mkdirSync(home.root, { recursive: true, mode: 0o700 });
-  const path = NodePath.join(home.root, SEED_LOCK);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      NodeFS.writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o600 });
-      return () => NodeFS.rmSync(path, { force: true });
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      if (seedIsRunning(home, isAlive)) {
-        throw new Error("Another seed is already filling the home.", { cause: error });
-      }
-      NodeFS.rmSync(path, { force: true });
-    }
+/** The home's state must be a real folder inside the home, apart from the installed app. */
+function assertHomeLayout(home, installed) {
+  const homeRoot = realpathOrSelf(home.root);
+  const installedRoot = realpathOrSelf(installed.stateDir);
+  if (inside(homeRoot, installedRoot) || inside(installedRoot, homeRoot)) {
+    throw new Error("The installed app's data and the identity home overlap; nothing was copied.");
   }
-  throw new Error("Could not lock the dev identity home.");
+  if (isLink(home.stateDir) || !inside(realpathOrSelf(home.stateDir), homeRoot)) {
+    throw new Error(`${home.stateDir} leads outside ${home.root}; nothing was copied.`);
+  }
+  if (exists(home.stateDir)) assertPlainTarget(home.stateDir);
 }
 
 /**
  * Fills the home from the installed app. `readKeychain(service, account)` returns a secret string
- * or null; macOS asks the owner once for each item. Nothing in the home changes unless the
- * installed app's accounts key was given and every replacement was staged.
+ * or null; macOS asks the owner once for each item. The home changes only when the installed
+ * app's accounts key was given and every record re-encrypted, all in one publication.
  */
 export async function seedDevIdentityHome({
   home = resolveDevIdentityHome(),
@@ -926,29 +1112,23 @@ export async function seedDevIdentityHome({
   isRunning = homeAppIsRunning,
   isAlive = processIsAlive,
 } = {}) {
-  const release = acquireSeedLock(home, isAlive);
+  const release = acquireHomeLock(home, isAlive);
   try {
     if (isRunning(home)) {
       throw new Error("Quit Scient (Dev) · identity first (pnpm dev:app:stop in its checkout).");
     }
+    if (!exists(installed.stateDir)) {
+      throw new Error(`No installed Scient data at ${installed.stateDir}.`);
+    }
+    assertHomeLayout(home, installed);
+    recoverInterruptedCopy(home.stateDir);
     const marker = readJsonObject(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER));
     if (marker?.seededFrom !== undefined && !force) {
       throw new Error(
         `The dev identity home was already seeded on ${String(marker.seededAt)}. Pass --force to replace its accounts with the installed app's again.`,
       );
     }
-    if (!exists(installed.stateDir)) {
-      throw new Error(`No installed Scient data at ${installed.stateDir}.`);
-    }
-    const homeRoot = realpathOrSelf(home.root);
-    const installedRoot = realpathOrSelf(installed.stateDir);
-    if (inside(homeRoot, installedRoot) || inside(installedRoot, homeRoot)) {
-      throw new Error(
-        "The installed app's data and the identity home overlap; nothing was copied.",
-      );
-    }
     NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
-    const report = { secrets: 0, websiteProfiles: 0, skipped: [] };
 
     const protection = vaultProtection(installed.stateDir);
     let sourceKey;
@@ -969,10 +1149,16 @@ export async function seedDevIdentityHome({
         "The installed app kept changing its accounts while they were read; try again.",
       );
     }
+    let cookieSecret = null;
+    for (const item of installed.cookieKeychains) {
+      cookieSecret = await readKeychain(item.service, item.account);
+      if (cookieSecret) break;
+    }
+
+    const report = { secrets: 0, websiteProfiles: 0, skipped: [] };
     const paths = { sourceDirs: [installed.stateDir], targetDir: homeServerStateDir(home) };
     const secrets = new Map(capture.secrets);
     if (sourceKey !== undefined) secrets.set(`${VAULT_KEY_FILE}.bin`, sourceKey);
-    const unreadable = [];
     const changes = new StagedChanges();
     try {
       report.secrets = stageSecrets({
@@ -980,7 +1166,6 @@ export async function seedDevIdentityHome({
         capture: { ...capture, secrets },
         targetStateDir: home.stateDir,
         targetKey: makePortableVault().key,
-        onSkip: (name) => unreadable.push(name),
       }).length;
       stageSettings({
         changes,
@@ -990,7 +1175,7 @@ export async function seedDevIdentityHome({
         fullProfile: true,
       });
       stageConnectors({ changes, capture, targetStateDir: home.stateDir, ...paths });
-      stageClientSettings({
+      const clientSettings = stageClientSettings({
         changes,
         sourceStateDir: installed.stateDir,
         targetStateDir: home.stateDir,
@@ -1000,47 +1185,43 @@ export async function seedDevIdentityHome({
         const from = NodePath.join(installed.stateDir, path);
         if (exists(from)) changes.copyTree(from, NodePath.join(home.stateDir, path));
       }
+      const installedEnvironmentId = readEnvironmentId(installed.stateDir);
+      if (installedEnvironmentId !== undefined && cookieSecret) {
+        const websites = await stageWebsiteSignIns({
+          changes,
+          source: { userData: installed.userData, environmentId: installedEnvironmentId },
+          target: {
+            userData: NodePath.join(home.stateDir, "electron-userdata"),
+            environmentId: ensureEnvironmentId(home.stateDir),
+          },
+          profileIds: browserProfileIds(clientSettings),
+          decrypt: makeChromiumCookieDecrypter(cookieSecret),
+        });
+        report.websiteProfiles = websites.copied.length;
+        if (websites.skipped.length > 0) {
+          report.skipped.push(
+            `website sign-ins for ${String(websites.skipped.length)} profiles the installed app kept writing to`,
+          );
+        }
+      } else {
+        report.skipped.push("website sign-ins (the Keychain did not give the installed app's key)");
+      }
+      changes.write(
+        NodePath.join(home.stateDir, DEV_IDENTITY_MARKER),
+        jsonBytes({
+          seededFrom: installed.stateDir,
+          seededAt: new Date().toISOString(),
+          secrets: report.secrets,
+          websiteProfiles: report.websiteProfiles,
+          skipped: report.skipped,
+        }),
+        0o644,
+      );
     } catch (error) {
       changes.abort();
       throw error;
     }
-    changes.commit();
-    if (unreadable.length > 0) {
-      report.skipped.push(`${String(unreadable.length)} saved secrets that could not be decrypted`);
-    }
-
-    const installedEnvironmentId = readEnvironmentId(installed.stateDir);
-    let cookieSecret = null;
-    for (const item of installed.cookieKeychains) {
-      cookieSecret = await readKeychain(item.service, item.account);
-      if (cookieSecret) break;
-    }
-    if (installedEnvironmentId !== undefined && cookieSecret) {
-      const websites = await copyWebsiteSignIns({
-        source: { userData: installed.userData, environmentId: installedEnvironmentId },
-        target: {
-          userData: NodePath.join(home.stateDir, "electron-userdata"),
-          environmentId: ensureEnvironmentId(home.stateDir),
-        },
-        profileIds: browserProfileIds(NodePath.join(home.stateDir, "client-settings.json")),
-        decrypt: makeChromiumCookieDecrypter(cookieSecret),
-      });
-      report.websiteProfiles = websites.length;
-    } else {
-      report.skipped.push("website sign-ins (the Keychain did not give the installed app's key)");
-    }
-
-    writeFileAtomic(
-      NodePath.join(home.stateDir, DEV_IDENTITY_MARKER),
-      jsonBytes({
-        seededFrom: installed.stateDir,
-        seededAt: new Date().toISOString(),
-        secrets: report.secrets,
-        websiteProfiles: report.websiteProfiles,
-        skipped: report.skipped,
-      }),
-      0o644,
-    );
+    changes.commit(home.stateDir);
     return report;
   } finally {
     release();
@@ -1048,23 +1229,25 @@ export async function seedDevIdentityHome({
 }
 
 /**
- * Makes the checkout the home app runs from: a detached worktree of this clone at origin/main,
- * named so the app is labelled "identity". Its `.scient-next` points at the home, so removing or
- * recreating the checkout never loses the owner's accounts.
+ * Makes the checkout the home app runs from: a detached worktree of this clone, named so the app
+ * is labelled "identity", at a commit that has this module. Its `.scient-next` points at the home,
+ * so removing or recreating the checkout never loses the owner's accounts.
  */
 export function setupHomeCheckout({
   repoRoot,
   checkout,
+  ref = "origin/main",
   home = resolveDevIdentityHome(),
   run = (command, args, options) =>
     NodeChildProcess.execFileSync(command, args, { stdio: "inherit", ...options }),
+  isAlive = processIsAlive,
 }) {
   if (NodePath.basename(checkout) !== HOME_CHECKOUT_NAME) {
     throw new Error(`The home checkout folder must be named ${HOME_CHECKOUT_NAME}.`);
   }
   const link = NodePath.join(checkout, ".scient-next");
   if (exists(link)) {
-    if (!NodeFS.lstatSync(link).isSymbolicLink()) {
+    if (!isLink(link)) {
       throw new Error(
         `${link} already holds an app's data; move it aside before using this checkout.`,
       );
@@ -1073,14 +1256,25 @@ export function setupHomeCheckout({
       throw new Error(`${link} points somewhere other than ${home.root}.`);
     }
   }
-  NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
-  if (!exists(checkout)) {
-    run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", "main"]);
-    run("git", ["-C", repoRoot, "worktree", "add", "--detach", checkout, "origin/main"]);
+  const release = acquireHomeLock(home, isAlive);
+  try {
+    NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
+    if (!exists(checkout)) {
+      if (ref === "origin/main") run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", "main"]);
+      run("git", ["-C", repoRoot, "worktree", "add", "--detach", checkout, ref]);
+    }
+    if (!exists(NodePath.join(checkout, "scripts", "dev-identity.mjs"))) {
+      throw new Error(
+        `${checkout} is at a commit without the dev identity code; check out a newer commit there.`,
+      );
+    }
+    if (!exists(link)) NodeFS.symlinkSync(home.root, link);
+    writeFileAtomic(NodePath.join(home.root, HOME_RECORD), jsonBytes({ checkout }), 0o644);
+    recoverInterruptedCopy(home.stateDir);
+    ensurePortableVault(home.stateDir);
+  } finally {
+    release();
   }
-  if (!exists(link)) NodeFS.symlinkSync(home.root, link);
-  writeFileAtomic(NodePath.join(home.root, HOME_RECORD), jsonBytes({ checkout }), 0o644);
-  ensurePortableVault(home.stateDir);
   return { checkout, home: home.root };
 }
 
@@ -1092,6 +1286,11 @@ export async function readKeychainWithKeyring(service, account, repoRoot) {
   const { AsyncEntry } = require("@napi-rs/keyring");
   return (await new AsyncEntry(service, account).getPassword()) ?? null;
 }
+
+const flagValue = (flags, name) => {
+  const at = flags.indexOf(name);
+  return at >= 0 ? flags[at + 1] : undefined;
+};
 
 const isMain = process.argv[1] && NodeURL.pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
@@ -1110,13 +1309,10 @@ if (isMain) {
       return;
     }
     if (command === "setup") {
-      const at = flags.indexOf("--checkout");
       const checkout = NodePath.resolve(
-        at >= 0 && flags[at + 1]
-          ? flags[at + 1]
-          : NodePath.join(NodeOS.homedir(), HOME_CHECKOUT_NAME),
+        flagValue(flags, "--checkout") ?? NodePath.join(NodeOS.homedir(), HOME_CHECKOUT_NAME),
       );
-      setupHomeCheckout({ repoRoot, checkout });
+      setupHomeCheckout({ repoRoot, checkout, ref: flagValue(flags, "--ref") ?? "origin/main" });
       console.log(
         `Identity home checkout ready at ${checkout}. Start it with: cd ${checkout} && pnpm install && pnpm dev:app:start`,
       );
@@ -1134,7 +1330,9 @@ if (isMain) {
       );
       return;
     }
-    throw new Error("Usage: pnpm dev:identity setup [--checkout <path>] | seed [--force] | status");
+    throw new Error(
+      "Usage: pnpm dev:identity setup [--checkout <path>] [--ref <commit>] | seed [--force] | status",
+    );
   };
   run().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
