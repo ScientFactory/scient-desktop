@@ -39,7 +39,9 @@ catalog. Local font size and family are: `<span style="font-size:12pt">` and
 rule `scient_font_span`; names come from the shared catalogue in
 `packages/scient-markdown/src/fontCatalogue.ts`; a span nested in a span of the
 same kind is left as source), and the document font lives in the `fontsize` and
-`mainfont` front matter keys. Whitespace is not styled content: where the set of marks
+`mainfont` front matter keys. `font_size` and `font_family` come first in mark rank, so
+the writer puts their spans outside every other mark. The caret word, the value shown for a
+selection and the size step are shared with LaTeX Visual (`writing/fontTarget.ts`). Whitespace is not styled content: where the set of marks
 changes, a space or line break loses `em`, `strong`, `strike`, `font_size` and `font_family`
 (`unstyleBoundaryWhitespace` in `schema.ts`), in the writer and in the round-trip guard
 (`hasSameWritebackContent`), so the guard does not refuse edits the file cannot hold; links and

@@ -383,8 +383,11 @@ caret, it applies to the word under the caret; between two words it applies to
 what you type next. The size is a number of points from 1 to 100, typed in the
 field or stepped with the minus and plus buttons (1 pt; 0.5 pt with Alt; 10 pt
 with Shift). The field shows the current size, and is empty when the selection
-mixes several sizes; the buttons then start from the document's base size. Sizes are
-absolute, as in Word: 12 means 12 pt whatever the surrounding text.
+mixes several sizes; the buttons then move each word by 1 pt, so the words keep
+their differences, as in Word. A click in the field lists common sizes (8 to 72).
+**Cmd+Shift+>** and **Cmd+Shift+<** (Ctrl on Windows and Linux) do the same as the
+plus and minus buttons. Sizes are absolute, as in Word: 12 means 12 pt whatever the
+surrounding text.
 
 Press Enter in the size field, or choose a font, and the panel closes with the
 selection kept, so the result shows at once. The font list opens when you click
@@ -398,7 +401,8 @@ The choice is saved in the file as `<span style="font-size:12pt">…</span>` and
 are read; any other span stays literal source. A size inside another size, or a
 font inside another font, is not read either: the outer span stays source so no
 text silently loses its font. Fonts come from a fixed list; a name outside it is
-never applied.
+never applied. A size or font span is written outside bold, italic, strikethrough
+and links (`<span style="font-size:14pt">**word**</span>`).
 
 A space or line break at the edge of a style carries no style. Applying a size or
 font to a selection that ends with a space leaves that space unsized, and a space

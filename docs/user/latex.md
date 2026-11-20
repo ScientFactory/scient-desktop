@@ -228,7 +228,9 @@ In Visual, **Text > Font / Size** works as in the Markdown editor: a size in
 points from 1 to 100 (field, minus and plus buttons) and a font from a
 searchable list. At a caret the change applies to the word under it. Enter in the
 size field closes the panel; a selection that mixes sizes or fonts leaves the
-field empty, and the buttons start from the document's base size. Unlike Markdown,
+field empty, and the buttons move each word by 1 pt. A click in the size field
+lists common sizes; **Cmd+Shift+>** and **Cmd+Shift+<** (Ctrl on Windows and Linux)
+step the size as the buttons do. Unlike Markdown,
 LaTeX Visual has no floating selection toolbar, so the panel is reached through
 **Text** only. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
 (the baseline is 1.2 times the size). Existing `\large`-style commands stay as
@@ -245,8 +247,7 @@ XeLaTeX, LuaLaTeX or Tectonic, or when `fontspec` is loaded, it is saved as an
 font missing on the machine never stops the build. Other fonts are listed but
 disabled in a pdfLaTeX document, with a note. Arial and Helvetica share one
 pdfLaTeX family, so the list shows Arial for either. Hebrew text needs the Hebrew
-font of the language setup. Time-saving shortcuts for the size are not available
-yet.
+font of the language setup.
 
 <a id="hebrew-and-mixed-language-documents"></a>
 
