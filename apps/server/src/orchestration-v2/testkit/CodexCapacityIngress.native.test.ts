@@ -508,6 +508,10 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
                   case "config/read":
                     result = { config: {}, origins: {} };
                     break;
+                  // T3 767f194fd9: the native thread name follows the thread's title.
+                  case "thread/name/set":
+                    result = {};
+                    break;
                   case "turn/start": {
                     startup.mark(witness, "turn.input.decode.entry", "turn/start");
                     const params = yield* decodeTurnInput(frame.params).pipe(Effect.orDie);

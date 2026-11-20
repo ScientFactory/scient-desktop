@@ -35,6 +35,7 @@ import {
   ThreadId,
   ThreadMetadataMcpUpdateResult,
   TurnItemId,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -145,6 +146,12 @@ export const claudeSelection = {
 
 export const claudePromptText = (text: string) =>
   emptyMcpReplayPrompt(ProviderDriverKind.make("claudeAgent"), text);
+
+/** What a child's Claude turn receives when the parent's agent sent `text` (upstream b0b2c4f952). */
+export const agentClaudePromptText = (text: string, senderThreadId: ThreadId = parentThreadId) =>
+  claudePromptText(
+    withMessageSenderNote({ createdBy: "agent", creationSource: "mcp", senderThreadId }, text),
+  );
 
 export const decodeCreateThreadsResult = Schema.decodeUnknownEffect(
   OrchestratorMcpCreateThreadsResult,
@@ -679,8 +686,10 @@ const makeFixtureState = Effect.gen(function* () {
   for (const text of [delegatedPrompt, cancellationPrompt, createdThreadPrompt]) {
     declareClaudePrompt(text);
   }
+  // Upstream b0b2c4f952: an agent's message reaches the provider after a line naming its sender.
+  const withoutSenderNote = (text: string) => text.replace(/^\[Scient: [^\n]*\]\n\n/, "");
   const claudePrompt = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-    claudePrompts.get(turn.message.text) ?? turn.message.text;
+    claudePrompts.get(withoutSenderNote(turn.message.text)) ?? turn.message.text;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
     makeDeterministicAdapter({
       instanceId: codexInstanceId,
@@ -701,12 +710,12 @@ const makeFixtureState = Effect.gen(function* () {
       shouldComplete: (turn) =>
         turn.threadId !== parentThreadId &&
         !turn.threadId.startsWith(heldCallerPrefix) &&
-        turn.message.text !== cancellationPrompt,
+        withoutSenderNote(turn.message.text) !== cancellationPrompt,
       terminalGate: (turn) =>
         gates.messageTerminal.get(turn.message.messageId) ??
         gates.threadTerminal.get(turn.threadId) ??
-        gates.promptTerminal.get(turn.message.text),
-      response: (turn) => `Codex completed: ${turn.message.text}`,
+        gates.promptTerminal.get(withoutSenderNote(turn.message.text)),
+      response: (turn) => `Codex completed: ${withoutSenderNote(turn.message.text)}`,
     }),
     makeDeterministicAdapter({
       instanceId: claudeInstanceId,
@@ -722,7 +731,7 @@ const makeFixtureState = Effect.gen(function* () {
         claudePrompt(turn) === delegatedPrompt
           ? delegatedResult
           : `Claude completed: ${claudePrompt(turn)}`,
-      steerReceived: (steer) => gates.steerReceived.get(steer.message.text),
+      steerReceived: (steer) => gates.steerReceived.get(withoutSenderNote(steer.message.text)),
     }),
   ]);
   const continuationOffers = yield* Ref.make<
@@ -945,6 +954,8 @@ const makeLayerTest = (state: FixtureState) => {
               ? Option.some({ id, defaultModelSelection: null } as never)
               : Option.none(),
           ),
+        // Upstream c0b1d32c97: capabilities and delegation scan the caller's own folder.
+        workspaceScanDirectory: Effect.succeed,
       }),
     ),
     Layer.provideMerge(

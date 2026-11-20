@@ -174,6 +174,10 @@ it.effect("keeps a fresh Codex session through startup that outlasts the idle wi
                     case "config/read":
                       yield* emit({ id: frame.id, result: { config: {}, origins: {} } });
                       break;
+                    // T3 767f194fd9: the native thread name follows the thread's title.
+                    case "thread/name/set":
+                      yield* emit({ id: frame.id, result: {} });
+                      break;
                     case "turn/start":
                       offered.push(frame.method);
                       yield* emit({

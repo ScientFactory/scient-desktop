@@ -10,6 +10,7 @@ import {
   cancellationPrompt,
   claudeInstanceId,
   claudeModel,
+  agentClaudePromptText,
   claudePromptText,
   claudeSelection,
   codexInstanceId,
@@ -134,7 +135,7 @@ describe("orchestrator MCP delegation", () => {
             {
               instanceId: claudeInstanceId,
               threadId: delegated.childThreadId,
-              text: claudePromptText(delegatedPrompt),
+              text: agentClaudePromptText(delegatedPrompt),
               modelSelection: { ...claudeSelection, options: delegatedOptions },
             },
           ]);
@@ -197,7 +198,7 @@ describe("orchestrator MCP delegation", () => {
               instanceId: claudeInstanceId,
               threadId: childThreadId,
               modelSelection: claudeSelection,
-              text: claudePromptText(prompt),
+              text: agentClaudePromptText(prompt),
             },
           ]);
           // A wait reports the outcome without delivering the result.

@@ -2883,6 +2883,10 @@ it.live(
     ),
 );
 
+const recentWindowNativeIds = () => {
+  let generation = 0;
+  return () => `recent-window-native-${generation++}`;
+};
 it.live("opening a recent fork window never reads its older copies", () =>
   withImporter(
     Effect.gen(function* () {
@@ -2956,6 +2960,9 @@ it.live("opening a recent fork window never reads its older copies", () =>
       const anchored = yield* tripwire(anchorItem.id);
       assert.equal(anchored.projection.visibleTurnItems.at(-1)?.sourceItemId, anchorItem.id);
     }),
+    // The turn after the rollback recovers in a fresh native session; upstream 27517 refuses a
+    // replacement that hands back the old session, so the peer opens a new one as Codex does.
+    { nativeIdFactory: recentWindowNativeIds() },
   ),
 );
 

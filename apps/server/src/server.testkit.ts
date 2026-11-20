@@ -1060,6 +1060,8 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
+              // Upstream's adapter registry reads the current manifest for version checks.
+              current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
               forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
               ...options?.layers?.modelManifest,
             }),

@@ -16,7 +16,8 @@ const outboundMethod = (entry: ProviderReplayEntry | undefined) => {
 /**
  * Adds what imported pre-06eda8e36e/767f194fd9 recordings lack: a `config/read` before each thread
  * start, fork or resume, and a `thread/name/set` (the app thread's title) before a native thread's
- * first turn per app-server. Client request ids are translated; recorded payloads stay unchanged.
+ * first turn per app-server, renaming recorded names to the test's titles. Client request ids are
+ * translated; other recorded payloads stay unchanged.
  */
 export function materializeCodexThreadSetup<T extends ProviderReplayTranscript>(
   transcript: T,
@@ -90,13 +91,29 @@ export function materializeCodexThreadSetup<T extends ProviderReplayTranscript>(
     }
     previousOutbound = entry;
   }
-  if (before.size === 0) return transcript;
-
   // Client request ids count up from initialize; server requests and their answers keep theirs.
   const entries: ProviderReplayEntry[] = [];
   let nextId = 0;
   let requestIds = new Map<number, number>();
   let insertedId = 0;
+  // A recording names its threads after its own titles; the test's threads carry theirs.
+  const renamed = (entry: ProviderReplayEntry): ProviderReplayEntry => {
+    const frame = frameOf(entry);
+    const params = frame?.params;
+    if (frame === undefined || !Predicate.isObject(params) || typeof params.threadId !== "string")
+      return entry;
+    if (entry.type === "expect_outbound" && frame.method === "thread/name/set")
+      return {
+        ...entry,
+        frame: { ...frame, params: { ...params, name: threadName(params.threadId) } },
+      };
+    if (entry.type === "emit_inbound" && frame.method === "thread/name/updated")
+      return {
+        ...entry,
+        frame: { ...frame, params: { ...params, threadName: threadName(params.threadId) } },
+      };
+    return entry;
+  };
   const translate = (entry: ProviderReplayEntry, inserted: boolean): ProviderReplayEntry => {
     const frame = frameOf(entry);
     if (frame === undefined || typeof frame.id !== "number") return entry;
@@ -118,7 +135,7 @@ export function materializeCodexThreadSetup<T extends ProviderReplayTranscript>(
   };
   for (const [index, entry] of source.entries()) {
     for (const addition of before.get(index) ?? []) entries.push(translate(addition, true));
-    entries.push(translate(entry, false));
+    entries.push(translate(renamed(entry), false));
   }
   return {
     ...transcript,

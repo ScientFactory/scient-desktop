@@ -144,13 +144,15 @@ vi.mock("../../state/shell", () => ({
 }));
 vi.mock("../../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
+  const { promiseCommandRun } = await import("../../../test/promiseCommandRun");
   const permission = Atom.make(true);
   return {
     providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
     serverEnvironment: {
       refreshProviders: {
         permissionAtom: () => permission,
-        run: (...args: unknown[]) => state.refreshInventory(...args),
+        // Commands run as Effects; the fakes below answer with a Promise of the settled result.
+        run: promiseCommandRun((...args: unknown[]) => state.refreshInventory(...args)),
       },
     },
   };
