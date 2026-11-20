@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -36,7 +37,17 @@ const gitAnswering = (
   Layer.merge(
     // A worktree whose gitdir is gone still has its `.git` file; a plain folder has none.
     FileSystem.layerNoop({
-      exists: (path) => Effect.succeed(headProbe === "missing-gitdir" && path === "/repo/.git"),
+      lstat: (path) =>
+        headProbe === "missing-gitdir" && path === "/repo/.git"
+          ? Effect.succeed({ type: "File" } as FileSystem.File.Info)
+          : Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "lstat",
+                pathOrDescriptor: path,
+              }),
+            ),
     }),
     gitDriverAnswering(headProbe),
   );

@@ -1099,6 +1099,7 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
       ["git refuses the repository", "refused"],
       // SCIENT-FORK: a worktree whose gitdir is gone is a broken checkout, not a plain folder.
       ["gitdir is gone", "refused"],
+      ["git symlink points at an unmounted disk", "refused"],
     ] as const) {
       const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-head-" });
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -1114,6 +1115,8 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
           `${repo}/.git`,
           `gitdir: ${repo}-gone/.git/worktrees/x\n`,
         );
+      else if (checkout === "git symlink points at an unmounted disk")
+        yield* fileSystem.symlink(`${repo}-unmounted/.git`, `${repo}/.git`);
       else if (checkout !== "not a repository")
         yield* git.execute({
           operation: "test.setupRepo",

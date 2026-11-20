@@ -158,9 +158,12 @@ export const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(
     // SCIENT-FORK:START — a `.git` Git cannot read (a worktree whose gitdir is gone) is a broken
     // checkout, not a plain folder: refuse instead of running the launch in its files.
     const fileSystem = yield* FileSystem.FileSystem;
-    const gitEntry = yield* fileSystem
-      .exists(`${workspaceRoot}/.git`)
-      .pipe(Effect.orElseSucceed(() => true));
+    // lstat, so a `.git` symlink to an unmounted disk still counts; only "not found" is a plain folder.
+    const gitEntry = yield* fileSystem.lstat(`${workspaceRoot}/.git`).pipe(
+      Effect.as(true),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      Effect.orElseSucceed(() => true),
+    );
     if (!gitEntry) return undefined;
     return yield* new OrchestratorMcpFailure({
       code: "orchestration_error",
