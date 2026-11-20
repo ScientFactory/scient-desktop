@@ -25,11 +25,13 @@ type Next =
   | "exits"
   | "stays unreadable"
   | "loses its executable, threads running on"
-  | "reads, running 1.0.0";
+  | "reads, running 1.0.0"
+  | "exits, as does process 5, which ran 1.0.0 in the first pass";
 
 /**
  * The real file system, with a Linux `/proc` of a readable process 1 and a process 7 whose
- * executable reads but whose arguments do not, on the first pass over `/proc`.
+ * executable reads but whose arguments do not, on the first pass over `/proc`; for one case
+ * also a readable process 5.
  */
 const withProc = (real: FileSystem.FileSystem, next: Next, runtime: string) => {
   let pass = 0;
@@ -39,11 +41,16 @@ const withProc = (real: FileSystem.FileSystem, next: Next, runtime: string) => {
     readDirectory: (path, options) => {
       if (path !== "/proc") return real.readDirectory(path, options);
       pass += 1;
-      return Effect.succeed(pass > 1 && next === "exits" ? ["1", "self"] : ["1", "self", "7"]);
+      if (next.startsWith("exits")) {
+        if (pass > 1) return Effect.succeed(["1", "self"]);
+        if (next !== "exits") return Effect.succeed(["1", "self", "5", "7"]);
+      }
+      return Effect.succeed(["1", "self", "7"]);
     },
     readLink: (path) => {
       if (path === "/proc/1/exe") return Effect.succeed("/usr/lib/systemd/systemd");
-      if (path === "/proc/1/cwd") return Effect.succeed("/");
+      if (path === "/proc/1/cwd" || path === "/proc/5/cwd") return Effect.succeed("/");
+      if (path === "/proc/5/exe") return Effect.succeed("/usr/bin/node");
       if (path === "/proc/7/cwd") return Effect.succeed("/");
       if (path === "/proc/7/exe") {
         return pass > 1 && next === "loses its executable, threads running on"
@@ -54,6 +61,7 @@ const withProc = (real: FileSystem.FileSystem, next: Next, runtime: string) => {
     },
     readFileString: (path, encoding) => {
       if (path === "/proc/1/cmdline") return Effect.succeed("/usr/lib/systemd/systemd\0");
+      if (path === "/proc/5/cmdline") return Effect.succeed(`node\0${runtime}\0`);
       if (path === "/proc/7/cmdline") {
         return unreadable() ? Effect.fail(missing(path)) : Effect.succeed(`node\0${runtime}\0`);
       }
@@ -96,6 +104,15 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes on Linux", (it) => {
   it.effect("keeps the runtime a process runs once a second pass reads it", () =>
     Effect.gen(function* () {
       assert.deepEqual(yield* prune("reads, running 1.0.0"), ["1.1.0"]);
+    }),
+  );
+
+  it.effect("keeps a runtime an earlier pass found in use", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* prune("exits, as does process 5, which ran 1.0.0 in the first pass"),
+        ["1.1.0"],
+      );
     }),
   );
 

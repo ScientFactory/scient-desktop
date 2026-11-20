@@ -599,41 +599,42 @@ const hasRelativeNodeScript = (processes: string) =>
 const LINUX_PROCESS_SCAN_PASSES = 5;
 
 /**
- * Every running process's executable, arguments resolved against its folder; the id of the
- * first process whose executable read but whose arguments or folder did not; or undefined
- * without a /proc. `recheck`, the process the previous pass could not read, must read in
- * full if it is still listed: its executable can vanish while its threads run on.
+ * One pass over /proc: adds each readable process's executable and resolved arguments to
+ * `executables` and its id to `known`, and returns the ids it could not read (undefined without
+ * a /proc). A `known` process must read in full while listed: its threads can outlive its exe.
  */
 const scanLinuxProcesses = Effect.fn("cloud.pinned_runtime.scan_linux_processes")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  recheck: string | undefined,
+  executables: Set<string>,
+  known: Set<string>,
 ) {
   const pids = yield* fs.readDirectory("/proc").pipe(Effect.option);
   if (Option.isNone(pids)) return undefined;
-  const executables: Array<string> = [];
+  const unreadable: Array<string> = [];
   for (const pid of pids.value) {
     if (!/^\d+$/.test(pid)) continue;
     // Unreadable ones belong to other users or are this user's non-dumpable daemons (systemd
     // --user, ssh-agent). Neither runs a t3 runtime, and bailing on them would never prune.
     const executable = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.option);
     if (Option.isNone(executable)) {
-      if (pid === recheck) return pid;
+      if (known.has(pid)) unreadable.push(pid);
       continue;
     }
+    known.add(pid);
     // Node's executable path alone does not identify its package runtime.
     const argumentsText = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
     const cwd = yield* fs.readLink(`/proc/${pid}/cwd`).pipe(Effect.option);
-    if (Option.isNone(argumentsText) || Option.isNone(cwd)) return pid;
-    executables.push(
-      executable.value,
-      ...argumentsText.value
-        .split("\0")
-        .filter(Boolean)
-        .map((arg) => path.resolve(cwd.value, arg)),
-    );
+    if (Option.isNone(argumentsText) || Option.isNone(cwd)) {
+      unreadable.push(pid);
+      continue;
+    }
+    executables.add(executable.value);
+    for (const argument of argumentsText.value.split("\0")) {
+      if (argument) executables.add(path.resolve(cwd.value, argument));
+    }
   }
-  return executables;
+  return unreadable;
 });
 // SCIENT-FORK:END
 
@@ -645,16 +646,21 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
   if (platform === "linux") {
     // SCIENT-FORK:START — a process that exits mid-scan does not leave the list unknown.
     // A pass that met a process it could not read is retried: one that exited is gone from
-    // the next pass. The same process listed and unreadable twice leaves the list unknown.
-    let unreadable: string | undefined;
+    // the next pass. What any pass found stays in use. A process unreadable in two passes
+    // leaves the list unknown.
+    const executables = new Set<string>();
+    const known = new Set<string>();
+    const unreadable = new Set<string>();
     for (let pass = 0; pass < LINUX_PROCESS_SCAN_PASSES; pass += 1) {
-      const scan = yield* scanLinuxProcesses(fs, path, unreadable);
-      if (scan === undefined) return Option.none<string>();
-      if (typeof scan !== "string") {
-        return scan.length === 0 ? Option.none<string>() : Option.some(scan.join("\n"));
+      const failed = yield* scanLinuxProcesses(fs, path, executables, known);
+      if (failed === undefined) return Option.none<string>();
+      if (failed.length === 0) {
+        return executables.size === 0
+          ? Option.none<string>()
+          : Option.some([...executables].join("\n"));
       }
-      if (scan === unreadable) return Option.none<string>();
-      unreadable = scan;
+      if (failed.some((pid) => unreadable.has(pid))) return Option.none<string>();
+      for (const pid of failed) unreadable.add(pid);
     }
     return Option.none<string>();
     // SCIENT-FORK:END
