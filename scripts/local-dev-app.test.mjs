@@ -29,6 +29,7 @@ import {
   stopApp,
   unloadLocalDevAppService,
   uninstallDevelopmentAppBundle,
+  shareDevelopmentIdentity,
   shareDevelopmentVoiceRuntime,
 } from "./local-dev-app.mjs";
 
@@ -839,5 +840,35 @@ describe("local dev app voice runtime", () => {
         },
       }),
     );
+  });
+});
+
+describe("local dev app identity", () => {
+  it("copies into this checkout's dev state and never stops the app from starting", async () => {
+    const lines = [];
+    const targets = [];
+    await shareDevelopmentIdentity(
+      { stateRoot: "/repo/.scient-next" },
+      {
+        importIdentity: async ({ targetStateDir }) => {
+          targets.push(targetStateDir);
+          return { status: "imported", home: "/home", secrets: 3, websiteProfiles: 1 };
+        },
+        writeLine: (line) => lines.push(line),
+      },
+    );
+    assert.deepEqual(targets, [NodePath.join("/repo/.scient-next", "scient-next-dev")]);
+    assert.match(lines[0], /3 saved secrets.*website sign-ins for 1 browser profile\./u);
+
+    await shareDevelopmentIdentity(
+      { stateRoot: "/repo/.scient-next" },
+      {
+        importIdentity: async () => {
+          throw new Error("disk full");
+        },
+        writeLine: (line) => lines.push(line),
+      },
+    );
+    assert.match(lines[1], /Could not copy your dev identity \(disk full\)/u);
   });
 });

@@ -26,6 +26,7 @@ import {
   writeApprovedHandoff,
 } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
 import { packageManagerInvocation } from "./dev-app/host.mjs";
+import { describeImport, importDevIdentity } from "./dev-identity.mjs";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
@@ -854,6 +855,23 @@ export function shareDevelopmentVoiceRuntime({
   }
 }
 
+/** Copies the owner's dev identity (accounts, models, sign-ins) into this checkout's app. */
+export async function shareDevelopmentIdentity(
+  paths,
+  { importIdentity = importDevIdentity, writeLine = console.log } = {},
+) {
+  try {
+    const line = describeImport(
+      await importIdentity({ targetStateDir: NodePath.join(paths.stateRoot, "scient-next-dev") }),
+    );
+    if (line) writeLine(line);
+  } catch (error) {
+    writeLine(
+      `Could not copy your dev identity (${error instanceof Error ? error.message : String(error)}); this dev app starts with its own accounts.`,
+    );
+  }
+}
+
 async function runApp() {
   const paths = resolveLocalDevAppPaths();
   const coldClaimPath = process.env.SCIENT_DEV_COLD_CLAIM_PATH;
@@ -923,6 +941,7 @@ async function runApp() {
   // Only the owning runner, with no app of this checkout running, may change
   // the checkout's helper.
   shareDevelopmentVoiceRuntime({ root: paths.root });
+  if (paths.role === "candidate") await shareDevelopmentIdentity(paths);
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];
   const pnpmInvocation = packageManagerInvocation(
