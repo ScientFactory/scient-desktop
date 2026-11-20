@@ -109,7 +109,7 @@ import {
 } from "@t3tools/contracts";
 
 import { exportBibliography } from "./BibliographyFileAdapter.ts";
-import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import { resolveJournalCover } from "./JournalCoverResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import { moveProjectBackIntoProject, restoreProjectPreMoveArchive } from "./LibraryMove.ts";
 import {
@@ -799,7 +799,7 @@ export async function libraryJournalIconMaterial(
     store.library,
     await libraryIdOf(store, input.sourceId),
   );
-  return record ? resolveJournalIcon({ record, cacheRoot: input.cacheRoot }) : null;
+  return record ? resolveJournalCover({ record, cacheRoot: input.cacheRoot }) : null;
 }
 
 /**
