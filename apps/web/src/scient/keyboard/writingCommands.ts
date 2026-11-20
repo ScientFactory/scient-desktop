@@ -4,6 +4,8 @@ export const WRITING_COMMANDS = [
   ["italic", "Emphasis / italic", ["mod+i", "alt+c e"]],
   ["inlineCode", "Inline code", ["mod+e"]],
   ["link", "Link", ["mod+k"]],
+  ["fontSizeLarger", "Larger text size", ["mod+>"]],
+  ["fontSizeSmaller", "Smaller text size", ["mod+<"]],
   ["paragraph", "Normal paragraph", ["mod+alt+0", "alt+p s"]],
   ["section", "Section", ["mod+alt+1", "alt+p 1"]],
   ["subsection", "Subsection", ["mod+alt+2", "alt+p 2"]],

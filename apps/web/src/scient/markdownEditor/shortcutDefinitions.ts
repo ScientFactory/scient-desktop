@@ -13,6 +13,8 @@ export type ScientMarkdownShortcutId =
   | "find"
   | "findNext"
   | "findPrevious"
+  | "fontSizeLarger"
+  | "fontSizeSmaller"
   | "hardBreak"
   | "heading1"
   | "heading2"
@@ -62,6 +64,8 @@ export const SCIENT_MARKDOWN_FOCUS_SHORTCUT_IDS = [
   "bulletList",
   "taskList",
   "clearFormatting",
+  "fontSizeLarger",
+  "fontSizeSmaller",
   "hardBreak",
   "moveBlockUp",
   "moveBlockDown",
@@ -141,6 +145,9 @@ export const SHORTCUTS = {
   bulletList: { bindings: [mod("8", { shiftKey: true })] },
   taskList: { bindings: [mod("9", { shiftKey: true })] },
   clearFormatting: { bindings: [mod("\\")] },
+  // Word's Cmd+Shift+> and Cmd+Shift+<. Strokes name the typed character, so Shift is implied.
+  fontSizeLarger: { bindings: [mod(">")] },
+  fontSizeSmaller: { bindings: [mod("<")] },
   hardBreak: { bindings: [shortcut("enter", { shiftKey: true }), mod("enter")] },
   moveBlockUp: { bindings: [shortcut("arrowup", { altKey: true })] },
   moveBlockDown: { bindings: [shortcut("arrowdown", { altKey: true })] },

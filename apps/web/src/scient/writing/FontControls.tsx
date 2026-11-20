@@ -1,5 +1,5 @@
 import { ChevronDownIcon } from "lucide-react";
-import { useContext, useState } from "react";
+import { type MouseEvent, useContext, useState } from "react";
 import { catalogueFont } from "@scientfactory/scient-markdown/fonts";
 import { Input } from "~/components/ui/input";
 import { DockPanelCloseContext } from "./dockChrome";
@@ -13,6 +13,7 @@ import {
   FONT_GROUPS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  FONT_SIZE_PRESETS,
   measureSelectionSize,
   normalizeFontSize,
 } from "./fontChoices";
@@ -37,6 +38,7 @@ export function FontControls(props: {
   readonly onStep: (steps: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const [query, setQuery] = useState("");
   // The size drawn when the text has no explicit size, measured while the selection is still in the page.
   const [defaultSize, setDefaultSize] = useState(() =>
@@ -52,6 +54,11 @@ export function FontControls(props: {
     props.onFamily(family);
     setOpen(false);
     setQuery("");
+    closePanel?.();
+  };
+  const chooseSize = (size: number) => {
+    props.onSize(size);
+    setPresetsOpen(false);
     closePanel?.();
   };
   return (
@@ -132,7 +139,12 @@ export function FontControls(props: {
           </>
         )}
       </div>
-      <div className="grid gap-1.5">
+      <div
+        className="grid gap-1.5"
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setPresetsOpen(false);
+        }}
+      >
         <span className="text-xs text-foreground/70">Size (pt)</span>
         <NumberField
           size="sm"
@@ -165,7 +177,12 @@ export function FontControls(props: {
           }}
         >
           <NumberFieldDecrement aria-label="Smaller" />
-          <NumberFieldInput aria-label="Font size in points" data-font-size-input="" />
+          <NumberFieldInput
+            aria-label="Font size in points"
+            aria-expanded={presetsOpen}
+            data-font-size-input=""
+            onClick={() => setPresetsOpen(true)}
+          />
           <NumberFieldIncrement aria-label="Larger" />
           <button
             type="button"
@@ -179,6 +196,21 @@ export function FontControls(props: {
             Default size
           </button>
         </NumberField>
+        {presetsOpen && (
+          <div className="max-h-40 overflow-y-auto" role="listbox" aria-label="Font size">
+            {FONT_SIZE_PRESETS.map((size) => (
+              <FontOption
+                key={size}
+                label={String(size)}
+                selected={!props.sizeMixed && props.size === size}
+                disabled={props.disabled}
+                // The field keeps focus, so its own commit on blur does not undo the choice.
+                onMouseDown={(event) => event.preventDefault()}
+                onSelect={() => chooseSize(size)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -190,6 +222,7 @@ function FontOption(props: {
   readonly note?: string | undefined;
   readonly selected: boolean;
   readonly disabled: boolean;
+  readonly onMouseDown?: (event: MouseEvent) => void;
   readonly onSelect: () => void;
 }) {
   return (
@@ -200,6 +233,7 @@ function FontOption(props: {
       disabled={props.disabled}
       className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-start hover:bg-accent aria-selected:bg-accent disabled:opacity-50"
       style={props.css === undefined ? undefined : { fontFamily: props.css }}
+      onMouseDown={props.onMouseDown}
       onClick={props.onSelect}
     >
       <span>{props.label}</span>

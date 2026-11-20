@@ -8642,6 +8642,15 @@ function LatexVisualEditorReady(
       return mathTarget.current
         ? mathTarget.current.toggleTextFormat("monospace")
         : toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "code");
+    if (id === "latex.fontSizeLarger" || id === "latex.fontSizeSmaller")
+      return (
+        !mathTarget.current &&
+        stepLatexFontSize(
+          latexEditingTarget(editor),
+          id === "latex.fontSizeLarger" ? 1 : -1,
+          latexVisualLayoutProfile(mathSetupSource).baseFontPt,
+        )
+      );
     if (id === "latex.link") {
       const link = insertActions.find((action) => action.id === "link");
       if (!link || link.disabled || link.disabledReason) return false;

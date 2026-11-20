@@ -28,6 +28,8 @@ const markdownActions = [
   "bulletList",
   "taskList",
   "clearFormatting",
+  "fontSizeLarger",
+  "fontSizeSmaller",
   "moveBlockUp",
   "moveBlockDown",
   "duplicateBlock",

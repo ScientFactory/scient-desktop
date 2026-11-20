@@ -3,6 +3,7 @@
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
+import { isMacKeyboard } from "../../keyboard/keys";
 import { drawnPointsAt } from "../../writing/fontChoices";
 import { selectionMarkValue } from "./selectionMarkValue";
 import { ScientMarkdownEditorView } from "./view";
@@ -208,5 +209,18 @@ describe("font gestures in a real browser", () => {
     select(view, 2);
     controller.stepFontSize(1);
     expect(draft(controller)).toBe(`# <span style="font-size:${drawn + 1}pt">Title</span>\n`);
+  });
+
+  it("Mod+Shift+> and Mod+Shift+< step the size of the selection", async () => {
+    using editor = open("alpha beta\n");
+    const { controller, view } = editor;
+    select(view, 0, 5);
+    controller.execute("font-size-14");
+    const mod = isMacKeyboard() ? "Meta" : "Control";
+    await userEvent.keyboard(`{${mod}>}{Shift>}>{/Shift}{/${mod}}`);
+    await userEvent.keyboard(`{${mod}>}{Shift>}>{/Shift}{/${mod}}`);
+    expect(draft(controller)).toBe(`<span style="font-size:16pt">alpha</span> beta\n`);
+    await userEvent.keyboard(`{${mod}>}{Shift>}<{/Shift}{/${mod}}`);
+    expect(draft(controller)).toBe(`<span style="font-size:15pt">alpha</span> beta\n`);
   });
 });

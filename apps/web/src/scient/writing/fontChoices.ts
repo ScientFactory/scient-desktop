@@ -11,6 +11,11 @@ import {
 
 export { FONT_SIZE_MAX, FONT_SIZE_MIN, catalogueFont, normalizeFontSize };
 
+/** Sizes offered in the size field's list, in points (Word's list). */
+export const FONT_SIZE_PRESETS: ReadonlyArray<number> = [
+  8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72,
+];
+
 const CATEGORY_LABELS: Readonly<Record<FontCategory, string>> = {
   serif: "Serif",
   "sans-serif": "Sans serif",

@@ -326,6 +326,8 @@ export class ScientMarkdownEditorView {
     if (!modeIsEditable(this.mode)) return false;
     if (id === "link") return this.requestLinkEdit();
     if (id === "duplicateBlock") return this.executeBlock("duplicate");
+    if (id === "fontSizeLarger") return this.stepFontSize(1);
+    if (id === "fontSizeSmaller") return this.stepFontSize(-1);
     if (id === "moveBlockUp") return this.executeBlock("move-up");
     if (id === "moveBlockDown") return this.executeBlock("move-down");
     const mapped = SCIENT_MARKDOWN_COMMAND_SHORTCUTS.find(([shortcut]) => shortcut === id);

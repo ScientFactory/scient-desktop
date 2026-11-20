@@ -3,6 +3,9 @@
 import { Editor, Mark } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
+import { attachShortcutHost } from "../keyboard/host";
+import { isMacKeyboard } from "../keyboard/keys";
 import { drawnPointsAt } from "../writing/fontChoices";
 import { latexFontState, setLatexFontSize, stepLatexFontSize } from "./latexFontCommands";
 import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
@@ -125,5 +128,25 @@ describe("LaTeX font commands in a real editor", () => {
       ["one", 13],
       [" two", undefined],
     ]);
+  });
+
+  it("Mod+Shift+> and Mod+Shift+< reach the LaTeX size commands", async () => {
+    using fixture = open("alpha beta");
+    const { editor } = fixture;
+    const run: string[] = [];
+    const detach = attachShortcutHost(editor.view.dom, ["latex"], {
+      accepts: () => true,
+      execute: (id) => {
+        run.push(id);
+        return true;
+      },
+    });
+    editor.commands.focus();
+    select(editor, 0, 5);
+    const mod = isMacKeyboard() ? "Meta" : "Control";
+    await userEvent.keyboard(`{${mod}>}{Shift>}>{/Shift}{/${mod}}`);
+    await userEvent.keyboard(`{${mod}>}{Shift>}<{/Shift}{/${mod}}`);
+    detach();
+    expect(run).toEqual(["latex.fontSizeLarger", "latex.fontSizeSmaller"]);
   });
 });
