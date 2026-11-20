@@ -112,11 +112,21 @@ export const ompLaunchPolicyFingerprint = (): string =>
 export const ompSessionDirectoryKey = (instanceId: string, threadId: string): string =>
   NodeCrypto.createHash("sha256").update(`${instanceId}\0${threadId}`).digest("hex").slice(0, 32);
 
-/** Resume across patch versions of the same major. A different major is refused. */
-export const ompMajorCompatible = (stored: string, running: string): boolean => {
+/**
+ * Resume across patch versions of the same major, and forward along `forwardMajors` (majors in
+ * release order whose session files a later one reads). Any other major is refused.
+ */
+export const ompMajorCompatible = (
+  stored: string,
+  running: string,
+  forwardMajors: ReadonlyArray<number> = [],
+): boolean => {
   const storedMajor = Number.parseInt(stored.split(".")[0] ?? "", 10);
   const runningMajor = Number.parseInt(running.split(".")[0] ?? "", 10);
-  return Number.isInteger(storedMajor) && storedMajor > 0 && storedMajor === runningMajor;
+  if (!Number.isInteger(storedMajor) || storedMajor <= 0) return false;
+  if (storedMajor === runningMajor) return true;
+  const from = forwardMajors.indexOf(storedMajor);
+  return from >= 0 && forwardMajors.indexOf(runningMajor) > from;
 };
 
 /** Lexical containment. A path that escapes the session root cannot be resumed. */
@@ -180,7 +190,14 @@ export const parseOmpSessionCursor = (
       if (cursor.rpcProtocolVersion !== input.rpcProtocolVersion) {
         return Effect.fail(`${input.target.name} resume cursor uses an incompatible RPC protocol.`);
       }
-      if (input.ompVersion && !ompMajorCompatible(cursor.ompVersion, input.ompVersion)) {
+      if (
+        input.ompVersion &&
+        !ompMajorCompatible(
+          cursor.ompVersion,
+          input.ompVersion,
+          input.target.resumableUpstreamMajors,
+        )
+      ) {
         return Effect.fail(
           `${input.target.name} resume cursor was written by a different major version.`,
         );

@@ -98,6 +98,8 @@ export const scientAgentTarget: OmpTarget = {
   minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
   noModelsHint:
     "Sign in to a model account, add a custom model in Settings, or start a local model server such as Ollama.",
+  // Oh My Pi 19 resumes an 18 session, so threads keep their native history across the update.
+  resumableUpstreamMajors: SCIENT_AGENT_UPSTREAM_MAJORS,
 };
 
 /** The directory Scient Agent keeps all of its own files in, assigned by this server. */

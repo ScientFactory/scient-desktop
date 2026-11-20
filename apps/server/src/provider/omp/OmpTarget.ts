@@ -54,6 +54,11 @@ export interface OmpTarget {
   readonly minimumVersion: string;
   /** What the user can do when the product has no model to run. */
   readonly noModelsHint: string;
+  /**
+   * Upstream majors in release order whose session files a later major in the list resumes. Without
+   * it, a resume cursor resumes only on the major that wrote it.
+   */
+  readonly resumableUpstreamMajors?: ReadonlyArray<number>;
 }
 
 /** True for an Oh My Pi release whose RPC surface this server is qualified against. */

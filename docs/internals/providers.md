@@ -912,7 +912,9 @@ Scient Agent.
   runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
 - Two versions. A process reports `version` (the product's, shown to the user) and
   `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
-  `runtimeVersion`. For Oh My Pi the two are equal.
+  `runtimeVersion`. For Oh My Pi the two are equal. A cursor resumes on the major that wrote it,
+  and Scient Agent's also resumes forward from 18 to 19 (`resumableUpstreamMajors`), since 19 reads
+  an 18 session.
 - State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
   and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
   treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a
