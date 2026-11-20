@@ -1071,9 +1071,9 @@ async function latestSupportedOmpRelease(
     const release = record(value, "Oh My Pi release");
     if (release.draft !== false || release.prerelease !== false) continue;
     const tag = release.tag_name;
-    // Only a strict version tag names a release; anything else is not a candidate.
-    if (typeof tag !== "string" || !/^v?[0-9]+\.[0-9]+\.[0-9]+$/u.test(tag)) continue;
-    const version = tag.replace(/^v/u, "");
+    // Release assets are published under `v<version>`; any other tag is not a candidate.
+    if (typeof tag !== "string" || !/^v[0-9]+\.[0-9]+\.[0-9]+$/u.test(tag)) continue;
+    const version = tag.slice(1);
     const isNewer = (than: string | undefined) =>
       than === undefined ||
       compareManagedRuntimeReleases({

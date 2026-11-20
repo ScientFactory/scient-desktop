@@ -171,10 +171,14 @@ interface WindowsRuntimeProcess {
 }
 
 /**
- * Processes running an executable from inside `directory` (Windows only).
- * `undefined` when the listing failed: that is not an empty list.
+ * Processes running an executable from inside the uniquely named qualification directory
+ * (Windows only). Matched by that name, so a short-path alias (`RUNNER~1`) on either side still
+ * matches. `undefined` when the listing failed: that is not an empty list.
  */
-function windowsProcessesUnder(directory: string): WindowsRuntimeProcess[] | undefined {
+function windowsProcessesUnder(
+  root: string,
+  timeoutMs = 30_000,
+): WindowsRuntimeProcess[] | undefined {
   const listing = NodeChildProcess.spawnSync(
     "powershell.exe",
     [
@@ -183,17 +187,17 @@ function windowsProcessesUnder(directory: string): WindowsRuntimeProcess[] | und
       "-Command",
       "Get-CimInstance Win32_Process | Where-Object ExecutablePath | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress",
     ],
-    { encoding: "utf8", windowsHide: true, timeout: 30_000 },
+    { encoding: "utf8", windowsHide: true, timeout: Math.max(1_000, timeoutMs) },
   );
   if (listing.error || listing.status !== 0 || !listing.stdout.trim()) return undefined;
   const parsed: unknown = JSON.parse(listing.stdout);
-  const prefix = `${directory.toLowerCase()}${NodePath.sep}`;
+  const marker = `\\${NodePath.basename(root).toLowerCase()}\\`;
   return (Array.isArray(parsed) ? parsed : [parsed]).filter(
     (entry): entry is WindowsRuntimeProcess =>
       typeof entry === "object" &&
       entry !== null &&
       typeof (entry as WindowsRuntimeProcess).ExecutablePath === "string" &&
-      (entry as WindowsRuntimeProcess).ExecutablePath.toLowerCase().startsWith(prefix),
+      (entry as WindowsRuntimeProcess).ExecutablePath.toLowerCase().includes(marker),
   );
 }
 
@@ -207,15 +211,14 @@ function describeProcesses(processes: readonly WindowsRuntimeProcess[]): string 
 }
 
 /**
- * Windows refuses to rename a directory while a process runs from it, and the
- * runtime's removal starts with that rename. Wait for every process started
- * from the qualification directory to exit before removing the runtime, and
- * name any that outlive the wait, so a removal failure says what held it.
+ * Windows refuses to rename a directory while a process runs from it, and the runtime's removal
+ * starts with that rename. Wait up to 60 s for processes started from the qualification directory
+ * to exit, and fail naming any that outlive the wait: the app would leave them running too.
  */
 async function waitForWindowsRuntimeProcesses(root: string): Promise<void> {
   if (HostProcess.Platform.defaultValue() !== "win32") return;
-  const directory = await NodeFSP.realpath(root);
-  let running = windowsProcessesUnder(directory);
+  const deadline = performance.now() + 60_000;
+  let running = windowsProcessesUnder(root);
   if (running === undefined) {
     process.stdout.write("Could not list Windows processes before removal.\n");
     return;
@@ -224,11 +227,20 @@ async function waitForWindowsRuntimeProcesses(root: string): Promise<void> {
   process.stdout.write(
     `Waiting before removal for processes still running from the runtime: ${describeProcesses(running)}.\n`,
   );
-  for (let waited = 0; waited < 120 && running !== undefined && running.length > 0; waited += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    running = windowsProcessesUnder(directory);
+  let last = running;
+  while (running === undefined || running.length > 0) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(500, remaining)));
+    running = windowsProcessesUnder(root, deadline - performance.now());
+    if (running !== undefined) last = running;
   }
-  if (running?.length) {
+  if (running === undefined) {
+    throw new Error(
+      `${provider} left processes running from its runtime after closing (last seen: ${describeProcesses(last)}); the process list could not be read again.`,
+    );
+  }
+  if (running.length > 0) {
     throw new Error(
       `${provider} left processes running from its runtime after closing: ${describeProcesses(running)}.`,
     );
@@ -236,24 +248,17 @@ async function waitForWindowsRuntimeProcesses(root: string): Promise<void> {
   process.stdout.write("Those processes exited; removing the runtime.\n");
 }
 
-/**
- * Remove the qualified runtime, as the app does. On Windows another program (on hosted runners,
- * the antivirus scanning a freshly run executable) can hold the directory past the filesystem's
- * own retries, so removal is retried twice more; each failure says what held it.
- */
+/** Remove the qualified runtime exactly as the app does; on Windows, a failure says what held it. */
 async function removeQualifiedRuntime(
   runtime: ManagedProviderRuntime,
   root: string,
 ): Promise<void> {
-  const windows = HostProcess.Platform.defaultValue() === "win32";
-  for (let attempt = 1; ; attempt += 1) {
-    await waitForWindowsRuntimeProcesses(root);
-    try {
-      await runtime.remove();
-      return;
-    } catch (cause) {
-      if (!windows) throw cause;
-      const running = windowsProcessesUnder(await NodeFSP.realpath(root));
+  await waitForWindowsRuntimeProcesses(root);
+  try {
+    await runtime.remove();
+  } catch (cause) {
+    if (HostProcess.Platform.defaultValue() === "win32") {
+      const running = windowsProcessesUnder(root);
       process.stdout.write(
         running === undefined
           ? "Removal failed and Windows processes could not be listed.\n"
@@ -261,10 +266,8 @@ async function removeQualifiedRuntime(
             ? `Removal failed while processes ran from the runtime: ${describeProcesses(running)}.\n`
             : "Removal failed with no process running from the runtime; another program held a file open.\n",
       );
-      if (attempt >= 3) throw cause;
-      process.stdout.write(`Retrying removal in 15 s (retry ${attempt} of 2).\n`);
-      await new Promise((resolve) => setTimeout(resolve, 15_000));
     }
+    throw cause;
   }
 }
 

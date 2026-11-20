@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { managedRuntimeFailedCheck, markManagedRuntimeCheck } from "./runtimeFiles.ts";
-import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
+import { makeRuntimeFilesystem, runtimeFilesystem } from "./runtimeFilesystem.ts";
 import { tryAcquireManagedRuntimeMutationLock } from "./runtimeMutationLock.ts";
 import {
   ManagedProviderRuntime,
@@ -840,6 +840,27 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await runtime.readState()).toBeUndefined();
     expect(await NodeFSP.readFile(sibling, "utf8")).toBe("keep");
     expect(await NodeFSP.readFile(external, "utf8")).toBe("external");
+  });
+
+  it("gives the removal rename a longer Windows sharing-violation budget", async () => {
+    const renames: Array<{ readonly to: string; readonly budget: number | undefined }> = [];
+    const { runtime } = await makeRuntime({
+      filesystem: {
+        rename: async (from, to, options) => {
+          renames.push({ to, budget: options?.windowsRetryBudgetMs });
+          await runtimeFilesystem.rename(from, to, options);
+        },
+        remove: (path, options) => runtimeFilesystem.remove(path, options),
+      },
+    });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    renames.length = 0;
+
+    await runtime.remove();
+
+    expect(renames).toEqual([{ to: expect.stringMatching(/\.removing-/u), budget: 60_000 }]);
+    expect((await runtime.status(recipe)).installed).toBe(false);
   });
 
   it("rejects unsupported artifacts before creating managed state", async () => {

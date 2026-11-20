@@ -1082,6 +1082,7 @@ describe("managed runtime release discovery", () => {
           { ...ompRelease("18.99.2"), prerelease: true },
           { ...ompRelease("18.99.3"), draft: true },
           { tag_name: "nightly", draft: false, prerelease: false },
+          { ...ompRelease("18.99.9"), tag_name: "18.99.9" },
           ompRelease(patch),
           ompRelease("18.99.0"),
         ]);
