@@ -321,9 +321,9 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
   readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
-  // SCIENT-FORK:START — Scient never reads the agy CLI's shared keyring item. On macOS the read
-  // waits on a Keychain prompt and holds a file-system worker, so a background probe could stall
-  // the server's file operations until someone answers it.
+  // SCIENT-FORK:START — opt-in: Scient never reads the agy CLI's shared keyring item. On macOS the
+  // read waits on a Keychain prompt and holds a file-system worker, so a background probe could
+  // stall the server's file operations until someone answers it.
   readonly readsSystemKeyring?: boolean;
   // SCIENT-FORK:END
 }) {
@@ -367,7 +367,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       const stored = (yield* fs.exists(cliTokenPath))
         ? yield* fs.readFileString(cliTokenPath)
         : // SCIENT-FORK: see readsSystemKeyring.
-          (input.readsSystemKeyring ?? true)
+          (input.readsSystemKeyring ?? false)
           ? yield* readKeyringSecret
           : undefined;
       if (stored === undefined) {

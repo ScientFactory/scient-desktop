@@ -711,6 +711,7 @@ describe("Antigravity subscription limits", () => {
       const signedIn = yield* fixture({
         missingToken: true,
         userId: "google-user-1",
+        readsSystemKeyring: true,
         keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
       });
       const limits = yield* signedIn.probe;
@@ -720,6 +721,7 @@ describe("Antigravity subscription limits", () => {
 
       const expired = yield* fixture({
         missingToken: true,
+        readsSystemKeyring: true,
         keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
       });
       expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
@@ -748,7 +750,11 @@ describe("Antigravity subscription limits", () => {
           Effect.promise(() => target.setSecret(stored)),
           () => Effect.promise(() => target.deleteCredential()),
         );
-        const { probe } = yield* fixture({ missingToken: true, nativeKeyring: true });
+        const { probe } = yield* fixture({
+          missingToken: true,
+          nativeKeyring: true,
+          readsSystemKeyring: true,
+        });
         const limits = yield* probe;
         expect(limits.unavailable).toBeUndefined();
         expect(limits.windows).toHaveLength(4);
@@ -770,13 +776,13 @@ describe("Antigravity subscription limits", () => {
     ).toBe(value);
   });
 
-  // SCIENT-FORK: Scient's probe never reads the agy CLI's shared keyring item.
-  it.effect("leaves the shared keyring alone when told not to read it", () =>
+  // SCIENT-FORK: the probe reads the agy CLI's shared keyring item only when a caller opts in;
+  // Scient's driver never does.
+  it.effect("leaves the shared keyring alone unless a caller opts in", () =>
     Effect.gen(function* () {
       let keyringReads = 0;
       const { probe, requests } = yield* fixture({
         missingToken: true,
-        readsSystemKeyring: false,
         keyringSecret: JSON.stringify({
           token: { access_token: "a", expiry: "2099-01-01T00:00:00Z" },
         }),

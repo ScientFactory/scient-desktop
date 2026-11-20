@@ -617,8 +617,6 @@ export const AntigravityDriver: ScientProviderDriver<
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
-      // SCIENT-FORK: limits come from the instance's own profile, never the shared OS keyring.
-      readsSystemKeyring: false,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
