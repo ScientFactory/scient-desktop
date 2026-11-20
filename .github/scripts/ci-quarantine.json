@@ -8,8 +8,8 @@
       "test": "unit src/scient/accounts/chromeWindow.real.test.ts > a sign-in window of a real browser > brings Chrome's sign-in back, read by Chrome itself",
       "signature": "Error: Test timed out in 120000ms.",
       "owner": "Accounts",
-      "quarantined": "2026-11-17",
-      "expires": "2026-11-24"
+      "quarantined": "2026-11-20",
+      "expires": "2026-11-27"
     },
     {
       "id": "windows-edge-sign-in-window",
@@ -18,8 +18,8 @@
       "test": "unit src/scient/accounts/chromeWindow.real.test.ts > a sign-in window of a real browser > brings Edge's sign-in back, read by Edge itself",
       "signature": "Error: Test timed out in 120000ms.",
       "owner": "Accounts",
-      "quarantined": "2026-11-17",
-      "expires": "2026-11-24"
+      "quarantined": "2026-11-20",
+      "expires": "2026-11-27"
     }
   ]
 }

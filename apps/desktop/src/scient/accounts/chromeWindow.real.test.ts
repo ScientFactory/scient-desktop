@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A real browser against a local page.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
@@ -28,7 +29,9 @@ async function openSignInTestWindow(
 ) {
   const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "chrome-sign-in-"));
   const signed = Promise.withResolvers<void>();
+  const requested: string[] = [];
   const server = NodeHttp.createServer((request, response) => {
+    requested.push(request.url ?? "");
     if (request.url === "/login")
       response.setHeader("Set-Cookie", [
         "sid=window-sign-in; Max-Age=3600; Path=/; HttpOnly",
@@ -48,7 +51,9 @@ async function openSignInTestWindow(
   let pageReady = false;
   const aborted = () =>
     process.stderr.write(
-      `Chrome window smoke aborted: ${browser.name}, page ready: ${pageReady}\n`,
+      `Chrome window smoke aborted: ${browser.name}, page ready: ${pageReady}, requests: ${
+        requested.join(", ") || "none"
+      }\n${describeBrowserWindows()}\n`,
     );
   signal.addEventListener("abort", aborted, { once: true });
   let closing: Promise<void> | undefined;
@@ -79,6 +84,48 @@ async function openSignInTestWindow(
   } catch (cause) {
     await close();
     throw cause;
+  }
+}
+
+/**
+ * What a stalled window shows, for the next failure to explain itself: on Windows each browser
+ * window's title, and a screenshot of the screen into `SCIENT_CHROME_WINDOW_CAPTURE` when set.
+ */
+let captures = 0;
+/** Best effort: a diagnostic that fails says so instead of failing the case. */
+function describeBrowserWindows() {
+  if (platform !== "win32") return "";
+  const capture = env.SCIENT_CHROME_WINDOW_CAPTURE;
+  const script = [
+    "Get-Process chrome, msedge -ErrorAction SilentlyContinue | Where-Object MainWindowTitle |",
+    '  ForEach-Object { "$($_.Name) $($_.Id): $($_.MainWindowTitle)" }',
+    ...(capture
+      ? [
+          "Add-Type -AssemblyName System.Windows.Forms, System.Drawing",
+          "$b = [System.Windows.Forms.SystemInformation]::VirtualScreen",
+          "$i = New-Object System.Drawing.Bitmap $b.Width, $b.Height",
+          "[System.Drawing.Graphics]::FromImage($i).CopyFromScreen($b.Left, $b.Top, 0, 0, $i.Size)",
+          "$i.Save($env:SCIENT_CAPTURE_FILE)",
+        ]
+      : []),
+  ].join("\n");
+  try {
+    if (capture) NodeFS.mkdirSync(capture, { recursive: true });
+    const result = NodeChildProcess.spawnSync("powershell", ["-NoProfile", "-Command", script], {
+      encoding: "utf8",
+      timeout: 15_000,
+      env: capture
+        ? {
+            ...env,
+            SCIENT_CAPTURE_FILE: NodePath.join(capture, `browser-window-${++captures}.png`),
+          }
+        : env,
+    });
+    if (result.error) return `Browser windows unreadable: ${result.error.message}`;
+    const windows = result.stdout?.trim() || "none with a title";
+    return `Browser windows:\n${windows}\n${result.stderr?.trim() ?? ""}`.trimEnd();
+  } catch (cause) {
+    return `Browser windows unreadable: ${String(cause)}`;
   }
 }
 
