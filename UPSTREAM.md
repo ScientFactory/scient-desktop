@@ -707,6 +707,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`f6d941fa4fa41741a881b8f646c6737d845ea91c` is recorded in
+[the 2026-11-20 0317d4f4e5 receipt](docs/internals/t3-upstream-sync-20261120-0317d4f4e5.md).
+Literal merge `c3ab5cc489c6598120ecbf6c571da9db1f7e2016` has owned base
+`d46a10f5132d3739289f53ba2cddd8e55350f173` and the frozen official target as parents, retaining
+the 161 official commits after `0317d4f4e5`. The range is mostly fixes to Antigravity, delegation
+and subagents, remote environments and chat, plus side chats added to their main thread,
+forwarding another environment's ports and a setting that turns off the preview tunnel. Scient
+keeps its managed Antigravity 1.4.5 harness supported instead of T3's 1.5 floor. T3's migrations
+100-102 are Scient's 104-106. The alignment is Scient PR #PRNUM. Release remains separate.
+
+The previous committed alignment through
 `0317d4f4e5d7d3b5aba37bed0d61c304fb24d7ae` is recorded in
 [the 2026-11-19 0226239a41 receipt](docs/internals/t3-upstream-sync-20261119-0226239a41.md).
 Literal merge `52bd8cf7bccbb78bde2af1e22937478e0f1695c0` has owned base
@@ -717,7 +728,7 @@ had not read for Resume, gives agents pull request and CI tools, and makes setti
 Connect link need the `relay:configure` permission. T3's migration 99 is Scient's 103. The
 alignment is Scient PR #1029. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `0226239a41e1fd0649fdd2562421d8950db7f39c` is recorded in
 [the 2026-11-18 8cf97b5f06 receipt](docs/internals/t3-upstream-sync-20261118-8cf97b5f06.md),
 whose 2026-11-19 extension adds the 41 official commits after `8cf97b5f06` in literal merge
@@ -1733,6 +1744,10 @@ native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release a
 floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
 native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
 qualification first.
+T3 also removed harness support and rates Antigravity below 1.5 broken; Scient's manifest keeps
+1.4.5 supported, and the driver, prompt and permission seams keep the harness path (its own
+`yolo`/`auto_edit` modes, video linking, runtime-policy approvals when no native Auto is
+offered). Usage limits read the shared OS keyring only for the agy CLI, never for the harness.
 
 Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
 worth proposing to T3:
