@@ -86,43 +86,31 @@ records its `sourceId`. `describeImport` counts attached PDFs apart, and for a
 PDF import names new sources with metadata diagnostics (**Check details**) and
 those `scientSourcesMayBeVersions` pairs with another record.
 
-Journal artwork is optional presentation, not source truth. The bundled catalog
-contains complete marks with documented redistribution provenance, not cropped
-initials or reconstructed favicons. Publisher and platform marks are labelled
-as fallbacks and never suppress discovery of the source's actual website icon.
-Named article, conference-paper and preprint venues are eligible; books retain
-their source-type icon. Original proportions and transparency are preserved.
+Journal artwork is optional presentation, not source truth. Rows and card
+headers show the publisher's website icon, decided in the client by
+`publisherMarks.ts` with no network request: the DOI registrant prefix first,
+then the publisher field, then the article's own host. A few journal families
+with their own icon (The Lancet, Cell Press, Nature, Cochrane, WestJEM, the
+preprint servers) are matched by title, but only when the DOI or publisher field
+names their owner, so a same-named journal elsewhere keeps its publisher. Indexes
+such as PubMed are never treated as the publisher. Without evidence the row keeps
+its source-type icon. The icons ship in `apps/web/src/assets/publishers/`
+(64 px PNGs from each publisher's own site; see `NOTICE` there).
 
-Discovery uses the Sources-owned read endpoint and signed asset route. It
-upgrades standard HTTP metadata addresses to HTTPS without ever sending an HTTP
-request. Crossref journal titles or ISSNs must agree with the record; DataCite
-preprint platforms cannot brand a published journal. OpenAlex homepages require
-an ISSN match or a unique exact title and publisher match. Ambiguous names are not
-guessed. Canonical article artwork is accepted only on that verified venue's
-site or an explicitly known publisher-owned domain; arbitrary record URLs and
-guessed registrable-parent homepages are never venue authority.
-A small conference-homepage map distinguishes proceedings from arXiv version
-DOIs. Canonical article declarations and verified venue declarations precede
-conventional verified-venue favicons and exact publisher fallbacks; completion order
-does not change that priority. Declared favicons precede Apple touch icons.
-Verified pages may explicitly declare CDN-hosted favicons, but page and image
-redirects cannot transfer authority to another registrable domain.
-Official JAMA Network support artwork is a labelled publisher fallback.
-The official NEJM AI store wordmark requires both that exact venue and its
-publisher; it is never reused for another NEJM journal. Neither is redistributed.
-
-Client successes are shared within an environment/project only when ISSN, venue
-title, publisher and preprint/published scope agree. A bad record's fallback
-cannot brand a differently attributed record. Pending requests and misses retain
-the source evidence that produced them.
-Notes, stars and reading-state changes do not reload artwork. Signed URLs renew
-without removing a working image, and a broken discovered image restores the
-bundled fallback. Successful host-side artwork persists for 30 days and remains
-visible offline or during refresh. Source-specific misses use a bounded cache
-and exponential backoff from one minute to six hours. A separate venue backoff
-prevents repeated registry/site discovery for other papers; a verified homepage
-is retained so different canonical paper evidence can still succeed. Cache
-versions predating the authority checks are rebuilt instead of reused.
+Cards also show the journal's current cover. The host derives at most four
+publisher addresses from the record (`journalCoverCandidates`): Springer Nature's
+journal id in the DOI, Atypon journal codes by title (Science, PNAS, Health
+Affairs, ACP, NEJM, AHA, RSNA), and Elsevier and Wiley covers by ISSN, including
+an ISSN embedded in older DOIs. Downloads go only to those publisher hosts over
+HTTPS, to public addresses, through at most three redirects that stay on them,
+and are capped at 6 MB, three at a time. A short-lived child process decodes the image after its
+declared dimensions are checked and writes a JPEG 240 px tall (at most 128 KB).
+Covers are cached for 30 days under `scient/journal-covers/v1` and stay visible
+offline and while a stale cover is refreshed. Failures back off exponentially
+from one minute to a day. The old `journal-icons` cache is deleted in the
+background. Signed cover URLs renew without removing a working image; client
+successes are shared within an environment and project only for the same journal
+identity.
 
 Discovery has a six-second network budget after registry-lane admission.
 Public-address checks and DNS pinning apply to every request, including
@@ -168,7 +156,7 @@ from validated records and operations. The overview contract returns bounded
 summaries only (tags included, so the list can filter by them); complete
 abstracts, provenance, and revision evidence are
 loaded through a direct source-ID detail endpoint when a researcher opens an
-item. Journal artwork uses the same direct record lookup, so rendering one row
+item. Journal covers use the same direct record lookup, so rendering one row
 does not repeatedly decode the rest of a large ledger. Source-PDF preview keeps
 the existing host seam and resolves its content-addressed attachment only when
 the researcher opens it; avoiding another `ChatView`/right-panel state branch is

@@ -143,15 +143,14 @@ Type, reading state, tags and collections are filters, not orders. **Show as
 cards** shows the papers as cards in one flow, at most a comfortable width
 however wide the panel is; a heading that continues onto a new row of cards is
 repeated there, dimmed. Each card keeps its journal and year. **Show as a list**
-goes back. Each row and card starts with a journal or publisher icon when one is
-available, else an icon for its type (article, book, conference paper and so on,
-named on hover). Some complete journal, publisher and platform marks ship with
-Scient. Other website icons are discovered for articles, conference papers and
-preprints, saved for offline use, and kept visible during background refresh.
-Changing a note, star, or reading state does not reload the icon. Hover names the
-journal or the website/publisher fallback actually shown; it does not claim that
-a shared publisher logo is a journal-specific mark. A blocked or unavailable
-site leaves the fallback visible and can be checked again later.
+goes back. Each row and card starts with the publisher's icon (BMJ, Elsevier,
+Springer and so on, named on hover), worked out from the paper's DOI, publisher or
+link. A few journals with their own icon, such as The Lancet, Cell and Nature,
+show it instead. When no publisher is known the row shows an icon for its type
+(article, book, conference paper and so on). Cards also show the journal's
+current cover when its publisher offers one (Elsevier, Wiley, Springer Nature,
+Science, PNAS, NEJM and some others). Covers are saved for offline use and kept
+visible while they are refreshed.
 In list view, the blue **Unread** dot sits with the actions on the right,
 immediately before **Open PDF** when a PDF is available.
 
