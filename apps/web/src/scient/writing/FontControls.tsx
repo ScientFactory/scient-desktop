@@ -204,7 +204,7 @@ export function FontControls(props: {
               <FontOption
                 key={size}
                 label={String(size)}
-                selected={!props.sizeMixed && props.size === size}
+                selected={shownSize === size}
                 disabled={props.disabled}
                 // The field keeps focus, so its own commit on blur does not undo the choice.
                 onMouseDown={(event) => event.preventDefault()}
