@@ -551,12 +551,13 @@ if (!linkSpec) throw new Error("Missing ProseMirror mark spec 'link'.");
 export const scientMarkdownSchema: Schema = new Schema({
   nodes,
   marks: defaultMarkdownParser.schema.spec.marks
-    .update("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } })
+    .remove("link")
     .addBefore("code", "strike", strikeSpec)
-    // First in rank, so the writer puts size and font tags outside every other style. A bold or
-    // strike delimiter then never touches a span tag inside a word, which CommonMark misreads.
+    // Rank sets nesting: a link stays whole, and size and font tags go outside bold, italic and
+    // strike, so their delimiters never touch a span tag inside a word (CommonMark misreads it).
     .addToStart("font_family", fontFamilySpec)
-    .addToStart("font_size", fontSizeSpec),
+    .addToStart("font_size", fontSizeSpec)
+    .addToStart("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } }),
 } satisfies SchemaSpec);
 
 function tableAlignment(token: { readonly attrGet: (name: string) => string | null }): {
@@ -1095,13 +1096,11 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       open: (_state, mark) => markdownFontSpanOpen({ size: mark.attrs.size as number }),
       close: MARKDOWN_FONT_SPAN_CLOSE,
       expelEnclosingWhitespace: true,
-      mixable: true,
     },
     font_family: {
       open: (_state, mark) => markdownFontSpanOpen({ family: String(mark.attrs.family) }),
       close: MARKDOWN_FONT_SPAN_CLOSE,
       expelEnclosingWhitespace: true,
-      mixable: true,
     },
     strike: {
       close: "~~",

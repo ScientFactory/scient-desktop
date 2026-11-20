@@ -468,3 +468,28 @@ describe("Whitespace rule: other marks and characters", () => {
     expect(markedText(session, "font_size")).toEqual(["don't", "x", "l\u2019arbre"]);
   });
 });
+
+const SIZE = '<span style="font-size:14pt">';
+
+describe("Size and font tags are written outside bold, italic and strike, inside links", () => {
+  it.each([
+    ["un**believ**able", 4, 7, "font-size-14", `un**be**${SIZE}**lie**</span>**v**able`],
+    ["un~~believ~~able", 4, 7, "font-size-14", `un~~be~~${SIZE}~~lie~~</span>~~v~~able`],
+    ["un*believ*able", 4, 7, "font-size-14", `un*be*${SIZE}*lie*</span>*v*able`],
+    [`unbel${SIZE}iev</span>able`, 2, 8, "bold", `un**bel**${SIZE}**iev**</span>able`],
+    ["[abc](https://x.example)", 1, 2, "font-size-14", `[a${SIZE}b</span>c](https://x.example)`],
+    [
+      "**defg**",
+      2,
+      4,
+      "font-family-Arial",
+      `**de**<span style="font-family:'Arial'">**fg**</span>`,
+    ],
+  ] as const)("in %s", (source, from, to, command, expected) => {
+    const session = open(`${source}\n`);
+    select(session, from, to);
+    run(session, command);
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe(`${expected}\n`);
+  });
+});
