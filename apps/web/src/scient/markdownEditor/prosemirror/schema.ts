@@ -553,8 +553,10 @@ export const scientMarkdownSchema: Schema = new Schema({
   marks: defaultMarkdownParser.schema.spec.marks
     .update("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } })
     .addBefore("code", "strike", strikeSpec)
-    .addBefore("code", "font_size", fontSizeSpec)
-    .addBefore("code", "font_family", fontFamilySpec),
+    // First in rank, so the writer puts size and font tags outside every other style. A bold or
+    // strike delimiter then never touches a span tag inside a word, which CommonMark misreads.
+    .addToStart("font_family", fontFamilySpec)
+    .addToStart("font_size", fontSizeSpec),
 } satisfies SchemaSpec);
 
 function tableAlignment(token: { readonly attrGet: (name: string) => string | null }): {

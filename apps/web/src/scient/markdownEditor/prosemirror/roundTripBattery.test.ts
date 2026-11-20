@@ -1,6 +1,7 @@
 // Seeded editing gestures over many paragraph kinds: an edit is refused only for the known family
-// left refused on purpose (a delimiter touching a size or font tag inside a word). Strike, inline
-// code and formulas are not exercised.
+// left refused on purpose (an emphasis delimiter between a letter and punctuation). Size and font
+// tags are written outside other styles, so a delimiter never touches them inside a word. Strike,
+// inline code and formulas are not exercised.
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, it } from "vite-plus/test";
 import { runScientMarkdownCommand, type ScientMarkdownCommand } from "./commands";
@@ -40,12 +41,10 @@ const SEQUENCES_PER_DOCUMENT = 120;
 const MAX_KNOWN_REFUSALS_PER_DOCUMENT = 5;
 
 /**
- * The known families, tested only on sources the guard already refused: a delimiter touching a
- * span tag inside a word, or a delimiter between a letter and punctuation (CommonMark cannot
- * open or close emphasis there, with or without sizes).
+ * The known family, tested only on sources the guard already refused: a delimiter between a
+ * letter and punctuation (CommonMark cannot open or close emphasis there, with or without sizes).
  */
-const KNOWN_REFUSAL =
-  /[\p{L}\p{N}](?:\*{1,3}|~~)<span|<\/span>(?:\*{1,3}|~~)[\p{L}\p{N}]|[\p{L}\p{N}](?:\*{1,3}|~~)\p{P}|\p{P}(?:\*{1,3}|~~)[\p{L}\p{N}]/u;
+const KNOWN_REFUSAL = /[\p{L}\p{N}](?:\*{1,3}|~~)\p{P}|\p{P}(?:\*{1,3}|~~)[\p{L}\p{N}]/u;
 
 function firstTextblock(session: ScientProseMirrorSession) {
   let found: { start: number; size: number } | null = null;

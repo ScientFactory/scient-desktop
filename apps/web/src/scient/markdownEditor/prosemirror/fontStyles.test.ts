@@ -269,9 +269,9 @@ describe("Whitespace is not styled content", () => {
     select(session, 1, 4);
     run(session, "italic");
     expect(session.pendingWriteback).toBeNull();
-    // The space between the two italic words carries no style, so each word has its own `*`.
+    // The space carries no style, and size tags stay outside the italic delimiters.
     expect(session.session.draftSource).toBe(
-      '<span style="font-size:14pt">a*a*</span> *<span style="font-size:20pt">b</span>*<span style="font-size:20pt">b</span> cc\n',
+      '<span style="font-size:14pt">a*a*</span> <span style="font-size:20pt">*b*b</span> cc\n',
     );
   });
 
@@ -301,7 +301,7 @@ describe("Whitespace is not styled content", () => {
     run(session, "font-size-14");
     expect(session.pendingWriteback).toBeNull();
     expect(session.session.draftSource).toBe(
-      '**<span style="font-size:14pt">a</span>** **<span style="font-size:14pt">b</span>**\n',
+      '<span style="font-size:14pt">**a**</span> <span style="font-size:14pt">**b**</span>\n',
     );
     expect(markedText(open(session.session.draftSource), "font_size")).toEqual(["a", "b"]);
   });
