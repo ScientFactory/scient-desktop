@@ -128,6 +128,20 @@ describe("withClaudeApiEndpoint", () => {
       origin: "https://gateway.example",
       source: "environment",
     });
+    assert.strictEqual(
+      withClaudeApiEndpoint(failure("Cannot POST /v1/acct-123/anthropic/v1/messages"), tenant)
+        ?.message,
+      "Cannot POST /v1/messages",
+    );
+    // A one-segment path names no tenant and stays as the provider wrote it.
+    const versioned = resolveClaudeApiEndpoint(
+      {},
+      { ANTHROPIC_BASE_URL: "https://proxy.example/v1" },
+    );
+    assert.strictEqual(
+      withClaudeApiEndpoint(failure("Cannot POST /v1beta/messages"), versioned)?.message,
+      "Cannot POST /v1beta/messages",
+    );
   });
 
   it("leaves turns without a failure or without a custom endpoint alone", () => {

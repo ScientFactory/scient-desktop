@@ -49,12 +49,21 @@ export function withClaudeApiEndpoint(
   endpoint: ClaudeApiEndpoint | undefined,
 ): OrchestrationV2ProviderFailure | null {
   if (failure === null || endpoint === undefined) return failure;
+  const path = endpoint.base.slice(endpoint.origin.length);
+  const withOrigin =
+    path === "" ? failure.message : failure.message.replaceAll(endpoint.base, endpoint.origin);
+  // A gateway may quote only the request path. A single segment such as /v1 names no tenant,
+  // so only a longer prefix is removed, and only where it ends a path segment.
+  const message =
+    path.split("/").filter(Boolean).length < 2
+      ? withOrigin
+      : withOrigin.replace(
+          new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=[/\\s"'?#]|$)`, "gu"),
+          "",
+        );
   return {
     ...failure,
-    message:
-      endpoint.base === endpoint.origin
-        ? failure.message
-        : failure.message.replaceAll(endpoint.base, endpoint.origin),
+    message,
     customEndpoint: { origin: endpoint.origin, source: endpoint.source },
   };
 }

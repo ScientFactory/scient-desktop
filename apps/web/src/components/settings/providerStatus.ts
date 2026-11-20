@@ -146,7 +146,10 @@ export function getProviderSummary(
         ? resolve(msg("Authenticated · {method}", { method: authLabel }))
         : resolve(msg("Authenticated")),
       // SCIENT-FORK:START — a custom endpoint names its server and where it was set.
-      detail: provider.message ?? providerEndpointText(provider.auth, resolve),
+      detail:
+        [provider.message, providerEndpointText(provider.auth, resolve)]
+          .filter((part) => part != null)
+          .join(" ") || null,
       // SCIENT-FORK:END
     };
   }

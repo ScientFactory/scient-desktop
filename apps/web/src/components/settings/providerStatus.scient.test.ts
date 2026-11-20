@@ -56,5 +56,9 @@ describe("getProviderSummary (Scient)", () => {
       "Sends requests to http://127.0.0.1:3456. Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
     );
     expect(getProviderSummary(claude()).detail).toBe("Sends requests to http://127.0.0.1:3456.");
+    // An upgrade notice does not hide the endpoint.
+    expect(
+      getProviderSummary({ ...claude(), message: "Update Claude Code to use Opus 5.5." }).detail,
+    ).toBe("Update Claude Code to use Opus 5.5. Sends requests to http://127.0.0.1:3456.");
   });
 });

@@ -5000,4 +5000,50 @@ describe("ClaudeAdapterV2 custom API endpoint failures", () => {
       assert.deepEqual(terminal.failure.customEndpoint, expected);
     }).pipe(Effect.provide(adapterServices)),
   );
+
+  it.effect("takes managed settings over the environment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const programData = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-managed-" });
+      yield* fileSystem.makeDirectory(`${programData}/ClaudeCode`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${programData}/ClaudeCode/managed-settings.json`,
+        JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://managed.example.test" } }),
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ANTHROPIC_BASE_URL: "https://environment.example.test",
+          ProgramData: programData,
+        },
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("managed-endpoint-failure"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000798",
+          result: "API Error: 404 model not found",
+          terminalReason: "api_error",
+          apiErrorStatus: 404,
+          isError: true,
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.deepEqual(terminal.failure.customEndpoint, {
+        origin: "https://managed.example.test",
+        source: "claude-settings",
+      });
+    }).pipe(Effect.scoped, Effect.provide(adapterServices)),
+  );
 });

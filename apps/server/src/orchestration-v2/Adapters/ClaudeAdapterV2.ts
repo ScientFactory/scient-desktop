@@ -209,6 +209,9 @@ import {
   discoverClaudeSkills,
   readClaudeSettingsEnv,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+// SCIENT-FORK:START — managed settings outrank every other source of a custom endpoint.
+import { claudeManagedSettingsFiles } from "../../provider/Drivers/ClaudeSkills.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — a failed turn names the custom endpoint it went to.
 import {
   type ClaudeApiEndpoint,
@@ -6129,6 +6132,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const resolveClaudeApiEndpointAtLaunch = Effect.fn(
     "ClaudeAdapterV2.resolveClaudeApiEndpointAtLaunch",
   )(function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
+    // Managed policy wins over --settings, which wins over local, project and user settings.
+    const managedFiles = claudeManagedSettingsFiles(path, hostPlatform, adapterOptions.environment);
+    for (const settingsFile of managedFiles.toReversed()) {
+      const value = yield* readSettingsEnv(settingsFile, "ANTHROPIC_BASE_URL");
+      if (value !== undefined) return resolveClaudeApiEndpoint({ ANTHROPIC_BASE_URL: value }, {});
+    }
     const launchValue = launchArgSettings?.env?.ANTHROPIC_BASE_URL;
     if (typeof launchValue === "string")
       return resolveClaudeApiEndpoint({ ANTHROPIC_BASE_URL: launchValue }, {});
