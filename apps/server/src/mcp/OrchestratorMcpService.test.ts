@@ -2125,6 +2125,8 @@ describe("OrchestratorMcpService provider resolution", () => {
         result: null,
       };
       const dependencies = Layer.mergeAll(
+        // SCIENT-FORK: Scient resolves the caller's invocation policy from its provider session.
+        fullAccessCapturedPolicyLayer,
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -3772,6 +3774,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           completedAt: null,
         };
         const layerDependencies = Layer.mergeAll(
+          // SCIENT-FORK: Scient resolves the caller's invocation policy from its provider session.
+          fullAccessCapturedPolicyLayer,
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({

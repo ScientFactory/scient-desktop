@@ -107,6 +107,7 @@ import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -1261,6 +1262,7 @@ export const buildAppUnderTest = (options?: {
           ),
         ),
         Layer.provide(Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({})),
+        Layer.provide(ThreadViewers.layer),
         Layer.provide(
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
             getTurnDiff: () =>

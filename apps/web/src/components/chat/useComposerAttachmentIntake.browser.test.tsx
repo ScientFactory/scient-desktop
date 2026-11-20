@@ -135,6 +135,9 @@ it.each(["available", "full", "duplicate"] as const)(
       <>
         <Harness
           input={{
+            // SCIENT-FORK: Scient's intake reads the target draft and its question siblings.
+            environmentId,
+            attachmentDraftTarget: question,
             activeThreadId: threadId,
             activePendingProgress: null,
             activePendingIsResponding: false,
