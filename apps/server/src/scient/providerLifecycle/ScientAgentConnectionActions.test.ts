@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 
 import {
   makeScientAgentConnectionActions,
+  isOfferedScientAgentAccount,
   readScientAgentAccounts,
   type ScientAgentSignInClient,
 } from "./ScientAgentConnectionActions.ts";
@@ -111,6 +112,20 @@ describe("Scient Agent sign-in", () => {
 
         yield* agent.finishLogin;
         yield* attempt.waitForCompletion;
+      }),
+    ),
+  );
+
+  it.live("starts no sign-in to an account Scient does not offer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const agent = yield* makeAgent;
+        const refused = yield* start(agent, "antigravity-cli").pipe(Effect.flip);
+        assert.strictEqual(
+          refused.message,
+          "Scient does not offer this account through Scient Agent.",
+        );
+        assert.strictEqual(yield* Ref.get(agent.opened), 0);
       }),
     ),
   );
@@ -494,6 +509,40 @@ describe("readScientAgentAccounts", () => {
           ["deepseek", undefined],
         ],
       );
+    }),
+  );
+
+  it.effect("leaves out the accounts Scient does not offer, signed in or not", () =>
+    Effect.gen(function* () {
+      const accounts = yield* listing([
+        {
+          id: "antigravity-cli",
+          name: "Antigravity CLI",
+          authenticated: false,
+          kind: "account",
+          stored: false,
+        },
+        {
+          id: "google-antigravity",
+          name: "Google Antigravity",
+          authenticated: true,
+          kind: "account",
+          stored: true,
+        },
+        {
+          id: "kimi-code",
+          name: "Kimi Code",
+          authenticated: false,
+          kind: "account",
+          stored: false,
+        },
+      ]);
+      assert.deepStrictEqual(
+        accounts?.map((entry) => entry.id),
+        ["kimi-code"],
+      );
+      assert.isFalse(isOfferedScientAgentAccount("antigravity-cli/gemini-4-hydrogen"));
+      assert.isTrue(isOfferedScientAgentAccount("google/gemini-4-hydrogen"));
     }),
   );
 

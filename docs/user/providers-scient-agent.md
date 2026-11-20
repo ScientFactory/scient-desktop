@@ -81,7 +81,9 @@ Scient Agent starts with no sign-ins. Give it a model in one of these ways:
   browser, and services you add an API key for. Choose one, finish in the browser, and paste a
   code or key if the agent asks for one. Some sign-ins ask more than one question, such as
   Cloudflare's token, account ID and gateway ID; each appears after you answer the one before.
-  **Sign out** removes a sign-in the agent stored.
+  **Sign out** removes a sign-in the agent stored. Antigravity is not offered here: neither of
+  its sign-ins can finish from Scient, so Scient leaves them and their models out. Use Scient's
+  separate [Antigravity](providers-antigravity.md) provider instead.
 - **Custom models.** Attach an OpenAI-compatible, OpenAI Responses, or Anthropic Messages
   connection in Scient's **Custom models** settings. Scient passes the key to the agent privately
   for each process; it is never in the agent's environment or arguments.
@@ -99,25 +101,24 @@ Signing out removes the sign-in and then stops Scient Agent's running conversati
 keeps using it. They resume when you next use them. A stored sign-in that no longer works can be
 renewed or signed out of from the same list.
 
-The model picker initially shows Sonnet 5.5, Opus 5.5, and Fable 5.5 for Anthropic;
-GPT-6-Astra, GPT-6-Luna, and GPT-6.1-Sol for Codex; and Gemini 3.8 Flash, Gemini 3.1 Pro,
-and Claude Opus 4.6 for Antigravity, whenever the agent reports those models. Other models
-in these account groups start hidden. They remain on the provider page, where you can enable
+The model picker initially shows Sonnet 5.5, Opus 5.5, and Fable 5.5 for Anthropic,
+and GPT-6-Astra, GPT-6-Luna, and GPT-6.1-Sol for Codex, whenever the agent reports those
+models. Other models in these account groups start hidden. They remain on the provider page, where you can enable
 them. Other account routes and custom models keep their existing defaults.
 
-The default account order is Anthropic, OpenAI/Codex, then Google/Antigravity. Models keep
+The default account order is Anthropic, OpenAI/Codex, then Google. Models keep
 their catalog order within each group. Your saved visibility and ordering choices take
 precedence and belong to this client and Scient Agent instance, independently of Pi and Oh My Pi.
 These defaults curate the display; they do not prove subscription access.
 
 For a new automatic selection, Scient prefers GPT-6.1-Sol for ChatGPT accounts,
-Opus 5.5 for Anthropic, Grok 4.7 for Cursor, and Gemini 3.8 Flash for Antigravity
-when the account reports them. High reasoning is the initial preference when
-the model offers it. Saved model and reasoning choices remain in effect, and
-custom models keep their own defaults. Hidden or unavailable models are excluded
-from automatic selection. Cursor and Antigravity's separate providers use the
-same model preferences; the separate Codex and Claude providers also start at
-high reasoning when supported.
+Opus 5.5 for Anthropic, and Grok 4.7 for Cursor when the account reports them.
+High reasoning is the initial preference when the model offers it. Saved model and
+reasoning choices remain in effect, and custom models keep their own defaults. Hidden
+or unavailable models are excluded from automatic selection. Cursor's separate provider
+uses the same model preference, and Antigravity's separate provider prefers Gemini 3.8
+Flash; the separate Codex and Claude providers also start at high reasoning when
+supported.
 
 If a successful refresh stops reporting a native model, the provider page retains it with an
 unavailable explanation, and selectors exclude it. A failed refresh does not establish a denial.
@@ -195,8 +196,8 @@ What the operating system asks for:
 
 ## Making pictures
 
-Scient Agent can make and edit pictures, such as figures and diagrams, when it has a ChatGPT or
-Google Antigravity account signed in. Scient turns the agent's image tool on while such an account
+Scient Agent can make and edit pictures, such as figures and diagrams, when it has a ChatGPT
+account signed in. Scient turns the agent's image tool on while such an account
 is connected and off when it is not; no restart is needed. The pictures show in the conversation
 and are saved as files. They use that account's quota. **Image generation** in the provider's
 settings turns it off; it is on by default.
