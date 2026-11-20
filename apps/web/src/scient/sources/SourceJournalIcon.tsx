@@ -25,14 +25,14 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { readScientSourceJournalIcon } from "./client";
-import { bundledJournalIcon } from "./bundledJournalIcons";
+import { publisherMark, sourceDoi } from "./publisherMarks";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type JournalIcon = (NonNullable<ScientSourceJournalIconResult["icon"]> & { url: string }) | null;
 
-/** What kind of source it is, at a glance, until its journal's own icon arrives. */
+/** What kind of source it is, when no publisher icon identifies it. */
 const SOURCE_TYPE_ICONS = {
   article: FileText,
   preprint: FileClock,
@@ -113,45 +113,86 @@ function discoverIcon(
   return entry;
 }
 
-export function SourceJournalIcon(props: {
+/** The publisher's website icon, or what kind of source it is when no publisher is known. */
+export function SourceJournalIcon(props: { readonly record: SourceRecord }) {
+  const messages = useMessages();
+  const mark = publisherMark(props.record);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const TypeIcon = SOURCE_TYPE_ICONS[props.record.type];
+  const shown = mark && mark.url !== failedUrl ? mark : null;
+  return (
+    <ScientTooltip
+      content={shown ? shown.name : messages(SCIENT_SOURCE_TYPE_LABELS[props.record.type])}
+    >
+      <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
+        {shown ? (
+          <img
+            src={shown.url}
+            alt=""
+            draggable={false}
+            className="size-full rounded-[3px] object-contain"
+            onError={() => setFailedUrl(shown.url)}
+          />
+        ) : (
+          <TypeIcon className="size-5" data-testid="source-generic-icon" />
+        )}
+      </span>
+    </ScientTooltip>
+  );
+}
+
+/**
+ * The parts of a DOI the environment reads a cover address from: its registrant, a Springer
+ * Nature journal id, or an ISSN embedded in an older Wiley or Elsevier DOI. Papers of one
+ * journal share these, so they share one cover; a corrected DOI looks the cover up again.
+ */
+function coverEvidence(record: SourceRecord): string | null {
+  const match = sourceDoi(record)?.match(
+    /^(10\.\d{4,9})\/(?:s(\d{5})-|(?:j\.|s)(\d{4}-\d{3}[\dx])[.(])?/u,
+  );
+  return match ? [match[1], match[2] ?? match[3] ?? ""].join(" ") : null;
+}
+
+/** The journal's current cover, fetched by the environment; nothing while there is none. */
+export function SourceJournalCover(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly record: SourceRecord;
   readonly resolveIcon?: IconResolver;
 }) {
   const identity = journalIconIdentity(props.record);
-  const cacheKey = JSON.stringify([props.environmentId, props.root, identity]);
+  const cacheKey = JSON.stringify([
+    props.environmentId,
+    props.root,
+    identity,
+    coverEvidence(props.record),
+  ]);
   const lookupKey = JSON.stringify([
     cacheKey,
     props.record.sourceId,
-    props.record.url,
-    props.record.identifiers.filter(({ scheme }) => /^doi$/iu.test(scheme.trim())),
+    props.record.identifiers.filter(({ scheme }) => /^(?:doi|e?issn)$/iu.test(scheme.trim())),
   ]);
+  if (identity === null) return null;
   return (
-    <JournalIconImage
+    <JournalCoverImage
       key={lookupKey}
       {...props}
       cacheKey={cacheKey}
       lookupKey={lookupKey}
-      eligible={identity !== null}
-      bundled={bundledJournalIcon(props.record)}
       resolveIcon={props.resolveIcon ?? readScientSourceJournalIcon}
     />
   );
 }
 
-function JournalIconImage(props: {
+function JournalCoverImage(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly record: SourceRecord;
   readonly resolveIcon: IconResolver;
   readonly cacheKey: string;
   readonly lookupKey: string;
-  readonly eligible: boolean;
-  readonly bundled: ReturnType<typeof bundledJournalIcon>;
 }) {
-  const { environmentId, root, resolveIcon, cacheKey, lookupKey, eligible, bundled } = props;
-  const messages = useMessages();
+  const { environmentId, root, resolveIcon, cacheKey, lookupKey } = props;
   const sourceId = props.record.sourceId;
   const [discovered, setDiscovered] = useState<{
     resolver: IconResolver;
@@ -162,20 +203,13 @@ function JournalIconImage(props: {
     () => typeof IntersectionObserver === "undefined",
   );
   const containerRef = useRef<HTMLSpanElement>(null);
-  const needsDiscovery = eligible && bundled?.source !== "journal";
   const resolved =
     discovered?.resolver === resolveIcon ? discovered.icon : cachedIcon(resolveIcon, cacheKey);
-  const icon =
-    bundled?.source === "journal"
-      ? bundled
-      : resolved && resolved.url !== failedUrl
-        ? resolved
-        : bundled;
-  const imageFailed = icon?.url === failedUrl;
+  const cover = resolved && resolved.url !== failedUrl ? resolved : null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes viewport admission before starting environment discovery
   useEffect(() => {
-    if (!needsDiscovery || shouldResolve || typeof IntersectionObserver === "undefined") return;
+    if (shouldResolve || typeof IntersectionObserver === "undefined") return;
     const element = containerRef.current;
     if (!element) return;
     const observer = new IntersectionObserver(
@@ -188,11 +222,11 @@ function JournalIconImage(props: {
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [needsDiscovery, shouldResolve]);
+  }, [shouldResolve]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns shared environment discovery and signed-asset renewal for an admitted row
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns shared environment discovery and signed-asset renewal for an admitted card
   useEffect(() => {
-    if (!needsDiscovery || !shouldResolve) return;
+    if (!shouldResolve) return;
     let active = true;
     let timer: number | undefined;
     const refresh = async () => {
@@ -212,54 +246,25 @@ function JournalIconImage(props: {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [
-    needsDiscovery,
-    shouldResolve,
-    resolveIcon,
-    cacheKey,
-    lookupKey,
-    environmentId,
-    root,
-    sourceId,
-    failedUrl,
-  ]);
+  }, [shouldResolve, resolveIcon, cacheKey, lookupKey, environmentId, root, sourceId, failedUrl]);
 
-  const TypeIcon = SOURCE_TYPE_ICONS[props.record.type];
-  const journalIcon = (
-    <span
-      ref={containerRef}
-      className="flex size-5 shrink-0 items-center justify-center"
-      aria-hidden
-    >
-      {icon && !imageFailed ? (
+  return (
+    <span ref={containerRef} className="flex shrink-0 self-end" aria-hidden>
+      {cover ? (
         <img
-          src={icon.url}
+          src={cover.url}
           alt=""
           loading="lazy"
           draggable={false}
-          className="size-full object-contain"
+          data-testid="source-journal-cover"
+          className="h-14 w-auto max-w-11 rounded-[2px] border border-border/70 object-cover shadow-[0_2px_6px_-2px_rgb(0_0_0/0.35)]"
           onError={() => {
-            setFailedUrl(icon.url);
-            if (icon === bundled) return;
+            setFailedUrl(cover.url);
             const entry = resolverCaches.get(resolveIcon)?.get(cacheKey);
             if (entry) entry.retryAt = Date.now() + RETRY_DELAY;
           }}
         />
-      ) : (
-        <TypeIcon className="size-5" data-testid="source-generic-icon" />
-      )}
+      ) : null}
     </span>
-  );
-
-  return (
-    <ScientTooltip
-      content={
-        icon && !imageFailed
-          ? messages(icon.journalTitle)
-          : messages(SCIENT_SOURCE_TYPE_LABELS[props.record.type])
-      }
-    >
-      {journalIcon}
-    </ScientTooltip>
   );
 }

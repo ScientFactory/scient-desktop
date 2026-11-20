@@ -2,7 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vite-plus/test";
 
-import { SourceJournalIcon } from "./SourceJournalIcon";
+import { SourceJournalCover, SourceJournalIcon } from "./SourceJournalIcon";
 
 vi.mock("gt-react", async (importOriginal) =>
   (await import("~/scient/testing/englishGTReact")).englishGTReact(await importOriginal()),
@@ -34,38 +34,43 @@ const record = {
   importedAt: "2026-08-13T00:00:00.000Z",
 };
 
-it("includes bundled artwork in the first render without article links or a journal lookup", () => {
-  const resolveIcon = vi.fn(async () => null);
-  for (const identity of [
-    { containerTitle: "NEJM Evidence", identifiers: [] },
-    { containerTitle: null, identifiers: [{ scheme: "issn", value: "2766-5526" }] },
-  ]) {
-    const markup = renderToStaticMarkup(
-      <SourceJournalIcon
-        environmentId={EnvironmentId.make("environment-test")}
-        root="/project"
-        record={{ ...record, ...identity, url: null }}
-        resolveIcon={resolveIcon}
-      />,
-    );
-    expect(markup).toContain("<img");
-    expect(markup).not.toContain('data-testid="source-generic-icon"');
-  }
-  expect(resolveIcon).not.toHaveBeenCalled();
+it("shows the publisher's icon in the first render, named in its tooltip", () => {
+  const markup = renderToStaticMarkup(
+    <SourceJournalIcon
+      record={{ ...record, identifiers: [{ scheme: "doi", value: "10.1136/bmj.n71" }] }}
+    />,
+  );
+  expect(markup).toContain("<img");
+  expect(markup).toMatch(/bmj[^"]*\.png/u);
+  expect(markup).not.toContain('data-testid="source-generic-icon"');
+});
+
+// regression: PubMed imports link to pubmed.gov, which says nothing about the journal
+it("shows the type's icon, never PubMed's, when only a PubMed link is known", () => {
+  const markup = renderToStaticMarkup(
+    <SourceJournalIcon
+      record={{
+        ...record,
+        identifiers: [{ scheme: "pmid", value: "32098899" }],
+        url: "https://pubmed.ncbi.nlm.nih.gov/32098899/",
+      }}
+    />,
+  );
+  expect(markup).toContain('data-testid="source-generic-icon"');
+  expect(markup).not.toContain("<img");
 });
 
 // regression: 4e05b272c1 feat(sources): complete reference intake workflows
-it("renders the type's icon immediately and does not wait for journal lookup", () => {
+it("renders no cover and asks the environment for nothing before the card is shown", () => {
   const resolveIcon = vi.fn(async () => null);
   const markup = renderToStaticMarkup(
-    <SourceJournalIcon
+    <SourceJournalCover
       environmentId={EnvironmentId.make("environment-test")}
       root="/project"
       record={record}
       resolveIcon={resolveIcon}
     />,
   );
-  expect(markup).toContain('data-testid="source-generic-icon"');
   expect(markup).not.toContain("<img");
   expect(resolveIcon).not.toHaveBeenCalled();
 });

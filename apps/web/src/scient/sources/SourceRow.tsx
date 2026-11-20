@@ -270,11 +270,7 @@ export function SourceRow(props: {
               className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={(event) => activateSource(event, record, row)}
             >
-              <SourceJournalIcon
-                environmentId={row.environmentId}
-                root={row.root}
-                record={record}
-              />
+              <SourceJournalIcon record={record} />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">
                   {record.title ?? gt("Untitled source")}

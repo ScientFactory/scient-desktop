@@ -11,7 +11,7 @@ import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { LIBRARY_LABELS } from "./libraryLabels";
 import { SOURCES_COLUMN } from "./PanelChrome";
-import { SourceJournalIcon } from "./SourceJournalIcon";
+import { SourceJournalCover, SourceJournalIcon } from "./SourceJournalIcon";
 import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { sourcePinLabel, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import {
@@ -110,11 +110,7 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
               onClick={(event) => activateSource(event, record, row)}
             >
               <span className="flex min-w-0 items-center gap-1.5 pe-3 text-[10px] tracking-wider text-muted-foreground uppercase">
-                <SourceJournalIcon
-                  environmentId={row.environmentId}
-                  root={row.root}
-                  record={record}
-                />
+                <SourceJournalIcon record={record} />
                 <span className="truncate">
                   {journal ?? m(SCIENT_SOURCE_TYPE_LABELS[record.type])}
                 </span>
@@ -122,11 +118,18 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
               <span className="mt-2.5 line-clamp-5 font-serif text-[15px] leading-snug">
                 {record.title ?? gt("Untitled source")}
               </span>
-              <span className="mt-auto line-clamp-3 pt-2 text-xs text-muted-foreground">
-                {authorsLine(record, m)}
-                {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                {sourceTrustLabel(record, m)}
-                {record.fromSnapshot ? sourcePinLabel(record, row.listed, m) : null}
+              <span className="mt-auto flex items-end gap-2 pt-2">
+                <span className="line-clamp-3 min-w-0 flex-1 text-xs text-muted-foreground">
+                  {authorsLine(record, m)}
+                  {record.issuedYear ? ` · ${record.issuedYear}` : ""}
+                  {sourceTrustLabel(record, m)}
+                  {record.fromSnapshot ? sourcePinLabel(record, row.listed, m) : null}
+                </span>
+                <SourceJournalCover
+                  environmentId={row.environmentId}
+                  root={row.root}
+                  record={record}
+                />
               </span>
             </button>
           }
