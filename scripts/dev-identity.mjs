@@ -11,6 +11,8 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 
 export const DEV_IDENTITY_ENV = "SCIENT_DEV_IDENTITY";
+/** Bumped whenever the lock, journal or vault handling changes; home and seed must agree. */
+export const DEV_IDENTITY_PROTOCOL = 1;
 export const DEV_IDENTITY_MARKER = "dev-identity.json";
 const JOURNAL = "dev-identity-journal.json";
 const HOME_RECORD = "dev-identity-home.json";
@@ -107,11 +109,16 @@ const isLink = (path) => {
   }
 };
 
+/** The canonical path, also for a path that does not exist yet: its nearest existing parent. */
 const realpathOrSelf = (path) => {
+  const resolved = NodePath.resolve(path);
   try {
-    return NodeFS.realpathSync(path);
+    return NodeFS.realpathSync(resolved);
   } catch {
-    return NodePath.resolve(path);
+    const parent = NodePath.dirname(resolved);
+    return parent === resolved
+      ? resolved
+      : NodePath.join(realpathOrSelf(parent), NodePath.basename(resolved));
   }
 };
 
@@ -176,16 +183,10 @@ function applyJournal(journalPath, journal) {
  */
 export function recoverInterruptedCopy(stateDir) {
   const journalPath = NodePath.join(stateDir, JOURNAL);
-  const journal = readJsonObject(journalPath);
-  if (journal === undefined) {
-    if (exists(journalPath)) {
-      throw new DevIdentityFatalError(
-        `${journalPath} is unreadable; this app's identity copy cannot be finished.`,
-      );
-    }
-    return false;
-  }
   try {
+    if (!exists(journalPath)) return false;
+    const journal = readJsonObject(journalPath);
+    if (journal === undefined) throw new Error(`${journalPath} is unreadable.`);
     applyJournal(journalPath, journal);
   } catch (error) {
     throw new DevIdentityFatalError(
@@ -769,6 +770,16 @@ async function stageWebsiteSignIns({ changes, source, target, profileIds, decryp
     if (isLink(targetDir)) throw new Error(`${targetDir} is a link; nothing was copied into it.`);
     const to = cookieDatabasePath(targetDir);
     if (exists(to)) continue;
+    const jarParent = NodePath.dirname(to);
+    if (
+      isLink(jarParent) ||
+      !inside(
+        realpathOrSelf(jarParent),
+        realpathOrSelf(NodePath.join(target.userData, "Partitions")),
+      )
+    ) {
+      throw new Error(`${jarParent} leads outside this app's data; nothing was copied into it.`);
+    }
     const snapshot = await snapshotCookieDatabase(from);
     if (snapshot === undefined) {
       skipped.push(targetName);
@@ -903,6 +914,13 @@ export async function importDevIdentity({
 } = {}) {
   if (isHomeTarget(targetStateDir, home)) {
     if (homeIsLocked(home)) return { status: "home-seeding" };
+    try {
+      assertHomeLayout(home, installed);
+    } catch (error) {
+      throw new DevIdentityFatalError(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+    }
     // A seed that stopped while publishing is finished before the home opens its vault.
     recoverInterruptedCopy(home.stateDir);
     return { status: "home" };
@@ -1099,6 +1117,18 @@ function assertHomeLayout(home, installed) {
   if (exists(home.stateDir)) assertPlainTarget(home.stateDir);
 }
 
+/** The home app must run code that honours this module's lock and journal. */
+function assertHomeCheckoutMatches(home) {
+  const checkout = homeCheckout(home);
+  if (checkout === undefined) return;
+  const source = readText(NodePath.join(checkout, "scripts", "dev-identity.mjs")) ?? "";
+  if (!source.includes(`export const DEV_IDENTITY_PROTOCOL = ${String(DEV_IDENTITY_PROTOCOL)};`)) {
+    throw new Error(
+      `${checkout} runs an older dev identity version; check out a newer commit there before seeding.`,
+    );
+  }
+}
+
 /**
  * Fills the home from the installed app. `readKeychain(service, account)` returns a secret string
  * or null; macOS asks the owner once for each item. The home changes only when the installed
@@ -1121,6 +1151,7 @@ export async function seedDevIdentityHome({
       throw new Error(`No installed Scient data at ${installed.stateDir}.`);
     }
     assertHomeLayout(home, installed);
+    assertHomeCheckoutMatches(home);
     recoverInterruptedCopy(home.stateDir);
     const marker = readJsonObject(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER));
     if (marker?.seededFrom !== undefined && !force) {
@@ -1238,6 +1269,7 @@ export function setupHomeCheckout({
   checkout,
   ref = "origin/main",
   home = resolveDevIdentityHome(),
+  installed = resolveInstalledApp(),
   run = (command, args, options) =>
     NodeChildProcess.execFileSync(command, args, { stdio: "inherit", ...options }),
   isAlive = processIsAlive,
@@ -1258,14 +1290,19 @@ export function setupHomeCheckout({
   }
   const release = acquireHomeLock(home, isAlive);
   try {
+    assertHomeLayout(home, installed);
     NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
     if (!exists(checkout)) {
       if (ref === "origin/main") run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", "main"]);
+      run("git", ["-C", repoRoot, "cat-file", "-e", `${ref}:scripts/dev-identity.mjs`]);
       run("git", ["-C", repoRoot, "worktree", "add", "--detach", checkout, ref]);
     }
-    if (!exists(NodePath.join(checkout, "scripts", "dev-identity.mjs"))) {
+    const source = readText(NodePath.join(checkout, "scripts", "dev-identity.mjs")) ?? "";
+    if (
+      !source.includes(`export const DEV_IDENTITY_PROTOCOL = ${String(DEV_IDENTITY_PROTOCOL)};`)
+    ) {
       throw new Error(
-        `${checkout} is at a commit without the dev identity code; check out a newer commit there.`,
+        `${checkout} is at a commit without this dev identity version; check out a newer commit there.`,
       );
     }
     if (!exists(link)) NodeFS.symlinkSync(home.root, link);

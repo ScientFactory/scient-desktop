@@ -56,6 +56,7 @@ const decrypt = (key, name, blob) => {
   return Buffer.concat([decipher.update(blob.subarray(29)), decipher.final()]);
 };
 
+const PROTOCOL_LINE = "export const DEV_IDENTITY_PROTOCOL = 1;\n";
 const homeAt = (root) => ({ root, stateDir: NodePath.join(root, "scient-next-dev") });
 
 /** A home whose vault is file-protected, as `seed` leaves it. */
@@ -745,7 +746,7 @@ describe("what a copy must not carry over", () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
     const checkout = NodePath.join(root, "scient-desktop-identity");
-    write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), "");
+    write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), PROTOCOL_LINE);
     setupHomeCheckout({ repoRoot: root, checkout, home, run: () => {} });
     assert.equal(vaultProtection(home.stateDir), "file");
     assert.equal(ensurePortableVault(home.stateDir), false);
@@ -798,7 +799,7 @@ describe("setupHomeCheckout", () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
     const checkout = NodePath.join(root, "scient-desktop-identity");
-    write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), "");
+    write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), PROTOCOL_LINE);
     const calls = [];
     setupHomeCheckout({ repoRoot: root, checkout, home, run: (...args) => calls.push(args) });
     assert.deepEqual(calls, []);
@@ -1180,5 +1181,64 @@ describe("cookie jar placement", () => {
       { name: "session", value: "home", sealed: 0 },
     ]);
     assert.equal(NodeFS.existsSync(NodePath.join(partition, "Cookies")), false);
+  });
+});
+
+describe("third review guards", () => {
+  it("does not start a home whose data folder is linked into the installed app", async () => {
+    const root = scratch();
+    const installedState = NodePath.join(root, "installed", "userdata");
+    NodeFS.mkdirSync(installedState, { recursive: true });
+    const home = homeAt(NodePath.join(root, "home"));
+    NodeFS.mkdirSync(home.root, { recursive: true });
+    NodeFS.symlinkSync(installedState, home.stateDir);
+    const error = await importDevIdentity({
+      targetStateDir: home.stateDir,
+      home,
+      installed: { stateDir: installedState },
+    }).catch((cause) => cause);
+    assert.equal(error?.fatal, true);
+    assert.deepEqual(NodeFS.readdirSync(installedState), []);
+  });
+
+  it("refuses to seed while the home checkout runs an older version", async () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const checkout = NodePath.join(root, "scient-desktop-identity");
+    write(
+      NodePath.join(checkout, "scripts", "dev-identity.mjs"),
+      "export const DEV_IDENTITY_PROTOCOL = 0;\n",
+    );
+    write(NodePath.join(home.root, "dev-identity-home.json"), JSON.stringify({ checkout }));
+    const stateDir = NodePath.join(root, "installed", "userdata");
+    NodeFS.mkdirSync(stateDir, { recursive: true });
+    const error = await seedDevIdentityHome({
+      home,
+      installed: { stateDir, userData: root, vaultKeychainAccount: "a", cookieKeychains: [] },
+      readKeychain: async () => null,
+      isRunning: () => false,
+    }).catch((cause) => cause);
+    assert.match(String(error), /older dev identity version/u);
+  });
+
+  it("checks the commit has this module before creating the home checkout", () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const checkout = NodePath.join(root, "scient-desktop-identity");
+    const calls = [];
+    assert.throws(() =>
+      setupHomeCheckout({
+        repoRoot: root,
+        checkout,
+        ref: "abc123",
+        home,
+        run: (command, args) => {
+          calls.push(args.slice(2).join(" "));
+          if (args[2] === "cat-file") throw new Error("no such path");
+        },
+      }),
+    );
+    assert.deepEqual(calls, ["cat-file -e abc123:scripts/dev-identity.mjs"]);
+    assert.equal(NodeFS.existsSync(checkout), false);
   });
 });

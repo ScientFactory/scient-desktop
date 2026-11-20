@@ -280,7 +280,7 @@ Keychain items.
 Set it up once, from an up-to-date checkout:
 
 ```sh
-pnpm dev:identity setup     # or: setup --checkout <folder>/scient-desktop-identity
+pnpm dev:identity setup     # options: --checkout <folder>/scient-desktop-identity, --ref <commit>
 pnpm dev:identity seed      # optional, once: copy from the installed Scient app
 cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
 ```
