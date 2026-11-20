@@ -33,6 +33,7 @@ import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
+import { wordAround } from "../../writing/fontTarget";
 import { catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
 import {
   canWriteMarkdownDocumentFont,
@@ -491,22 +492,13 @@ function clearMarkdownFormatting(): Command {
   };
 }
 
-/** The word around a caret (letters, digits, underscore) inside its text block, or null. */
+/** The word around a caret inside its text block, or null (see `wordAround`). */
 function wordAroundCaret(state: EditorState): { from: number; to: number } | null {
   const { $from } = state.selection;
   if (!$from.parent.isTextblock) return null;
   const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
-  const isLetter = (char: string | undefined) =>
-    char !== undefined && /[\p{L}\p{M}\p{N}_]/u.test(char);
-  // An apostrophe between two letters belongs to the word ("don't", "l'arbre").
-  const isWord = (at: number) =>
-    isLetter(text[at]) ||
-    (/['\u2019]/u.test(text[at] ?? "") && isLetter(text[at - 1]) && isLetter(text[at + 1]));
-  let start = $from.parentOffset;
-  let end = start;
-  while (isWord(start - 1)) start -= 1;
-  while (isWord(end)) end += 1;
-  return start === end ? null : { from: $from.start() + start, to: $from.start() + end };
+  const word = wordAround(text, $from.parentOffset);
+  return word === null ? null : { from: $from.start() + word.start, to: $from.start() + word.end };
 }
 
 /**

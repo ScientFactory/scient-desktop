@@ -13,7 +13,7 @@ function editorOver(runs: ReadonlyArray<ReadonlyArray<ReturnType<typeof mark>>>)
       storedMarks: null,
       doc: {
         nodesBetween: (_from: number, _to: number, visit: (node: unknown) => void) =>
-          runs.forEach((marks) => visit({ isText: true, marks })),
+          runs.forEach((marks) => visit({ isText: true, text: "word", marks })),
       },
     },
   } as unknown as Editor;

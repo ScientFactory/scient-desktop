@@ -2,6 +2,7 @@ import type { ChainedCommands, Editor } from "@tiptap/core";
 import type { Mark } from "@tiptap/pm/model";
 import { latexVisualFontMetrics } from "./latexVisualLayout";
 import { normalizeFontSize } from "../writing/fontChoices";
+import { holdsFont, sharedValue, wordAround } from "../writing/fontTarget";
 import { declaredLatexCompiler } from "./latexCompiler";
 import { latexFontFamilyDeclaration, type LatexFontEngine } from "./latexTextFormatting";
 
@@ -24,7 +25,7 @@ const LEADING_RATIO = 1.2;
 /**
  * The size and font shared by the whole selection. A value is null when the text has none, and
  * the matching `Mixed` flag is true when the selection holds several. A named size (`\large`)
- * reports its number for the document's class size.
+ * reports its number for the document's class size. Whitespace and code are ignored (`holdsFont`).
  */
 export function latexFontState(
   editor: Editor | null,
@@ -57,15 +58,23 @@ export function latexFontState(
   if (selection.empty) read(editor.state.storedMarks ?? selection.$from.marks());
   else {
     doc.nodesBetween(selection.from, selection.to, (node) => {
-      if (node.isText) read(node.marks);
+      if (!node.isText) return;
+      if (
+        holdsFont(
+          node.text ?? "",
+          node.marks.some((mark) => mark.type.name === "code"),
+        )
+      )
+        read(node.marks);
     });
   }
-  const only = <T>(values: Set<T>): T | null => (values.size === 1 ? [...values][0]! : null);
+  const size = sharedValue(sizes);
+  const family = sharedValue(families);
   return {
-    size: only(sizes),
-    family: only(families),
-    sizeMixed: sizes.size > 1,
-    familyMixed: families.size > 1,
+    size: size.value,
+    family: family.value,
+    sizeMixed: size.mixed,
+    familyMixed: family.mixed,
   };
 }
 
@@ -79,18 +88,17 @@ function runFontChange(
 ): boolean {
   const { selection } = editor.state;
   const { $from } = selection;
-  let start = $from.parentOffset;
-  let end = start;
-  if (selection.empty && $from.parent.isTextblock) {
-    const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
-    const isWord = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}_]/u.test(char);
-    while (isWord(text[start - 1])) start -= 1;
-    while (isWord(text[end])) end += 1;
-  }
+  const word =
+    selection.empty && $from.parent.isTextblock
+      ? wordAround(
+          $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc"),
+          $from.parentOffset,
+        )
+      : null;
   const chain = editor.chain().focus();
-  if (start === end) return change(chain).run();
+  if (word === null) return change(chain).run();
   const base = $from.start();
-  return change(chain.setTextSelection({ from: base + start, to: base + end }))
+  return change(chain.setTextSelection({ from: base + word.start, to: base + word.end }))
     .setTextSelection(selection.from)
     .run();
 }

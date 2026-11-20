@@ -1,5 +1,6 @@
 // The value of one mark attribute (a font size or family) over the selection, shown in the font panel.
 import type { EditorState } from "prosemirror-state";
+import { holdsFont, sharedValue } from "../../writing/fontTarget";
 import { scientMarkdownSchema } from "./schema";
 
 /**
@@ -22,12 +23,16 @@ export function selectionMarkValue<T extends string | number>(
   }
   const values = new Set<T | null>();
   state.doc.nodesBetween(selection.from, selection.to, (node) => {
-    if (!node.isText || /^\s*$/u.test(node.text ?? "")) return;
-    if (node.marks.some((m) => m.type.name === "code")) return;
+    if (!node.isText) return;
+    if (
+      !holdsFont(
+        node.text ?? "",
+        node.marks.some((m) => m.type.name === "code"),
+      )
+    )
+      return;
     const value = node.marks.find((m) => m.type === type)?.attrs[attribute];
     values.add(valid(value) ? value : null);
   });
-  return values.size === 1
-    ? { value: [...values][0] ?? null, mixed: false }
-    : { value: null, mixed: values.size > 1 };
+  return sharedValue(values);
 }
