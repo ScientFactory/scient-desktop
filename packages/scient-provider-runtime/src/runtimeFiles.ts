@@ -11,10 +11,11 @@ import * as NodeZlib from "node:zlib";
 import * as Tar from "tar";
 import * as Yauzl from "yauzl";
 
-import type {
-  ManagedRuntimeArchiveFormat,
-  ManagedRuntimeChecksum,
-  ManagedRuntimeExtractionLimits,
+import {
+  MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES,
+  type ManagedRuntimeArchiveFormat,
+  type ManagedRuntimeChecksum,
+  type ManagedRuntimeExtractionLimits,
 } from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
@@ -30,9 +31,6 @@ const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000] as const;
 const MAX_RETRY_AFTER_MS = 4 * 60 * 60 * 1_000;
 // Covers all four jittered backoffs; longer server waits belong to durable recovery.
 const LOCAL_RETRY_WAIT_BUDGET_MS = 65_000;
-/** Largest artifact the installer downloads; release discovery rejects larger ones. */
-export const MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
-const MAX_DOWNLOAD_BYTES = MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES;
 // Compressed downloads and expanded payloads have independent budgets.
 // Providers must explicitly opt in above the unchanged default below.
 const MAX_EXPANDED_BYTES = 768 * 1024 * 1024;
@@ -416,6 +414,8 @@ interface ManagedRuntimeDownloadInput {
   readonly partialPath?: string | undefined;
   readonly allowedHosts: ReadonlyArray<string>;
   readonly expectedSize: number;
+  /** The artifact family's reviewed limit; the shared default when absent. */
+  readonly maxBytes?: number | undefined;
   readonly signal: AbortSignal;
   /** From the bytes kept by an earlier try, when a try starts, then as bytes arrive. */
   readonly onProgress?: (downloaded: number, total: number) => void;
@@ -759,7 +759,7 @@ async function downloadOnce(
         contentLength !== null &&
         (!Number.isSafeInteger(contentLength) ||
           contentLength < 0 ||
-          contentLength > MAX_DOWNLOAD_BYTES ||
+          contentLength > (input.maxBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) ||
           contentLength !== input.expectedSize)
       ) {
         await response.body.cancel().catch(() => undefined);
@@ -780,7 +780,10 @@ async function downloadOnce(
       transfer.receivedBytes += chunk.byteLength;
       hash?.update(chunk);
       resetIdleTimer();
-      if (downloaded > MAX_DOWNLOAD_BYTES || downloaded > input.expectedSize) {
+      if (
+        downloaded > (input.maxBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) ||
+        downloaded > input.expectedSize
+      ) {
         source.destroy(
           new ManagedRuntimeFileError("Managed runtime download exceeded the reviewed size.", {
             failureClass: "size_mismatch",

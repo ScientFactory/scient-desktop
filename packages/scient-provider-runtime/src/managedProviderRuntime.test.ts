@@ -1076,6 +1076,29 @@ describe("ManagedProviderRuntime mutation lock ownership", () => {
   });
 });
 
+describe("ManagedProviderRuntime download limit", () => {
+  it("downloads within the family's reviewed limit", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
+    temporaryRoots.push(root);
+    const limits: Array<number | undefined> = [];
+    const runtime = new ManagedProviderRuntime(
+      root,
+      { providerDirectory: "test-provider", displayName: "Test Provider" },
+      {
+        download: async ({ destination, maxBytes }) => {
+          limits.push(maxBytes);
+          await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+          await NodeFSP.writeFile(destination, "working-runtime", { flag: "wx" });
+        },
+        verify: async () => undefined,
+        smoke: async () => undefined,
+      },
+    );
+    await install(runtime, artifact("1.0.0", { maxDownloadBytes: 1024 * 1024 * 1024 }));
+    expect(limits).toEqual([1024 * 1024 * 1024]);
+  });
+});
+
 describe("ManagedProviderRuntime ZIP composition", () => {
   it.each(["malformed", "extraction-limit"] as const)(
     "keeps the active runtime when ZIP %s validation fails during install",

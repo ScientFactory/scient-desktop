@@ -6,6 +6,8 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
 
 export type ManagedRuntimeArchiveFormat = "raw" | "tar.gz" | "zip";
+/** Largest artifact the installer downloads unless a family's reviewed policy allows more. */
+export const MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 /** Distinct release families can belong to the same user-facing provider. */
 export const MANAGED_RUNTIME_CATALOG_PROVIDERS = [
   "codex",
@@ -71,6 +73,8 @@ export interface ManagedRuntimeArtifactPolicy {
   /** App-compiled identity for vendors whose downloads use version and artifact query parameters. */
   readonly releaseUrlTemplate?: string;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
+  /** Reviewed download limit above the shared default; raising it needs a new contract revision. */
+  readonly maxDownloadBytes?: number | undefined;
   /** Reviewed archive-specific limits; omitted for small single-binary releases. */
   readonly extractionLimits?: ManagedRuntimeExtractionLimits | undefined;
   readonly executablePath: string;
@@ -272,6 +276,9 @@ export function hydrateManagedRuntimeArtifact(
   if (
     receipt.size <= 0 ||
     !Number.isSafeInteger(receipt.size) ||
+    // A family with a zstd copy may download that instead; each transfer keeps the limit.
+    (policy.compressedArtifactName === undefined &&
+      receipt.size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)) ||
     receipt.checksum.digest.length !== expectedDigestLength ||
     !/^[0-9a-f]+$/u.test(receipt.checksum.digest)
   ) {
