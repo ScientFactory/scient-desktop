@@ -595,57 +595,64 @@ const hasRelativeNodeScript = (processes: string) =>
     return !argument.startsWith("/") && !/^[A-Za-z]:[/\\]/.test(argument);
   });
 // SCIENT-FORK:END
+// SCIENT-FORK:START — one pass over /proc, retried by runningExecutables.
+const LINUX_PROCESS_SCAN_PASSES = 5;
+
+/**
+ * Every running process's executable, arguments resolved against its folder; the id of the
+ * first process whose executable read but whose arguments or folder did not; or undefined
+ * without a /proc.
+ */
+const scanLinuxProcesses = Effect.fn("cloud.pinned_runtime.scan_linux_processes")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+) {
+  const pids = yield* fs.readDirectory("/proc").pipe(Effect.option);
+  if (Option.isNone(pids)) return undefined;
+  const executables: Array<string> = [];
+  for (const pid of pids.value) {
+    if (!/^\d+$/.test(pid)) continue;
+    // Unreadable ones belong to other users or are this user's non-dumpable daemons (systemd
+    // --user, ssh-agent). Neither runs a t3 runtime, and bailing on them would never prune.
+    const executable = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.option);
+    // Node's executable path alone does not identify its package runtime.
+    if (Option.isNone(executable)) continue;
+    const argumentsText = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
+    const cwd = yield* fs.readLink(`/proc/${pid}/cwd`).pipe(Effect.option);
+    if (Option.isNone(argumentsText) || Option.isNone(cwd)) return pid;
+    executables.push(
+      executable.value,
+      ...argumentsText.value
+        .split("\0")
+        .filter(Boolean)
+        .map((arg) => path.resolve(cwd.value, arg)),
+    );
+  }
+  return executables;
+});
+// SCIENT-FORK:END
+
 const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const runner = yield* ProcessRunner.ProcessRunner;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   if (platform === "linux") {
-    const pids = yield* fs.readDirectory("/proc").pipe(Effect.option);
-    if (Option.isNone(pids)) return Option.none<string>();
-    const executables: Array<string> = [];
-    for (const pid of pids.value) {
-      if (!/^\d+$/.test(pid)) continue;
-      // Unreadable ones belong to other users or are this user's non-dumpable daemons (systemd
-      // --user, ssh-agent). Neither runs a t3 runtime, and bailing on them would never prune.
-      const executable = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.option);
-      // SCIENT-FORK:START — Node's executable path alone does not identify its package runtime.
-      if (Option.isSome(executable)) {
-        const argumentsText = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
-        const cwd = yield* fs.readLink(`/proc/${pid}/cwd`).pipe(Effect.option);
-        if (Option.isNone(argumentsText) || Option.isNone(cwd)) {
-          // One that exited runs nothing; a busy machine always has some. Only the kernel's
-          // "no such process" proves it: /proc can hide a live one (hidepid), and a zombie,
-          // a leader whose threads live on or a reused id still answer, leaving the list unknown.
-          // The ids are this server's only when /proc is its own PID namespace's.
-          const ownProc = yield* fs.readLink("/proc/self").pipe(
-            Effect.map((self) => self === String(process.pid)),
-            Effect.orElseSucceed(() => false),
-          );
-          const exited =
-            ownProc &&
-            (yield* Effect.sync(() => {
-              try {
-                process.kill(Number(pid), 0);
-                return false;
-              } catch (error) {
-                return (error as NodeJS.ErrnoException).code === "ESRCH";
-              }
-            }));
-          if (exited) continue;
-          return Option.none<string>();
-        }
-        executables.push(
-          executable.value,
-          ...argumentsText.value
-            .split("\0")
-            .filter(Boolean)
-            .map((arg) => path.resolve(cwd.value, arg)),
-        );
+    // SCIENT-FORK:START — a process that exits mid-scan does not leave the list unknown.
+    // A pass that met a process it could not read is retried: one that exited is gone from
+    // the next pass. The same process unreadable twice is running, and its list unknown.
+    let unreadable: string | undefined;
+    for (let pass = 0; pass < LINUX_PROCESS_SCAN_PASSES; pass += 1) {
+      const scan = yield* scanLinuxProcesses(fs, path);
+      if (scan === undefined) return Option.none<string>();
+      if (typeof scan !== "string") {
+        return scan.length === 0 ? Option.none<string>() : Option.some(scan.join("\n"));
       }
-      // SCIENT-FORK:END
+      if (scan === unreadable) return Option.none<string>();
+      unreadable = scan;
     }
-    return executables.length === 0 ? Option.none<string>() : Option.some(executables.join("\n"));
+    return Option.none<string>();
+    // SCIENT-FORK:END
   }
   const result = yield* runner
     .run({

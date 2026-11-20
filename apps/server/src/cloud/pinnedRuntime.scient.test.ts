@@ -16,46 +16,38 @@ const missing = (path: string) =>
   PlatformError.systemError({
     _tag: "NotFound",
     module: "FileSystem",
-    method: "readLink",
+    method: "readFile",
     pathOrDescriptor: path,
   });
 
-// Above any pid_max (Linux's is at most 2^22), so no process has it; this test's own is alive.
-const EXITED_PID = "2147483646";
-const LIVE_PID = String(process.pid);
+/** What process 7 does after the first pass met it with only its executable readable. */
+type Next = "exits" | "stays unreadable" | "reads, running 1.0.0";
 
 /**
- * The real file system, with a Linux `/proc` of one readable process and one whose
- * executable reads once, then nothing else of it does: one that exited, or one still
- * running whose /proc entry is gone too (as hidepid hides it).
+ * The real file system, with a Linux `/proc` of a readable process 1 and a process 7 whose
+ * executable reads but whose arguments do not, on the first pass over `/proc`.
  */
-type Next = "exits" | "stays unreadable" | "exits, in another namespace's /proc";
-
-const withProc = (real: FileSystem.FileSystem, next: Next) => {
-  let executableReads = 0;
-  const pid = next === "stays unreadable" ? LIVE_PID : EXITED_PID;
-  const unreadable = (path: string) => Effect.fail(missing(path));
+const withProc = (real: FileSystem.FileSystem, next: Next, runtime: string) => {
+  let pass = 0;
+  const unreadable = () => pass === 1 || next === "stays unreadable";
   return FileSystem.FileSystem.of({
     ...real,
-    readDirectory: (path, options) =>
-      path === "/proc" ? Effect.succeed(["1", "self", pid]) : real.readDirectory(path, options),
+    readDirectory: (path, options) => {
+      if (path !== "/proc") return real.readDirectory(path, options);
+      pass += 1;
+      return Effect.succeed(pass > 1 && next === "exits" ? ["1", "self"] : ["1", "self", "7"]);
+    },
     readLink: (path) => {
-      if (path === "/proc/self") {
-        return Effect.succeed(next === "exits, in another namespace's /proc" ? "1" : LIVE_PID);
-      }
       if (path === "/proc/1/exe") return Effect.succeed("/usr/lib/systemd/systemd");
-      if (path === "/proc/1/cwd") return Effect.succeed("/");
-      if (path === `/proc/${pid}/exe`) {
-        executableReads += 1;
-        return executableReads === 1 ? Effect.succeed("/usr/bin/sleep") : unreadable(path);
-      }
-      if (path === `/proc/${pid}/cwd`) return unreadable(path);
+      if (path === "/proc/1/cwd" || path === "/proc/7/cwd") return Effect.succeed("/");
+      if (path === "/proc/7/exe") return Effect.succeed("/usr/bin/node");
       return real.readLink(path);
     },
-    stat: (path) => (path === `/proc/${pid}` ? unreadable(path) : real.stat(path)),
     readFileString: (path, encoding) => {
       if (path === "/proc/1/cmdline") return Effect.succeed("/usr/lib/systemd/systemd\0");
-      if (path === `/proc/${pid}/cmdline`) return unreadable(path);
+      if (path === "/proc/7/cmdline") {
+        return unreadable() ? Effect.fail(missing(path)) : Effect.succeed(`node\0${runtime}\0`);
+      }
       return real.readFileString(path, encoding);
     },
   });
@@ -76,29 +68,31 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes on Linux", (it) => {
         yield* real.writeFileString(sentinel, `${version}\n`);
         yield* real.utimes(sentinel, 0, 0);
       }
-      return yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
-        Effect.provideService(FileSystem.FileSystem, withProc(real, next)),
+      const runtime = path.join(baseDir, "runtime", "versions", "1.0.0", "t3");
+      const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
+        Effect.provideService(FileSystem.FileSystem, withProc(real, next, runtime)),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Environment, { T3CODE_INSTALL_BIN_DIR: baseDir }),
         Effect.provide(ProcessRunner.layer),
       );
+      return removed.toSorted();
     });
 
   it.effect("still prunes when a process exits while the process list is read", () =>
     Effect.gen(function* () {
-      assert.deepEqual((yield* prune("exits")).toSorted(), ["1.0.0", "1.1.0"]);
+      assert.deepEqual(yield* prune("exits"), ["1.0.0", "1.1.0"]);
+    }),
+  );
+
+  it.effect("keeps the runtime a process runs once a second pass reads it", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* prune("reads, running 1.0.0"), ["1.1.0"]);
     }),
   );
 
   it.effect("prunes nothing while a running process cannot be read", () =>
     Effect.gen(function* () {
       assert.deepEqual(yield* prune("stays unreadable"), []);
-    }),
-  );
-
-  it.effect("prunes nothing when /proc's ids are not this server's to check", () =>
-    Effect.gen(function* () {
-      assert.deepEqual(yield* prune("exits, in another namespace's /proc"), []);
     }),
   );
 });
