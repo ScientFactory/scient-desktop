@@ -37,6 +37,31 @@ export function providerAuthLabel(
   return auth.label ?? auth.type;
 }
 
+// SCIENT-FORK:START — a custom endpoint names its server and where it was set, whatever else
+// the card shows for the account.
+function providerEndpointText(
+  auth: Pick<ServerProvider["auth"], "type" | "endpoint" | "endpointSource">,
+  resolve: MessageResolver,
+): string | null {
+  if (auth.type !== "customEndpoint" || auth.endpoint === undefined) return null;
+  const endpoint = auth.endpoint;
+  if (auth.endpointSource === "claude-settings")
+    return resolve(
+      msg("Sends requests to {endpoint}. Set by ANTHROPIC_BASE_URL in Claude's settings.", {
+        endpoint,
+      }),
+    );
+  if (auth.endpointSource === "environment")
+    return resolve(
+      msg(
+        "Sends requests to {endpoint}. Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
+        { endpoint },
+      ),
+    );
+  return resolve(msg("Sends requests to {endpoint}.", { endpoint }));
+}
+// SCIENT-FORK:END
+
 // Antigravity's local health check verifies installation, not Google sign-in.
 // API-key and Agent Platform warnings still need attention.
 function isAntigravitySignInUnchecked(provider: ServerProvider): boolean {
@@ -120,7 +145,12 @@ export function getProviderSummary(
       headline: authLabel
         ? resolve(msg("Authenticated · {method}", { method: authLabel }))
         : resolve(msg("Authenticated")),
-      detail: provider.message ?? null,
+      // SCIENT-FORK:START — a custom endpoint names its server and where it was set.
+      detail:
+        [provider.message, providerEndpointText(provider.auth, resolve)]
+          .filter((part) => part != null)
+          .join(" ") || null,
+      // SCIENT-FORK:END
     };
   }
   return {

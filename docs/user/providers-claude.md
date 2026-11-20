@@ -155,6 +155,22 @@ remaining wait when Claude reports a reset time. Claude may keep the turn open u
 reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
 when its displayed wait began.
 
+## Claude shows "Custom API endpoint"
+
+Claude sends its requests to Anthropic unless `ANTHROPIC_BASE_URL` points it somewhere else, such
+as OpenRouter or a local router. When it does, Settings → Providers shows **Custom API endpoint**
+and the line under it names that server and where the setting comes from:
+
+- **Claude's settings**: the `env` section of `~/.claude/settings.json` (or the file in this
+  provider's `CLAUDE_CONFIG_DIR`), a project's `.claude/settings.json`, or a `--settings` launch
+  argument. Another tool may have written it, or it may remain from an earlier Claude Code setup.
+- **Environment variable**: this provider's Environment variables in Scient, or a variable set on
+  your computer.
+
+Signing in to a Claude account does not change where requests go. If you did not mean to use
+another server, remove `ANTHROPIC_BASE_URL` from that place and restart Scient. A failed turn on a
+custom endpoint names the server it went to under the error.
+
 ## Steering
 
 A steer waits until Claude finishes the tool calls it is running, then Claude reads it

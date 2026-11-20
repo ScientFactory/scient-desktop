@@ -29,7 +29,10 @@ then checks shape and privacy: an event name, at most 64 properties of strings u
 characters, finite numbers, booleans or arrays of up to 32 of those, 16 KiB in all, and no free-text
 key (`prompt`, `message`, `error`, `path`, `url`, `email` and the like) or value that looks like a
 path, link or email address. Revision 11 permits a validated `email` only on
-`install.account_observed`; ordinary events retain the same exclusions.
+`install.account_observed`; ordinary events retain the same exclusions. A Claude account on a
+custom API endpoint also reports that endpoint as separate `endpointHost`, `endpointPort` and
+`endpointScheme` fields (never a link, credentials, path or query) and `endpointSource`
+(`claude-settings` or `environment`).
 Every event is queued at the full `diagnostic` level the gateway reads, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
@@ -806,7 +809,7 @@ failed without a process exit. Builds up to 0.6.30 dropped these codes.
   `toolServerOwner`: `scient` for Scient's own server, `connector` for one Scient delivered to the
   session, `user` for one in the profile's own `mcp_config.json`, or `unknown` when no single
   source lists the name; and `httpStatus` when Scient's bridge reported one), and
-  `harness_error` for another harness error; Droid reports its turn-end reason
+  `harness_error` for another harness error; a Claude turn sent to a custom API endpoint carries `customEndpoint: true`; Droid reports its turn-end reason
   (`model_usage_exhausted`, `model_rate_limited`, …) and `no_active_subscription`.
   [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each
   provider's known codes, ChatGPT sharing codes included by name, and the contract itself drops

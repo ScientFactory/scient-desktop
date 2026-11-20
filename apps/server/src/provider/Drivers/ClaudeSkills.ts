@@ -148,6 +148,10 @@ function claudeManagedSettingsPaths(
   ];
 }
 
+// SCIENT-FORK:START — managed settings outrank every other source of a custom endpoint.
+export const claudeManagedSettingsFiles = claudeManagedSettingsPaths;
+// SCIENT-FORK:END
+
 /** Claude Code settings files, lowest precedence first. */
 function claudeSettingsPaths(
   path: Path.Path,

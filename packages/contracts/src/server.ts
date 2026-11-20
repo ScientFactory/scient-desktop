@@ -75,6 +75,9 @@ export const ServerProviderAuth = Schema.Struct({
   workspaceId: Schema.optional(TrimmedNonEmptyString),
   /** Origin of the custom endpoint the instance sends its requests to. */
   endpoint: Schema.optional(TrimmedNonEmptyString),
+  // SCIENT-FORK:START — where the custom endpoint was set, so Providers can point to it.
+  endpointSource: Schema.optional(Schema.Literals(["claude-settings", "environment"])),
+  // SCIENT-FORK:END
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 

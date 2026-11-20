@@ -78,6 +78,26 @@ describe("ProviderInstanceCard", () => {
     expect(toggle.textContent).toBe("developer@example.com");
   });
 
+  it("names a custom endpoint's server when Claude has no account email", async () => {
+    await using screen = await renderCard(
+      provider({
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        auth: {
+          status: "authenticated",
+          type: "customEndpoint",
+          label: "Custom API endpoint",
+          endpoint: "http://127.0.0.1:3456",
+          endpointSource: "claude-settings",
+        },
+      }),
+      "editor",
+    );
+    expect(screen.container.textContent).toContain(
+      "Sends requests to http://127.0.0.1:3456. Set by ANTHROPIC_BASE_URL in Claude's settings.",
+    );
+  });
+
   it("keeps why setup failed behind an info button beside the status", async () => {
     const reason =
       "Scient could not install the private Codex runtime. The download server returned HTTP 504 on all 5 tries.";

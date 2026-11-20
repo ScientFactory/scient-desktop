@@ -25,4 +25,40 @@ describe("getProviderSummary (Scient)", () => {
       detail: null,
     });
   });
+
+  it("names a custom Claude endpoint and where it was set", () => {
+    const claude = (endpointSource?: "claude-settings" | "environment"): ServerProvider => ({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "2.1.302",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+        endpoint: "http://127.0.0.1:3456",
+        ...(endpointSource ? { endpointSource } : {}),
+      },
+      checkedAt: "2026-11-20T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    });
+
+    expect(getProviderSummary(claude("claude-settings"))).toEqual({
+      headline: "Authenticated · Custom API endpoint",
+      detail:
+        "Sends requests to http://127.0.0.1:3456. Set by ANTHROPIC_BASE_URL in Claude's settings.",
+    });
+    expect(getProviderSummary(claude("environment")).detail).toBe(
+      "Sends requests to http://127.0.0.1:3456. Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
+    );
+    expect(getProviderSummary(claude()).detail).toBe("Sends requests to http://127.0.0.1:3456.");
+    // An upgrade notice does not hide the endpoint.
+    expect(
+      getProviderSummary({ ...claude(), message: "Update Claude Code to use Opus 5.5." }).detail,
+    ).toBe("Update Claude Code to use Opus 5.5. Sends requests to http://127.0.0.1:3456.");
+  });
 });

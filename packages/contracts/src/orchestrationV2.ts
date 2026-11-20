@@ -1756,6 +1756,15 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   httpStatus: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
   // SCIENT-FORK: whose tool server failed to start, for a failure caused by one.
   toolServerOwner: Schema.optional(Schema.Literals(["scient", "connector", "user", "unknown"])),
+  // SCIENT-FORK:START — the custom API endpoint the request went to instead of the vendor's, and
+  // where it was set. Origin only: never credentials, path or query.
+  customEndpoint: Schema.optional(
+    Schema.Struct({
+      origin: TrimmedNonEmptyString,
+      source: Schema.Literals(["claude-settings", "environment"]),
+    }),
+  ),
+  // SCIENT-FORK:END
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 

@@ -4,6 +4,9 @@ import {
 } from "./scient/threadTimeline/presentation";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { msg } from "gt-react";
+// SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+import { customEndpointFailureNote } from "./scient/providerConnection/customEndpointFailureNote";
+// SCIENT-FORK:END
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   checkpointSupportsRewind,
@@ -334,7 +337,11 @@ export function providerErrorPresentation(
         item.failure.class === "usage_limit"
           ? resolve(msg("Usage limit reached"))
           : item.title?.trim() || resolve(msg("Provider error")),
-      detail: item.failure.message,
+      // SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
+      detail: [item.failure.message, customEndpointFailureNote(item.failure, resolve)]
+        .filter((part) => part !== null)
+        .join("\n\n"),
+      // SCIENT-FORK:END
     };
   }
   const progress =

@@ -209,6 +209,16 @@ import {
   discoverClaudeSkills,
   readClaudeSettingsEnv,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+// SCIENT-FORK:START — managed settings outrank every other source of a custom endpoint.
+import { claudeManagedSettingsFiles } from "../../provider/Drivers/ClaudeSkills.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a failed turn names the custom endpoint it went to.
+import {
+  type ClaudeApiEndpoint,
+  resolveClaudeApiEndpoint,
+  withClaudeApiEndpoint,
+} from "../../scient/providerLifecycle/ClaudeApiEndpoint.ts";
+// SCIENT-FORK:END
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -5075,6 +5085,18 @@ function withClaudeAssistantErrorCode(
   }
   return { ...failure, code: `assistant_${assistantError}` };
 }
+
+/** Only a result the API answered went to an endpoint; a local setup failure never left. */
+function claudeResultReachedApi(
+  message: SDKResultMessage,
+  assistantError: SDKAssistantMessageError | undefined,
+): boolean {
+  return (
+    assistantError !== undefined ||
+    message.terminal_reason === "api_error" ||
+    (message.subtype === "success" && message.api_error_status != null)
+  );
+}
 // SCIENT-FORK:END
 
 function providerFailureFromResult(
@@ -5480,6 +5502,9 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly settingsCwd: string | null;
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
+  // SCIENT-FORK:START — the custom API endpoint this query launched with, if any.
+  readonly apiEndpoint: ClaudeApiEndpoint | undefined;
+  // SCIENT-FORK:END
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
@@ -6103,6 +6128,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     }
     return adapterOptions.environment[name];
   });
+  // SCIENT-FORK:START — the custom endpoint a query launches with, in the same precedence.
+  const resolveClaudeApiEndpointAtLaunch = Effect.fn(
+    "ClaudeAdapterV2.resolveClaudeApiEndpointAtLaunch",
+  )(function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
+    // Managed policy wins over --settings, which wins over local, project and user settings.
+    const managedFiles = claudeManagedSettingsFiles(path, hostPlatform, adapterOptions.environment);
+    for (const settingsFile of managedFiles.toReversed()) {
+      const value = yield* readSettingsEnv(settingsFile, "ANTHROPIC_BASE_URL");
+      if (value !== undefined) return resolveClaudeApiEndpoint({ ANTHROPIC_BASE_URL: value }, {});
+    }
+    const launchValue = launchArgSettings?.env?.ANTHROPIC_BASE_URL;
+    if (typeof launchValue === "string")
+      return resolveClaudeApiEndpoint({ ANTHROPIC_BASE_URL: launchValue }, {});
+    for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
+      const value = yield* readSettingsEnv(settingsFile, "ANTHROPIC_BASE_URL");
+      if (value !== undefined) return resolveClaudeApiEndpoint({ ANTHROPIC_BASE_URL: value }, {});
+    }
+    return resolveClaudeApiEndpoint({}, adapterOptions.environment);
+  });
+  // SCIENT-FORK:END
   const resolveToolSearchOverride = (
     cwd: string | null,
     launchArgSettings: ClaudeSdkSettings | undefined,
@@ -12773,14 +12818,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
                 : null;
-            // SCIENT-FORK: a failure with no API status is named by the SDK's closed assistant error.
-            const terminalFailure = withClaudeAssistantErrorCode(
-              resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt }
-                : resultFailure,
-              message,
-              context.latestAssistantError,
+            // SCIENT-FORK:START — a failure with no API status is named by the SDK's closed
+            // assistant error, and one sent to a custom endpoint names that endpoint.
+            const failedEndpoint =
+              resultFailure !== null &&
+              claudeResultReachedApi(message, context.latestAssistantError)
+                ? liveQuery.apiEndpoint
+                : undefined;
+            const terminalFailure = withClaudeApiEndpoint(
+              withClaudeAssistantErrorCode(
+                resultFailure?.class === "usage_limit"
+                  ? { ...resultFailure, resetAt }
+                  : resultFailure,
+                message,
+                context.latestAssistantError,
+              ),
+              failedEndpoint,
             );
+            // SCIENT-FORK:END
             const status = interrupted
               ? "interrupted"
               : limitedCompaction !== null
@@ -13756,6 +13811,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.modelSelection,
             launchArgSettings,
           );
+          // The custom API endpoint this query launches with, read before opening for the same reason.
+          const apiEndpoint = yield* resolveClaudeApiEndpointAtLaunch(
+            turnInput.runtimePolicy.cwd,
+            launchArgSettings,
+          );
           yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
           // Failed replacement retires only its captured wake state.
           return yield* Effect.gen(function* () {
@@ -13915,6 +13975,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeThreadId,
               settingsCwd: turnInput.runtimePolicy.cwd,
               launchArgSettings,
+              // SCIENT-FORK:START — the custom API endpoint this query launched with, if any.
+              apiEndpoint,
+              // SCIENT-FORK:END
               query: querySession,
               queryPolicyKey,
               selection: compiledSelection,
