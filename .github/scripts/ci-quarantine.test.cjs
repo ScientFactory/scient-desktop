@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   ADVISORY_JOBS,
+  AFTER_FAILURE,
   CONSEQUENCES,
   WITNESSES,
   RUN_DESPITE_FAILURE,
@@ -380,6 +381,84 @@ test("a quarantined failure that skipped a later check blocks", () => {
   assert.equal(skipped.ok, false);
   assert.match(skipped.blocked.join("\n"), /Test release checks \(skipped\) did not run/);
   assert.equal(decide([step("Test release checks", "cancelled")]).ok, false);
+});
+
+// The steps listed after each `- name: <step>` in the workflows, as GitHub names them.
+function stepsAfter(workflow, name) {
+  const lines = workflow.split("\n");
+  const found = [];
+  lines.forEach((line, index) => {
+    const own = /^(\s*)- name: (.+)$/.exec(line);
+    if (!own || own[2].trim() !== name) return;
+    const indent = own[1].length;
+    const later = [];
+    for (const next of lines.slice(index + 1)) {
+      if (/^\s*(#.*)?$/.test(next)) continue;
+      const lead = /^\s*/.exec(next)[0].length;
+      if (lead < indent || (lead === indent && !next.slice(indent).startsWith("- "))) break;
+      if (lead === indent) later.push({});
+      // Fields of the row's own step come before any later step; deeper lines are values.
+      if (later.length === 0 || (lead !== indent && lead !== indent + 2)) continue;
+      const field = /^(?:- )?(name|uses|if): ?(.*)$/.exec(
+        next.slice(lead === indent ? indent : indent + 2),
+      );
+      if (field) later.at(-1)[field[1]] = field[2];
+    }
+    found.push(
+      later.map((step) => ({
+        name: step.name ?? `Run ${(step.uses ?? "").split(" ")[0]}`,
+        if: step.if ?? "",
+      })),
+    );
+  });
+  return found;
+}
+
+test("every checked-in row's step is followed only by steps its waiver lets skip or that still run", () => {
+  // A later check skipped after the waived step blocks the row (previous test), so a step added
+  // after a row's step without `always()` or `!cancelled()` silently switches the row off.
+  const workflows = fs
+    .readdirSync(path.join(ROOT, ".github/workflows"))
+    .filter((file) => file.endsWith(".yml"))
+    .map((file) => fs.readFileSync(path.join(ROOT, ".github/workflows", file), "utf8"));
+  for (const row of readRegister(ROOT).rows) {
+    const jobs = workflows.flatMap((workflow) => stepsAfter(workflow, row.step));
+    assert.ok(jobs.length > 0, `${row.id}: no workflow step is named ${row.step}`);
+    for (const later of jobs)
+      for (const step of later)
+        assert.ok(
+          AFTER_FAILURE.test(step.name) ||
+            RUN_DESPITE_FAILURE.includes(step.name) ||
+            /always\(\)|!cancelled\(\)/.test(step.if),
+          `${row.id}: ${step.name} after ${row.step} would be skipped by its failure`,
+        );
+  }
+});
+
+test("the step-order check reads GitHub's step names and conditions", () => {
+  const workflow = [
+    "jobs:",
+    "  one:",
+    "    steps:",
+    "      - name: Flaky",
+    "        run: exit 1",
+    "      # A comment",
+    "      - uses: actions/upload-artifact@043fb46d1a93 # v7",
+    "        with:",
+    "          name: not-a-step-name",
+    "      - name: Later check",
+    "        if: ${{ !cancelled() && steps.flaky.outcome == 'failure' }}",
+    "        run: exit 0",
+    "  two:",
+    "    steps:",
+    "      - name: Other",
+  ].join("\n");
+  assert.deepEqual(stepsAfter(workflow, "Flaky"), [
+    [
+      { name: "Run actions/upload-artifact@043fb46d1a93", if: "" },
+      { name: "Later check", if: "${{ !cancelled() && steps.flaky.outcome == 'failure' }}" },
+    ],
+  ]);
 });
 
 test("a script row's signature must be in the output that ended its step", () => {
