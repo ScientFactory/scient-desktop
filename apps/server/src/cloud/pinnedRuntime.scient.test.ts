@@ -12,20 +12,23 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import { prunePinnedRuntimes } from "./pinnedRuntime.ts";
 
-const missing = (path: string) =>
+const failure = (path: string, tag: "NotFound" | "PermissionDenied") =>
   PlatformError.systemError({
-    _tag: "NotFound",
+    _tag: tag,
     module: "FileSystem",
     method: "readLink",
     pathOrDescriptor: path,
   });
 
 /**
- * The real file system, with a Linux `/proc` of one process that is still running and
- * one that `next` describes: its executable reads once, then its arguments do not.
+ * The real file system, with a Linux `/proc` of one readable process and one whose
+ * executable reads once, then nothing else of it does. `next` says whether its /proc
+ * entry is then gone (it exited) or still there (running, but no longer readable).
  */
 const withProc = (real: FileSystem.FileSystem, next: "exits" | "stays unreadable") => {
   let executableReads = 0;
+  const unreadable = (path: string) =>
+    Effect.fail(failure(path, next === "exits" ? "NotFound" : "PermissionDenied"));
   return FileSystem.FileSystem.of({
     ...real,
     readDirectory: (path, options) =>
@@ -35,16 +38,20 @@ const withProc = (real: FileSystem.FileSystem, next: "exits" | "stays unreadable
       if (path === "/proc/1/cwd") return Effect.succeed("/");
       if (path === "/proc/2/exe") {
         executableReads += 1;
-        return executableReads === 1 || next === "stays unreadable"
-          ? Effect.succeed("/usr/bin/sleep")
-          : Effect.fail(missing(path));
+        return executableReads === 1 ? Effect.succeed("/usr/bin/sleep") : unreadable(path);
       }
-      if (path === "/proc/2/cwd") return Effect.fail(missing(path));
+      if (path === "/proc/2/cwd") return unreadable(path);
       return real.readLink(path);
     },
+    stat: (path) =>
+      path === "/proc/2"
+        ? next === "exits"
+          ? Effect.fail(failure(path, "NotFound"))
+          : real.stat("/")
+        : real.stat(path),
     readFileString: (path, encoding) => {
       if (path === "/proc/1/cmdline") return Effect.succeed("/usr/lib/systemd/systemd\0");
-      if (path === "/proc/2/cmdline") return Effect.fail(missing(path));
+      if (path === "/proc/2/cmdline") return unreadable(path);
       return real.readFileString(path, encoding);
     },
   });

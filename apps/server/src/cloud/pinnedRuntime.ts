@@ -614,9 +614,13 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
         const argumentsText = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
         const cwd = yield* fs.readLink(`/proc/${pid}/cwd`).pipe(Effect.option);
         if (Option.isNone(argumentsText) || Option.isNone(cwd)) {
-          // One that exited since its executable was read runs nothing; a busy machine always
-          // has some. One still running that cannot be read leaves the list unknown.
-          const exited = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.isFailure);
+          // One whose /proc entry is gone has exited, so it runs nothing; a busy machine always
+          // has some. Anything else (still running but unreadable, a zombie, a leader whose
+          // threads live on) leaves the list unknown.
+          const exited = yield* fs.stat(`/proc/${pid}`).pipe(
+            Effect.as(false),
+            Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound")),
+          );
           if (exited) continue;
           return Option.none<string>();
         }
