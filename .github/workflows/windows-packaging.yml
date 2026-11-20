@@ -337,6 +337,7 @@ jobs:
       # The voice helper must need nothing Windows lacks (no Visual C++
       # Redistributable) and must transcribe through the app's runtime owner.
       - name: Transcribe with the installed voice runtime
+        id: voice_transcription
         shell: pwsh
         run: node scripts/qualify-whisper-runtime.mjs (Join-Path $env:SCIENT_PACKAGING_INSTALL 'resources/whisper-runtime')
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -346,7 +347,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       # Last: each install here replaces the registered upgrade install above.
+      # It also runs after a voice transcription failure, whose quarantine row
+      # (ci-flakes.md) waives that step only when every later check still ran.
       - name: Install into a fresh, a shared and a linked folder
+        if: ${{ success() || (!cancelled() && steps.voice_transcription.outcome == 'failure') }}
         shell: pwsh
         timeout-minutes: 10
         run: node scripts/qualify-windows-install-folder.mjs fixtures (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path
