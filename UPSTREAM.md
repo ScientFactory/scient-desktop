@@ -707,6 +707,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`f2d4df0367451f1771e94619021dfbb9982b463f` is recorded in
+[the 2026-11-20 f6d941fa4f receipt](docs/internals/t3-upstream-sync-20261120-f6d941fa4f.md).
+Literal merge `7baaaf047c8c698fa9ea8c383184b73c1a5922a5` has owned base
+`94197d30deac94197f89d566932d5a5f4f73c792` and the frozen official target as parents, retaining
+the 35 official commits after `f6d941fa4f`. The range is mostly fixes to Antigravity sign-in,
+rules and its managed CLI, credential scoping, delegation and chat, plus linking several
+environments at once. Google-account Antigravity instances keep their own sign-in, so limits need
+no keychain. The alignment is Scient PR #1038. Release remains separate.
+
+The previous committed alignment through
 `f6d941fa4fa41741a881b8f646c6737d845ea91c` is recorded in
 [the 2026-11-20 0317d4f4e5 receipt](docs/internals/t3-upstream-sync-20261120-0317d4f4e5.md).
 Literal merge `c3ab5cc489c6598120ecbf6c571da9db1f7e2016` has owned base
@@ -717,7 +727,7 @@ forwarding another environment's ports and a setting that turns off the preview 
 keeps its managed Antigravity 1.4.5 harness supported instead of T3's 1.5 floor. T3's migrations
 100-102 are Scient's 104-106. The alignment is Scient PR #1035. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `0317d4f4e5d7d3b5aba37bed0d61c304fb24d7ae` is recorded in
 [the 2026-11-19 0226239a41 receipt](docs/internals/t3-upstream-sync-20261119-0226239a41.md).
 Literal merge `52bd8cf7bccbb78bde2af1e22937478e0f1695c0` has owned base
@@ -1747,8 +1757,10 @@ qualification first.
 T3 also removed harness support and rates Antigravity below 1.5 broken; Scient's manifest keeps
 1.4.5 supported, and the driver, prompt and permission seams keep the harness path (its own
 `yolo`/`auto_edit` modes, video linking, runtime-policy approvals when no native Auto is
-offered). Usage limits never read the agy CLI's shared OS keyring item: on macOS the read waits
-on a Keychain prompt and holds a file-system worker, which stalled the server's file operations.
+offered). Google-account instances keep their sign-in in the instance profile (T3's
+`SSH_CONNECTION` marker), and usage limits never read the agy CLI's shared OS keyring item, which
+T3 offers only for Gemini Enterprise: on macOS the read waits on a Keychain prompt and holds a
+file-system worker, which stalled the server's file operations.
 
 Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
 worth proposing to T3:

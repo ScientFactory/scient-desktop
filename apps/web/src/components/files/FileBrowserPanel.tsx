@@ -183,6 +183,9 @@ export default function FileBrowserPanel({
   // SCIENT-FORK:END
   const searchSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  // Tree path of the revealed row. Folders restored or loaded later insert rows above it, so each
+  // path update scrolls to it again until the user takes over the scroll position.
+  const followedRevealRef = useRef<string | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
@@ -428,6 +431,17 @@ export default function FileBrowserPanel({
   }, [expansionRoot, loadedDirectoryPaths, model, pendingExpandedPaths]);
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — Scient's lazy tree applies each folder's listing before it emits a snapshot.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the imperative Pierre tree back to the revealed row after folders above it load
+  useEffect(() => {
+    const followed = followedRevealRef.current;
+    if (followed === null || treeSnapshot.entries.size === 0) return;
+    model.scrollToPath(followed, { focus: false, offset: "center" });
+  }, [model, treeSnapshot]);
+  // SCIENT-FORK:END
+  const stopFollowingReveal = () => {
+    followedRevealRef.current = null;
+  };
   const handleSearchValueChange = (value: string) => {
     if (!isSearching && value.trim().length > 0) {
       // Starting a search must not look like an external file selection.
@@ -507,6 +521,7 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
+      followedRevealRef.current = null;
       return;
     }
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
@@ -538,7 +553,10 @@ export default function FileBrowserPanel({
     let cancelled = false;
     void treeControllerRef.current?.ensurePath(selectedPath).then((found) => {
       if (cancelled || !found) return;
-      const selectedKind = entryKindsRef.current.get(selectedPath);
+      // The listing can land before React updates the ref; the controller already has it.
+      const selectedKind =
+        treeControllerRef.current?.entryKind(selectedPath) ??
+        entryKindsRef.current.get(selectedPath);
       if (selectedKind === undefined) return;
       const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
       const selectedItem = model.getItem(selectedTreePath);
@@ -551,6 +569,7 @@ export default function FileBrowserPanel({
       if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
         treeSelectionPathRef.current = null;
         handledRevealRef.current = revealRequest;
+        followedRevealRef.current = null;
         return;
       }
       treeSelectionPathRef.current = null;
@@ -563,6 +582,7 @@ export default function FileBrowserPanel({
       if ("expand" in selectedItem) selectedItem.expand();
       selectedItem.select();
       model.scrollToPath(selectedTreePath, { focus: true, offset: "center" });
+      followedRevealRef.current = selectedTreePath;
       queueMicrotask(() => {
         syncingSelectionRef.current = false;
       });
@@ -587,7 +607,11 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
+      onWheel={stopFollowingReveal}
+      onPointerDown={stopFollowingReveal}
+      onTouchStart={stopFollowingReveal}
       onKeyDown={(event) => {
+        stopFollowingReveal();
         const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
         if (isModPressed && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
           event.preventDefault();

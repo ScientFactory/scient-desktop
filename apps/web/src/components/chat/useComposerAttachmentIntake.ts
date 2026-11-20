@@ -1,6 +1,5 @@
 import { stageComposerAttachmentBatch } from "./composerAttachmentStaging";
 import { composerDraftAttachmentFacts } from "./composerAttachmentFiles";
-import { useComposerDraftStore } from "../../composerDraftStore";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { msg } from "gt-react";
 import { m } from "~/i18n/messages";
@@ -21,6 +20,8 @@ import {
   type DraftId,
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
+  composerTargetKey,
+  useComposerDraftStore,
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import type { PendingUserInputProgress } from "../../pendingUserInput";
@@ -50,10 +51,12 @@ import {
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
+import { serializeComposerImages } from "./composerImagePersistence";
 import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
 
@@ -266,22 +269,40 @@ export function useComposerAttachmentIntake(input: {
     const pendingInsertion = imageAttachmentsGetChips
       ? composerEditorRef.current?.captureAttachmentInsertion()
       : undefined;
+    // An unanswered question that closes hands its preparing images to the thread's draft.
+    const movedThread = () => preparingImages.map(movedPreparingImageThread).find(Boolean);
+    const preparingTargetKey = (thread: ReturnType<typeof movedThread>) =>
+      thread ? composerTargetKey(thread) : attachmentTargetKey;
     // Runs at commit and again in the finally. The size check keeps an empty second run from
     // recreating a cleared question's count: `-0` is not a decrement. A send held for these
     // images is dropped when one failed or none joined the draft.
     const releasePreparingImages = (cancelSubmission: boolean) => {
-      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds, {
+      const thread = movedThread();
+      const removed = removePreparingComposerImages(preparingTargetKey(thread), preparingIds, {
         cancelSubmission,
       });
-      if (questionAttachmentTarget && removed.size > 0)
+      if (questionAttachmentTarget && !thread && removed.size > 0)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -removed.size);
     };
+    let unrestoredImagesError: string | null = null;
+    let movedImages: {
+      thread: NonNullable<ReturnType<typeof movedThread>>;
+      images: ComposerImageAttachment[];
+    } | null = null;
     const stageAttachments = async (): Promise<boolean> => {
       const staged = await stageComposerAttachmentBatch({
         images: preparingImages,
         files: acceptedFiles,
-        isImageWanted: (id) => isPreparingComposerImage(attachmentTargetKey, id),
+        isImageWanted: (id) => {
+          const image = preparingImages.find((candidate) => candidate.id === id);
+          return isPreparingComposerImage(
+            preparingTargetKey(image ? movedPreparingImageThread(image) : undefined),
+            id,
+          );
+        },
         readExisting: () => {
+          // The thread's draft admits moved images itself and names those it has no room for.
+          if (movedThread()) return [];
           const targetDraft = getComposerDraft(attachmentDraftTarget) ?? {
             images: [],
             files: [],
@@ -305,13 +326,20 @@ export function useComposerAttachmentIntake(input: {
         stillWanted: () =>
           acceptedImages.length === 0 ||
           !questionAttachmentTarget ||
+          movedThread() !== undefined ||
           questionAttachmentTarget in useQuestionAttachmentPreparation.getState().counts,
         commit: ({ images, files, error }) => {
+          const thread = movedThread();
+          const draftStore = useComposerDraftStore.getState();
           let insertedAny = false;
           if (files.length > 0) {
-            const storedIds = new Set(addComposerFilesToDraft([...files]));
+            const storedIds = new Set(
+              thread
+                ? draftStore.addFiles(thread, [...files])
+                : addComposerFilesToDraft([...files]),
+            );
             const storedFiles = files.filter((file) => storedIds.has(file.id));
-            if (storedFiles.length > 0) {
+            if (storedFiles.length > 0 && !thread) {
               insertedAny = insertAttachmentReferences(
                 storedFiles.map(fileContextReference),
                 options?.selection,
@@ -332,9 +360,6 @@ export function useComposerAttachmentIntake(input: {
               });
             }
           }
-          // Same tick as the draft insert below, with nothing that could render in between, so
-          // the strip swaps each placeholder for its ready tile under one key in one render.
-          releasePreparingImages(error !== null);
           const nextImages: ComposerImageAttachment[] = images.map(({ id, file }) => ({
             type: "image",
             id,
@@ -344,18 +369,39 @@ export function useComposerAttachmentIntake(input: {
             previewUrl: URL.createObjectURL(file),
             file,
           }));
+          const unrestoredImageNames: string[] = [];
           const storedImageIds = new Set(
-            nextImages.length === 1 && nextImages[0]
-              ? addComposerImage(nextImages[0])
-              : nextImages.length > 1
-                ? addComposerImagesToDraft(nextImages)
-                : [],
+            thread
+              ? draftStore.addImages(thread, nextImages, {
+                  onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
+                })
+              : nextImages.length === 1 && nextImages[0]
+                ? addComposerImage(nextImages[0])
+                : nextImages.length > 1
+                  ? addComposerImagesToDraft(nextImages)
+                  : [],
           );
+          // Same tick as the draft insert above, with nothing that could render in between, so
+          // the strip swaps each placeholder for its ready tile under one key in one render.
+          releasePreparingImages(error !== null || unrestoredImageNames.length > 0);
+          if (unrestoredImageNames.length > 0) {
+            unrestoredImagesError = m(
+              msg(
+                "{names} could not be restored: the composer is at its {limit}-attachment limit.",
+                {
+                  names: unrestoredImageNames.join(", "),
+                  limit: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+                },
+              ),
+            );
+          }
           const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
           for (const image of nextImages) {
             if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
           }
-          if (storedImages.length > 0 && imageAttachmentsGetChips) {
+          if (thread) {
+            if (storedImages.length > 0) movedImages = { thread, images: storedImages };
+          } else if (storedImages.length > 0 && imageAttachmentsGetChips) {
             insertedAny =
               insertAttachmentReferences(
                 storedImages.map(imageContextReference),
@@ -366,7 +412,18 @@ export function useComposerAttachmentIntake(input: {
           return insertedAny;
         },
       });
-      if (staged.error !== null) setThreadError(threadId, staged.error);
+      const errors = [staged.error, unrestoredImagesError].filter(
+        (message): message is string => message !== null,
+      );
+      if (errors.length > 0) setThreadError(threadId, errors.join("\n"));
+      if (movedImages) {
+        // Only a mounted composer re-serializes images, so save the moved ones for a reload.
+        const { thread, images } = movedImages;
+        const serialized = await serializeComposerImages(images, []);
+        await useComposerDraftStore
+          .getState()
+          .appendPersistedAttachments(thread, images, serialized);
+      }
       return staged.inserted;
     };
     return await stageAttachments().finally(() => {

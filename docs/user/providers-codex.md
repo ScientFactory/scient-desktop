@@ -144,6 +144,22 @@ reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory
 contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
+## Use the OpenAI Chrome extension
+
+Connecting ChatGPT in **Settings → Providers** signs in the Codex provider.
+Using your signed-in Chrome profile through the extension requires a browser
+connection for the current Codex thread.
+
+If a Scient thread reports `The browser access host is unavailable`, its browser
+host is unavailable; this does not identify an extension connection failure.
+For a task that requested Chrome, follow [OpenAI's setup guide](https://learn.chatgpt.com/docs/chrome-extension),
+then select Chrome in a Codex chat in the ChatGPT desktop app.
+If the task runs on a remote environment, `localhost` in the desktop browser
+refers to your computer. Forward the remote page's port or use a URL reachable
+from your computer before repeating the task. Connecting to Scient through a
+relay or tunnel does not by itself expose that page. Scient's built-in browser
+preview uses its own browser session.
+
 ## Use Daybreak
 
 Models with cyber access programs show a Cyber Access option in the model

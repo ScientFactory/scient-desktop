@@ -66,7 +66,7 @@ function inhibitorCommand(
       return {
         command: "systemd-inhibit",
         args: [
-          "--what=idle:sleep",
+          "--what=sleep",
           // SCIENT-FORK: the name Linux shows for the inhibitor.
           "--who=Scient",
           "--why=Agents are working",

@@ -25,6 +25,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -123,7 +124,9 @@ it.live.each(controls.map(({ phase, name }) => ({ caseTitle: name, phase, name }
             yield* eventStore.publishCommitted(events);
           }),
       });
-      const sinkContext = yield* Layer.build(EventSink.layerFromStores).pipe(
+      const sinkContext = yield* Layer.build(
+        EventSink.layerFromStores.pipe(Layer.provide(ThreadViewers.layer)),
+      ).pipe(
         Effect.provideService(EventStore.EventStoreV2, controlledEvents),
         Effect.provideService(ProjectionStore.ProjectionStoreV2, controlledProjections),
       );

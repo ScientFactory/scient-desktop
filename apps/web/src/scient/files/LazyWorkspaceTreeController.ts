@@ -234,6 +234,11 @@ export class LazyWorkspaceTreeController {
     this.#emit();
   }
 
+  /** Current as soon as a listing lands, before React renders its snapshot. */
+  entryKind(relativePath: string): ProjectDirectoryEntry["kind"] | undefined {
+    return this.#entries.get(relativePath)?.kind;
+  }
+
   retry(relativeDirectory: string): Promise<boolean> {
     return this.load(relativeDirectory, true);
   }
