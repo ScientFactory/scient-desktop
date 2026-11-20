@@ -668,6 +668,21 @@ function acpRegistry(version: string, nativeVersion: string) {
   };
 }
 
+const OMP_RELEASES_URL = "https://api.github.com/repos/can1357/oh-my-pi/releases?per_page=20";
+
+function ompRelease(version: string) {
+  return {
+    tag_name: `v${version}`,
+    draft: false,
+    prerelease: false,
+    assets: Object.values(bundledCatalogJson.providers.omp.artifacts).map(({ artifactName }) => ({
+      name: artifactName,
+      browser_download_url: `https://github.com/can1357/oh-my-pi/releases/download/v${version}/${artifactName}`,
+      digest: `sha256:${"b".repeat(64)}`,
+    })),
+  };
+}
+
 function nextPatch(version: string): string {
   const match = /^(.*\.)([0-9]+)$/u.exec(version);
   if (!match) throw new Error(`Test version '${version}' has no numeric patch component.`);
@@ -710,12 +725,14 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
         draft: false,
         prerelease: false,
       });
-    if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest")
-      return Response.json({
-        tag_name: `v${bundledCatalogJson.providers.omp.version}`,
-        draft: false,
-        prerelease: false,
-      });
+    if (url === OMP_RELEASES_URL)
+      return Response.json([
+        {
+          tag_name: `v${bundledCatalogJson.providers.omp.version}`,
+          draft: false,
+          prerelease: false,
+        },
+      ]);
     if (url === "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest")
       return new Response(null, { status: 404 });
     if (url === "https://api.meta.ai/muse-code/channels/muse-stable") {
@@ -1024,22 +1041,62 @@ describe("managed runtime release discovery", () => {
     expect(Object.keys(result.catalog.providers.droid!.artifacts)).toHaveLength(6);
   });
 
-  it("refuses an Oh My Pi release outside the supported major", async () => {
+  it("keeps the qualified Oh My Pi release while only a new major is newer", async () => {
     const current = validateManagedRuntimeCatalog(bundledCatalogJson);
     const requested: string[] = [];
+    const reports: string[] = [];
+    const qualified = bundledCatalogJson.providers.omp.version;
     const fetch_ = async (input: URL) => {
       const url = input.toString();
       requested.push(url);
-      if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest") {
-        return Response.json({ tag_name: "v19.0.0", draft: false, prerelease: false, assets: [] });
+      if (url === OMP_RELEASES_URL) {
+        return Response.json([
+          ompRelease("19.0.1"),
+          ompRelease("19.0.0"),
+          ompRelease(qualified),
+          ompRelease("17.9.0"),
+        ]);
       }
       throw new Error(`Unexpected release request: ${url}`);
     };
-    await expect(refreshManagedRuntimeProvider(current, "omp", fetch_)).rejects.toThrow(
-      /19\.0\.0.*major 18/u,
+    const result = await refreshManagedRuntimeProvider(current, "omp", fetch_, (message) =>
+      reports.push(message),
     );
-    // Discovery stops at the stable pointer; no artifact metadata is fetched.
-    expect(requested).toEqual(["https://api.github.com/repos/can1357/oh-my-pi/releases/latest"]);
+    expect(result.changedProviders).toEqual([]);
+    expect(result.catalog).toBe(current);
+    expect(reports).toContain(
+      "Oh My Pi 19.0.1 is outside the supported major 18; it is not published until the new major is qualified.",
+    );
+    // Discovery stops at the release list; no artifact metadata is fetched.
+    expect(requested).toEqual([OMP_RELEASES_URL]);
+  });
+
+  it("discovers the newest Oh My Pi patch of the supported major past a newer major", async () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const patch = "18.99.1";
+    const fetch_ = async (input: URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === OMP_RELEASES_URL) {
+        return Response.json([
+          ompRelease("19.0.1"),
+          { ...ompRelease("18.99.2"), prerelease: true },
+          { ...ompRelease("18.99.3"), draft: true },
+          { tag_name: "nightly", draft: false, prerelease: false },
+          { ...ompRelease("18.99.9"), tag_name: "18.99.9" },
+          ompRelease(patch),
+          ompRelease("18.99.0"),
+        ]);
+      }
+      expect(
+        url.startsWith(`https://github.com/can1357/oh-my-pi/releases/download/v${patch}/`),
+      ).toBe(true);
+      expect(init?.method).toBe("HEAD");
+      return new Response(null, { headers: { "content-length": "100000000" } });
+    };
+    const result = await refreshManagedRuntimeProvider(current, "omp", fetch_);
+    expect(result.changedProviders).toEqual(["omp"]);
+    expect(result.catalog.providers.omp?.version).toBe(patch);
+    expect(Object.keys(result.catalog.providers.omp!.artifacts)).toHaveLength(6);
   });
 
   it("accepts only a strict Grok stable version", () => {

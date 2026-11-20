@@ -138,7 +138,8 @@ jobs:
     needs: discover
     if: needs.discover.outputs.available == 'true' && (needs.discover.outputs.changed == 'true' || !inputs.publish)
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # Qualify-only runs repeat each Windows qualification five times, about 6 minutes each on Arm.
+    timeout-minutes: ${{ !inputs.publish && 60 || 30 }}
     strategy:
       fail-fast: false
       matrix:

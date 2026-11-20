@@ -174,6 +174,7 @@ export class ManagedProviderRuntimeBusyError extends ManagedProviderRuntimeError
 
 const SMOKE_TIMEOUT_MS = 15_000;
 const MAX_SMOKE_OUTPUT_BYTES = 64 * 1024;
+const REMOVAL_WINDOWS_RETRY_BUDGET_MS = 60_000;
 
 export function managedRuntimeSmokeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const allowed = [
@@ -1000,7 +1001,12 @@ export class ManagedProviderRuntime {
     }
   }
 
-  async remove(): Promise<void> {
+  /**
+   * `signal` cancels removal only before its commit, the rename that takes the runtime away: a
+   * cancelled removal leaves the runtime untouched, and a committed one finishes.
+   */
+  async remove(options: { readonly signal?: AbortSignal | undefined } = {}): Promise<void> {
+    options.signal?.throwIfAborted();
     const exists = await NodeFSP.access(this.#root).then(
       () => true,
       () => false,
@@ -1008,27 +1014,31 @@ export class ManagedProviderRuntime {
     if (!exists) return;
     const lock = await this.#acquireMutation();
     try {
-      await this.#removeOwned(lock.signal);
+      await this.#removeOwned(lock.signal, options.signal);
     } finally {
       // The lock left with the root; this is a no-op unless removal rolled back.
       await lock.release();
     }
   }
 
-  async #removeOwned(signal: AbortSignal): Promise<void> {
+  async #removeOwned(signal: AbortSignal, cancellation?: AbortSignal): Promise<void> {
     this.#throwIfOwnershipLost(signal);
+    cancellation?.throwIfAborted();
     const parent = NodePath.dirname(this.#root);
     const tombstone = NodePath.join(
       parent,
       `${NodePath.basename(this.#root)}.removing-${process.pid}-${this.#dependencies.now()}`,
     );
     try {
-      // Make the managed runtime disappear atomically before recursively
-      // deleting it. A concurrent probe therefore sees either the complete
-      // runtime or no runtime, never a half-deleted version directory.
-      await this.#dependencies.filesystem.rename(this.#root, tombstone);
+      // Atomic before the recursive delete: probes see the whole runtime or none. A just-run
+      // executable can stay held on Windows past the usual 15 s, so removal waits longer.
+      await this.#dependencies.filesystem.rename(this.#root, tombstone, {
+        signal: cancellation,
+        windowsRetryBudgetMs: REMOVAL_WINDOWS_RETRY_BUDGET_MS,
+      });
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      cancellation?.throwIfAborted();
       throw new ManagedProviderRuntimeError(
         `Managed ${this.#displayName} could not be prepared for removal.`,
         { cause },

@@ -669,7 +669,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         message: `Removing Scient's private ${providerName} runtime.`,
       });
       yield* Effect.tryPromise({
-        try: () => runtime.remove(),
+        try: (signal) => runtime.remove({ signal }),
         catch: (cause) =>
           runtimeError(`Scient could not remove its private ${providerName} runtime.`, cause),
       });
