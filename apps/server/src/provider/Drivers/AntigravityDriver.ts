@@ -617,11 +617,8 @@ export const AntigravityDriver: ScientProviderDriver<
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
-      // SCIENT-FORK: the managed 1.4.5 harness keeps its sign-in in the profile, not the keyring.
-      runtimeUsesKeyring: installation.resolve(settings.binaryPath, processEnvironment).pipe(
-        Effect.map((executable) => executable.harnessPath === null),
-        Effect.orElseSucceed(() => false),
-      ),
+      // SCIENT-FORK: limits come from the instance's own profile, never the shared OS keyring.
+      readsSystemKeyring: false,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

@@ -74,6 +74,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
     nativeKeyring?: boolean;
+    readsSystemKeyring?: boolean;
+    onKeyringRead?: () => void;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -140,7 +142,17 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
+    ...(options.nativeKeyring
+      ? {}
+      : {
+          readKeyringSecret: Effect.sync(() => {
+            options.onKeyringRead?.();
+            return options.keyringSecret;
+          }),
+        }),
+    ...(options.readsSystemKeyring === undefined
+      ? {}
+      : { readsSystemKeyring: options.readsSystemKeyring }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -757,6 +769,24 @@ describe("Antigravity subscription limits", () => {
       decodeGoKeyringSecret(bytes(`go-keyring-encoded:${Buffer.from(value).toString("hex")}`)),
     ).toBe(value);
   });
+
+  // SCIENT-FORK: Scient's probe never reads the agy CLI's shared keyring item.
+  it.effect("leaves the shared keyring alone when told not to read it", () =>
+    Effect.gen(function* () {
+      let keyringReads = 0;
+      const { probe, requests } = yield* fixture({
+        missingToken: true,
+        readsSystemKeyring: false,
+        keyringSecret: JSON.stringify({
+          token: { access_token: "a", expiry: "2099-01-01T00:00:00Z" },
+        }),
+        onKeyringRead: () => keyringReads++,
+      });
+      expect((yield* probe).unavailable?.reason).toBe("unsupported");
+      expect(keyringReads).toBe(0);
+      expect(requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
