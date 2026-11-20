@@ -370,6 +370,7 @@ function MarkdownFontControls({
       onSize={(size) =>
         controller.execute(size === null ? "font-size-default" : `font-size-${size}`)
       }
+      onStep={(steps) => controller.stepFontSize(steps)}
     />
   );
 }

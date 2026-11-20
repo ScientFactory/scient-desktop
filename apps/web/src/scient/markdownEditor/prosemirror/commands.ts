@@ -33,7 +33,7 @@ import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
-import { wordAround } from "../../writing/fontTarget";
+import { holdsFont, steppedFontSize, wordAround } from "../../writing/fontTarget";
 import { catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
 import {
   canWriteMarkdownDocumentFont,
@@ -501,6 +501,16 @@ function wordAroundCaret(state: EditorState): { from: number; to: number } | nul
   return word === null ? null : { from: $from.start() + word.start, to: $from.start() + word.end };
 }
 
+/** A range without the whitespace at its ends: like toggleMark, a written span cannot keep it. */
+function trimmedRange(doc: ProseMirrorNode, from: number, to: number) {
+  const isSpace = (at: number) => /^\s$/u.test(doc.textBetween(at, at + 1));
+  let start = from;
+  let end = to;
+  while (start < end && isSpace(start)) start += 1;
+  while (end > start && isSpace(end - 1)) end -= 1;
+  return { start, end };
+}
+
 /**
  * Set one font mark on the selection; `null` removes it. At a caret it applies to the word
  * around it (as Word does), or, between words, to the typing marks. Every selected range gets
@@ -527,18 +537,65 @@ function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
     for (const { from, to } of ranges) {
       transaction = transaction.removeMark(from, to, type);
       if (!attrs) continue;
-      // Like toggleMark: the written span cannot keep whitespace at its ends.
-      const isSpace = (at: number) => /^\s$/u.test(state.doc.textBetween(at, at + 1));
-      let start = from;
-      let end = to;
-      while (start < end && isSpace(start)) start += 1;
-      while (end > start && isSpace(end - 1)) end -= 1;
+      const { start, end } = trimmedRange(state.doc, from, to);
       state.doc.nodesBetween(start, end, (node, position) => {
         if (!node.isInline || node.marks.some((mark) => mark.type === code)) return;
         transaction = transaction.addMark(
           Math.max(start, position),
           Math.min(end, position + node.nodeSize),
           type.create(attrs),
+        );
+      });
+    }
+    dispatch(transaction);
+    return true;
+  };
+}
+
+/**
+ * Move the size of every run of the selection (or of the word at the caret) by `steps` steps;
+ * each run keeps its difference with the others. Text without a size starts from the size it is
+ * drawn at (`drawnPoints`), so a heading word grows from the heading's size.
+ */
+function stepMarkdownFontSize(
+  steps: number,
+  drawnPoints: (position: number) => number | null,
+): Command {
+  return (state, dispatch) => {
+    const type = requiredMarkType("font_size");
+    const code = requiredMarkType("code");
+    const { empty, from } = state.selection;
+    const word = empty ? wordAroundCaret(state) : null;
+    if (empty && word === null) {
+      const typing = (state.storedMarks ?? state.selection.$from.marks()).find(
+        (mark) => mark.type === type,
+      );
+      const current = typing?.attrs.size ?? drawnPoints(from);
+      return typeof current === "number"
+        ? setMarkdownFontMark("font_size", { size: steppedFontSize(current, steps) })(
+            state,
+            dispatch,
+          )
+        : false;
+    }
+    if (!dispatch) return true;
+    const transaction = state.tr;
+    const ranges = word
+      ? [word]
+      : state.selection.ranges.map((range) => ({ from: range.$from.pos, to: range.$to.pos }));
+    for (const range of ranges) {
+      const { start, end } = trimmedRange(state.doc, range.from, range.to);
+      state.doc.nodesBetween(start, end, (node, position) => {
+        if (!node.isText || code.isInSet(node.marks)) return;
+        const own = type.isInSet(node.marks)?.attrs.size;
+        if (own === undefined && !holdsFont(node.text ?? "", false)) return;
+        const runFrom = Math.max(start, position);
+        const current = typeof own === "number" ? own : drawnPoints(runFrom);
+        if (current === null) return;
+        transaction.addMark(
+          runFrom,
+          Math.min(end, position + node.nodeSize),
+          type.create({ size: steppedFontSize(current, steps) }),
         );
       });
     }
@@ -778,6 +835,20 @@ export function runScientMarkdownCommand(
     state,
     dispatch,
     command !== "undo" && command !== "redo",
+  );
+}
+
+/** Move the selection's sizes by `steps` steps through the same history path as dock commands. */
+export function runScientMarkdownFontStep(
+  steps: number,
+  drawnPoints: (position: number) => number | null,
+  state: EditorState,
+  dispatch?: (transaction: Transaction) => void,
+): boolean {
+  return runExplicitScientMarkdownCommand(
+    stepMarkdownFontSize(steps, drawnPoints),
+    state,
+    dispatch,
   );
 }
 

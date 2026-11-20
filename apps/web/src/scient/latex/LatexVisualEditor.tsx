@@ -9,6 +9,7 @@ import {
   latexFontEngine,
   setLatexFontFamily,
   setLatexFontSize,
+  stepLatexFontSize,
 } from "./latexFontCommands";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
 import { mathColorSource } from "./mathColorSyntax";
@@ -9720,12 +9721,18 @@ function LatexVisualEditorReady(
         size={editingPresentation.fontSize}
         familyMixed={editingPresentation.fontFamilyMixed}
         sizeMixed={editingPresentation.fontSizeMixed}
-        bodySize={latexVisualLayoutProfile(mathSetupSource).baseFontPt}
         disabled={readOnly || !editor || !formattingAvailable || mathActive}
         isAvailable={(name) => latexFontAvailable(fontEngine, name)}
         unavailableNote="Needs XeLaTeX or LuaLaTeX"
         onFamily={(family) => setLatexFontFamily(editingTarget, family, fontEngine)}
         onSize={(size) => setLatexFontSize(editingTarget, size)}
+        onStep={(steps) =>
+          stepLatexFontSize(
+            editingTarget,
+            steps,
+            latexVisualLayoutProfile(mathSetupSource).baseFontPt,
+          )
+        }
       />
     ),
     direction: (

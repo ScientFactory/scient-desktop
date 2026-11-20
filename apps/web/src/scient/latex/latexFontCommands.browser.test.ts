@@ -3,7 +3,8 @@
 import { Editor, Mark } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
-import { latexFontState, setLatexFontSize } from "./latexFontCommands";
+import { drawnPointsAt } from "../writing/fontChoices";
+import { latexFontState, setLatexFontSize, stepLatexFontSize } from "./latexFontCommands";
 import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
 
 const marks = [
@@ -82,6 +83,47 @@ describe("LaTeX font commands in a real editor", () => {
       [" know ", undefined],
       ["café", 16],
       [" now", undefined],
+    ]);
+  });
+
+  it("+ and − move each word of a mixed selection by one point and keep the field empty", () => {
+    using fixture = open("alpha beta gamma");
+    const { editor } = fixture;
+    const drawn = drawnPointsAt(editor.view, 13)!;
+    select(editor, 2);
+    setLatexFontSize(editor, 11);
+    select(editor, 8);
+    setLatexFontSize(editor, 20);
+    select(editor, 0, 16);
+    stepLatexFontSize(editor, 1, 10);
+    expect(sizes(editor)).toEqual([
+      ["alpha", 12],
+      [" ", undefined],
+      ["beta", 21],
+      [" ", undefined],
+      ["gamma", drawn + 1],
+    ]);
+    expect(latexFontState(editor)).toMatchObject({ size: null, sizeMixed: true });
+    stepLatexFontSize(editor, -1, 10);
+    expect(sizes(editor).map(([, points]) => points)).toEqual([
+      11,
+      undefined,
+      20,
+      undefined,
+      drawn,
+    ]);
+  });
+
+  it("+ at a caret moves the word under it, from a named size", () => {
+    using fixture = open("one two");
+    const { editor } = fixture;
+    editor.commands.setTextSelection({ from: 1, to: 4 });
+    editor.commands.setMark("latexSize_large");
+    select(editor, 1);
+    stepLatexFontSize(editor, 1, 10);
+    expect(sizes(editor)).toEqual([
+      ["one", 13],
+      [" two", undefined],
     ]);
   });
 });

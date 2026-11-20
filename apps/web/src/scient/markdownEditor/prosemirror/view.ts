@@ -47,12 +47,14 @@ import {
   filterScientMarkdownSlashCommands,
   runScientMarkdownCommand,
   runScientMarkdownDocumentFont,
+  runScientMarkdownFontStep,
   runScientMarkdownTableInsert,
   type ScientMarkdownCommand,
   type ScientMarkdownTableDimensions,
 } from "./commands";
 import { scientMarkdownParser, scientMarkdownSchema } from "./schema";
 import { selectionMarkValue } from "./selectionMarkValue";
+import { drawnPointsAt } from "../../writing/fontChoices";
 import {
   addImageUploadPlaceholder,
   imageUploadPlaceholderPosition,
@@ -629,6 +631,19 @@ export class ScientMarkdownEditorView {
       else view.focus();
     }
     return handled;
+  }
+
+  /** Moves every run of the selection by `steps` size steps, each keeping its own size. */
+  stepFontSize(steps: number): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    view.focus();
+    return runScientMarkdownFontStep(
+      steps,
+      (position) => drawnPointsAt(view, position),
+      view.state,
+      view.dispatch,
+    );
   }
 
   setDocumentFont(font: MarkdownDocumentFont): boolean {

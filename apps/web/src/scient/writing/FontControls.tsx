@@ -13,10 +13,10 @@ import {
   FONT_GROUPS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
-  measureDocumentSize,
   measureSelectionSize,
   normalizeFontSize,
 } from "./fontChoices";
+import { FONT_SIZE_STEP } from "./fontTarget";
 
 /**
  * Content of `Text > Font / Size`, identical in both editors: a scrolling list of fonts and a
@@ -27,14 +27,14 @@ export function FontControls(props: {
   readonly size: number | null;
   readonly familyMixed?: boolean;
   readonly sizeMixed?: boolean;
-  /** The document's body size, where the size buttons start when the selection mixes sizes; measured when absent. */
-  readonly bodySize?: number;
   readonly disabled: boolean;
   /** Fonts the document cannot use are listed but disabled, with `unavailableNote` as the reason. */
   readonly isAvailable?: (name: string) => boolean;
   readonly unavailableNote?: string;
   readonly onFamily: (family: string | null) => void;
   readonly onSize: (size: number | null) => void;
+  /** Moves every run of the selection by `steps` size steps, each keeping its own size. */
+  readonly onStep: (steps: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -42,9 +42,6 @@ export function FontControls(props: {
   const [defaultSize, setDefaultSize] = useState(() =>
     props.size === null ? measureSelectionSize() : null,
   );
-  // Where the size buttons start from when the selection mixes sizes.
-  const [measuredSize] = useState(measureDocumentSize);
-  const documentSize = props.bodySize ?? measuredSize;
   const needle = query.trim().toLowerCase();
   const groups = FONT_GROUPS.map((group) => ({
     ...group,
@@ -142,13 +139,13 @@ export function FontControls(props: {
           variant="compact"
           min={FONT_SIZE_MIN}
           max={FONT_SIZE_MAX}
-          step={1}
+          step={FONT_SIZE_STEP}
           smallStep={0.5}
           disabled={props.disabled}
           value={props.sizeMixed ? null : (props.size ?? defaultSize)}
           format={{ maximumFractionDigits: 2 }}
           onValueChange={(value, details) => {
-            // From an empty (mixed) field the stepper would start at the minimum: start from the document size.
+            // From an empty (mixed) field the stepper would start at the minimum: each run steps instead.
             if (!props.sizeMixed || value === null) return;
             const step =
               details.reason === "increment-press"
@@ -160,7 +157,7 @@ export function FontControls(props: {
                     : 0;
             if (step === 0) return;
             details.cancel();
-            props.onSize(normalizeFontSize((documentSize ?? 12) + step));
+            props.onStep(step);
           }}
           onValueCommitted={(value) => {
             const size = value === null ? null : normalizeFontSize(value);

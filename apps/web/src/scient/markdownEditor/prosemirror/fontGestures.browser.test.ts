@@ -3,6 +3,8 @@
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
+import { drawnPointsAt } from "../../writing/fontChoices";
+import { selectionMarkValue } from "./selectionMarkValue";
 import { ScientMarkdownEditorView } from "./view";
 
 /** Mounts an editor on a throwaway host; `using` destroys both when the test ends. */
@@ -177,5 +179,34 @@ describe("font gestures in a real browser", () => {
       controller.execute("font-size-20");
       expect(refused(controller)).toBe(false);
     });
+  });
+
+  it("+ and − move each word of a mixed selection by one point and keep the field empty", () => {
+    using editor = open(
+      `<span style="font-size:11pt">alpha</span> <span style="font-size:20pt">beta</span> gamma\n`,
+    );
+    const { controller, view } = editor;
+    const drawn = drawnPointsAt(view, 14)!;
+    select(view, 0, 16);
+    controller.stepFontSize(1);
+    expect(refused(controller)).toBe(false);
+    expect(draft(controller)).toBe(
+      `<span style="font-size:12pt">alpha</span> <span style="font-size:21pt">beta</span> <span style="font-size:${drawn + 1}pt">gamma</span>\n`,
+    );
+    expect(selectionMarkValue(view.state, "font_size", "size", "number")).toEqual({
+      value: null,
+      mixed: true,
+    });
+    controller.stepFontSize(-1);
+    expect(draft(controller)).toContain(`<span style="font-size:11pt">alpha</span>`);
+  });
+
+  it("+ on a heading word starts from the heading's drawn size", () => {
+    using editor = open("# Title\n");
+    const { controller, view } = editor;
+    const drawn = drawnPointsAt(view, 2)!;
+    select(view, 2);
+    controller.stepFontSize(1);
+    expect(draft(controller)).toBe(`# <span style="font-size:${drawn + 1}pt">Title</span>\n`);
   });
 });

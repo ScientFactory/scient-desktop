@@ -1,5 +1,10 @@
 // Rules shared by the Markdown and LaTeX Visual editors: the word a font change at the caret
-// covers, and the text that counts when the size or font of a selection is shown.
+// covers, the text that counts when the size or font of a selection is shown, and the size one
+// step larger or smaller.
+import { FONT_SIZE_MAX, FONT_SIZE_MIN, normalizeFontSize } from "./fontChoices";
+
+/** Points added or removed by one step of the size buttons and shortcuts. */
+export const FONT_SIZE_STEP = 1;
 
 const isLetter = (char: string | undefined) =>
   char !== undefined && /[\p{L}\p{M}\p{N}_]/u.test(char);
@@ -31,4 +36,13 @@ export function sharedValue<T>(values: ReadonlySet<T | null>): {
   return values.size === 1
     ? { value: [...values][0] ?? null, mixed: false }
     : { value: null, mixed: values.size > 1 };
+}
+
+/**
+ * A size moved by `steps` steps, kept within the allowed range. Each run of a mixed selection
+ * moves by the same amount, so every word keeps its difference (as Word does).
+ */
+export function steppedFontSize(current: number, steps: number): number {
+  const target = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, current + steps * FONT_SIZE_STEP));
+  return normalizeFontSize(target) ?? current;
 }

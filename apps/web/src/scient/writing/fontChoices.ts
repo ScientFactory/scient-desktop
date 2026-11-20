@@ -43,10 +43,14 @@ export function measureSelectionSize(): number | null {
   return element === null ? null : pointsOf(element);
 }
 
-/** The size the document body is drawn at: the editable root holding the selection. */
-export function measureDocumentSize(): number | null {
-  const root = selectionElement()?.closest('[contenteditable="true"]');
-  return root ? pointsOf(root) : null;
+/** The size in points that the text at a document position is drawn at, or null. */
+export function drawnPointsAt(
+  view: { domAtPos(pos: number): { node: Node } },
+  pos: number,
+): number | null {
+  const { node } = view.domAtPos(pos);
+  const element = node instanceof Element ? node : node.parentElement;
+  return element === null ? null : pointsOf(element);
 }
 
 function pointsOf(element: Element): number | null {
