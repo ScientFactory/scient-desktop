@@ -144,7 +144,7 @@ export const claudeSelection = {
   model: claudeModel,
 } satisfies ModelSelection;
 
-export const claudePromptText = (text: string) =>
+const claudePromptText = (text: string) =>
   emptyMcpReplayPrompt(ProviderDriverKind.make("claudeAgent"), text);
 
 /** What a child's Claude turn receives when the parent's agent sent `text` (upstream b0b2c4f952). */
@@ -731,7 +731,8 @@ const makeFixtureState = Effect.gen(function* () {
         claudePrompt(turn) === delegatedPrompt
           ? delegatedResult
           : `Claude completed: ${claudePrompt(turn)}`,
-      steerReceived: (steer) => gates.steerReceived.get(withoutSenderNote(steer.message.text)),
+      // Exact text, sender note included: a steer from the wrong thread must not open the gate.
+      steerReceived: (steer) => gates.steerReceived.get(steer.message.text),
     }),
   ]);
   const continuationOffers = yield* Ref.make<

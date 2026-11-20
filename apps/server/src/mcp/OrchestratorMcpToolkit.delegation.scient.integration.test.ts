@@ -11,7 +11,6 @@ import {
   claudeInstanceId,
   claudeModel,
   agentClaudePromptText,
-  claudePromptText,
   claudeSelection,
   codexInstanceId,
   codexModel,
@@ -697,7 +696,7 @@ describe("orchestrator MCP delegation", () => {
       Effect.gen(function* () {
         const steerReceived = yield* Deferred.make<void>();
         // SCIENT-FORK: match the skill-scope projection (docs/internals/providers.md).
-        fx.gates.steerReceived.set(claudePromptText(childSteerText), steerReceived);
+        fx.gates.steerReceived.set(agentClaudePromptText(childSteerText), steerReceived);
         const { child, sent } = yield* steerIntoUntaskedChildRun(
           fx,
           { providerInstanceId: claudeInstanceId, model: claudeModel },
