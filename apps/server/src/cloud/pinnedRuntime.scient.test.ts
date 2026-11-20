@@ -21,7 +21,11 @@ const missing = (path: string) =>
   });
 
 /** What process 7 does after the first pass met it with only its executable readable. */
-type Next = "exits" | "stays unreadable" | "reads, running 1.0.0";
+type Next =
+  | "exits"
+  | "stays unreadable"
+  | "loses its executable, threads running on"
+  | "reads, running 1.0.0";
 
 /**
  * The real file system, with a Linux `/proc` of a readable process 1 and a process 7 whose
@@ -29,7 +33,7 @@ type Next = "exits" | "stays unreadable" | "reads, running 1.0.0";
  */
 const withProc = (real: FileSystem.FileSystem, next: Next, runtime: string) => {
   let pass = 0;
-  const unreadable = () => pass === 1 || next === "stays unreadable";
+  const unreadable = () => pass === 1 || next !== "reads, running 1.0.0";
   return FileSystem.FileSystem.of({
     ...real,
     readDirectory: (path, options) => {
@@ -39,8 +43,13 @@ const withProc = (real: FileSystem.FileSystem, next: Next, runtime: string) => {
     },
     readLink: (path) => {
       if (path === "/proc/1/exe") return Effect.succeed("/usr/lib/systemd/systemd");
-      if (path === "/proc/1/cwd" || path === "/proc/7/cwd") return Effect.succeed("/");
-      if (path === "/proc/7/exe") return Effect.succeed("/usr/bin/node");
+      if (path === "/proc/1/cwd") return Effect.succeed("/");
+      if (path === "/proc/7/cwd") return Effect.succeed("/");
+      if (path === "/proc/7/exe") {
+        return pass > 1 && next === "loses its executable, threads running on"
+          ? Effect.fail(missing(path))
+          : Effect.succeed("/usr/bin/node");
+      }
       return real.readLink(path);
     },
     readFileString: (path, encoding) => {
@@ -93,6 +102,8 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes on Linux", (it) => {
   it.effect("prunes nothing while a running process cannot be read", () =>
     Effect.gen(function* () {
       assert.deepEqual(yield* prune("stays unreadable"), []);
+      // Its main thread gone, its executable no longer reads, but it is still listed.
+      assert.deepEqual(yield* prune("loses its executable, threads running on"), []);
     }),
   );
 });

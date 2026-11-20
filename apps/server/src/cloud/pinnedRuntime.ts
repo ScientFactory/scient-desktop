@@ -601,11 +601,13 @@ const LINUX_PROCESS_SCAN_PASSES = 5;
 /**
  * Every running process's executable, arguments resolved against its folder; the id of the
  * first process whose executable read but whose arguments or folder did not; or undefined
- * without a /proc.
+ * without a /proc. `recheck`, the process the previous pass could not read, must read in
+ * full if it is still listed: its executable can vanish while its threads run on.
  */
 const scanLinuxProcesses = Effect.fn("cloud.pinned_runtime.scan_linux_processes")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  recheck: string | undefined,
 ) {
   const pids = yield* fs.readDirectory("/proc").pipe(Effect.option);
   if (Option.isNone(pids)) return undefined;
@@ -615,8 +617,11 @@ const scanLinuxProcesses = Effect.fn("cloud.pinned_runtime.scan_linux_processes"
     // Unreadable ones belong to other users or are this user's non-dumpable daemons (systemd
     // --user, ssh-agent). Neither runs a t3 runtime, and bailing on them would never prune.
     const executable = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.option);
+    if (Option.isNone(executable)) {
+      if (pid === recheck) return pid;
+      continue;
+    }
     // Node's executable path alone does not identify its package runtime.
-    if (Option.isNone(executable)) continue;
     const argumentsText = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
     const cwd = yield* fs.readLink(`/proc/${pid}/cwd`).pipe(Effect.option);
     if (Option.isNone(argumentsText) || Option.isNone(cwd)) return pid;
@@ -640,10 +645,10 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
   if (platform === "linux") {
     // SCIENT-FORK:START — a process that exits mid-scan does not leave the list unknown.
     // A pass that met a process it could not read is retried: one that exited is gone from
-    // the next pass. The same process unreadable twice is running, and its list unknown.
+    // the next pass. The same process listed and unreadable twice leaves the list unknown.
     let unreadable: string | undefined;
     for (let pass = 0; pass < LINUX_PROCESS_SCAN_PASSES; pass += 1) {
-      const scan = yield* scanLinuxProcesses(fs, path);
+      const scan = yield* scanLinuxProcesses(fs, path, unreadable);
       if (scan === undefined) return Option.none<string>();
       if (typeof scan !== "string") {
         return scan.length === 0 ? Option.none<string>() : Option.some(scan.join("\n"));
