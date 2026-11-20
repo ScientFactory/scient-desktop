@@ -20,16 +20,6 @@
       "owner": "Accounts",
       "quarantined": "2026-11-17",
       "expires": "2026-11-24"
-    },
-    {
-      "id": "linux-google-sign-in-restart",
-      "job": "Test 6",
-      "step": "Explain Google's sign-in refusal in Electron's browser",
-      "test": null,
-      "signature": "Error: Failed during Google refusing that site's Continue with Google",
-      "owner": "Browser access",
-      "quarantined": "2026-11-17",
-      "expires": "2026-11-24"
     }
   ]
 }

@@ -610,22 +610,6 @@ test("the consequence jobs and steps exist under these names", () => {
   }
 });
 
-test("the checked-in Google smoke row names the job its step runs in", () => {
-  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
-  const row = readRegister(ROOT).rows.find((r) => r.id === "linux-google-sign-in-restart");
-  assert.equal(row.job, "Test 6");
-  assert.match(
-    workflow,
-    /name: \$\{\{ matrix\.part == 1 && 'Test' \|\| format\('Test \{0\}', matrix\.part\) \}\}/,
-  );
-  assert.match(
-    workflow,
-    new RegExp(
-      `- name: ${row.step}\\n\\s+if: \\$\\{\\{ !cancelled\\(\\) && matrix\\.part == 6 \\}\\}`,
-    ),
-  );
-});
-
 test("steps that run despite an earlier failure say so in ci.yml, wherever they are", () => {
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
   for (const name of RUN_DESPITE_FAILURE) {
