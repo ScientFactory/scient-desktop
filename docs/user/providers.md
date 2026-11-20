@@ -197,10 +197,8 @@ The current subscription choices are:
 These are preferences, not a promise of account access. An implicit subscription selection
 uses the preferred model only when the provider actually offers it and it is eligible;
 it does not substitute whichever model happens to appear first in the catalog. Standalone
-Antigravity and Muse Code use the same preferred choices when offered. Scient Agent's
-Antigravity connections distinguish `google-antigravity/` from `antigravity-cli/`; their
-Hydrogen IDs are respectively `google-antigravity/gemini-4-hydrogen` and
-`antigravity-cli/gemini-4-hydrogen`.
+Antigravity and Muse Code use the same preferred choices when offered. Scient Agent does not
+offer Antigravity accounts.
 
 Older current OpenAI and Anthropic models are hidden by default. Antigravity also hides
 Gemini 3.8 Flash, Claude Sonnet 5.5, GPT-OSS 120B Medium, and the CLI catalog's Gemini 4 Carbon;

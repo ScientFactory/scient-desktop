@@ -22,6 +22,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderConnectionActionError } from "../../scient/providerLifecycle/ProviderConnectionActions.ts";
 import {
   makeScientAgentConnectionActions,
+  isOfferedScientAgentAccount,
   readScientAgentAccounts,
 } from "../../scient/providerLifecycle/ScientAgentConnectionActions.ts";
 import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
@@ -207,7 +208,11 @@ export const ScientAgentDriver: ScientProviderDriver<
     ): ServerProvider => {
       const { accounts, checkFailure, ...draft } = snapshot;
       return {
-        ...stampIdentity(draft),
+        // The models of an account Scient does not offer, which Scient Agent may still report.
+        ...stampIdentity({
+          ...draft,
+          models: draft.models.filter((model) => isOfferedScientAgentAccount(model.slug)),
+        }),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
         // The apps of the agent's own ChatGPT sign-in, which only it holds and only a build
         // that runs them can use.

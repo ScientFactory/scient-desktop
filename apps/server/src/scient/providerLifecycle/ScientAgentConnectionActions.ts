@@ -81,6 +81,18 @@ const decodeSignInList = Schema.decodeUnknownOption(SignInList);
 const isAccountId = (id: string) => id.length <= 128 && /^[A-Za-z0-9._-]+$/u.test(id);
 
 /**
+ * Model accounts Scient does not offer through Scient Agent. Neither Antigravity
+ * sign-in finishes from Scient: Oh My Pi refuses the CLI's questions over RPC, and
+ * it pauses the older Google Antigravity sign-in itself. They leave the list, their
+ * models leave the picker, and a sign-in to them is not started.
+ */
+const UNOFFERED_ACCOUNTS: ReadonlySet<string> = new Set(["antigravity-cli", "google-antigravity"]);
+
+/** Whether Scient offers this Scient Agent account, or the account a `account/model` slug names. */
+export const isOfferedScientAgentAccount = (idOrModel: string): boolean =>
+  !UNOFFERED_ACCOUNTS.has(idOrModel.split("/", 1)[0] ?? idOrModel);
+
+/**
  * The agent's sign-in list as Scient shows it. `undefined` when the agent does
  * not describe its entries, so an older build offers no sign-in rather than a
  * list Scient cannot present truthfully.
@@ -96,7 +108,9 @@ export const readScientAgentAccounts = (
       for (const entry of list.value.providers) {
         if (entry.kind === undefined || entry.stored === undefined) return undefined;
         const name = entry.name.trim().slice(0, 128);
-        if (!isAccountId(entry.id) || name.length === 0) continue;
+        if (!isAccountId(entry.id) || !isOfferedScientAgentAccount(entry.id) || name.length === 0) {
+          continue;
+        }
         const email = entry.email?.trim();
         const emails = [
           ...new Set(
@@ -193,6 +207,13 @@ export function makeScientAgentConnectionActions(input: {
     if (method !== SCIENT_AGENT_ACCOUNT_METHOD || account === undefined) {
       return yield* connectionError(
         "Choose an account from Scient Agent's sign-in list.",
+        undefined,
+        "start_failed",
+      );
+    }
+    if (!isOfferedScientAgentAccount(account)) {
+      return yield* connectionError(
+        "Scient does not offer this account through Scient Agent.",
         undefined,
         "start_failed",
       );
