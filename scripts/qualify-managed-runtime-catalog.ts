@@ -163,6 +163,79 @@ async function terminateProcessTree(root: number): Promise<boolean> {
   return descendants !== undefined && !tree.some(isRunning);
 }
 
+interface WindowsRuntimeProcess {
+  readonly ProcessId: number;
+  readonly ParentProcessId: number;
+  readonly Name: string;
+  readonly ExecutablePath: string;
+}
+
+/**
+ * Processes running an executable from inside `directory` (Windows only).
+ * `undefined` when the listing failed: that is not an empty list.
+ */
+function windowsProcessesUnder(directory: string): WindowsRuntimeProcess[] | undefined {
+  const listing = NodeChildProcess.spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-CimInstance Win32_Process | Where-Object ExecutablePath | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress",
+    ],
+    { encoding: "utf8", windowsHide: true, timeout: 30_000 },
+  );
+  if (listing.error || listing.status !== 0 || !listing.stdout.trim()) return undefined;
+  const parsed: unknown = JSON.parse(listing.stdout);
+  const prefix = `${directory.toLowerCase()}${NodePath.sep}`;
+  return (Array.isArray(parsed) ? parsed : [parsed]).filter(
+    (entry): entry is WindowsRuntimeProcess =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as WindowsRuntimeProcess).ExecutablePath === "string" &&
+      (entry as WindowsRuntimeProcess).ExecutablePath.toLowerCase().startsWith(prefix),
+  );
+}
+
+function describeProcesses(processes: readonly WindowsRuntimeProcess[]): string {
+  return processes
+    .map(
+      (entry) =>
+        `${entry.Name} (pid ${entry.ProcessId}, parent ${entry.ParentProcessId}) from ${entry.ExecutablePath}`,
+    )
+    .join("; ");
+}
+
+/**
+ * Windows refuses to rename a directory while a process runs from it, and the
+ * runtime's removal starts with that rename. Wait for every process started
+ * from the qualification directory to exit before removing the runtime, and
+ * name any that outlive the wait, so a removal failure says what held it.
+ */
+async function waitForWindowsRuntimeProcesses(root: string): Promise<void> {
+  if (HostProcess.Platform.defaultValue() !== "win32") return;
+  const directory = await NodeFSP.realpath(root);
+  let running = windowsProcessesUnder(directory);
+  if (running === undefined) {
+    process.stdout.write("Could not list Windows processes before removal.\n");
+    return;
+  }
+  if (running.length === 0) return;
+  process.stdout.write(
+    `Waiting before removal for processes still running from the runtime: ${describeProcesses(running)}.\n`,
+  );
+  for (let waited = 0; waited < 120 && running !== undefined && running.length > 0; waited += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    running = windowsProcessesUnder(directory);
+  }
+  if (running?.length) {
+    throw new Error(
+      `${provider} left processes running from its runtime after closing: ${describeProcesses(running)}.`,
+    );
+  }
+  process.stdout.write("Those processes exited; removing the runtime.\n");
+}
+
 /**
  * Oh My Pi is published only after the installed binary completes the app's
  * managed-activation check: the RPC v2 handshake, its version, and
@@ -451,7 +524,22 @@ try {
     }
     if (provider === "omp") await verifyRpc(provider, repaired.launchPath, artifact.version);
   }
-  await runtime.remove();
+  await waitForWindowsRuntimeProcesses(root);
+  try {
+    await runtime.remove();
+  } catch (cause) {
+    if (HostProcess.Platform.defaultValue() === "win32") {
+      const running = windowsProcessesUnder(await NodeFSP.realpath(root));
+      process.stderr.write(
+        running === undefined
+          ? "Removal failed and Windows processes could not be listed.\n"
+          : running.length > 0
+            ? `Removal failed while processes ran from the runtime: ${describeProcesses(running)}.\n`
+            : "Removal failed with no process running from the runtime; another program held a file open.\n",
+      );
+    }
+    throw cause;
+  }
   const removed = await runtime.status(artifact);
   if (removed.installed || removed.selected) {
     throw new Error(`${provider} ${targetKey} did not cleanly remove the qualification runtime.`);
