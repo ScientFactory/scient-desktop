@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -32,6 +33,15 @@ const gitAnswering = (
     | "missing-gitdir"
     | "not-a-repository",
 ) =>
+  Layer.merge(
+    // A worktree whose gitdir is gone still has its `.git` file; a plain folder has none.
+    FileSystem.layerNoop({
+      exists: (path) => Effect.succeed(headProbe === "missing-gitdir" && path === "/repo/.git"),
+    }),
+    gitDriverAnswering(headProbe),
+  );
+
+const gitDriverAnswering = (headProbe: Parameters<typeof gitAnswering>[0]) =>
   Layer.mock(GitVcsDriver.GitVcsDriver)({
     resolveCommit: (input) =>
       headProbe === "commit"
@@ -79,6 +89,13 @@ it.effect("a HEAD probe that never answers refuses the worktree default instead 
       Effect.flip,
     );
     assert.equal(refused.code, "orchestration_error");
+    // So does a worktree whose gitdir is gone: Git calls it no repository, but its `.git` remains.
+    const missing = yield* defaultWorktreeStrategy("/repo").pipe(
+      Effect.provide(gitAnswering("missing-gitdir")),
+      Effect.flip,
+    );
+    assert.equal(missing.code, "orchestration_error");
+    assert.include(missing.message, "pass workspaceStrategy");
 
     // Git's own answer still decides: no commit or no repository stays shared, a branch gets a worktree.
     assert.isUndefined(
@@ -88,10 +105,6 @@ it.effect("a HEAD probe that never answers refuses the worktree default instead 
       yield* defaultWorktreeStrategy("/repo").pipe(
         Effect.provide(gitAnswering("not-a-repository")),
       ),
-    );
-    // Upstream reads a worktree whose gitdir is gone as Git's "not a repository" too.
-    assert.isUndefined(
-      yield* defaultWorktreeStrategy("/repo").pipe(Effect.provide(gitAnswering("missing-gitdir"))),
     );
     // HEAD is not peeled, so a branch whose tip object is missing still gets its worktree.
     assert.deepEqual(

@@ -1097,6 +1097,8 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
       ["no commit yet", "root"],
       ["branch tip object missing", "worktree"],
       ["git refuses the repository", "refused"],
+      // SCIENT-FORK: a worktree whose gitdir is gone is a broken checkout, not a plain folder.
+      ["gitdir is gone", "refused"],
     ] as const) {
       const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-head-" });
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -1107,7 +1109,12 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
         defaultThreadEnvMode: "worktree",
       });
       const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
-      if (checkout !== "not a repository")
+      if (checkout === "gitdir is gone")
+        yield* fileSystem.writeFileString(
+          `${repo}/.git`,
+          `gitdir: ${repo}-gone/.git/worktrees/x\n`,
+        );
+      else if (checkout !== "not a repository")
         yield* git.execute({
           operation: "test.setupRepo",
           cwd: repo,

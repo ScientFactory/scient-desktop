@@ -132,7 +132,7 @@ export const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(
 ): Effect.fn.Return<
   OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined,
   OrchestratorMcpFailure,
-  GitVcsDriver.GitVcsDriver
+  GitVcsDriver.GitVcsDriver | FileSystem.FileSystem
 > {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const unreadable = new OrchestratorMcpFailure({
@@ -153,8 +153,22 @@ export const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(
     })
     .pipe(Effect.orElseSucceed(() => null));
   // Only Git saying "no commit yet" (exit 1) or "not a repository" keeps the launch shared.
-  if (commit?.exitCode === 1 || (commit !== null && NON_REPOSITORY_FATAL.test(commit.stderr)))
-    return undefined;
+  if (commit?.exitCode === 1) return undefined;
+  if (commit !== null && NON_REPOSITORY_FATAL.test(commit.stderr)) {
+    // SCIENT-FORK:START — a `.git` Git cannot read (a worktree whose gitdir is gone) is a broken
+    // checkout, not a plain folder: refuse instead of running the launch in its files.
+    const fileSystem = yield* FileSystem.FileSystem;
+    const gitEntry = yield* fileSystem
+      .exists(`${workspaceRoot}/.git`)
+      .pipe(Effect.orElseSucceed(() => true));
+    if (!gitEntry) return undefined;
+    return yield* new OrchestratorMcpFailure({
+      code: "orchestration_error",
+      message:
+        "Could not read the project's current commit for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
+    });
+    // SCIENT-FORK:END
+  }
   if (commit?.exitCode !== 0) return yield* unreadable;
   // symbolic-ref skips the index, so a held index lock cannot drop the launch into the shared checkout.
   const head = yield* git
