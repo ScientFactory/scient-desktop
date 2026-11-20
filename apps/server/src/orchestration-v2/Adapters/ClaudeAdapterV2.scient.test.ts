@@ -4957,12 +4957,14 @@ describe("ClaudeAdapterV2 custom API endpoint failures", () => {
     },
   ])("records where a failed request went: $name", ({ baseUrl, expected, setupFailure }) =>
     Effect.gen(function* () {
+      // Windows without ProgramData or ProgramFiles has no managed settings to read, so the
+      // host's own policy cannot change the result.
       const harness = yield* makeWakeHarnessWithOptions({
         environment: {
           CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
           ANTHROPIC_BASE_URL: baseUrl,
         },
-      });
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,

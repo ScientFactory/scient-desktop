@@ -131,8 +131,20 @@ describe("withClaudeApiEndpoint", () => {
     assert.strictEqual(
       withClaudeApiEndpoint(failure("Cannot POST /v1/acct-123/anthropic/v1/messages"), tenant)
         ?.message,
-      "Cannot POST /v1/messages",
+      "Cannot POST /…/v1/messages",
     );
+    for (const [echo, kept] of [
+      // The whole message never becomes empty.
+      ["/v1/acct-123/anthropic", "/…"],
+      ["<pre>Cannot POST /v1/acct-123/anthropic</pre>", "<pre>Cannot POST /…</pre>"],
+      // A different route that only contains the prefix stays as the gateway wrote it.
+      [
+        "Cannot POST /service/v1/acct-123/anthropic/v1/messages",
+        "Cannot POST /service/v1/acct-123/anthropic/v1/messages",
+      ],
+    ] as const) {
+      assert.strictEqual(withClaudeApiEndpoint(failure(echo), tenant)?.message, kept);
+    }
     // A one-segment path names no tenant and stays as the provider wrote it.
     const versioned = resolveClaudeApiEndpoint(
       {},

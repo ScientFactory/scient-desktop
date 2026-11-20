@@ -53,13 +53,16 @@ export function withClaudeApiEndpoint(
   const withOrigin =
     path === "" ? failure.message : failure.message.replaceAll(endpoint.base, endpoint.origin);
   // A gateway may quote only the request path. A single segment such as /v1 names no tenant,
-  // so only a longer prefix is removed, and only where it ends a path segment.
+  // so only a longer prefix is elided, and only where it stands as its own path.
   const message =
     path.split("/").filter(Boolean).length < 2
       ? withOrigin
       : withOrigin.replace(
-          new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=[/\\s"'?#]|$)`, "gu"),
-          "",
+          new RegExp(
+            `(?<=^|[\\s"'(=>])${path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=[/\\s"'?#)<]|$)`,
+            "gu",
+          ),
+          "/…",
         );
   return {
     ...failure,
