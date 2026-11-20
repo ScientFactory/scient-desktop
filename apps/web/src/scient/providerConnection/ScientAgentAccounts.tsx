@@ -111,6 +111,15 @@ export function ScientAgentAccounts(props: {
   const nameOf = (id: string | undefined) =>
     accounts.find((account) => account.id === id)?.name ?? gt("the account");
   const busy = pending !== null || props.disabled === true;
+  // A sign-in the agent refused fails twice: the click's own reply, and the
+  // failed sign-in the server records. Say it once, naming the account.
+  const repeatedFailure =
+    failed !== null &&
+    failed.message.length > 0 &&
+    shownError !== null &&
+    shownError.includes(failed.message)
+      ? `${nameOf(failed.account)}: ${failed.message}`
+      : null;
 
   const fail = (failure: unknown, fallback: string) =>
     setError(providerLifecycleFailureMessage(failure, fallback));
@@ -311,7 +320,7 @@ export function ScientAgentAccounts(props: {
               value={query}
             />
           )}
-          <div className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border">
+          <div className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border bg-background">
             <AccountGroup
               accounts={sections.yours}
               busy={busy}
@@ -344,7 +353,7 @@ export function ScientAgentAccounts(props: {
           </div>
         </>
       )}
-      {failed ? (
+      {failed && repeatedFailure === null ? (
         <p className="text-xs leading-relaxed text-muted-foreground" role="status">
           {nameOf(failed.account)}: {failed.message}
         </p>
@@ -355,7 +364,7 @@ export function ScientAgentAccounts(props: {
           className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
         >
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>{shownError}</span>
+          <span>{repeatedFailure ?? shownError}</span>
         </div>
       ) : null}
     </section>
@@ -376,7 +385,8 @@ function AccountGroup(props: {
     props.pending?.kind === kind && props.pending.account === account.id;
   return (
     <div>
-      <p className="sticky top-0 border-b bg-muted/60 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur">
+      {/* Opaque: rows scroll under it, and dark themes' muted color is nearly transparent. */}
+      <p className="sticky top-0 z-10 border-b bg-background bg-linear-to-b from-muted to-muted px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {props.label}
       </p>
       <ul className="divide-y">
