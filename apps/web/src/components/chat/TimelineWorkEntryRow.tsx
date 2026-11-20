@@ -347,8 +347,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? gt("Usage limit reached. Retry after {resetTime}.", { resetTime })
         : gt("Usage limit reached.")
       : workEntry.label;
-    // SCIENT-FORK: a request sent to a custom endpoint says where it went.
+    // SCIENT-FORK:START — a request sent to a custom endpoint says where it went.
     const customEndpointNote = customEndpointFailureNote(failureItem.failure, m);
+    // SCIENT-FORK:END
     const retryRunId =
       failureItem.runId !== null &&
       retryableWorkspacePreparationRunIds.has(failureItem.runId) &&

@@ -13,7 +13,7 @@ export function customEndpointFailureNote(
   return endpoint.source === "claude-settings"
     ? resolve(
         msg(
-          "This request went to {endpoint}, not to Anthropic. It is set by ANTHROPIC_BASE_URL in Claude's settings.json.",
+          "This request went to {endpoint}, not to Anthropic. It is set by ANTHROPIC_BASE_URL in Claude's settings.",
           { endpoint: endpoint.origin },
         ),
       )

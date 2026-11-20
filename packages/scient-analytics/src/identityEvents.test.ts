@@ -50,6 +50,17 @@ describe("identity events", () => {
       endpointSource: "claude-settings",
     });
     expect(wire("install.account_observed", { ...event!.properties })).toBeNull();
+    expect(
+      normalizeInheritedEvent(
+        "install.account_observed",
+        {
+          provider: "claudeAgent",
+          accountType: "customEndpoint",
+          endpointHost: "gateway.example.",
+        },
+        context,
+      )?.properties,
+    ).toMatchObject({ endpointHost: "gateway.example" });
 
     const unsafe = normalizeInheritedEvent(
       "install.account_observed",

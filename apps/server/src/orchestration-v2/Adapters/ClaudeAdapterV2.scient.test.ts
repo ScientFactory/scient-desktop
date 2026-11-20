@@ -4949,7 +4949,13 @@ describe("ClaudeAdapterV2 custom API endpoint failures", () => {
       expected: { origin: "https://gateway.example.test", source: "environment" as const },
     },
     { name: "Anthropic's own API", baseUrl: "https://api.anthropic.com", expected: undefined },
-  ])("records where a failed request went: $name", ({ baseUrl, expected }) =>
+    {
+      name: "a turn that failed before any request",
+      baseUrl: "https://gateway.example.test/v1",
+      expected: undefined,
+      setupFailure: true,
+    },
+  ])("records where a failed request went: $name", ({ baseUrl, expected, setupFailure }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
         environment: {
@@ -4969,19 +4975,28 @@ describe("ClaudeAdapterV2 custom API endpoint failures", () => {
       );
       yield* Queue.offer(
         harness.sdkMessages,
-        makeResultFrame({
-          uuid: "00000000-0000-4000-8000-000000000799",
-          result: "API Error: 404 model not found",
-          terminalReason: "api_error",
-          apiErrorStatus: 404,
-          isError: true,
-        }),
+        setupFailure === true
+          ? makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000799",
+              result: "",
+              terminalReason: "turn_setup_failed",
+              isError: true,
+            })
+          : makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000799",
+              result: "API Error: 404 model not found",
+              terminalReason: "api_error",
+              apiErrorStatus: 404,
+              isError: true,
+            }),
       );
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
       // The provider's own text stays as it was; the app names the endpoint beside it.
-      assert.equal(terminal.failure.message, "API Error: 404 model not found");
+      if (setupFailure !== true) {
+        assert.equal(terminal.failure.message, "API Error: 404 model not found");
+      }
       assert.deepEqual(terminal.failure.customEndpoint, expected);
     }).pipe(Effect.provide(adapterServices)),
   );

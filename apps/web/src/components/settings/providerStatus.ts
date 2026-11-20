@@ -30,33 +30,35 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
 /** The server names a custom endpoint in English; other auth labels are product or plan names. */
 export function providerAuthLabel(
-  auth: Pick<ServerProvider["auth"], "label" | "type" | "endpoint">,
+  auth: Pick<ServerProvider["auth"], "label" | "type">,
   resolve: MessageResolver = m,
 ): string | undefined {
-  // SCIENT-FORK:START — name the endpoint so a redirected provider is visible at a glance.
-  if (auth.type === "customEndpoint")
-    return auth.endpoint
-      ? resolve(msg("Custom API endpoint · {endpoint}", { endpoint: auth.endpoint }))
-      : resolve(msg("Custom API endpoint"));
-  // SCIENT-FORK:END
+  if (auth.type === "customEndpoint") return resolve(msg("Custom API endpoint"));
   return auth.label ?? auth.type;
 }
 
-// SCIENT-FORK:START — where a custom endpoint was set, so the user knows what to change.
-function providerEndpointSourceText(
-  auth: Pick<ServerProvider["auth"], "type" | "endpointSource">,
-  resolve: MessageResolver = m,
+// SCIENT-FORK:START — a custom endpoint names its server and where it was set, whatever else
+// the card shows for the account.
+function providerEndpointText(
+  auth: Pick<ServerProvider["auth"], "type" | "endpoint" | "endpointSource">,
+  resolve: MessageResolver,
 ): string | null {
-  if (auth.type !== "customEndpoint") return null;
+  if (auth.type !== "customEndpoint" || auth.endpoint === undefined) return null;
+  const endpoint = auth.endpoint;
   if (auth.endpointSource === "claude-settings")
-    return resolve(msg("Set by ANTHROPIC_BASE_URL in Claude's settings.json."));
+    return resolve(
+      msg("Sends requests to {endpoint}. Set by ANTHROPIC_BASE_URL in Claude's settings.", {
+        endpoint,
+      }),
+    );
   if (auth.endpointSource === "environment")
     return resolve(
       msg(
-        "Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
+        "Sends requests to {endpoint}. Set by the ANTHROPIC_BASE_URL environment variable, in this provider's settings or on this computer.",
+        { endpoint },
       ),
     );
-  return null;
+  return resolve(msg("Sends requests to {endpoint}.", { endpoint }));
 }
 // SCIENT-FORK:END
 
@@ -143,8 +145,9 @@ export function getProviderSummary(
       headline: authLabel
         ? resolve(msg("Authenticated · {method}", { method: authLabel }))
         : resolve(msg("Authenticated")),
-      // SCIENT-FORK: a custom endpoint says where it was set.
-      detail: provider.message ?? providerEndpointSourceText(provider.auth, resolve),
+      // SCIENT-FORK:START — a custom endpoint names its server and where it was set.
+      detail: provider.message ?? providerEndpointText(provider.auth, resolve),
+      // SCIENT-FORK:END
     };
   }
   return {

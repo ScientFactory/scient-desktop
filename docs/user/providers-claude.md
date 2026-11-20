@@ -159,11 +159,11 @@ when its displayed wait began.
 
 Claude sends its requests to Anthropic unless `ANTHROPIC_BASE_URL` points it somewhere else, such
 as OpenRouter or a local router. When it does, Settings → Providers shows **Custom API endpoint**
-with that server's address and where the setting comes from:
+and the line under it names that server and where the setting comes from:
 
-- **Claude's settings.json**: the `env` section of `~/.claude/settings.json` (or the file in this
-  provider's `CLAUDE_CONFIG_DIR`). Another tool may have written it, or it may remain from an
-  earlier Claude Code setup.
+- **Claude's settings**: the `env` section of `~/.claude/settings.json` (or the file in this
+  provider's `CLAUDE_CONFIG_DIR`), a project's `.claude/settings.json`, or a `--settings` launch
+  argument. Another tool may have written it, or it may remain from an earlier Claude Code setup.
 - **Environment variable**: this provider's Environment variables in Scient, or a variable set on
   your computer.
 

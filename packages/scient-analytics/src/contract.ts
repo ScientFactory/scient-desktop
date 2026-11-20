@@ -332,7 +332,9 @@ function accountEndpointProperties(
   input: Readonly<Record<string, unknown>>,
 ): Record<string, string | number> {
   // Read every field first: an unread key would pass through unvalidated.
-  const host = property(input, "endpointHost");
+  const rawHost = property(input, "endpointHost");
+  // A fully qualified name's root dot names the same host.
+  const host = typeof rawHost === "string" ? rawHost.replace(/\.$/u, "") : rawHost;
   const scheme = property(input, "endpointScheme");
   const source = property(input, "endpointSource");
   const port = property(input, "endpointPort");

@@ -27,7 +27,8 @@ function endpointProperties(auth: ServerProvider["auth"]): EndpointProperties {
   const url = URL.parse(auth.endpoint);
   if (url === null || url.hostname === "") return {};
   return {
-    endpointHost: url.hostname,
+    // A fully qualified name's root dot names the same host.
+    endpointHost: url.hostname.replace(/\.$/u, ""),
     ...(url.port === "" ? {} : { endpointPort: Number(url.port) }),
     endpointScheme: url.protocol.replace(/:$/, ""),
     ...(auth.endpointSource === undefined ? {} : { endpointSource: auth.endpointSource }),

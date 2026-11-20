@@ -70,9 +70,7 @@ describe("resolveClaudeApiEndpoint", () => {
       ),
       {
         origin: "https://proxy.example:8443",
-        scheme: "https",
-        host: "proxy.example",
-        port: 8443,
+        base: "https://proxy.example:8443/v1",
         source: "environment",
       },
     );
@@ -84,13 +82,7 @@ describe("resolveClaudeApiEndpoint", () => {
         { ANTHROPIC_BASE_URL: "http://127.0.0.1:3456" },
         { ANTHROPIC_BASE_URL: "https://proxy.example" },
       ),
-      {
-        origin: "http://127.0.0.1:3456",
-        scheme: "http",
-        host: "127.0.0.1",
-        port: 3456,
-        source: "claude-settings",
-      },
+      { origin: "http://127.0.0.1:3456", base: "http://127.0.0.1:3456", source: "claude-settings" },
     );
     assert.strictEqual(
       resolveClaudeApiEndpoint(
@@ -119,6 +111,22 @@ describe("withClaudeApiEndpoint", () => {
     assert.deepStrictEqual(marked, {
       ...failure("API Error: 404 model not found"),
       customEndpoint: { origin: "https://proxy.example", source: "claude-settings" },
+    });
+  });
+
+  it("keeps only the origin of an endpoint the provider echoed", () => {
+    const tenant = resolveClaudeApiEndpoint(
+      {},
+      { ANTHROPIC_BASE_URL: "https://gateway.example/v1/acct-123/anthropic/" },
+    );
+    const marked = withClaudeApiEndpoint(
+      failure("POST https://gateway.example/v1/acct-123/anthropic/v1/messages returned 404"),
+      tenant,
+    );
+    assert.strictEqual(marked?.message, "POST https://gateway.example/v1/messages returned 404");
+    assert.deepStrictEqual(marked?.customEndpoint, {
+      origin: "https://gateway.example",
+      source: "environment",
     });
   });
 

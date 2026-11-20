@@ -21,7 +21,7 @@ describe("customEndpointFailureNote", () => {
         failure({ origin: "http://127.0.0.1:3456", source: "claude-settings" }),
       ),
     ).toBe(
-      "This request went to http://127.0.0.1:3456, not to Anthropic. It is set by ANTHROPIC_BASE_URL in Claude's settings.json.",
+      "This request went to http://127.0.0.1:3456, not to Anthropic. It is set by ANTHROPIC_BASE_URL in Claude's settings.",
     );
     expect(
       customEndpointFailureNote(

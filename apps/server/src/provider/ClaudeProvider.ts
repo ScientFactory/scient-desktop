@@ -945,12 +945,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
   const endpoint = customApiEndpoint ? URL.parse(baseUrl?.trim() ?? "")?.origin : undefined;
   // SCIENT-FORK:START — name where the custom endpoint was set, so Providers can point to it.
-  const endpointSource = customApiEndpoint
+  // A second read can race a settings edit; a source is named only for the same endpoint.
+  const sourcedEndpoint = customApiEndpoint
     ? resolveClaudeApiEndpoint(
         yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment),
         resolvedEnvironment,
-      )?.source
+      )
     : undefined;
+  const endpointSource =
+    sourcedEndpoint !== undefined && sourcedEndpoint.origin === endpoint
+      ? sourcedEndpoint.source
+      : undefined;
   // SCIENT-FORK:END
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     const path = yield* Path.Path;

@@ -6,11 +6,10 @@ import { customClaudeApiEndpointHost } from "../../provider/Drivers/ClaudeSkills
 export type ClaudeApiEndpointSource = "claude-settings" | "environment";
 
 export interface ClaudeApiEndpoint {
-  /** Scheme, host and port only: credentials, path and query never leave this module. */
+  /** Scheme, host and port only: what Scient records and shows. */
   readonly origin: string;
-  readonly scheme: "http" | "https";
-  readonly host: string;
-  readonly port?: number;
+  /** Origin and path, without credentials or query; used only to scrub echoed text. */
+  readonly base: string;
   readonly source: ClaudeApiEndpointSource;
 }
 
@@ -29,9 +28,7 @@ export function resolveClaudeApiEndpoint(
   if (url === null) return undefined;
   return {
     origin: url.origin,
-    scheme: url.protocol === "http:" ? "http" : "https",
-    host: url.hostname,
-    ...(url.port === "" ? {} : { port: Number(url.port) }),
+    base: `${url.origin}${url.pathname.replace(/\/+$/u, "")}`,
     source: fromSettings === undefined ? "environment" : "claude-settings",
   };
 }
@@ -43,11 +40,21 @@ export const EXTERNAL_PROVIDER_AUTH_TYPES: ReadonlySet<string> = new Set([
   "bedrock",
 ]);
 
-/** Marks a failed turn whose request went to a custom endpoint; the app names it beside the error. */
+/**
+ * Marks a failed turn whose request went to a custom endpoint, for the app to name beside the
+ * error. An endpoint path can hold a tenant or key, so an echo of it in the text keeps its origin.
+ */
 export function withClaudeApiEndpoint(
   failure: OrchestrationV2ProviderFailure | null,
   endpoint: ClaudeApiEndpoint | undefined,
 ): OrchestrationV2ProviderFailure | null {
   if (failure === null || endpoint === undefined) return failure;
-  return { ...failure, customEndpoint: { origin: endpoint.origin, source: endpoint.source } };
+  return {
+    ...failure,
+    message:
+      endpoint.base === endpoint.origin
+        ? failure.message
+        : failure.message.replaceAll(endpoint.base, endpoint.origin),
+    customEndpoint: { origin: endpoint.origin, source: endpoint.source },
+  };
 }
