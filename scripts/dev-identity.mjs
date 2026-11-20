@@ -13,6 +13,7 @@ import * as NodeURL from "node:url";
 export const DEV_IDENTITY_ENV = "SCIENT_DEV_IDENTITY";
 export const DEV_IDENTITY_MARKER = "dev-identity.json";
 const HOME_RECORD = "dev-identity-home.json";
+const SEED_LOCK = "dev-identity-seed.lock";
 const HOME_CHECKOUT_NAME = "scient-desktop-identity";
 const STATE_SUBDIR = "scient-next-dev";
 const PREVIEW_PARTITION_DIR_PREFIX = "scient-next-preview-";
@@ -22,7 +23,9 @@ const VAULT_SENTINEL = "accounts-vault";
 const VAULT_KEY_FILE = "accounts-master-key";
 const ACCOUNTS_STATE = "accounts-state";
 const SEALED = 0xff;
+const SECRET_REDACTED = "••••••";
 const CAPTURE_ATTEMPTS = 5;
+const STAGED_SUFFIX = ".dev-identity-staged";
 
 /**
  * Secret records that are the owner's identity, never the install's. Each family is replaced as a
@@ -31,12 +34,15 @@ const CAPTURE_ATTEMPTS = 5;
  */
 const IDENTITY_SECRET =
   /^(?:accounts-(?:master-key|vault|state|activity)|accounts-value-[0-9a-f-]{36}|custom-model-.+|connector-.+|provider-env-.+|provider-config-.+|text-generator-.+|overleaf-git-token-.+|source-control-.+)\.bin$/u;
-/** Records the vault encrypts directly, without the sealed-store prefix. */
-const VAULT_RECORD = /^(?:accounts-(?:state|activity)|accounts-value-[0-9a-f-]{36})$/u;
+/** Records the vault encrypts directly; a connector record may still be legacy JSON. */
+const VAULT_RECORD =
+  /^(?:accounts-(?:state|activity)|accounts-value-[0-9a-f-]{36}|connector-[0-9a-f-]{36})$/u;
+/** Install records the Accounts store seals with the vault key; they die with that key. */
+const SEALED_INSTALL_RECORD = /^secret-request-[0-9a-f]{32}\.bin$/u;
 /** A reference from settings, connectors or Accounts to a record that must travel with it. */
 const RECORD_REFERENCE = /^(?:accounts-value|connector|custom-model)-[0-9a-f-]{36}$/u;
 
-/** Server settings that describe the owner's models and providers; refreshed on every start. */
+/** Server settings that describe the owner's models, providers and sign-ins; refreshed every start. */
 export const IDENTITY_SETTINGS_KEYS = [
   "customModels",
   "providerInstances",
@@ -46,6 +52,8 @@ export const IDENTITY_SETTINGS_KEYS = [
   "fallbackModelSelection",
   "textGenerationModelSelection",
   "textGenerators",
+  "sourceControlHosts",
+  "secretProviders",
 ];
 /** Server settings tied to this install's projects and threads; never copied. */
 const LOCAL_SETTINGS_KEYS = new Set([
@@ -57,6 +65,7 @@ const LOCAL_SETTINGS_KEYS = new Set([
 ]);
 /** Accounts state that belongs to the install holding it, not to the owner. */
 const LOCAL_ACCOUNTS_KEYS = ["senders", "senderKeys", "profileChoices"];
+const LOCAL_PROFILE_KEYS = ["send", "sharedWith", "received"];
 /** Folders and files copied once, when a dev app starts for the first time. */
 const PROFILE_PATHS = ["keybindings.json", "themes", "skills", "personal-skills.json"];
 
@@ -83,26 +92,24 @@ const realpathOrSelf = (path) => {
   }
 };
 
+const inside = (path, root) => path === root || path.startsWith(`${root}${NodePath.sep}`);
+
+/** A missing file reads as absent; any other failure stops the copy instead of dropping data. */
+const readBytes = (path) => {
+  try {
+    return NodeFS.readFileSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+};
+
+const readText = (path) => readBytes(path)?.toString("utf8");
+
 const parseJsonObject = (text) => {
   try {
     const value = JSON.parse(text);
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const readText = (path) => {
-  try {
-    return NodeFS.readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-};
-
-const readBytes = (path) => {
-  try {
-    return NodeFS.readFileSync(path);
   } catch {
     return undefined;
   }
@@ -113,6 +120,8 @@ const readJsonObject = (path) => {
   return text === undefined ? undefined : parseJsonObject(text);
 };
 
+const jsonBytes = (value) => `${JSON.stringify(value, null, 2)}\n`;
+
 /** Replace a file the way the app does: write beside it, then rename over it. */
 function writeFileAtomic(path, data, mode = 0o600) {
   NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true, mode: 0o700 });
@@ -121,12 +130,44 @@ function writeFileAtomic(path, data, mode = 0o600) {
   NodeFS.renameSync(temporary, path);
 }
 
-const writeJsonAtomic = (path, value, mode = 0o644) =>
-  writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`, mode);
+/**
+ * Changes staged beside their targets, published only once every one is written. A failure while
+ * staging leaves the target exactly as it was.
+ */
+class StagedChanges {
+  #writes = [];
+  #removals = [];
 
-function copyTree(source, destination) {
-  NodeFS.rmSync(destination, { recursive: true, force: true });
-  NodeFS.cpSync(source, destination, { recursive: true, errorOnExist: false, force: true });
+  write(path, data, mode = 0o600) {
+    NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true, mode: 0o700 });
+    const staged = `${path}${STAGED_SUFFIX}`;
+    NodeFS.writeFileSync(staged, data, { mode });
+    NodeFS.chmodSync(staged, mode);
+    this.#writes.push({ staged, path });
+  }
+
+  copyTree(source, destination) {
+    const staged = `${destination}${STAGED_SUFFIX}`;
+    NodeFS.rmSync(staged, { recursive: true, force: true });
+    NodeFS.cpSync(source, staged, { recursive: true });
+    this.#writes.push({ staged, path: destination, tree: true });
+  }
+
+  remove(path) {
+    this.#removals.push(path);
+  }
+
+  commit() {
+    for (const path of this.#removals) NodeFS.rmSync(path, { recursive: true, force: true });
+    for (const { staged, path, tree } of this.#writes) {
+      if (tree) NodeFS.rmSync(path, { recursive: true, force: true });
+      NodeFS.renameSync(staged, path);
+    }
+  }
+
+  abort() {
+    for (const { staged } of this.#writes) NodeFS.rmSync(staged, { recursive: true, force: true });
+  }
 }
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -210,13 +251,32 @@ function portableProviderAuthNames(settings) {
 
 function identitySecretNames(secretsDir, settings) {
   const providerAuth = portableProviderAuthNames(settings);
+  let names;
   try {
-    return NodeFS.readdirSync(secretsDir).filter(
-      (name) => IDENTITY_SECRET.test(name) || providerAuth.has(name),
-    );
-  } catch {
-    return [];
+    names = NodeFS.readdirSync(secretsDir);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
   }
+  return names.filter((name) => IDENTITY_SECRET.test(name) || providerAuth.has(name));
+}
+
+const base64url = (value) => Buffer.from(value, "utf8").toString("base64url");
+
+/** Slots settings point at by name rather than by id: redacted provider environment values. */
+function derivedSecretNames(settings) {
+  const names = [];
+  const instances = settings?.providerInstances;
+  if (instances === null || typeof instances !== "object") return names;
+  for (const [id, instance] of Object.entries(instances)) {
+    for (const variable of Array.isArray(instance?.environment) ? instance.environment : []) {
+      if (typeof variable?.name !== "string") continue;
+      if (variable.valueRedacted === true || variable.value === SECRET_REDACTED) {
+        names.push(`provider-env-${base64url(id)}-${base64url(variable.name)}.bin`);
+      }
+    }
+  }
+  return names;
 }
 
 const vaultEncrypt = (key, name, value) => {
@@ -235,14 +295,13 @@ const vaultDecrypt = (key, name, blob) => {
   return Buffer.concat([decipher.update(blob.subarray(29)), decipher.final()]);
 };
 
+const makeSentinel = (key) =>
+  Buffer.concat([Buffer.from([0]), vaultEncrypt(key, VAULT_SENTINEL, Buffer.alloc(0))]);
+
 /** A fresh file-protected vault: the key file plus the sentinel the vault checks it against. */
 export function makePortableVault() {
   const key = NodeCrypto.randomBytes(32);
-  const sentinel = Buffer.concat([
-    Buffer.from([0]),
-    vaultEncrypt(key, VAULT_SENTINEL, Buffer.alloc(0)),
-  ]);
-  return { key, sentinel };
+  return { key, sentinel: makeSentinel(key) };
 }
 
 /** Gives a home without accounts a file key before its first launch would make a Keychain one. */
@@ -256,13 +315,13 @@ export function ensurePortableVault(stateDir) {
   return true;
 }
 
-const vaultKeyOf = (secrets) => secrets.get(`${VAULT_KEY_FILE}.bin`);
-
 /** Re-encrypts one identity record from the source vault key to the target vault key. */
 export function reencryptSecret(name, bytes, sourceKey, targetKey) {
   const record = name.replace(/\.bin$/u, "");
   if (record === VAULT_SENTINEL || record === VAULT_KEY_FILE) return undefined;
   if (VAULT_RECORD.test(record)) {
+    // A connector record from before the vault is plain JSON and moves as it is.
+    if (bytes[0] !== 1 && record.startsWith("connector-")) return bytes;
     return vaultEncrypt(targetKey, record, vaultDecrypt(sourceKey, record, bytes));
   }
   if (bytes[0] === SEALED) {
@@ -272,7 +331,7 @@ export function reencryptSecret(name, bytes, sourceKey, targetKey) {
   return bytes;
 }
 
-/** The owner's accounts, without the senders, keys and choices that belong to the source install. */
+/** The owner's accounts, without the senders, keys, choices and sharing of the source install. */
 export function scrubAccountsState(state) {
   const next = { ...state };
   for (const key of LOCAL_ACCOUNTS_KEYS) delete next[key];
@@ -283,13 +342,21 @@ export function scrubAccountsState(state) {
       return rest;
     });
   }
+  if (Array.isArray(next.profiles)) {
+    next.profiles = next.profiles.map((profile) => {
+      if (profile === null || typeof profile !== "object") return profile;
+      const copy = { ...profile };
+      for (const key of LOCAL_PROFILE_KEYS) delete copy[key];
+      return copy;
+    });
+  }
   return next;
 }
 
 /**
  * Reads one app's identity as a single consistent snapshot. Accounts and connectors write a value
  * before publishing its reference, so the snapshot is retaken until the anchors stayed the same
- * across the read and every reference resolves.
+ * across the read and every reference resolves. A snapshot that never settles is refused.
  */
 export function captureIdentity(
   stateDir,
@@ -299,6 +366,7 @@ export function captureIdentity(
   const anchors = () =>
     [
       readBytes(NodePath.join(secretsDir, `${ACCOUNTS_STATE}.bin`)),
+      readBytes(NodePath.join(secretsDir, `${VAULT_SENTINEL}.bin`)),
       readBytes(NodePath.join(stateDir, "settings.json")),
       readBytes(NodePath.join(stateDir, "scient-extensions.json")),
     ].map((bytes) => (bytes === undefined ? "" : bytes.toString("base64")));
@@ -309,6 +377,12 @@ export function captureIdentity(
     const extensionsText = readText(NodePath.join(stateDir, "scient-extensions.json"));
     const settings = settingsText === undefined ? undefined : parseJsonObject(settingsText);
     const extensions = extensionsText === undefined ? undefined : parseJsonObject(extensionsText);
+    if (
+      (settingsText !== undefined && settings === undefined) ||
+      (extensionsText !== undefined && extensions === undefined)
+    ) {
+      continue;
+    }
     const secrets = new Map();
     for (const name of identitySecretNames(secretsDir, settings)) {
       const bytes = readBytes(NodePath.join(secretsDir, name));
@@ -316,35 +390,41 @@ export function captureIdentity(
     }
     afterRead(attempt);
     if (before.join() !== anchors().join()) continue;
-    const key = vaultKey ?? vaultKeyOf(secrets);
+    const key = vaultKey ?? secrets.get(`${VAULT_KEY_FILE}.bin`);
+    const sentinel = secrets.get(`${VAULT_SENTINEL}.bin`);
     let accounts;
-    const stateBlob = secrets.get(`${ACCOUNTS_STATE}.bin`);
-    if (stateBlob !== undefined && key !== undefined) {
-      try {
-        accounts = JSON.parse(vaultDecrypt(key, ACCOUNTS_STATE, stateBlob).toString("utf8"));
-      } catch {
-        continue;
+    try {
+      if (key !== undefined && sentinel !== undefined) {
+        vaultDecrypt(key, VAULT_SENTINEL, sentinel.subarray(1));
       }
+      const stateBlob = secrets.get(`${ACCOUNTS_STATE}.bin`);
+      if (stateBlob !== undefined && key !== undefined) {
+        accounts = JSON.parse(vaultDecrypt(key, ACCOUNTS_STATE, stateBlob).toString("utf8"));
+      }
+    } catch {
+      continue;
     }
-    const capture = { stateDir, secrets, settings, extensions, accounts };
-    const dangling = collectStrings([settings, extensions, accounts]).filter(
-      (text) => RECORD_REFERENCE.test(text) && !secrets.has(`${text}.bin`),
-    );
-    // A reference that stays missing across every read was already missing in the source.
-    if (dangling.length === 0 || attempt === attempts - 1) return capture;
+    const missing = [
+      ...collectStrings([settings, extensions, accounts])
+        .filter((text) => RECORD_REFERENCE.test(text))
+        .map((reference) => `${reference}.bin`),
+      ...derivedSecretNames(settings),
+    ].filter((name) => !secrets.has(name));
+    if (missing.length > 0) continue;
+    return { stateDir, secrets, settings, extensions, accounts };
   }
   return undefined;
 }
 
 /**
- * Writes a captured identity into a target, re-encrypting each record when `targetKey` is a new
- * key. The Accounts document is rewritten without the source install's senders and choices.
+ * Stages a captured identity's secrets for a target, re-encrypting each record when `targetKey` is
+ * a new key. The Accounts document is rewritten without the source install's local state.
  */
-function installSecrets({ capture, targetStateDir, targetKey, onSkip = () => {} }) {
+function stageSecrets({ changes, capture, targetStateDir, targetKey, onSkip = () => {} }) {
   const targetSecrets = NodePath.join(targetStateDir, "secrets");
   NodeFS.mkdirSync(targetSecrets, { recursive: true, mode: 0o700 });
   const previousKey = readBytes(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`));
-  const sourceKey = vaultKeyOf(capture.secrets) ?? targetKey;
+  const sourceKey = capture.secrets.get(`${VAULT_KEY_FILE}.bin`) ?? targetKey;
   const key = targetKey ?? sourceKey;
   const removed = new Set(
     identitySecretNames(
@@ -355,11 +435,9 @@ function installSecrets({ capture, targetStateDir, targetKey, onSkip = () => {} 
   // Records the old key sealed can no longer be opened once the key changes.
   if (previousKey === undefined || key === undefined || !previousKey.equals(key)) {
     for (const name of NodeFS.readdirSync(targetSecrets)) {
-      if (!name.endsWith(".bin") || removed.has(name)) continue;
-      if (readBytes(NodePath.join(targetSecrets, name))?.[0] === SEALED) removed.add(name);
+      if (SEALED_INSTALL_RECORD.test(name)) removed.add(name);
     }
   }
-  for (const name of removed) NodeFS.rmSync(NodePath.join(targetSecrets, name), { force: true });
   const written = [];
   for (const [name, bytes] of capture.secrets) {
     let output = bytes;
@@ -378,23 +456,22 @@ function installSecrets({ capture, targetStateDir, targetKey, onSkip = () => {} 
       continue;
     }
     if (output === undefined) continue;
-    writeFileAtomic(NodePath.join(targetSecrets, name), output);
+    removed.delete(name);
+    changes.write(NodePath.join(targetSecrets, name), output);
     written.push(name);
   }
   if (targetKey !== undefined) {
-    const sentinel = Buffer.concat([
-      Buffer.from([0]),
-      vaultEncrypt(targetKey, VAULT_SENTINEL, Buffer.alloc(0)),
-    ]);
-    writeFileAtomic(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`), targetKey);
-    writeFileAtomic(NodePath.join(targetSecrets, `${VAULT_SENTINEL}.bin`), sentinel);
+    for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
+    changes.write(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`), targetKey);
+    changes.write(NodePath.join(targetSecrets, `${VAULT_SENTINEL}.bin`), makeSentinel(targetKey));
   }
+  for (const name of removed) changes.remove(NodePath.join(targetSecrets, name));
   return written.filter(
     (name) => !name.startsWith(VAULT_SENTINEL) && !name.startsWith(VAULT_KEY_FILE),
   );
 }
 
-function installSettings({ capture, targetStateDir, sourceDirs, targetDir, fullProfile }) {
+function stageSettings({ changes, capture, targetStateDir, sourceDirs, targetDir, fullProfile }) {
   if (capture.settings === undefined) return;
   const source = rebasePaths(capture.settings, sourceDirs, targetDir);
   const targetPath = NodePath.join(targetStateDir, "settings.json");
@@ -406,32 +483,36 @@ function installSettings({ capture, targetStateDir, sourceDirs, targetDir, fullP
     if (Object.hasOwn(source, key)) next[key] = source[key];
     else delete next[key];
   }
-  writeJsonAtomic(targetPath, next);
+  changes.write(targetPath, jsonBytes(next));
 }
 
-function installConnectors({ capture, targetStateDir, sourceDirs, targetDir }) {
+function stageConnectors({ changes, capture, targetStateDir, sourceDirs, targetDir }) {
   const from = NodePath.join(capture.stateDir, "connectors");
   const to = NodePath.join(targetStateDir, "connectors");
-  if (exists(from)) copyTree(from, to);
-  else NodeFS.rmSync(to, { recursive: true, force: true });
+  if (exists(from)) changes.copyTree(from, to);
+  else changes.remove(to);
+  // Undo history describes the connectors being replaced; it must not act on the copies.
+  changes.remove(NodePath.join(targetStateDir, "connector-history"));
   const path = NodePath.join(targetStateDir, "scient-extensions.json");
   if (capture.extensions === undefined) {
-    NodeFS.rmSync(path, { force: true });
+    changes.remove(path);
     return;
   }
-  writeJsonAtomic(
+  changes.write(
     path,
-    disownOutsideFolders(rebasePaths(capture.extensions, sourceDirs, targetDir), targetDir),
+    jsonBytes(
+      disownOutsideFolders(rebasePaths(capture.extensions, sourceDirs, targetDir), targetDir),
+    ),
   );
 }
 
 /** Profiles the target lacks are added by id; its default stays unless it has none that resolves. */
-function installClientSettings({ sourceStateDir, targetStateDir, firstStart }) {
+function stageClientSettings({ changes, sourceStateDir, targetStateDir, firstStart }) {
   const source = readJsonObject(NodePath.join(sourceStateDir, "client-settings.json"));
   if (source === undefined) return;
   const targetPath = NodePath.join(targetStateDir, "client-settings.json");
   if (firstStart) {
-    writeJsonAtomic(targetPath, source);
+    changes.write(targetPath, jsonBytes(source), 0o644);
     return;
   }
   const target = readJsonObject(targetPath) ?? {};
@@ -446,7 +527,7 @@ function installClientSettings({ sourceStateDir, targetStateDir, firstStart }) {
   if (!resolves(target.browserDefaultProfileId) && resolves(source.browserDefaultProfileId)) {
     next.browserDefaultProfileId = source.browserDefaultProfileId;
   }
-  writeJsonAtomic(targetPath, next);
+  changes.write(targetPath, jsonBytes(next), 0o644);
 }
 
 /** Same bytes BrowserSession hashes: a backslash is escaped, and so is a lone UTF-16 surrogate. */
@@ -475,7 +556,7 @@ const readEnvironmentId = (stateDir) => {
 function ensureEnvironmentId(stateDir) {
   const existing = readEnvironmentId(stateDir);
   if (existing !== undefined) return existing;
-  NodeFS.mkdirSync(stateDir, { recursive: true });
+  NodeFS.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   try {
     NodeFS.writeFileSync(
       NodePath.join(stateDir, "environment-id"),
@@ -507,12 +588,33 @@ export function mapPreviewPartitions({ sourceEnvironmentId, targetEnvironmentId,
   return mapping;
 }
 
-/** A standalone, consistent copy of a cookie database, even while its app writes to it. */
-async function backupDatabase(sourcePath, destinationPath) {
-  NodeFS.mkdirSync(NodePath.dirname(destinationPath), { recursive: true, mode: 0o700 });
-  const staged = `${destinationPath}.${process.pid}.staged`;
-  NodeFS.rmSync(staged, { force: true });
-  const source = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+/**
+ * The cookie jar Chromium opens in a partition: under `Network/` once its network data has been
+ * migrated there, at the partition root before that.
+ */
+export function activeCookieDatabase(partitionDir) {
+  const migrated = NodePath.join(partitionDir, "Network", "Cookies");
+  const root = NodePath.join(partitionDir, "Cookies");
+  if (exists(NodePath.join(partitionDir, "NetworkDataMigrated"))) {
+    return exists(migrated) ? migrated : undefined;
+  }
+  if (exists(root)) return root;
+  return exists(migrated) ? migrated : undefined;
+}
+
+/**
+ * A standalone copy of a cookie jar. The jar and its journal are copied first, so SQLite never
+ * creates files beside the source, then settled into one file.
+ */
+async function snapshotCookieDatabase(sourcePath, stagingDir) {
+  NodeFS.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+  const copy = NodePath.join(stagingDir, "Cookies.source");
+  for (const suffix of ["", "-journal", "-wal"]) {
+    const from = `${sourcePath}${suffix}`;
+    if (exists(from)) NodeFS.copyFileSync(from, `${copy}${suffix}`);
+  }
+  const staged = NodePath.join(stagingDir, "Cookies");
+  const source = new NodeSqlite.DatabaseSync(copy);
   try {
     await NodeSqlite.backup(source, staged);
   } finally {
@@ -522,14 +624,9 @@ async function backupDatabase(sourcePath, destinationPath) {
   return staged;
 }
 
-const cookieDatabase = (partitionDir) =>
-  [NodePath.join(partitionDir, "Network", "Cookies"), NodePath.join(partitionDir, "Cookies")].find(
-    exists,
-  );
-
 /**
  * Copies website sign-ins into profiles that have no cookies yet in the target. A profile the
- * target already signed into keeps its own.
+ * target already signed into keeps its own. A new profile's jar goes where Chromium opens it.
  */
 async function copyWebsiteSignIns({ source, target, profileIds, decrypt }) {
   const sourcePartitions = NodePath.join(source.userData, "Partitions");
@@ -538,8 +635,9 @@ async function copyWebsiteSignIns({ source, target, profileIds, decrypt }) {
     entries = NodeFS.readdirSync(sourcePartitions).filter((name) =>
       name.startsWith(PREVIEW_PARTITION_DIR_PREFIX),
     );
-  } catch {
-    return [];
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
   }
   const mapping = mapPreviewPartitions({
     sourceEnvironmentId: source.environmentId,
@@ -548,80 +646,125 @@ async function copyWebsiteSignIns({ source, target, profileIds, decrypt }) {
   });
   const copied = [];
   for (const name of entries) {
-    const from = cookieDatabase(NodePath.join(sourcePartitions, name));
+    const from = activeCookieDatabase(NodePath.join(sourcePartitions, name));
     if (from === undefined) continue;
     const targetName = mapping.get(name) ?? name;
     const targetDir = NodePath.join(target.userData, "Partitions", targetName);
-    if (cookieDatabase(targetDir) !== undefined) continue;
-    const to = NodePath.join(
-      targetDir,
-      NodePath.relative(NodePath.join(sourcePartitions, name), from),
-    );
-    const staged = await backupDatabase(from, to);
+    if (activeCookieDatabase(targetDir) !== undefined) continue;
+    const to = exists(NodePath.join(targetDir, "NetworkDataMigrated"))
+      ? NodePath.join(targetDir, "Network", "Cookies")
+      : NodePath.join(targetDir, "Cookies");
+    const stagingDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dev-identity-cookies-"));
     try {
+      const staged = await snapshotCookieDatabase(from, stagingDir);
       if (decrypt) decryptCookieDatabase(staged, decrypt);
-      NodeFS.renameSync(staged, to);
+      NodeFS.mkdirSync(NodePath.dirname(to), { recursive: true, mode: 0o700 });
+      NodeFS.copyFileSync(staged, `${to}${STAGED_SUFFIX}`);
+      NodeFS.chmodSync(`${to}${STAGED_SUFFIX}`, 0o600);
+      NodeFS.renameSync(`${to}${STAGED_SUFFIX}`, to);
     } finally {
-      NodeFS.rmSync(staged, { force: true });
+      NodeFS.rmSync(stagingDir, { recursive: true, force: true });
     }
     copied.push(targetName);
   }
   return copied;
 }
 
-const homeStateDirs = (home) => {
+const homeCheckout = (home) => {
   const checkout = readJsonObject(NodePath.join(home.root, HOME_RECORD))?.checkout;
+  return typeof checkout === "string" ? checkout : undefined;
+};
+
+const homeStateDirs = (home) => {
+  const checkout = homeCheckout(home);
   const dirs = [home.stateDir, realpathOrSelf(home.stateDir)];
-  if (typeof checkout === "string")
-    dirs.push(NodePath.join(checkout, ".scient-next", STATE_SUBDIR));
+  if (checkout !== undefined) dirs.push(NodePath.join(checkout, ".scient-next", STATE_SUBDIR));
   return [...new Set(dirs)];
 };
 
 /** The path the home's own server uses for its state: through its checkout's link, if set up. */
 const homeServerStateDir = (home) => {
-  const checkout = readJsonObject(NodePath.join(home.root, HOME_RECORD))?.checkout;
-  return typeof checkout === "string"
-    ? NodePath.join(checkout, ".scient-next", STATE_SUBDIR)
-    : home.stateDir;
+  const checkout = homeCheckout(home);
+  return checkout === undefined
+    ? home.stateDir
+    : NodePath.join(checkout, ".scient-next", STATE_SUBDIR);
 };
+
+const processIsAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+};
+
+/** Whether a seed is filling the home right now; the home app must not start under it. */
+export function seedIsRunning(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
+  const pid = Number.parseInt(readText(NodePath.join(home.root, SEED_LOCK)) ?? "", 10);
+  return Number.isInteger(pid) && pid > 0 && isAlive(pid);
+}
+
+/** Whether a target path is, or lies inside, the home or the installed app's state. */
+function isProtectedTarget(targetStateDir, home, installed) {
+  const target = realpathOrSelf(targetStateDir);
+  const parent = realpathOrSelf(NodePath.dirname(targetStateDir));
+  const roots = [realpathOrSelf(home.root), realpathOrSelf(installed.stateDir)];
+  return roots.some((root) => inside(target, root) || inside(parent, root) || inside(root, target));
+}
 
 /**
  * Copies the home's identity into a dev app that is about to start. Runs while no app of that
- * checkout is running; the home may be running, so its files are read as one snapshot.
+ * checkout is running; the home may be running, so its files are read as one snapshot, and
+ * nothing in the target changes until every replacement is ready.
  */
 export async function importDevIdentity({
   targetStateDir,
   home = resolveDevIdentityHome(),
+  installed = resolveInstalledApp(),
   environment = process.env,
   now = () => new Date(),
 } = {}) {
   if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
-  if (realpathOrSelf(NodePath.dirname(targetStateDir)) === realpathOrSelf(home.root)) {
-    return { status: "home" };
+  if (isProtectedTarget(targetStateDir, home, installed)) {
+    const isHome =
+      realpathOrSelf(NodePath.dirname(targetStateDir)) === realpathOrSelf(home.root) &&
+      NodePath.basename(targetStateDir) === STATE_SUBDIR;
+    if (!isHome) return { status: "refused-target" };
+    return { status: seedIsRunning(home) ? "home-seeding" : "home" };
   }
   if (!exists(home.stateDir)) return { status: "no-home" };
   const protection = vaultProtection(home.stateDir);
   if (protection !== "file" && protection !== "none") {
     return { status: "home-vault-not-portable", protection };
   }
+  if (seedIsRunning(home)) return { status: "home-busy" };
   const capture = captureIdentity(home.stateDir);
   if (capture === undefined) return { status: "home-busy" };
   const firstStart =
     !exists(NodePath.join(targetStateDir, "settings.json")) &&
     !exists(NodePath.join(targetStateDir, "client-settings.json"));
-  NodeFS.mkdirSync(targetStateDir, { recursive: true });
+  NodeFS.mkdirSync(targetStateDir, { recursive: true, mode: 0o700 });
   const paths = { sourceDirs: homeStateDirs(home), targetDir: targetStateDir };
 
-  const secrets = protection === "file" ? installSecrets({ capture, targetStateDir }) : [];
-  installSettings({ capture, targetStateDir, ...paths, fullProfile: firstStart });
-  installConnectors({ capture, targetStateDir, ...paths });
-  installClientSettings({ sourceStateDir: home.stateDir, targetStateDir, firstStart });
-  if (firstStart) {
-    for (const path of PROFILE_PATHS) {
-      const from = NodePath.join(home.stateDir, path);
-      if (exists(from)) copyTree(from, NodePath.join(targetStateDir, path));
+  const changes = new StagedChanges();
+  let secrets = [];
+  try {
+    if (protection === "file") secrets = stageSecrets({ changes, capture, targetStateDir });
+    stageSettings({ changes, capture, targetStateDir, ...paths, fullProfile: firstStart });
+    stageConnectors({ changes, capture, targetStateDir, ...paths });
+    stageClientSettings({ changes, sourceStateDir: home.stateDir, targetStateDir, firstStart });
+    if (firstStart) {
+      for (const path of PROFILE_PATHS) {
+        const from = NodePath.join(home.stateDir, path);
+        if (exists(from)) changes.copyTree(from, NodePath.join(targetStateDir, path));
+      }
     }
+  } catch (error) {
+    changes.abort();
+    throw error;
   }
+  changes.commit();
 
   const homeEnvironmentId = readEnvironmentId(home.stateDir);
   const websites =
@@ -647,7 +790,7 @@ export async function importDevIdentity({
     secrets: secrets.length,
     websiteProfiles: websites.length,
   };
-  writeJsonAtomic(NodePath.join(targetStateDir, DEV_IDENTITY_MARKER), summary);
+  writeFileAtomic(NodePath.join(targetStateDir, DEV_IDENTITY_MARKER), jsonBytes(summary), 0o644);
   return summary;
 }
 
@@ -664,7 +807,9 @@ export function describeImport(result) {
     case "home-vault-not-portable":
       return "The dev identity home keeps its accounts key in the Keychain, which other dev apps cannot open; run pnpm dev:identity seed to move it to a shared key. Starting with this app's own accounts.";
     case "home-busy":
-      return "The dev identity home kept changing while it was being copied; this dev app starts with the identity it already had. Restart it to try again.";
+      return "The dev identity home was changing while it was being copied; this dev app starts with the identity it already had. Restart it to try again.";
+    case "refused-target":
+      return "This dev app's data folder points into the identity home or the installed app, so nothing was copied into it.";
     case "disabled":
       return `${DEV_IDENTITY_ENV}=off: this dev app keeps its own accounts.`;
     default:
@@ -737,15 +882,6 @@ export function resolveInstalledApp(homeDir = NodeOS.homedir()) {
   };
 }
 
-const processIsAlive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-};
-
 /** The home's app writes its own files; seeding waits until it is closed. */
 export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
   for (const file of ["electron.pid", "backend.pid"]) {
@@ -758,9 +894,29 @@ export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = proc
   return exists(NodePath.join(home.root, "local-dev-app-runner", "state.json"));
 }
 
+/** Holds the home for one seed: the home app refuses to start while this lock is live. */
+function acquireSeedLock(home, isAlive) {
+  NodeFS.mkdirSync(home.root, { recursive: true, mode: 0o700 });
+  const path = NodePath.join(home.root, SEED_LOCK);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      NodeFS.writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o600 });
+      return () => NodeFS.rmSync(path, { force: true });
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      if (seedIsRunning(home, isAlive)) {
+        throw new Error("Another seed is already filling the home.", { cause: error });
+      }
+      NodeFS.rmSync(path, { force: true });
+    }
+  }
+  throw new Error("Could not lock the dev identity home.");
+}
+
 /**
  * Fills the home from the installed app. `readKeychain(service, account)` returns a secret string
- * or null; macOS asks the owner once for each item.
+ * or null; macOS asks the owner once for each item. Nothing in the home changes unless the
+ * installed app's accounts key was given and every replacement was staged.
  */
 export async function seedDevIdentityHome({
   home = resolveDevIdentityHome(),
@@ -768,122 +924,128 @@ export async function seedDevIdentityHome({
   readKeychain,
   force = false,
   isRunning = homeAppIsRunning,
+  isAlive = processIsAlive,
 } = {}) {
-  if (isRunning(home)) {
-    throw new Error("Quit Scient (Dev) · identity first (pnpm dev:app:stop in its checkout).");
-  }
-  const marker = readJsonObject(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER));
-  if (marker?.seededFrom !== undefined && !force) {
-    throw new Error(
-      `The dev identity home was already seeded on ${String(marker.seededAt)}. Pass --force to replace its accounts with the installed app's again.`,
-    );
-  }
-  if (!exists(installed.stateDir)) {
-    throw new Error(`No installed Scient data at ${installed.stateDir}.`);
-  }
-  NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
-  const report = { secrets: 0, websiteProfiles: 0, skipped: [] };
+  const release = acquireSeedLock(home, isAlive);
+  try {
+    if (isRunning(home)) {
+      throw new Error("Quit Scient (Dev) · identity first (pnpm dev:app:stop in its checkout).");
+    }
+    const marker = readJsonObject(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER));
+    if (marker?.seededFrom !== undefined && !force) {
+      throw new Error(
+        `The dev identity home was already seeded on ${String(marker.seededAt)}. Pass --force to replace its accounts with the installed app's again.`,
+      );
+    }
+    if (!exists(installed.stateDir)) {
+      throw new Error(`No installed Scient data at ${installed.stateDir}.`);
+    }
+    const homeRoot = realpathOrSelf(home.root);
+    const installedRoot = realpathOrSelf(installed.stateDir);
+    if (inside(homeRoot, installedRoot) || inside(installedRoot, homeRoot)) {
+      throw new Error(
+        "The installed app's data and the identity home overlap; nothing was copied.",
+      );
+    }
+    NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
+    const report = { secrets: 0, websiteProfiles: 0, skipped: [] };
 
-  const protection = vaultProtection(installed.stateDir);
-  let sourceKey;
-  if (protection === "file") {
-    sourceKey = readBytes(NodePath.join(installed.stateDir, "secrets", `${VAULT_KEY_FILE}.bin`));
-  } else if (protection === "keychain") {
-    const encoded = await readKeychain("Scient Accounts", installed.vaultKeychainAccount);
-    if (encoded) sourceKey = Buffer.from(encoded, "base64");
-  }
-  if (sourceKey !== undefined && sourceKey.length === 32) {
-    vaultDecrypt(
-      sourceKey,
-      VAULT_SENTINEL,
-      readBytes(NodePath.join(installed.stateDir, "secrets", `${VAULT_SENTINEL}.bin`)).subarray(1),
-    );
-  } else {
-    sourceKey = undefined;
-  }
-  const capture = captureIdentity(installed.stateDir, { vaultKey: sourceKey });
-  if (capture === undefined) {
-    throw new Error(
-      "The installed app kept changing its accounts while they were read; try again.",
-    );
-  }
-  const homeDir = homeServerStateDir(home);
-  const paths = { sourceDirs: [installed.stateDir], targetDir: homeDir };
-  if (sourceKey === undefined) {
-    capture.secrets = new Map(
-      [...capture.secrets].filter(
-        ([name, bytes]) => !name.startsWith("accounts-") && bytes[0] !== SEALED,
-      ),
-    );
-    capture.accounts = undefined;
-    report.skipped.push(
-      "accounts and encrypted keys (the Keychain did not give the installed app's key)",
-    );
-  }
-  const vault = makePortableVault();
-  const unreadable = [];
-  report.secrets = installSecrets({
-    capture: { ...capture, secrets: withSourceKey(capture.secrets, sourceKey) },
-    targetStateDir: home.stateDir,
-    targetKey: vault.key,
-    onSkip: (name) => unreadable.push(name),
-  }).length;
-  if (unreadable.length > 0) {
-    report.skipped.push(`${String(unreadable.length)} saved secrets that could not be decrypted`);
-  }
-  installSettings({ capture, targetStateDir: home.stateDir, ...paths, fullProfile: true });
-  installConnectors({ capture, targetStateDir: home.stateDir, ...paths });
-  installClientSettings({
-    sourceStateDir: installed.stateDir,
-    targetStateDir: home.stateDir,
-    firstStart: true,
-  });
-  for (const path of PROFILE_PATHS) {
-    const from = NodePath.join(installed.stateDir, path);
-    if (exists(from)) copyTree(from, NodePath.join(home.stateDir, path));
-  }
+    const protection = vaultProtection(installed.stateDir);
+    let sourceKey;
+    if (protection === "file") {
+      sourceKey = readBytes(NodePath.join(installed.stateDir, "secrets", `${VAULT_KEY_FILE}.bin`));
+    } else if (protection === "keychain") {
+      const encoded = await readKeychain("Scient Accounts", installed.vaultKeychainAccount);
+      if (encoded) sourceKey = Buffer.from(encoded, "base64");
+    }
+    if (protection !== "none" && sourceKey?.length !== 32) {
+      throw new Error(
+        "The Keychain did not give the installed app's accounts key, so nothing was copied. Run the seed again and click Allow.",
+      );
+    }
+    const capture = captureIdentity(installed.stateDir, { vaultKey: sourceKey });
+    if (capture === undefined) {
+      throw new Error(
+        "The installed app kept changing its accounts while they were read; try again.",
+      );
+    }
+    const paths = { sourceDirs: [installed.stateDir], targetDir: homeServerStateDir(home) };
+    const secrets = new Map(capture.secrets);
+    if (sourceKey !== undefined) secrets.set(`${VAULT_KEY_FILE}.bin`, sourceKey);
+    const unreadable = [];
+    const changes = new StagedChanges();
+    try {
+      report.secrets = stageSecrets({
+        changes,
+        capture: { ...capture, secrets },
+        targetStateDir: home.stateDir,
+        targetKey: makePortableVault().key,
+        onSkip: (name) => unreadable.push(name),
+      }).length;
+      stageSettings({
+        changes,
+        capture,
+        targetStateDir: home.stateDir,
+        ...paths,
+        fullProfile: true,
+      });
+      stageConnectors({ changes, capture, targetStateDir: home.stateDir, ...paths });
+      stageClientSettings({
+        changes,
+        sourceStateDir: installed.stateDir,
+        targetStateDir: home.stateDir,
+        firstStart: true,
+      });
+      for (const path of PROFILE_PATHS) {
+        const from = NodePath.join(installed.stateDir, path);
+        if (exists(from)) changes.copyTree(from, NodePath.join(home.stateDir, path));
+      }
+    } catch (error) {
+      changes.abort();
+      throw error;
+    }
+    changes.commit();
+    if (unreadable.length > 0) {
+      report.skipped.push(`${String(unreadable.length)} saved secrets that could not be decrypted`);
+    }
 
-  const installedEnvironmentId = readEnvironmentId(installed.stateDir);
-  let cookieSecret = null;
-  for (const item of installed.cookieKeychains) {
-    cookieSecret = await readKeychain(item.service, item.account);
-    if (cookieSecret) break;
-  }
-  if (installedEnvironmentId !== undefined && cookieSecret) {
-    const websites = await copyWebsiteSignIns({
-      source: { userData: installed.userData, environmentId: installedEnvironmentId },
-      target: {
-        userData: NodePath.join(home.stateDir, "electron-userdata"),
-        environmentId: ensureEnvironmentId(home.stateDir),
-      },
-      profileIds: browserProfileIds(NodePath.join(home.stateDir, "client-settings.json")),
-      decrypt: makeChromiumCookieDecrypter(cookieSecret),
-    });
-    report.websiteProfiles = websites.length;
-  } else {
-    report.skipped.push("website sign-ins (the Keychain did not give the installed app's key)");
-  }
+    const installedEnvironmentId = readEnvironmentId(installed.stateDir);
+    let cookieSecret = null;
+    for (const item of installed.cookieKeychains) {
+      cookieSecret = await readKeychain(item.service, item.account);
+      if (cookieSecret) break;
+    }
+    if (installedEnvironmentId !== undefined && cookieSecret) {
+      const websites = await copyWebsiteSignIns({
+        source: { userData: installed.userData, environmentId: installedEnvironmentId },
+        target: {
+          userData: NodePath.join(home.stateDir, "electron-userdata"),
+          environmentId: ensureEnvironmentId(home.stateDir),
+        },
+        profileIds: browserProfileIds(NodePath.join(home.stateDir, "client-settings.json")),
+        decrypt: makeChromiumCookieDecrypter(cookieSecret),
+      });
+      report.websiteProfiles = websites.length;
+    } else {
+      report.skipped.push("website sign-ins (the Keychain did not give the installed app's key)");
+    }
 
-  writeJsonAtomic(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER), {
-    seededFrom: installed.stateDir,
-    seededAt: new Date().toISOString(),
-    secrets: report.secrets,
-    websiteProfiles: report.websiteProfiles,
-    skipped: report.skipped,
-  });
-  return report;
+    writeFileAtomic(
+      NodePath.join(home.stateDir, DEV_IDENTITY_MARKER),
+      jsonBytes({
+        seededFrom: installed.stateDir,
+        seededAt: new Date().toISOString(),
+        secrets: report.secrets,
+        websiteProfiles: report.websiteProfiles,
+        skipped: report.skipped,
+      }),
+      0o644,
+    );
+    return report;
+  } finally {
+    release();
+  }
 }
-
-/** The capture keeps its source key beside the records so they can be re-encrypted. */
-const withSourceKey = (secrets, sourceKey) => {
-  const next = new Map(
-    [...secrets].filter(
-      ([name]) => name !== `${VAULT_KEY_FILE}.bin` && name !== `${VAULT_SENTINEL}.bin`,
-    ),
-  );
-  if (sourceKey !== undefined) next.set(`${VAULT_KEY_FILE}.bin`, sourceKey);
-  return next;
-};
 
 /**
  * Makes the checkout the home app runs from: a detached worktree of this clone at origin/main,
@@ -900,19 +1062,24 @@ export function setupHomeCheckout({
   if (NodePath.basename(checkout) !== HOME_CHECKOUT_NAME) {
     throw new Error(`The home checkout folder must be named ${HOME_CHECKOUT_NAME}.`);
   }
+  const link = NodePath.join(checkout, ".scient-next");
+  if (exists(link)) {
+    if (!NodeFS.lstatSync(link).isSymbolicLink()) {
+      throw new Error(
+        `${link} already holds an app's data; move it aside before using this checkout.`,
+      );
+    }
+    if (realpathOrSelf(link) !== realpathOrSelf(home.root)) {
+      throw new Error(`${link} points somewhere other than ${home.root}.`);
+    }
+  }
   NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
   if (!exists(checkout)) {
     run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", "main"]);
     run("git", ["-C", repoRoot, "worktree", "add", "--detach", checkout, "origin/main"]);
   }
-  const link = NodePath.join(checkout, ".scient-next");
-  if (exists(link) && !NodeFS.lstatSync(link).isSymbolicLink()) {
-    throw new Error(
-      `${link} already holds an app's data; move it aside before using this checkout.`,
-    );
-  }
   if (!exists(link)) NodeFS.symlinkSync(home.root, link);
-  writeJsonAtomic(NodePath.join(home.root, HOME_RECORD), { checkout });
+  writeFileAtomic(NodePath.join(home.root, HOME_RECORD), jsonBytes({ checkout }), 0o644);
   ensurePortableVault(home.stateDir);
   return { checkout, home: home.root };
 }

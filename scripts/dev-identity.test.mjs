@@ -7,6 +7,7 @@ import * as NodeSqlite from "node:sqlite";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
+  activeCookieDatabase,
   captureIdentity,
   DEV_IDENTITY_ENV,
   DEV_IDENTITY_MARKER,
@@ -17,6 +18,7 @@ import {
   makePortableVault,
   previewPartitionDirectory,
   reencryptSecret,
+  scrubAccountsState,
   seedDevIdentityHome,
   setupHomeCheckout,
   vaultProtection,
@@ -562,29 +564,6 @@ describe("seedDevIdentityHome", () => {
       force: true,
     });
   });
-
-  it("still copies settings when the Keychain refuses, and says what it left behind", async () => {
-    const root = scratch();
-    const { installed } = makeInstalledApp(NodePath.join(root, "installed"));
-    const home = homeAt(NodePath.join(root, "home"));
-    const report = await seedDevIdentityHome({
-      home,
-      installed,
-      readKeychain: async () => null,
-      isRunning: () => false,
-    });
-    // Only the plain Overleaf token needs no key; nothing encrypted is copied unreadable.
-    assert.equal(report.secrets, 1);
-    assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort(), [
-      "accounts-master-key.bin",
-      "accounts-vault.bin",
-      "overleaf-git-token-b3ZlcmxlYWYuY29t.bin",
-    ]);
-    assert.equal(report.skipped.length, 2);
-    assert.deepEqual(readJson(NodePath.join(home.stateDir, "settings.json")), {
-      customModels: [{ id: "m" }],
-    });
-  });
 });
 
 describe("what a copy must not carry over", () => {
@@ -687,7 +666,7 @@ describe("what a copy must not carry over", () => {
     assert.notInclude(names, "provider-auth-abc.bin");
   });
 
-  it("retries a home caught between writing a value and publishing its reference", async () => {
+  it("refuses a home whose settings point at a record that has not landed", async () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));
     const ref = "custom-model-66666666-6666-4666-8666-666666666666";
@@ -695,10 +674,27 @@ describe("what a copy must not carry over", () => {
       NodePath.join(home.stateDir, "settings.json"),
       JSON.stringify({ customModels: [{ keyRef: ref }] }),
     );
-    // The reference is published but its value has not landed yet: the last read accepts it as is.
-    const capture = captureIdentity(home.stateDir, { attempts: 2 });
-    assert.ok(capture);
-    assert.equal(capture.secrets.has(`${ref}.bin`), false);
+    assert.equal(captureIdentity(home.stateDir, { attempts: 2 }), undefined);
+    write(
+      NodePath.join(home.stateDir, "settings.json"),
+      JSON.stringify({
+        providerInstances: {
+          codex: {
+            driver: "codex",
+            environment: [{ name: "OPENAI_API_KEY", valueRedacted: true }],
+          },
+        },
+      }),
+    );
+    assert.equal(captureIdentity(home.stateDir, { attempts: 2 }), undefined);
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "secrets", "accounts-state.bin"), "kept");
+    const result = await importDevIdentity({ targetStateDir: target, home });
+    assert.equal(result.status, "home-busy");
+    assert.equal(
+      NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-state.bin"), "utf8"),
+      "kept",
+    );
   });
 
   it("reads again when the home saves in the middle of a copy", () => {
@@ -821,5 +817,244 @@ describe("setupHomeCheckout", () => {
       () => setupHomeCheckout({ repoRoot: root, checkout: NodePath.join(root, "x"), home }),
       /scient-desktop-identity/u,
     );
+  });
+});
+
+describe("code review guards", () => {
+  it("re-encrypts connector sign-ins on seed and keeps legacy JSON ones readable", async () => {
+    const root = scratch();
+    const installedRoot = NodePath.join(root, "installed");
+    const stateDir = NodePath.join(installedRoot, "userdata");
+    const key = NodeCrypto.randomBytes(32);
+    const secrets = NodePath.join(stateDir, "secrets");
+    write(
+      NodePath.join(secrets, "accounts-vault.bin"),
+      Buffer.concat([Buffer.from([1]), encrypt(key, "accounts-vault", Buffer.alloc(0))]),
+    );
+    const current = "connector-77777777-7777-4777-8777-777777777777";
+    const legacy = "connector-88888888-8888-4888-8888-888888888888";
+    write(
+      NodePath.join(secrets, `${current}.bin`),
+      encrypt(key, current, Buffer.from('{"token":"t"}')),
+    );
+    write(NodePath.join(secrets, `${legacy}.bin`), '{"token":"old"}');
+    write(
+      NodePath.join(stateDir, "scient-extensions.json"),
+      JSON.stringify({ refs: [current, legacy] }),
+    );
+    const home = homeAt(NodePath.join(root, "home"));
+    await seedDevIdentityHome({
+      home,
+      installed: {
+        stateDir,
+        userData: NodePath.join(installedRoot, "none"),
+        vaultKeychainAccount: "a",
+        cookieKeychains: [],
+      },
+      readKeychain: async (service) =>
+        service === "Scient Accounts" ? key.toString("base64") : null,
+      isRunning: () => false,
+    });
+    const homeKey = NodeFS.readFileSync(
+      NodePath.join(home.stateDir, "secrets", "accounts-master-key.bin"),
+    );
+    assert.equal(
+      decrypt(
+        homeKey,
+        current,
+        NodeFS.readFileSync(NodePath.join(home.stateDir, "secrets", `${current}.bin`)),
+      ).toString(),
+      '{"token":"t"}',
+    );
+    assert.equal(
+      NodeFS.readFileSync(NodePath.join(home.stateDir, "secrets", `${legacy}.bin`), "utf8"),
+      '{"token":"old"}',
+    );
+  });
+
+  it("leaves the home untouched when the Keychain refuses the installed app's key", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const before = NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort();
+    const stateDir = NodePath.join(root, "installed", "userdata");
+    write(NodePath.join(stateDir, "secrets", "accounts-vault.bin"), Buffer.from([1, 0]));
+    const error = await seedDevIdentityHome({
+      home,
+      installed: { stateDir, userData: root, vaultKeychainAccount: "a", cookieKeychains: [] },
+      readKeychain: async () => null,
+      isRunning: () => false,
+    }).catch((cause) => cause);
+    assert.match(String(error), /nothing was copied/u);
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort(), before);
+    assert.equal(NodeFS.existsSync(NodePath.join(home.root, "dev-identity-seed.lock")), false);
+  });
+
+  it("holds a lock through the seed that keeps the home app from starting", async () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const stateDir = NodePath.join(root, "installed", "userdata");
+    write(NodePath.join(stateDir, "secrets", "accounts-vault.bin"), Buffer.from([1, 0]));
+    let seenDuringSeed;
+    await seedDevIdentityHome({
+      home,
+      installed: { stateDir, userData: root, vaultKeychainAccount: "a", cookieKeychains: [] },
+      readKeychain: async () => {
+        seenDuringSeed = await importDevIdentity({
+          targetStateDir: home.stateDir,
+          home,
+        });
+        return null;
+      },
+      isRunning: () => false,
+    }).catch(() => {});
+    assert.deepEqual(seenDuringSeed, { status: "home-seeding" });
+  });
+
+  it("never writes into a data folder linked to the home or the installed app", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const candidate = NodePath.join(root, "candidate");
+    NodeFS.mkdirSync(candidate);
+    const linked = NodePath.join(candidate, "scient-next-dev");
+    NodeFS.symlinkSync(home.stateDir, linked);
+    const before = NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort();
+    assert.equal(
+      (await importDevIdentity({ targetStateDir: linked, home })).status,
+      "refused-target",
+    );
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort(), before);
+
+    const installedState = NodePath.join(root, "installed", "userdata");
+    NodeFS.mkdirSync(installedState, { recursive: true });
+    const other = NodePath.join(root, "other");
+    NodeFS.mkdirSync(other);
+    NodeFS.symlinkSync(installedState, NodePath.join(other, "scient-next-dev"));
+    const result = await importDevIdentity({
+      targetStateDir: NodePath.join(other, "scient-next-dev"),
+      home,
+      installed: { stateDir: installedState },
+    });
+    assert.equal(result.status, "refused-target");
+    assert.deepEqual(NodeFS.readdirSync(installedState), []);
+  });
+
+  it("changes nothing in a dev app when a replacement cannot be written", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "secrets", "accounts-state.bin"), "old");
+    write(NodePath.join(target, "settings.json"), "{}");
+    // The staged settings file cannot be created, after the secrets were staged.
+    NodeFS.mkdirSync(NodePath.join(target, "settings.json.dev-identity-staged"));
+    const error = await importDevIdentity({ targetStateDir: target, home }).catch((cause) => cause);
+    assert.ok(error instanceof Error);
+    assert.equal(
+      NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-state.bin"), "utf8"),
+      "old",
+    );
+    assert.deepEqual(
+      NodeFS.readdirSync(NodePath.join(target, "secrets")).filter((name) =>
+        name.includes("staged"),
+      ),
+      [],
+    );
+  });
+
+  it("keeps plain install keys that happen to start with 0xff when the vault key changes", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    const signing = Buffer.concat([Buffer.from([0xff]), NodeCrypto.randomBytes(31)]);
+    write(NodePath.join(target, "secrets", "server-signing-key.bin"), signing);
+    write(NodePath.join(target, "secrets", "secret-request-salt.bin"), Buffer.from([0xff, 7]));
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(target, "secrets", "server-signing-key.bin")),
+      signing,
+    );
+    assert.ok(NodeFS.existsSync(NodePath.join(target, "secrets", "secret-request-salt.bin")));
+  });
+
+  it("drops connector Undo history and keeps connector state private", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "settings.json"), "{}");
+    write(NodePath.join(target, "connector-history", "con_x", "created.json"), "{}");
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.equal(NodeFS.existsSync(NodePath.join(target, "connector-history")), false);
+    assert.equal(
+      NodeFS.statSync(NodePath.join(target, "scient-extensions.json")).mode & 0o777,
+      0o600,
+    );
+  });
+
+  it("refreshes source-control hosts with their secret slots on every start", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    write(
+      NodePath.join(home.stateDir, "settings.json"),
+      JSON.stringify({ sourceControlHosts: { github: { enabled: true } } }),
+    );
+    write(
+      NodePath.join(home.stateDir, "secrets", "source-control-Z2l0aHVi-dG9rZW4.bin"),
+      "gh-token",
+    );
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "settings.json"), JSON.stringify({ sourceControlHosts: {} }));
+    write(NodePath.join(target, "client-settings.json"), "{}");
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(readJson(NodePath.join(target, "settings.json")).sourceControlHosts, {
+      github: { enabled: true },
+    });
+    assert.ok(
+      NodeFS.existsSync(NodePath.join(target, "secrets", "source-control-Z2l0aHVi-dG9rZW4.bin")),
+    );
+  });
+
+  it("drops sharing records from copied browser profiles", () => {
+    assert.deepEqual(
+      scrubAccountsState({
+        profiles: [{ profileId: "p", access: "ask", send: {}, sharedWith: [], received: [{}] }],
+      }),
+      { profiles: [{ profileId: "p", access: "ask" }] },
+    );
+  });
+
+  it("reads a migrated jar and writes the jar a fresh profile opens, leaving the source alone", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const partition = NodePath.join(
+      home.stateDir,
+      "electron-userdata",
+      "Partitions",
+      previewPartitionDirectory("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    );
+    makeCookieDatabase(NodePath.join(partition, "Network", "Cookies"), [
+      { host: ".example.org", name: "session", value: "migrated" },
+    ]);
+    write(NodePath.join(partition, "NetworkDataMigrated"), "");
+    // A stale pre-migration jar Chromium no longer opens.
+    makeCookieDatabase(NodePath.join(partition, "Cookies"), [
+      { host: ".example.org", name: "session", value: "stale" },
+    ]);
+    const sourceFiles = NodeFS.readdirSync(NodePath.join(partition, "Network")).sort();
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    await importDevIdentity({ targetStateDir: target, home });
+    const environmentId = NodeFS.readFileSync(
+      NodePath.join(target, "environment-id"),
+      "utf8",
+    ).trim();
+    const targetPartition = NodePath.join(
+      target,
+      "electron-userdata",
+      "Partitions",
+      previewPartitionDirectory(environmentId),
+    );
+    assert.equal(activeCookieDatabase(targetPartition), NodePath.join(targetPartition, "Cookies"));
+    assert.deepEqual(readCookies(NodePath.join(targetPartition, "Cookies")), [
+      { name: "session", value: "migrated", sealed: 0 },
+    ]);
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(partition, "Network")).sort(), sourceFiles);
   });
 });

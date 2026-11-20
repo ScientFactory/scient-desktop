@@ -26,7 +26,6 @@ import {
   writeApprovedHandoff,
 } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
 import { packageManagerInvocation } from "./dev-app/host.mjs";
-import { describeImport, importDevIdentity } from "./dev-identity.mjs";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
@@ -856,21 +855,38 @@ export function shareDevelopmentVoiceRuntime({
   }
 }
 
-/** Copies the owner's dev identity (accounts, models, sign-ins) into this checkout's app. */
+/**
+ * Copies the owner's dev identity (accounts, models, sign-ins) into this checkout's app. Loaded on
+ * demand: the stable controller ships this launcher without the identity module.
+ */
 export async function shareDevelopmentIdentity(
   paths,
-  { importIdentity = importDevIdentity, writeLine = console.log } = {},
+  { loadIdentity = () => import("./dev-identity.mjs"), writeLine = console.log } = {},
 ) {
+  let identity;
   try {
-    const line = describeImport(
-      await importIdentity({ targetStateDir: NodePath.join(paths.stateRoot, "scient-next-dev") }),
-    );
-    if (line) writeLine(line);
+    identity = await loadIdentity();
+  } catch {
+    return;
+  }
+  let result;
+  try {
+    result = await identity.importDevIdentity({
+      targetStateDir: NodePath.join(paths.stateRoot, "scient-next-dev"),
+    });
   } catch (error) {
     writeLine(
-      `Could not copy your dev identity (${error instanceof Error ? error.message : String(error)}); this dev app starts with its own accounts.`,
+      `Could not copy your dev identity (${error instanceof Error ? error.message : String(error)}); this dev app starts with the identity it already had.`,
+    );
+    return;
+  }
+  if (result.status === "home-seeding") {
+    throw new Error(
+      "pnpm dev:identity seed is filling this identity home; start it again when the seed finishes.",
     );
   }
+  const line = identity.describeImport(result);
+  if (line) writeLine(line);
 }
 
 async function runApp() {

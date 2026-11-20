@@ -291,8 +291,9 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   the home. To update it, check out a newer `origin/main` there and restart it.
 - `seed` fills a stopped home from the installed app, which it only reads.
   macOS asks once for each of two Keychain items: the installed app's accounts
-  key and its website-cookie key. Allow both, or the step reports what it left
-  out. The home's accounts are re-encrypted under a key kept in its own
+  key and its website-cookie key. Allow both. Without the first, the seed copies
+  nothing and the home stays as it was; without the second, it skips website
+  sign-ins and says so. The home app does not start while a seed runs. The home's accounts are re-encrypted under a key kept in its own
   `secrets/` folder, the only kind another dev app can open without the
   Keychain. `seed --force` repeats it and replaces the home's accounts.
 - Add or change accounts in the identity app. A candidate replaces its copy of
@@ -309,7 +310,9 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   inside the home are copied with the connector; a folder elsewhere is used in
   place and never deleted by a dev app.
 - The home may keep running: its files are read as one snapshot, read again if
-  it saves partway through.
+  it saves partway through. A candidate changes nothing until every replacement
+  file is ready; if the home never settles, the candidate starts with the
+  identity it already had and says so.
 - A connector whose sign-in renews itself can be renewed by any app holding the
   copy. If a candidate renews it, the home may need to sign in to that connector
   again; candidates started afterwards copy the new sign-in.
