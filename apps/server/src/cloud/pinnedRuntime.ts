@@ -614,13 +614,17 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
         const argumentsText = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
         const cwd = yield* fs.readLink(`/proc/${pid}/cwd`).pipe(Effect.option);
         if (Option.isNone(argumentsText) || Option.isNone(cwd)) {
-          // One whose /proc entry is gone has exited, so it runs nothing; a busy machine always
-          // has some. Anything else (still running but unreadable, a zombie, a leader whose
-          // threads live on) leaves the list unknown.
-          const exited = yield* fs.stat(`/proc/${pid}`).pipe(
-            Effect.as(false),
-            Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound")),
-          );
+          // One that exited runs nothing; a busy machine always has some. Only the kernel's
+          // "no such process" proves it: /proc can hide a live one (hidepid), and a zombie,
+          // a leader whose threads live on or a reused id still answer, leaving the list unknown.
+          const exited = yield* Effect.sync(() => {
+            try {
+              process.kill(Number(pid), 0);
+              return false;
+            } catch (error) {
+              return (error as NodeJS.ErrnoException).code === "ESRCH";
+            }
+          });
           if (exited) continue;
           return Option.none<string>();
         }
