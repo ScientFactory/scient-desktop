@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationReadScope,
@@ -60,10 +61,15 @@ export function useProviderInventory({
       read: (input) => {
         const next = serial.current.then(async () => {
           if (!active) throw new Error("Inventory request cancelled.");
-          const reply = await serverEnvironment.refreshProviders.run(registry, {
-            environmentId,
-            input,
-          });
+          const reply = await runAtomCommand(
+            registry,
+            serverEnvironment.refreshProviders,
+            {
+              environmentId,
+              input,
+            },
+            { reportFailure: false },
+          );
           if (reply._tag === "Failure") throw new Error(formatEnvironmentQueryError(reply.cause));
           return reply.value;
         });

@@ -141,6 +141,10 @@ import Migration0101 from "./Migrations/101_IssueTrackerBindings.ts";
 import Migration0102 from "./Migrations/102_ActiveShellIndexIndexes.ts";
 // T3's migration 99 follows Scient's immutable migration sequence.
 import Migration0103 from "./Migrations/103_BackgroundRecoveryIndexes.ts";
+// T3's migrations 100-102 follow Scient's immutable migration sequence.
+import Migration0104 from "./Migrations/104_TurnStartReadIndexes.ts";
+import Migration0105 from "./Migrations/105_DelegatedTaskReadIndexes.ts";
+import Migration0106 from "./Migrations/106_ThreadItemCounts.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -279,6 +283,10 @@ export const migrationEntries = [
   [102, "ActiveShellIndexIndexes", Migration0102],
   // T3's migration 99 follows Scient's immutable migration sequence.
   [103, "BackgroundRecoveryIndexes", Migration0103],
+  // T3's migrations 100-102 follow Scient's immutable migration sequence.
+  [104, "TurnStartReadIndexes", Migration0104],
+  [105, "DelegatedTaskReadIndexes", Migration0105],
+  [106, "ThreadItemCounts", Migration0106],
   // SCIENT-FORK:END
 ] as const;
 

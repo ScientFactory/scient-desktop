@@ -61,11 +61,9 @@ export function isTokenLimitError(error: string | null): boolean {
 export function getThreadErrorBannerKey(
   threadKey: string,
   error: string | null,
-  turnId?: string | null,
+  source: string | null = null,
 ): string | null {
-  if (error === null) return null;
-  const occurrence = isTokenLimitError(error) && turnId ? `\u0000${turnId}` : "";
-  return `${threadKey}\u0000${error}${occurrence}`;
+  return error === null ? null : `${threadKey}\u0000${source ?? ""}\u0000${error}`;
 }
 
 export function shouldShowThreadErrorBanner(

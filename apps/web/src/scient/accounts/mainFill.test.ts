@@ -54,18 +54,33 @@ vi.mock("~/scient/browser/browserShortcuts", () => ({
 }));
 vi.mock("./accountsState", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
+  const { promiseCommandRun } = await import("../../../test/promiseCommandRun");
   const unread = Atom.make(AsyncResult.initial());
   return {
     accountsState: {
       snapshot: () => unread,
-      readSnapshot: { run: async () => ({ _tag: "Success", value: state.snapshot }) },
-      mainFilled: { run: async (_registry: unknown, input: unknown) => state.filled.push(input) },
-      remove: { run: (_registry: unknown, input: unknown) => state.rowCommand("remove", input) },
+      readSnapshot: {
+        run: promiseCommandRun(async () => ({ _tag: "Success", value: state.snapshot })),
+      },
+      mainFilled: {
+        run: promiseCommandRun(async (_registry: unknown, input: unknown) =>
+          state.filled.push(input),
+        ),
+      },
+      remove: {
+        run: promiseCommandRun((_registry: unknown, input: unknown) =>
+          state.rowCommand("remove", input),
+        ),
+      },
       sessionEnded: {
-        run: (_registry: unknown, input: unknown) => state.rowCommand("signed out", input),
+        run: promiseCommandRun((_registry: unknown, input: unknown) =>
+          state.rowCommand("signed out", input),
+        ),
       },
       retireProfile: {
-        run: (_registry: unknown, input: unknown) => state.rowCommand("retire", input),
+        run: promiseCommandRun((_registry: unknown, input: unknown) =>
+          state.rowCommand("retire", input),
+        ),
       },
     },
   };

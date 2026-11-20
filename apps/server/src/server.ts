@@ -1065,7 +1065,10 @@ export const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
-  Layer.provide(ServerHttp.layerHttpCompression),
+  // SCIENT-FORK: Scient's extra route layers fill pipe's 20 arguments, so these two global middlewares share one.
+  Layer.provide(
+    Layer.mergeAll(ServerHttp.layerHttpCompression, ServerHttp.layerUnloggedSignedRequests),
+  ),
 );
 
 const layerMakeServer = Layer.unwrap(

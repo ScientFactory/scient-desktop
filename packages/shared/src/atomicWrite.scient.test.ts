@@ -20,12 +20,16 @@ describe("durable atomic text replacement", () => {
         ...fs,
         open: (path, options) =>
           fs.open(path, options).pipe(
-            Effect.map((file) => ({
-              ...file,
-              sync: Effect.sync(() => {
-                operations.push(path === directory ? "directory sync" : "file sync");
-              }).pipe(Effect.andThen(file.sync)),
-            })),
+            // A prototype wrapper keeps the handle's methods, which writes now use.
+            Effect.map((file) =>
+              Object.create(file, {
+                sync: {
+                  value: Effect.sync(() => {
+                    operations.push(path === directory ? "directory sync" : "file sync");
+                  }).pipe(Effect.andThen(file.sync)),
+                },
+              }),
+            ),
           ),
         rename: (from, to) =>
           Effect.sync(() => {
@@ -64,7 +68,9 @@ describe("durable atomic text replacement", () => {
         open: (path, options) =>
           fs
             .open(path, options)
-            .pipe(Effect.map((file) => ({ ...file, sync: Effect.fail(error) }))),
+            .pipe(
+              Effect.map((file) => Object.create(file, { sync: { value: Effect.fail(error) } })),
+            ),
       });
       const outcome = yield* writeFileStringAtomically({
         filePath: target,

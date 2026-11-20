@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   ACCOUNTS_PROTOCOL,
   GOOGLE_SITE,
@@ -94,17 +95,25 @@ async function recordRows(environmentId: EnvironmentId, profileId: string, from:
     ?.cookieMetadata?.(profileId, environmentId)
     .catch(() => null);
   if (!cookies) return;
-  const read = await accountsState.readSnapshot
-    .run(appAtomRegistry, { environmentId, input: {} })
-    .catch(() => null);
+  const read = await runAtomCommand(
+    appAtomRegistry,
+    accountsState.readSnapshot,
+    { environmentId, input: {} },
+    { reportFailure: false },
+  ).catch(() => null);
   if (read?._tag !== "Success" || (read.value.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL) return;
   const sites = importedSessionSites(cookies, read.value.accounts, Date.now());
   if (sites.length === 0) return;
-  await accountsState.sessionsSeen.run(appAtomRegistry, {
-    environmentId,
-    input: {
-      profileId,
-      sessions: sites.map((site) => ({ site, how: "imported" as const, from })),
+  await runAtomCommand(
+    appAtomRegistry,
+    accountsState.sessionsSeen,
+    {
+      environmentId,
+      input: {
+        profileId,
+        sessions: sites.map((site) => ({ site, how: "imported" as const, from })),
+      },
     },
-  });
+    { reportFailure: false },
+  );
 }

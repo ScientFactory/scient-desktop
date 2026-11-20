@@ -1346,7 +1346,8 @@ describe("CodexAdapterV2 post-settle continuation (McpFork)", () => {
       assert.include(errorCauseChainText(error), "source native thread");
       assert.deepEqual(
         outbound,
-        ["initialize", "thread/start", "thread/fork"],
+        // Upstream 06eda8e36e reads the stdio MCP config before each thread start or fork.
+        ["initialize", "config/read", "thread/start", "config/read", "thread/fork"],
         "A source-ID response must not authorize read/revert/resume/start of its source",
       );
       assert.equal(encodeUnknownJson(h.providerThread), sourceBefore);
@@ -5075,7 +5076,12 @@ describe("Codex restored Sessions", () => {
         );
         assert.isDefined(harness.runtime.unloadThread);
         yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
-        assert.deepEqual(requests, ["initialize", "thread/start", "thread/unsubscribe"]);
+        assert.deepEqual(requests, [
+          "initialize",
+          "config/read",
+          "thread/start",
+          "thread/unsubscribe",
+        ]);
       }).pipe(Effect.scoped, Effect.provide(adapterServices)),
     );
     it.effect.each([

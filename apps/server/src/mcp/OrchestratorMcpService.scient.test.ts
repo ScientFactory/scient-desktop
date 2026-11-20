@@ -136,7 +136,7 @@ const serviceLayer = (input: {
               } as unknown as ProviderAdapter.ProviderAdapterV2["Service"]),
           }),
         ),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),

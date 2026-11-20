@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off -- Delivery times are UI labels; decisions use revisions.
 import { msg } from "gt-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { type AtomCommand, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   ACCOUNTS_PROTOCOL,
   AuthSettingsWriteScope,
@@ -98,7 +98,12 @@ const call = async <I, A, E>(
   environmentId: EnvironmentId,
   input: I,
 ): Promise<A> => {
-  const result = await command.run(registry, { environmentId, input });
+  const result = await runAtomCommand(
+    registry,
+    command,
+    { environmentId, input },
+    { reportFailure: false },
+  );
   if (result._tag !== "Success") throw new DeliveryFailed({ reason: failureReason(result) });
   return result.value;
 };

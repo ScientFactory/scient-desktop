@@ -105,6 +105,64 @@ it.effect("bridges official Google auth into Scient's one-click connection flow"
 );
 
 it.effect(
+  "sends the agy CLI's Antigravity page code through the controller's code interaction",
+  () =>
+    Effect.gen(function* () {
+      const codeAuthorizationUrl =
+        "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=cli-test";
+      let current = authState("waiting", {
+        flowId: "flow-cli",
+        authorizationUrl: codeAuthorizationUrl,
+        interaction: {
+          type: "credentials",
+          id: "flow-cli",
+          fields: [{ name: "code", label: "Code from the Antigravity page", secret: false }],
+        },
+      });
+      const calls: string[] = [];
+      const controller: ProviderAuthController = {
+        start: (_owner, stopSessions) => (stopSessions ?? Effect.void).pipe(Effect.as(current)),
+        complete: (_owner, input) =>
+          Effect.sync(() => {
+            calls.push(`complete:${input.callbackUrl}`);
+            return current;
+          }),
+        respond: (owner, input) =>
+          Effect.sync(() => {
+            calls.push(`respond:${owner}:${input.flowId}:${input.interactionId}`);
+            calls.push(JSON.stringify(input.response));
+            current = authState("succeeded", { flowId: input.flowId });
+            return current;
+          }),
+        cancel: (_owner, flowId) => Effect.succeed(authState("cancelled", { flowId })),
+        logout: (stopSessions) => stopSessions.pipe(Effect.as(authState("idle"))),
+        subscribe: () => Stream.suspend(() => Stream.make(current)),
+      };
+      const actions = makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller,
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("owner"),
+      });
+
+      const attempt = yield* actions.start("antigravity_google");
+      expect(attempt.authorizationUrl).toBe(codeAuthorizationUrl);
+      expect(attempt.authorizationResponseKind).toBe("code");
+      if (!attempt.submitAuthorizationCode) {
+        return yield* Effect.die("Expected the Antigravity code handoff.");
+      }
+      yield* attempt.submitAuthorizationCode("4/0Afixture-code");
+      yield* attempt.waitForCompletion;
+
+      expect(calls).toEqual([
+        "respond:scient-provider-lifecycle-owner:flow-cli:flow-cli",
+        JSON.stringify({ type: "credentials", values: { code: "4/0Afixture-code" } }),
+      ]);
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
   "bridges credential authentication and cancels its owned flow when the lifecycle scope closes",
   () =>
     Effect.gen(function* () {
@@ -190,6 +248,7 @@ it.effect("classifies system, custom, and managed ACP runtimes without taking ow
     const source = { current: "path" as "path" | "override" | "managed" };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       startRelease: () => Effect.die("not used"),
@@ -261,6 +320,7 @@ it.effect("never removes a managed runtime when its repair download or verificat
     };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
       latestRelease: Effect.sync(() => current),
       refreshLatestRelease: Effect.sync(() => {
         refreshes++;

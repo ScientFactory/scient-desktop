@@ -47,6 +47,7 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
   AuthSessionId,
@@ -2418,6 +2419,9 @@ export const layerWsRpc = (
                         creationSource:
                           "creationSource" in command ? command.creationSource : "web",
                       }),
+                      {
+                        managesProviders: currentSession.scopes.includes(AuthProvidersManageScope),
+                      },
                     )
                 ).pipe(Effect.provide(intakeContext)),
               )
@@ -2426,7 +2430,11 @@ export const layerWsRpc = (
                   result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                 ),
                 Effect.map((result) => ThreadMessageIntake.dispatchCommandReceipt(command, result)),
-                Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
+                Effect.mapError((cause) =>
+                  cause._tag === "EnvironmentAuthorizationError"
+                    ? cause
+                    : dispatchCommandRpcError(command, cause),
+                ),
               ),
             {
               "rpc.aggregate": "orchestrationV2",

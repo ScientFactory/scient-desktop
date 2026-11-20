@@ -201,6 +201,7 @@ function layerProjectionStore(
       getCheckpointRollbackContext: () => Effect.die("unused rollback context"),
       getCheckpointCaptureContext: () => Effect.die("not used"),
       getRunMessage: () => Effect.die("not used"),
+      getDelegatedChildControls: () => Effect.die("not used"),
       getRun: () => Effect.die("not used"),
       isNodeStored: () => Effect.die("not used"),
       canStartQueuedRun: () => Effect.die("not used"),
@@ -235,6 +236,7 @@ function layerSessions(
       detach: () => Effect.void,
       otherWorkingThreads: () => Effect.succeed([]),
       releaseUnlessBusy: () => Effect.succeed(true),
+      forgetLoadedProviderThread: () => Effect.void,
       subscribePromptSuggestion: () => Stream.empty,
     }),
   );
@@ -399,7 +401,7 @@ it.effect(
     }),
 );
 
-it.effect("steers a running turn with the thread's MCP app model context", () =>
+it.effect("steers a running turn with its sender and the thread's MCP app model context", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const threadId = ThreadId.make("thread:steer-app-context");
@@ -435,8 +437,9 @@ it.effect("steers a running turn with the thread's MCP app model context", () =>
                 id: MessageId.make("message:steer-app-context"),
                 text: "What did the app report?",
                 attachments: [],
-                createdBy: "user",
-                creationSource: "web",
+                createdBy: "agent",
+                creationSource: "mcp",
+                senderThreadId: ThreadId.make("thread:steer-sender"),
               } as unknown as NonNullable<
                 ProjectionStore.ProjectionProviderControlContext["message"]
               >,
@@ -480,6 +483,10 @@ it.effect("steers a running turn with the thread's MCP app model context", () =>
     }).pipe(Effect.provide(layerControl));
 
     assert.equal(steered.length, 1);
+    assert.equal(
+      steered[0]!.message.text,
+      '[Scient: the agent in Scient thread "thread:steer-sender" sent this message, not the user.]\n\nWhat did the app report?',
+    );
     assert.deepEqual("appContext" in steered[0]! ? steered[0].appContext : undefined, [
       { key: "mcp_app_turn-item_call-1", text: "Pressed: blue" },
     ]);

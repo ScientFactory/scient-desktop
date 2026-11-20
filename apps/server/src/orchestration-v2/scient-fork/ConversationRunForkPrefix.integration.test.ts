@@ -150,6 +150,7 @@ const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string
 
 import { planConversationFork } from "./ConversationForkPlan.ts";
 import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
+import { liveCodexThreadSetup } from "../testkit/CodexReplayThreadSetup.ts";
 
 it.live.each(
   [false, true].map((nested) => ({
@@ -208,7 +209,18 @@ it.live.each(
           },
         );
       }
-      const transcript = { ...full, entries };
+      // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+      const transcript = {
+        ...full,
+        entries: liveCodexThreadSetup(
+          full,
+          entries,
+          (native) =>
+            ({ "native-source-thread": "Source", "native-grandchild-thread": "Source (3)" })[
+              native
+            ] ?? "Source (2)",
+        ),
+      };
       const driver = yield* CodexReplay.makeReplayDriver(transcript);
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name, runtimePolicyOverride: { cwd } },

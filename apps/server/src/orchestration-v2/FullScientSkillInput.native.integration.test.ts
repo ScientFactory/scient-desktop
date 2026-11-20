@@ -248,8 +248,13 @@ const runConjunction = () =>
               };
               break;
             // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+            // T3 06eda8e36e also reads it for the stdio MCP servers a new or resumed thread gets.
             case "config/read":
               result = { config: {}, origins: {} };
+              break;
+            // T3 767f194fd9: the native thread name follows the thread's title.
+            case "thread/name/set":
+              result = {};
               break;
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
@@ -516,18 +521,21 @@ const runConjunction = () =>
           true,
           "explicit",
         );
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "message.dispatch",
-          threadId,
-          commandId: CommandId.make(`${name}:automatic`),
-          messageId: MessageId.make(`${name}:automatic`),
-          text: "Review this workspace automatically.",
-          attachments: [],
-          modelSelection: selection,
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "message.dispatch",
+            threadId,
+            commandId: CommandId.make(`${name}:automatic`),
+            messageId: MessageId.make(`${name}:automatic`),
+            text: "Review this workspace automatically.",
+            attachments: [],
+            modelSelection: selection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          },
+          { managesProviders: true },
+        );
         const automatic = yield* Queue.take(offered).pipe(Effect.timeout("15 seconds"));
         assert.deepEqual(
           automatic.scope.skillScope?.skills.map((skill) => skill.name),
@@ -564,19 +572,22 @@ const runConjunction = () =>
           false,
           "automatic",
         );
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "message.dispatch",
-          threadId,
-          commandId: CommandId.make(`${name}:send`),
-          messageId: MessageId.make(`${name}:message`),
-          text: currentText,
-          selectedScientSkillNames: ["project-method"],
-          attachments: uploaded,
-          modelSelection: selection,
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "message.dispatch",
+            threadId,
+            commandId: CommandId.make(`${name}:send`),
+            messageId: MessageId.make(`${name}:message`),
+            text: currentText,
+            selectedScientSkillNames: ["project-method"],
+            attachments: uploaded,
+            modelSelection: selection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          },
+          { managesProviders: true },
+        );
         const projection = yield* orchestrator.getThreadProjection(threadId);
         const message = projection.messages.find((item) => item.id === `${name}:message`);
         assert.ok(message);
@@ -601,9 +612,12 @@ const runConjunction = () =>
         assert.deepEqual(methods, [
           "initialize",
           "initialized",
+          "config/read",
           "thread/start",
+          "thread/name/set",
           "config/read",
           "turn/start",
+          "config/read",
           "thread/resume",
           "config/read",
           "turn/start",
@@ -710,19 +724,22 @@ const runConjunction = () =>
         yield* finish(`${nativeTurn.id}:2`, 2);
         const emptyCommand = CommandId.make(`${name}:empty`);
         const emptyMessageId = MessageId.make(`${name}:empty`);
-        yield* ThreadMessageIntake.dispatchCommand({
-          type: "message.dispatch",
-          threadId,
-          commandId: emptyCommand,
-          messageId: emptyMessageId,
-          text: currentText,
-          selectedScientSkillNames: [],
-          attachments: claimedAttachments,
-          modelSelection: selection,
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        yield* ThreadMessageIntake.dispatchCommand(
+          {
+            type: "message.dispatch",
+            threadId,
+            commandId: emptyCommand,
+            messageId: emptyMessageId,
+            text: currentText,
+            selectedScientSkillNames: [],
+            attachments: claimedAttachments,
+            modelSelection: selection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          },
+          { managesProviders: true },
+        );
         const empty = yield* Queue.take(offered).pipe(Effect.timeout("15 seconds"));
         assert.equal(empty.token, automatic.token);
         assert.deepEqual(

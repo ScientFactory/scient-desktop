@@ -29,6 +29,7 @@ import {
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
 import { conversationForkOf, forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 it.live(
   "freezes the received partial native proposal and retains its first timestamp through later deltas",
@@ -54,7 +55,8 @@ it.live(
         const gate = makeProviderReplayGate(["remaining-plan-deltas"]);
         yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
         const registry = CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(
-          transcript,
+          // SCIENT-FORK: the recording names its thread after its own title.
+          materializeCodexThreadSetup(transcript, () => "Partial plan"),
           { replayGate: gate },
         );
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(

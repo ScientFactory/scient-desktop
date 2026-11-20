@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   ACCOUNTS_PROTOCOL,
   ThreadId,
@@ -30,8 +31,10 @@ export function watchSignInKeeps(
       (item) => item.threadId === tab.threadId && item.tabId === tab.tabId,
     );
     if ((snapshot.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL || !attempt) return;
-    void accountsState.keepTyped
-      .run(registry, {
+    void runAtomCommand(
+      registry,
+      accountsState.keepTyped,
+      {
         environmentId,
         input: {
           attemptId: attempt.attemptId,
@@ -43,7 +46,8 @@ export function watchSignInKeeps(
           username: capture.username,
           password: capture.password,
         },
-      })
-      .catch(() => undefined);
+      },
+      { reportFailure: false },
+    ).catch(() => undefined);
   });
 }

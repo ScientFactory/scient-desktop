@@ -157,6 +157,26 @@ export function makeAntigravityConnectionActionsFromController(input: {
           "invalid_response",
         );
       }
+      // The managed 1.4.5 harness finishes on a loopback callback URL; the agy CLI asks for the
+      // code its Antigravity page shows, through a credentials interaction.
+      const interaction =
+        initial.phase !== "waiting"
+          ? null
+          : initial.interaction !== undefined
+            ? initial.interaction
+            : yield* input.controller.subscribe(owner).pipe(
+                Stream.runHead,
+                Effect.map((state) =>
+                  Option.isSome(state) && state.value.flowId === flowId
+                    ? (state.value.interaction ?? null)
+                    : null,
+                ),
+              );
+      const codeField =
+        interaction?.type === "credentials" && interaction.fields.length === 1
+          ? interaction.fields[0]?.name
+          : undefined;
+      const respond = input.controller.respond;
       const waitForCompletion = input.controller.subscribe(owner).pipe(
         Stream.filter((state) => state.flowId === flowId && isTerminalAuthPhase(state.phase)),
         Stream.runHead,
@@ -180,15 +200,26 @@ export function makeAntigravityConnectionActionsFromController(input: {
           : {}),
         initialStatus:
           initial.phase === "waiting" ? ("waiting_for_browser" as const) : ("verifying" as const),
-        ...(initial.phase === "waiting" && antigravityAuthUsesBrowser(input.authMethod)
-          ? {
-              authorizationResponseKind: "callback_url" as const,
-              submitAuthorizationCode: (callbackUrl: string) =>
-                input.controller
-                  .complete(owner, { flowId, callbackUrl })
-                  .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
-            }
-          : {}),
+        ...(initial.phase !== "waiting" || !antigravityAuthUsesBrowser(input.authMethod)
+          ? {}
+          : interaction?.type === "credentials" && codeField !== undefined && respond
+            ? {
+                authorizationResponseKind: "code" as const,
+                submitAuthorizationCode: (code: string) =>
+                  respond(owner, {
+                    instanceId: input.instanceId,
+                    flowId,
+                    interactionId: interaction.id,
+                    response: { type: "credentials", values: { [codeField]: code } },
+                  }).pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
+              }
+            : {
+                authorizationResponseKind: "callback_url" as const,
+                submitAuthorizationCode: (callbackUrl: string) =>
+                  input.controller
+                    .complete(owner, { flowId, callbackUrl })
+                    .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
+              }),
         waitForCompletion,
         cancel: input.controller
           .cancel(owner, flowId)

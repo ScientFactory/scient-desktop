@@ -90,52 +90,56 @@ export const harness = Effect.fnUntraced(function* (options?: {
             generateReviewGuide: unused,
             generateTranscriptionPostProcessing: unused,
           },
-          orchestrationAdapter: makeNativeSessionAdapterV2({
-            instanceId,
-            driver: kind,
-            idAllocator,
-            defaultCwd: "/workspace",
-            // This scripted native transport captures the host credential during open.
-            mcpSessionInjection: true,
-            capabilities: AcpProviderCapabilitiesV2,
-            continuations: { offer: () => Effect.void },
-            open: Effect.fn("ProviderInstanceRegistryNativeLifetime.test-harness.open")(
-              function* (input) {
-                log.push(`open:${instanceId}:${config.revision}`);
-                yield* Effect.addFinalizer(() =>
-                  Effect.sync(() => {
-                    log.push(`close:${instanceId}:${config.revision}`);
-                  }),
-                );
-                yield* options?.openingStarted
-                  ? Deferred.succeed(options.openingStarted, undefined)
-                  : Effect.void;
-                yield* options?.openingGate ? Deferred.await(options.openingGate) : Effect.void;
-                yield* options?.beforeOpen?.(input) ?? Effect.void;
-                if (options?.failOpen)
-                  return yield* new NativeSessionOperationError({ detail: "Native open failed" });
-                return {
-                  nativeId: `native:${instanceId}:${config.revision}`,
-                  nativeThreadKnown: false,
-                  send: () =>
+          // The scripted transport has no provider version for the registry's version policy.
+          orchestrationAdapter: {
+            checksVersionAtHandshake: true,
+            ...makeNativeSessionAdapterV2({
+              instanceId,
+              driver: kind,
+              idAllocator,
+              defaultCwd: "/workspace",
+              // This scripted native transport captures the host credential during open.
+              mcpSessionInjection: true,
+              capabilities: AcpProviderCapabilitiesV2,
+              continuations: { offer: () => Effect.void },
+              open: Effect.fn("ProviderInstanceRegistryNativeLifetime.test-harness.open")(
+                function* (input) {
+                  log.push(`open:${instanceId}:${config.revision}`);
+                  yield* Effect.addFinalizer(() =>
                     Effect.sync(() => {
-                      log.push(`send:${instanceId}`);
+                      log.push(`close:${instanceId}:${config.revision}`);
                     }),
-                  interrupt: Effect.sync(() => {
-                    log.push(`interrupt:${instanceId}`);
-                  }),
-                  resume: () =>
-                    Effect.sync(() => {
-                      log.push(`resume:${instanceId}`);
+                  );
+                  yield* options?.openingStarted
+                    ? Deferred.succeed(options.openingStarted, undefined)
+                    : Effect.void;
+                  yield* options?.openingGate ? Deferred.await(options.openingGate) : Effect.void;
+                  yield* options?.beforeOpen?.(input) ?? Effect.void;
+                  if (options?.failOpen)
+                    return yield* new NativeSessionOperationError({ detail: "Native open failed" });
+                  return {
+                    nativeId: `native:${instanceId}:${config.revision}`,
+                    nativeThreadKnown: false,
+                    send: () =>
+                      Effect.sync(() => {
+                        log.push(`send:${instanceId}`);
+                      }),
+                    interrupt: Effect.sync(() => {
+                      log.push(`interrupt:${instanceId}`);
                     }),
-                  respond: () =>
-                    Effect.sync(() => {
-                      log.push(`respond:${instanceId}`);
-                    }),
-                };
-              },
-            ),
-          }),
+                    resume: () =>
+                      Effect.sync(() => {
+                        log.push(`resume:${instanceId}`);
+                      }),
+                    respond: () =>
+                      Effect.sync(() => {
+                        log.push(`respond:${instanceId}`);
+                      }),
+                  };
+                },
+              ),
+            }),
+          },
         } satisfies ProviderInstance;
       }),
   };

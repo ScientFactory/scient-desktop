@@ -519,14 +519,17 @@ it.live("rechecks a later retained reference and refuses managed reuse after cle
           "Failure",
         );
         let dispatched = false;
-        const refused = yield* dispatchCommand({
-          type: "queued-run.edit",
-          commandId: CommandId.make("missing-reuse"),
-          threadId,
-          runId: reverted.id,
-          text: "reuse",
-          attachments: [removed.attachment],
-        }).pipe(
+        const refused = yield* dispatchCommand(
+          {
+            type: "queued-run.edit",
+            commandId: CommandId.make("missing-reuse"),
+            threadId,
+            runId: reverted.id,
+            text: "reuse",
+            attachments: [removed.attachment],
+          },
+          { managesProviders: true },
+        ).pipe(
           Effect.provide(
             Layer.merge(
               Layer.mock(ThreadManagementService)({

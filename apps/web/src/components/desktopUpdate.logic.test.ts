@@ -129,6 +129,20 @@ describe("desktop update button state", () => {
     );
   });
 
+  // SCIENT-FORK:START — Scient's updater offers a newer build of the selected track to a build from
+  // another one, so an off-track build that found nothing newer is up to date.
+  it("calls a build on the other track up to date when nothing newer exists", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "up-to-date",
+      channel: "beta",
+      currentVersion: "0.1.5",
+      checkedAt: "2026-11-18T00:00:00.000Z",
+    };
+    expect(getDesktopUpdateButtonTooltip(state)).toBe("Up to date");
+  });
+  // SCIENT-FORK:END
+
   it("prefers a newly available release over a stale downloaded version", () => {
     const state: DesktopUpdateState = {
       ...baseState,

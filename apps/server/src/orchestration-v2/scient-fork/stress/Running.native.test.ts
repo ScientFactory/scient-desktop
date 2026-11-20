@@ -164,11 +164,14 @@ it.live.each([false, true])(
             },
           ],
         });
-        // Every turn/start follows the adapter's config/read.
-        const driver = yield* CodexReplay.makeReplayDriver(withConfigReads(transcript), {
-          beforeEmitInbound: (entry) =>
-            Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
-        });
+        // Every turn/start follows the adapter's config/read, and the first names the thread.
+        const driver = yield* CodexReplay.makeReplayDriver(
+          withConfigReads(transcript, { threadName: "Stress" }),
+          {
+            beforeEmitInbound: (entry) =>
+              Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
+          },
+        );
         const received = yield* Effect.forEach(chunks, () => Deferred.make<void>());
         let receipts = 0;
         const factory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
