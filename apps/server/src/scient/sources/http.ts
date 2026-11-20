@@ -346,7 +346,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             const config = yield* ServerConfig.ServerConfig;
             const path = yield* Path.Path;
             const library = yield* libraryFor(args.payload.root, AuthOrchestrationReadScope);
-            const cacheRoot = path.join(config.stateDir, "scient", "journal-icons", "v1");
+            const cacheRoot = path.join(config.stateDir, "scient", "journal-covers", "v1");
             const material = yield* sourcesOperation(() =>
               library
                 ? libraryJournalIconMaterial(library, {

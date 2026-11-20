@@ -1169,11 +1169,11 @@
       "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
     },
     {
-      "name": "Journal and publisher marks",
+      "name": "Publisher icons",
       "bundles": ["assets", "desktop", "web"],
-      "license": "CC0-1.0 AND LicenseRef-PD-textlogo",
-      "sourceUrl": "https://commons.wikimedia.org/wiki/Template:PD-textlogo",
-      "noticeFile": "apps/web/src/assets/journals/NOTICE"
+      "license": "LicenseRef-Publisher-Trademarks",
+      "sourceUrl": "https://github.com/ScientFactory/scient-desktop/blob/main/apps/web/src/assets/publishers/NOTICE",
+      "noticeFile": "apps/web/src/assets/publishers/NOTICE"
     }
   ]
 }
