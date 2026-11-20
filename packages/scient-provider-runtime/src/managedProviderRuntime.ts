@@ -739,6 +739,7 @@ export class ManagedProviderRuntime {
         destination: copy.destination,
         partialPath: this.#partialDownloadPath(copy.checksum),
         expectedSize: copy.size,
+        maxBytes: artifact.maxDownloadBytes,
         signal,
         onProgress: (bytes, totalBytes) => {
           downloadedBytes = bytes;

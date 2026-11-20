@@ -1255,7 +1255,7 @@ async function discoverMuse(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvide
     const asset = record(artifacts[manifestKey], "Muse release artifact");
     // Raw executables download as-is; a larger release could never install.
     const size = strictSize(Number(asset.size), "Muse release artifact");
-    if (size > MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) {
+    if (size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)) {
       throw new Error("Muse release artifact exceeds the installer's download limit.");
     }
     return [
