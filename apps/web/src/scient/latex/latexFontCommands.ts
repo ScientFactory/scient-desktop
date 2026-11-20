@@ -2,7 +2,14 @@ import type { ChainedCommands, Editor } from "@tiptap/core";
 import type { Mark } from "@tiptap/pm/model";
 import { latexVisualFontMetrics } from "./latexVisualLayout";
 import { drawnPointsAt, normalizeFontSize } from "../writing/fontChoices";
-import { holdsFont, sharedValue, steppedFontSize, wordAround } from "../writing/fontTarget";
+import {
+  type FontRun,
+  holdsFont,
+  sharedValue,
+  steppedFontSize,
+  steppedRuns,
+  wordAround,
+} from "../writing/fontTarget";
 import { declaredLatexCompiler } from "./latexCompiler";
 import { latexFontFamilyDeclaration, type LatexFontEngine } from "./latexTextFormatting";
 
@@ -149,27 +156,31 @@ export function stepLatexFontSize(
     .focus()
     .command(({ tr }) => {
       for (const range of ranges) {
+        const runs: FontRun[] = [];
         state.doc.nodesBetween(range.from, range.to, (node, position) => {
-          if (!node.isText || node.marks.some((mark) => mark.type.name === "code")) return;
-          const own = latexRunSize(node.marks, baseFontPt);
-          if (own === null && !holdsFont(node.text ?? "", false)) return;
-          // Like a size applied to a selection, the group leaves out the spaces at its ends.
-          const text = node.text ?? "";
-          let from = Math.max(range.from, position);
-          let to = Math.min(range.to, position + node.nodeSize);
-          while (from < to && /\s/u.test(text[from - position] ?? "")) from += 1;
-          while (to > from && /\s/u.test(text[to - position - 1] ?? "")) to -= 1;
-          const current = own ?? drawnPointsAt(view, from);
-          if (current === null) return;
-          for (const name of sizeMarks) tr.removeMark(from, to, state.schema.marks[name]);
-          tr.addMark(
-            from,
-            to,
-            state.schema.marks["latexFontSize"]!.create(
-              sizeAttributes(steppedFontSize(current, steps)),
+          if (!node.isText) return;
+          const from = Math.max(range.from, position);
+          runs.push({
+            text: (node.text ?? "").slice(
+              from - position,
+              Math.min(range.to, position + node.nodeSize) - position,
             ),
-          );
+            from,
+            isCode: node.marks.some((mark) => mark.type.name === "code"),
+            size: latexRunSize(node.marks, baseFontPt),
+          });
         });
+        for (const change of steppedRuns(runs, steps, (position) =>
+          drawnPointsAt(view, position),
+        )) {
+          for (const name of sizeMarks)
+            tr.removeMark(change.from, change.to, state.schema.marks[name]);
+          tr.addMark(
+            change.from,
+            change.to,
+            state.schema.marks["latexFontSize"]!.create(sizeAttributes(change.size)),
+          );
+        }
       }
       return true;
     })

@@ -46,3 +46,36 @@ export function steppedFontSize(current: number, steps: number): number {
   const target = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, current + steps * FONT_SIZE_STEP));
   return normalizeFontSize(target) ?? current;
 }
+
+/** A piece of one text node inside the selection, with its explicit size in points, if any. */
+export interface FontRun {
+  readonly text: string;
+  readonly from: number;
+  readonly isCode: boolean;
+  readonly size: number | null;
+}
+
+/**
+ * What a size step changes: each run without the spaces at its ends, moved by `steps` from its
+ * own size or, without one, from the size it is drawn at. Code and whitespace keep their size.
+ */
+export function steppedRuns(
+  runs: Iterable<FontRun>,
+  steps: number,
+  drawnPoints: (position: number) => number | null,
+): Array<{ readonly from: number; readonly to: number; readonly size: number }> {
+  const changes = [];
+  for (const run of runs) {
+    if (!holdsFont(run.text, run.isCode)) continue;
+    const start = run.text.length - run.text.trimStart().length;
+    const end = run.text.trimEnd().length;
+    const current = run.size ?? drawnPoints(run.from + start);
+    if (current === null) continue;
+    changes.push({
+      from: run.from + start,
+      to: run.from + end,
+      size: steppedFontSize(current, steps),
+    });
+  }
+  return changes;
+}

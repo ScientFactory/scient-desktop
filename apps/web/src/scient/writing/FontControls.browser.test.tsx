@@ -28,4 +28,27 @@ describe("the size field's presets", () => {
     expect(sizes).toEqual([18]);
     expect(screen.container.querySelector('[aria-label="Font size"]')).toBeNull();
   });
+
+  it("sends every button step to the per-run rule, even when the field shows one size", async () => {
+    const sizes: Array<number | null> = [];
+    const steps: number[] = [];
+    await using screen = await render(
+      <FontControls
+        family={null}
+        size={12}
+        disabled={false}
+        onFamily={() => {}}
+        onSize={(size) => sizes.push(size)}
+        onStep={(step) => steps.push(step)}
+      />,
+      { router: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Larger" }));
+    await userEvent.click(screen.getByRole("button", { name: "Smaller" }));
+    await userEvent.keyboard("{Shift>}");
+    await userEvent.click(screen.getByRole("button", { name: "Larger" }));
+    await userEvent.keyboard("{/Shift}");
+    expect(steps).toEqual([1, -1, 10]);
+    expect(sizes).toEqual([]);
+  });
 });

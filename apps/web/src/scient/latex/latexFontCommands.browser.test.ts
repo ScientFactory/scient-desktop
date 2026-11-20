@@ -22,7 +22,11 @@ const marks = [
     renderHTML: () => ["span", 0],
   }),
   ...LATEX_CANVAS_TEXT_MARKS.map(({ name }) =>
-    Mark.create({ name, renderHTML: () => ["span", 0] }),
+    Mark.create({
+      name,
+      // Small caps drawn smaller, so text without a size is drawn at two sizes.
+      renderHTML: () => ["span", name === "latexSmallCaps" ? { style: "font-size:8px" } : {}, 0],
+    }),
   ),
 ];
 
@@ -148,5 +152,18 @@ describe("LaTeX font commands in a real editor", () => {
     await userEvent.keyboard(`{${mod}>}{Shift>}<{/Shift}{/${mod}}`);
     detach();
     expect(run).toEqual(["latex.fontSizeLarger", "latex.fontSizeSmaller"]);
+  });
+
+  it("text without a size steps from the size it is drawn at, wherever the selection starts", () => {
+    using fixture = open("ab cd");
+    const { editor } = fixture;
+    select(editor, 3, 5);
+    editor.commands.setMark("latexSmallCaps");
+    const small = drawnPointsAt(editor.view, 1 + 4)!;
+    const body = drawnPointsAt(editor.view, 1 + 1)!;
+    expect(small).toBeLessThan(body);
+    select(editor, 0, 5);
+    stepLatexFontSize(editor, 1, 10);
+    expect(sizes(editor).map(([, points]) => points)).toEqual([body + 1, undefined, small + 1]);
   });
 });

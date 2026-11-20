@@ -33,7 +33,7 @@ import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
-import { holdsFont, steppedFontSize, wordAround } from "../../writing/fontTarget";
+import { type FontRun, steppedFontSize, steppedRuns, wordAround } from "../../writing/fontTarget";
 import { catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
 import {
   canWriteMarkdownDocumentFont,
@@ -584,20 +584,23 @@ function stepMarkdownFontSize(
       ? [word]
       : state.selection.ranges.map((range) => ({ from: range.$from.pos, to: range.$to.pos }));
     for (const range of ranges) {
-      const { start, end } = trimmedRange(state.doc, range.from, range.to);
-      state.doc.nodesBetween(start, end, (node, position) => {
-        if (!node.isText || code.isInSet(node.marks)) return;
+      const runs: FontRun[] = [];
+      state.doc.nodesBetween(range.from, range.to, (node, position) => {
+        if (!node.isText) return;
+        const from = Math.max(range.from, position);
         const own = type.isInSet(node.marks)?.attrs.size;
-        if (own === undefined && !holdsFont(node.text ?? "", false)) return;
-        const runFrom = Math.max(start, position);
-        const current = typeof own === "number" ? own : drawnPoints(runFrom);
-        if (current === null) return;
-        transaction.addMark(
-          runFrom,
-          Math.min(end, position + node.nodeSize),
-          type.create({ size: steppedFontSize(current, steps) }),
-        );
+        runs.push({
+          text: (node.text ?? "").slice(
+            from - position,
+            Math.min(range.to, position + node.nodeSize) - position,
+          ),
+          from,
+          isCode: code.isInSet(node.marks) !== undefined,
+          size: typeof own === "number" ? own : null,
+        });
       });
+      for (const change of steppedRuns(runs, steps, drawnPoints))
+        transaction.addMark(change.from, change.to, type.create({ size: change.size }));
     }
     dispatch(transaction);
     return true;

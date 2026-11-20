@@ -48,12 +48,13 @@ export function measureSelectionSize(): number | null {
   return element === null ? null : pointsOf(element);
 }
 
-/** The size in points that the text at a document position is drawn at, or null. */
+/** The size in points that the text starting at a document position is drawn at, or null. */
 export function drawnPointsAt(
-  view: { domAtPos(pos: number): { node: Node } },
+  view: { domAtPos(pos: number, side?: number): { node: Node } },
   pos: number,
 ): number | null {
-  const { node } = view.domAtPos(pos);
+  // Side 1 resolves into the text after the position, not into the element around it.
+  const { node } = view.domAtPos(pos, 1);
   const element = node instanceof Element ? node : node.parentElement;
   return element === null ? null : pointsOf(element);
 }

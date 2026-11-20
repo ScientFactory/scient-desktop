@@ -34,7 +34,7 @@ export function FontControls(props: {
   readonly unavailableNote?: string;
   readonly onFamily: (family: string | null) => void;
   readonly onSize: (size: number | null) => void;
-  /** Moves every run of the selection by `steps` size steps, each keeping its own size. */
+  /** Moves every run of the selection by `steps` size steps, each from its own size. */
   readonly onStep: (steps: number) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -44,6 +44,7 @@ export function FontControls(props: {
   const [defaultSize, setDefaultSize] = useState(() =>
     props.size === null ? measureSelectionSize() : null,
   );
+  const shownSize = props.sizeMixed ? null : (props.size ?? defaultSize);
   const needle = query.trim().toLowerCase();
   const groups = FONT_GROUPS.map((group) => ({
     ...group,
@@ -152,14 +153,13 @@ export function FontControls(props: {
           min={FONT_SIZE_MIN}
           max={FONT_SIZE_MAX}
           step={FONT_SIZE_STEP}
-          smallStep={0.5}
           disabled={props.disabled}
-          value={props.sizeMixed ? null : (props.size ?? defaultSize)}
+          value={shownSize}
           format={{ maximumFractionDigits: 2 }}
-          onValueChange={(value, details) => {
-            // From an empty (mixed) field the stepper would start at the minimum: each run steps instead.
-            if (!props.sizeMixed || value === null) return;
-            const step =
+          onValueChange={(_value, details) => {
+            // Buttons and arrow keys step each run of the selection from its own size; typing
+            // a number sets one size. Alt steps 0.5 pt and Shift 10 pt, as the field would.
+            const direction =
               details.reason === "increment-press"
                 ? 1
                 : details.reason === "decrement-press"
@@ -167,13 +167,15 @@ export function FontControls(props: {
                   : details.reason === "keyboard" && details.event instanceof KeyboardEvent
                     ? ({ ArrowUp: 1, ArrowDown: -1 }[details.event.key] ?? 0)
                     : 0;
-            if (step === 0) return;
+            if (direction === 0) return;
             details.cancel();
-            props.onStep(step);
+            const event = details.event as { altKey?: boolean; shiftKey?: boolean } | undefined;
+            props.onStep(direction * (event?.altKey ? 0.5 : event?.shiftKey ? 10 : 1));
           }}
           onValueCommitted={(value) => {
+            // A step commits the unchanged value too; only a new number sets one size.
             const size = value === null ? null : normalizeFontSize(value);
-            if (size !== null) props.onSize(size);
+            if (size !== null && size !== shownSize) props.onSize(size);
           }}
         >
           <NumberFieldDecrement aria-label="Smaller" />
