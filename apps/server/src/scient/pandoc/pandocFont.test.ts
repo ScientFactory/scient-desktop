@@ -190,6 +190,27 @@ describe("LaTeX font sizes", () => {
     ).toEqual({ sizePoints: 11, family: "Calibri" });
   });
 
+  it("lets the declaration that sets the text win, and reads \\setmainfont options", () => {
+    const preamble = (...lines: string[]) => ["\\documentclass{article}", ...lines].join("\n");
+    expect(
+      latexBaseFontOf(preamble("\\renewcommand{\\familydefault}{qtm}", "\\setmainfont{Calibri}"))
+        .family,
+    ).toBe("Calibri");
+    expect(
+      latexBaseFontOf(
+        preamble("\\setmainfont{Georgia}", "\\renewcommand{\\familydefault}{\\rmdefault}"),
+      ).family,
+    ).toBe("Georgia");
+    expect(
+      latexBaseFontOf(
+        preamble("\\setmainfont{Georgia}", "\\renewcommand{\\familydefault}{\\sfdefault}"),
+      ).family,
+    ).toBe("Arial");
+    expect(latexBaseFontOf(preamble("\\setmainfont[Ligatures=TeX]{Calibri}")).family).toBe(
+      "Calibri",
+    );
+  });
+
   it("ignores a font outside the catalogue and a \\setmainfont after the preamble", () => {
     expect(latexBaseFontOf("\\setmainfont{Comic Sans MS}")).toEqual({
       sizePoints: 10,

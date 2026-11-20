@@ -135,7 +135,7 @@ const LATEX_CLASS_SIZE = new RegExp(
   "u",
 );
 const LATEX_FAMILY_DEFAULT = /\\renewcommand\s*\{\\familydefault\}\s*\{\\?([A-Za-z0-9]+)\}/gu;
-const LATEX_MAIN_FONT = /\\setmainfont\s*\{([^{}]+)\}/gu;
+const LATEX_MAIN_FONT = /\\setmainfont\s*(?:\[[^\]]*\]\s*)?\{([^{}]+)\}/gu;
 const LATEX_FAMILIES: Readonly<Record<string, string>> = {
   rm: "Times New Roman",
   sf: "Arial",
@@ -286,8 +286,9 @@ const lastValue = (text: string, pattern: RegExp): string | undefined =>
 
 /**
  * The base font set by the preamble, as the Visual card writes it: the class option size (10 pt
- * when absent), and a generic `\familydefault`, a catalogue font code in it, or a catalogue font
- * in `\setmainfont`.
+ * when absent), and the font the text is set in. A sans-serif or monospace `\familydefault`
+ * wins; otherwise a catalogue font in `\setmainfont` (it defines the roman family), then a
+ * catalogue font code in `\familydefault`, then the generic roman family.
  */
 export function latexBaseFontOf(source: string): WordBaseFont {
   const active = withoutComments(source);
@@ -296,14 +297,14 @@ export function latexBaseFontOf(source: string): WordBaseFont {
   const familyDefault = lastValue(preamble, LATEX_FAMILY_DEFAULT);
   const mainFont = lastValue(preamble, LATEX_MAIN_FONT);
   const generic = familyDefault?.match(/^(rm|sf|tt)default$/u)?.[1];
-  const named = FONT_CATALOGUE.find(
-    (font) => font.latex.fontspec === mainFont || font.latex.pdftex === familyDefault,
-  );
+  const family =
+    (generic === "sf" || generic === "tt" ? LATEX_FAMILIES[generic] : undefined) ??
+    FONT_CATALOGUE.find((font) => font.latex.fontspec === mainFont)?.name ??
+    FONT_CATALOGUE.find((font) => font.latex.pdftex === familyDefault)?.name ??
+    (generic === "rm" ? LATEX_FAMILIES["rm"] : undefined);
   return {
     sizePoints: latexClassSize(source),
-    family:
-      (generic === undefined ? named?.name : LATEX_FAMILIES[generic]) ??
-      DEFAULT_WORD_BASE_FONT.family,
+    family: family ?? DEFAULT_WORD_BASE_FONT.family,
   };
 }
 
