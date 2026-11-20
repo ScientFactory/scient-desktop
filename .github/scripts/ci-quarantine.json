@@ -30,16 +30,6 @@
       "owner": "Browser access",
       "quarantined": "2026-11-17",
       "expires": "2026-11-24"
-    },
-    {
-      "id": "intel-julia-interrupt",
-      "job": "compute_native / Real R and Julia / macos-15-intel",
-      "step": "Run real R and Julia kernels",
-      "test": "src/scient/compute/KernelLanguages.live.test.ts > kernel language integration > runs Julia through IJulia with rich output, variables, interrupt and restart",
-      "signature": "Error: Test timed out in 1200000ms.",
-      "owner": "Compute",
-      "quarantined": "2026-11-17",
-      "expires": "2026-11-24"
     }
   ]
 }
