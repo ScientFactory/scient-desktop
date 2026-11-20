@@ -300,9 +300,16 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   every start. On its first start it also takes the home's other settings,
   keybindings, themes, personal skills and website sign-ins. A browser profile
   that already exists in a candidate keeps its own website sign-ins.
-- Not copied: Scient account sign-in (dev builds carry no Clerk key),
-  Scient-managed provider sign-ins that refresh in place (`provider-auth-*`),
-  signing keys, cloud links, databases, threads, projects and the environment id.
+- Website sign-ins travel as cookies. A site that keeps its sign-in in local
+  storage asks again in a new dev app.
+- Not copied: Scient account sign-in (dev builds carry no Clerk key), the
+  Scient-managed Codex sign-in (it refreshes in place; Cursor's fixed key is
+  copied), Accounts senders and per-thread profile choices, signing keys, cloud
+  links, databases, threads, projects and the environment id. Connector folders
+  inside the home are copied with the connector; a folder elsewhere is used in
+  place and never deleted by a dev app.
+- The home may keep running: its files are read as one snapshot, read again if
+  it saves partway through.
 - A connector whose sign-in renews itself can be renewed by any app holding the
   copy. If a candidate renews it, the home may need to sign in to that connector
   again; candidates started afterwards copy the new sign-in.
