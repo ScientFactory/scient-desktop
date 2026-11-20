@@ -171,7 +171,26 @@ function publish({ staged, path, tree }) {
   if (tree) NodeFS.rmSync(`${path}${OLD_SUFFIX}`, { recursive: true, force: true });
 }
 
+/** Every path a copy touches must stay inside the state directory it was made for. */
+function assertContained(root, paths) {
+  const real = realpathOrSelf(root);
+  for (const path of paths) {
+    if (typeof path !== "string" || !inside(realpathOrSelf(NodePath.dirname(path)), real)) {
+      throw new Error(`${String(path)} leads outside ${root}; nothing was changed there.`);
+    }
+  }
+}
+
 function applyJournal(journalPath, journal) {
+  const root = NodePath.dirname(journalPath);
+  if (!Array.isArray(journal.writes) || !Array.isArray(journal.removals)) {
+    throw new Error(`${journalPath} is not a dev identity journal.`);
+  }
+  // Checked before anything moves: a link planted since staging cannot redirect the replay.
+  assertContained(root, [
+    ...journal.writes.flatMap((write) => [write?.staged, write?.path]),
+    ...journal.removals,
+  ]);
   for (const write of journal.writes) publish(write);
   for (const path of journal.removals) NodeFS.rmSync(path, { recursive: true, force: true });
   NodeFS.rmSync(journalPath, { force: true });
@@ -202,10 +221,16 @@ export function recoverInterruptedCopy(stateDir) {
  * journal records the set, so an interruption is finished on the next start.
  */
 class StagedChanges {
+  #root;
   #writes = [];
   #removals = [];
 
+  constructor(root) {
+    this.#root = root;
+  }
+
   write(path, data, mode = 0o600) {
+    assertContained(this.#root, [path]);
     NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true, mode: 0o700 });
     const staged = `${path}${STAGED_SUFFIX}`;
     NodeFS.rmSync(staged, { recursive: true, force: true });
@@ -215,6 +240,7 @@ class StagedChanges {
   }
 
   copyTree(source, destination) {
+    assertContained(this.#root, [destination]);
     const staged = `${destination}${STAGED_SUFFIX}`;
     NodeFS.rmSync(staged, { recursive: true, force: true });
     NodeFS.cpSync(source, staged, { recursive: true, errorOnExist: true, force: false });
@@ -222,17 +248,18 @@ class StagedChanges {
   }
 
   remove(path) {
+    assertContained(this.#root, [path]);
     this.#removals.push(path);
   }
 
-  commit(stateDir) {
-    const journalPath = NodePath.join(stateDir, JOURNAL);
+  commit() {
+    const journalPath = NodePath.join(this.#root, JOURNAL);
     const journal = { writes: this.#writes, removals: this.#removals };
     writeFileAtomic(journalPath, jsonBytes(journal));
     try {
       applyJournal(journalPath, journal);
     } catch (error) {
-      throw new DevIdentityFatalError(`Could not finish the identity copy in ${stateDir}.`, {
+      throw new DevIdentityFatalError(`Could not finish the identity copy in ${this.#root}.`, {
         cause: error,
       });
     }
@@ -412,10 +439,10 @@ export function ensurePortableVault(stateDir) {
   const secrets = NodePath.join(stateDir, "secrets");
   if (exists(NodePath.join(secrets, `${ACCOUNTS_STATE}.bin`))) return false;
   const vault = makePortableVault();
-  const changes = new StagedChanges();
+  const changes = new StagedChanges(stateDir);
   changes.write(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`), vault.key);
   changes.write(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`), vault.sentinel);
-  changes.commit(stateDir);
+  changes.commit();
   return true;
 }
 
@@ -943,7 +970,7 @@ export async function importDevIdentity({
   NodeFS.mkdirSync(targetStateDir, { recursive: true, mode: 0o700 });
   const paths = { sourceDirs: homeStateDirs(home), targetDir: targetStateDir };
 
-  const changes = new StagedChanges();
+  const changes = new StagedChanges(targetStateDir);
   let secrets = [];
   let websites = { copied: [], skipped: [] };
   try {
@@ -996,7 +1023,7 @@ export async function importDevIdentity({
     websiteProfilesSkipped: websites.skipped.length,
   };
   changes.write(NodePath.join(targetStateDir, DEV_IDENTITY_MARKER), jsonBytes(summary), 0o644);
-  changes.commit(targetStateDir);
+  changes.commit();
   return summary;
 }
 
@@ -1190,7 +1217,7 @@ export async function seedDevIdentityHome({
     const paths = { sourceDirs: [installed.stateDir], targetDir: homeServerStateDir(home) };
     const secrets = new Map(capture.secrets);
     if (sourceKey !== undefined) secrets.set(`${VAULT_KEY_FILE}.bin`, sourceKey);
-    const changes = new StagedChanges();
+    const changes = new StagedChanges(home.stateDir);
     try {
       report.secrets = stageSecrets({
         changes,
@@ -1252,7 +1279,7 @@ export async function seedDevIdentityHome({
       changes.abort();
       throw error;
     }
-    changes.commit(home.stateDir);
+    changes.commit();
     return report;
   } finally {
     release();
@@ -1272,6 +1299,16 @@ export function setupHomeCheckout({
   installed = resolveInstalledApp(),
   run = (command, args, options) =>
     NodeChildProcess.execFileSync(command, args, { stdio: "inherit", ...options }),
+  readGitFile = (cwd, spec) => {
+    try {
+      return NodeChildProcess.execFileSync("git", ["-C", cwd, "show", spec], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      return undefined;
+    }
+  },
   isAlive = processIsAlive,
 }) {
   if (NodePath.basename(checkout) !== HOME_CHECKOUT_NAME) {
@@ -1294,7 +1331,12 @@ export function setupHomeCheckout({
     NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
     if (!exists(checkout)) {
       if (ref === "origin/main") run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", "main"]);
-      run("git", ["-C", repoRoot, "cat-file", "-e", `${ref}:scripts/dev-identity.mjs`]);
+      const blob = readGitFile(repoRoot, `${ref}:scripts/dev-identity.mjs`) ?? "";
+      if (
+        !blob.includes(`export const DEV_IDENTITY_PROTOCOL = ${String(DEV_IDENTITY_PROTOCOL)};`)
+      ) {
+        throw new Error(`${ref} does not have this dev identity version; pass a newer --ref.`);
+      }
       run("git", ["-C", repoRoot, "worktree", "add", "--detach", checkout, ref]);
     }
     const source = readText(NodePath.join(checkout, "scripts", "dev-identity.mjs")) ?? "";

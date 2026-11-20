@@ -1221,24 +1221,58 @@ describe("third review guards", () => {
     assert.match(String(error), /older dev identity version/u);
   });
 
-  it("checks the commit has this module before creating the home checkout", () => {
+  it("checks the commit has this module version before creating the home checkout", () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
     const checkout = NodePath.join(root, "scient-desktop-identity");
-    const calls = [];
-    assert.throws(() =>
-      setupHomeCheckout({
-        repoRoot: root,
-        checkout,
-        ref: "abc123",
-        home,
-        run: (command, args) => {
-          calls.push(args.slice(2).join(" "));
-          if (args[2] === "cat-file") throw new Error("no such path");
-        },
+    for (const blob of [undefined, "export const DEV_IDENTITY_PROTOCOL = 0;\n"]) {
+      const calls = [];
+      assert.throws(
+        () =>
+          setupHomeCheckout({
+            repoRoot: root,
+            checkout,
+            ref: "abc123",
+            home,
+            run: (_command, args) => calls.push(args.slice(2).join(" ")),
+            readGitFile: () => blob,
+          }),
+        /does not have this dev identity version/u,
+      );
+      assert.deepEqual(calls, []);
+      assert.equal(NodeFS.existsSync(checkout), false);
+    }
+  });
+
+  it("refuses to replay a journal whose paths now lead outside the app", async () => {
+    const root = scratch();
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    const outside = NodePath.join(root, "outside");
+    write(NodePath.join(outside, "Cookies"), "someone else's jar");
+    const network = NodePath.join(target, "electron-userdata", "Partitions", "p", "Network");
+    NodeFS.mkdirSync(NodePath.dirname(network), { recursive: true });
+    NodeFS.symlinkSync(outside, network);
+    write(NodePath.join(outside, "Cookies.dev-identity-staged"), "replacement");
+    write(
+      NodePath.join(target, "dev-identity-journal.json"),
+      JSON.stringify({
+        writes: [
+          {
+            staged: NodePath.join(network, "Cookies.dev-identity-staged"),
+            path: NodePath.join(network, "Cookies"),
+          },
+        ],
+        removals: [],
       }),
     );
-    assert.deepEqual(calls, ["cat-file -e abc123:scripts/dev-identity.mjs"]);
-    assert.equal(NodeFS.existsSync(checkout), false);
+    const error = await importDevIdentity({
+      targetStateDir: target,
+      home: homeAt(NodePath.join(root, "no-home")),
+    }).catch((cause) => cause);
+    assert.equal(error?.fatal, true);
+    assert.equal(
+      NodeFS.readFileSync(NodePath.join(outside, "Cookies"), "utf8"),
+      "someone else's jar",
+    );
   });
 });
