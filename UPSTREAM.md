@@ -714,7 +714,7 @@ Literal merge `7baaaf047c8c698fa9ea8c383184b73c1a5922a5` has owned base
 the 35 official commits after `f6d941fa4f`. The range is mostly fixes to Antigravity sign-in,
 rules and its managed CLI, credential scoping, delegation and chat, plus linking several
 environments at once. Google-account Antigravity instances keep their own sign-in, so limits need
-no keychain. The alignment is Scient PR #PRNUM. Release remains separate.
+no keychain. The alignment is Scient PR #1038. Release remains separate.
 
 The previous committed alignment through
 `f6d941fa4fa41741a881b8f646c6737d845ea91c` is recorded in

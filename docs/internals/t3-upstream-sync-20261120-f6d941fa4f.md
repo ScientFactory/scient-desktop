@@ -43,11 +43,12 @@ The branch is `codex/t3-sync-f6d941fa4f-20261120`. The `upstream` push URL stays
   exists. Scient's plugin-skill projection runs after the links, as before.
 - **Managed CLI self-update (#39363).** T3's read-only release folders, managed-directory lock,
   symlink checks and "changed on disk" detection cover Scient's 1.4.5 pair: the harness is locked
-  and size-checked with the executable. Scient keeps its repair, which holds the previous copy in
-  `.repair-*` outside staging until the replacement is active, and now restores it when activating
-  the replacement fails, as T3 does. Renames and removals go through Scient's Windows-retrying
-  installer filesystem. A Windows launcher still pairs its harness: T3's lock-free external lookup
-  leaves launchers to the full lookup. A failed startup check shows the check's own detail.
+  and size-checked with the executable. Publication, activation and repair rollback run in one
+  critical section, as in T3, with interruption disabled only inside the installer gate. Scient's
+  repair keeps the previous copy in `.repair-*` outside staging and restores it when publishing or
+  activating the replacement fails. Renames and removals go through Scient's Windows-retrying
+  installer filesystem. T3's lock-free external lookup also resolves external 1.4.5 pairs and
+  Windows launchers. A failed startup check shows the check's own detail.
 - **Killed subagents (#39519) and MCP tool names (#39474)** are taken unchanged.
 
 ### Orchestration, MCP and server
@@ -71,12 +72,18 @@ The branch is `codex/t3-sync-f6d941fa4f-20261120`. The `upstream` push URL stays
   images moved to the thread: the thread's draft admits them, reports those it has no room for,
   and saves them for a reload. A file batch committed after the move goes to the thread too.
 
-### Found while composing
+### Found in review
 
-- A reveal requested while the Files panel is still listing its first folder is not replayed once
-  the listing arrives (Scient's lazy tree reads entry kinds from a ref the next render updates).
-  The ported test reveals after the root listing; the race predates this range and is left for a
-  separate fix.
+Codex reviewed the composed tree. Each finding was checked against the code:
+
+- **Fixed:** the repair held the installer gate with interruption disabled, so a cancel could
+  deadlock it; publishing and activating took the managed lock twice, so another server could prune
+  the new release in between; external 1.4.5 pairs needed the managed lock, which fails under a
+  read-only parent; a reveal requested while the Files panel was still listing its first folder was
+  dropped (Scient's lazy tree read the entry kind from a ref the next render updates; it now asks
+  the tree controller), so T3's reveal test runs as written.
+- **Not changed:** images moved from a closed question are admitted by count, not total size, as in
+  T3; the server still refuses an oversized send with its error.
 
 ### Brand and copy
 
