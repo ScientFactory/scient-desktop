@@ -157,6 +157,21 @@ describe("provider compatibility", () => {
     ).toBeDefined();
   });
 
+  it("supports Scient Agent 1.x only from the Scient release that drives it", () => {
+    const status = (agent: string, scientRelease: string) =>
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        ProviderDriverKind.make("scient"),
+        agent,
+        scientRelease,
+      )?.status;
+    // Installed releases read this manifest from main: 0.6.31 cannot run 1.x.
+    expect(status("1.0.0", "0.6.31")).toBe("unsupported");
+    expect(status("0.1.13", "0.6.31")).toBe("supported");
+    expect(status("1.0.0", "0.6.32")).toBe("supported");
+    expect(status("2.0.0", "0.6.32")).toBe("unsupported");
+  });
+
   it("uses Scient's documented Pi runtime floor", () => {
     const pi = ProviderDriverKind.make("pi");
     for (const [version, expected] of [
