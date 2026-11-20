@@ -1,4 +1,4 @@
-import { FONT_CATALOGUE } from "@scientfactory/scient-markdown";
+import { FONT_CATALOGUE } from "@scientfactory/scient-markdown/fonts";
 import { useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";

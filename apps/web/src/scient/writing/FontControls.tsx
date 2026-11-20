@@ -1,6 +1,6 @@
 import { ChevronDownIcon } from "lucide-react";
 import { useContext, useState } from "react";
-import { catalogueFont } from "@scientfactory/scient-markdown";
+import { catalogueFont } from "@scientfactory/scient-markdown/fonts";
 import { Input } from "~/components/ui/input";
 import { DockPanelCloseContext } from "./dockChrome";
 import {

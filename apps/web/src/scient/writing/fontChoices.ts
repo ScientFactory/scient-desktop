@@ -7,7 +7,7 @@ import {
   normalizeFontSize,
   type CatalogueFont,
   type FontCategory,
-} from "@scientfactory/scient-markdown";
+} from "@scientfactory/scient-markdown/fonts";
 
 export { FONT_SIZE_MAX, FONT_SIZE_MIN, catalogueFont, normalizeFontSize };
 

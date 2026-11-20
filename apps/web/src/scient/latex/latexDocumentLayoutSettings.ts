@@ -1,4 +1,4 @@
-import { FONT_CATALOGUE, catalogueFont } from "@scientfactory/scient-markdown";
+import { FONT_CATALOGUE, catalogueFont } from "@scientfactory/scient-markdown/fonts";
 import { latexPreambleEnd, latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 import { latexLengthInches, latexVisualLayoutProfile } from "./latexVisualLayout";
 import { latexRunningPageSourceFields, latexRunningPageStyle } from "./latexPageLayouts";

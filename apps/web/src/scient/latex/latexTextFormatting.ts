@@ -1,4 +1,8 @@
-import { FONT_CATALOGUE, catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
+import {
+  FONT_CATALOGUE,
+  catalogueFont,
+  normalizeFontSize,
+} from "@scientfactory/scient-markdown/fonts";
 import { LATEX_DIRECTION_MARKS, latexDirectionMark } from "./latexLanguage";
 
 /** Text styles understood by both the source adapter and the editable canvas. */

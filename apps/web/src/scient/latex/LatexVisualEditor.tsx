@@ -1,7 +1,7 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
 import { latexSelectionClipboard } from "./latexClipboard";
-import { catalogueFont } from "@scientfactory/scient-markdown";
+import { catalogueFont } from "@scientfactory/scient-markdown/fonts";
 import { FontControls } from "../writing/FontControls";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import {

@@ -43,8 +43,6 @@ export {
 } from "./documentResources.ts";
 export {
   DOCUMENT_FONT_SIZES,
-  FONT_SIZE_MAX,
-  FONT_SIZE_MIN,
   MARKDOWN_FONT_SPAN_CLOSE,
   normalizeFontSize,
   markdownFontSpanOpen,
