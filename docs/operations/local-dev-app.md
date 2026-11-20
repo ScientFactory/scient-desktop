@@ -267,6 +267,48 @@ System Settings when macOS asks. Reloading the renderer cannot repair an
 incorrect app identity or permission grant; stop and start the exact candidate
 after changing either one.
 
+## One Identity For Every Dev App
+
+Every candidate dev app on a Mac starts signed in as its owner. One dev app, the
+**identity home**, keeps the owner's Accounts & secrets, custom models, provider
+settings, connectors, Overleaf token and website sign-ins in
+`~/.scient-next/dev-identity`. Each candidate copies that identity when
+`pnpm dev:app:start` launches it, before Electron or the server start. The copy
+goes one way: the home is the only writer, and candidates never read its
+Keychain items.
+
+Set it up once, from an up-to-date checkout:
+
+```sh
+pnpm dev:identity setup     # or: setup --checkout <folder>/scient-desktop-identity
+pnpm dev:identity seed      # optional, once: copy from the installed Scient app
+cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
+```
+
+- `setup` creates a detached worktree at `origin/main`, named so the app shows as
+  `Scient (Dev) · identity`. Its `.scient-next` is a link to
+  `~/.scient-next/dev-identity`, so removing or recreating that checkout keeps
+  the home. To update it, check out a newer `origin/main` there and restart it.
+- `seed` fills a stopped home from the installed app, which it only reads.
+  macOS asks once for each of two Keychain items: the installed app's accounts
+  key and its website-cookie key. Allow both, or the step reports what it left
+  out. The home's accounts are re-encrypted under a key kept in its own
+  `secrets/` folder, the only kind another dev app can open without the
+  Keychain. `seed --force` repeats it and replaces the home's accounts.
+- Add or change accounts in the identity app. A candidate replaces its copy of
+  Accounts, custom models, provider settings and connectors with the home's on
+  every start. On its first start it also takes the home's other settings,
+  keybindings, themes, personal skills and website sign-ins. A browser profile
+  that already exists in a candidate keeps its own website sign-ins.
+- Not copied: Scient account sign-in (dev builds carry no Clerk key),
+  Scient-managed provider sign-ins that refresh in place (`provider-auth-*`),
+  signing keys, cloud links, databases, threads, projects and the environment id.
+- A connector whose sign-in renews itself can be renewed by any app holding the
+  copy. If a candidate renews it, the home may need to sign in to that connector
+  again; candidates started afterwards copy the new sign-in.
+- `SCIENT_DEV_IDENTITY=off pnpm dev:app:start` starts a candidate with only its
+  own accounts. `pnpm dev:identity status` shows the home.
+
 ## State And Project Safety
 
 - Never point `SCIENT_NEXT_HOME`, `--home-dir`, or `--base-dir` at `.t3`, the
@@ -277,17 +319,22 @@ after changing either one.
   always use their own isolated state roots.
 - Do not copy data into a stable profile by hand.
 - Never seed the dev app from live T3 or current-Scient data. Use synthetic or
-  deliberately created candidate state.
+  deliberately created candidate state. The one exception is the owner's own
+  `pnpm dev:identity seed`, which reads the installed app and writes only the
+  identity home.
 - A project folder may be opened by the dev app, but app sessions, settings,
   browser partitions, credentials, and databases remain in the owning dev
-  state root.
+  state root, except for the identity a candidate copies from the identity home.
 - Provider CLI authentication remains external-provider state. Do not copy
-  production credentials into the repository or dev state.
+  production credentials into the repository or dev state; the identity home's
+  `seed` is the only path that brings the owner's installed-app accounts into dev
+  state, and only on the owner's request.
 - One folder is shared by every development app on the machine:
   `~/.scient-next/dev-shared/`. It holds only public, checksum-verified
   downloads and one preference (the voice helper, voice models, and the voice
   model last chosen), so a new candidate does not set voice up again. It never
-  holds sessions, settings, credentials, or databases. See
+  holds sessions, settings, credentials, or databases; the owner's identity lives
+  in `~/.scient-next/dev-identity` instead. See
   [`scient-voice.md`](../internals/scient-voice.md).
 
 ## Status, Recovery, And Removal
