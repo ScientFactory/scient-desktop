@@ -5,6 +5,7 @@ import {
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  isDelegatedAppThread,
   isOrchestrationV2WorkActive,
   CommandId,
   type EventId,
@@ -2199,6 +2200,7 @@ export const layer: Layer.Layer<
               return yield* shouldStopProviderEventIngestion;
             }),
             Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
+            { threadId: input.run.threadId, delegated: isDelegatedAppThread(input.appThread) },
           )
           .pipe(
             Effect.ensuring(closeIdleFlush),

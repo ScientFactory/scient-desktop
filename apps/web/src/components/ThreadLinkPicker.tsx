@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useProjects, useVisibleThreadShells } from "~/state/entities";
 import { useThreadSearch } from "~/state/queries";
 
+import { threadLinkMatcher } from "./ThreadLinkPicker.logic";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 type ThreadShell = ReturnType<typeof useVisibleThreadShells>[number];
@@ -33,7 +34,7 @@ export function ThreadLinkPicker({
       .filter((project) => project.environmentId === environmentId)
       .map((project) => [project.id, project.title]),
   );
-  const search = query.trim().toLocaleLowerCase();
+  const matches = threadLinkMatcher(query);
   const candidates = threads
     // SCIENT-FORK:START — historical null-project shells are decode-only, not linkable workspaces.
     .flatMap((thread) =>
@@ -44,9 +45,7 @@ export function ThreadLinkPicker({
       (thread) =>
         thread.environmentId === environmentId &&
         thread.archivedAt === null &&
-        `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`
-          .toLocaleLowerCase()
-          .includes(search),
+        matches(`${thread.title} ${projectNames.get(thread.projectId) ?? ""}`),
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (

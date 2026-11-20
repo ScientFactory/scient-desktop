@@ -18,6 +18,7 @@ import { isMacPlatform } from "~/lib/utils";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { refreshProjectFiles } from "./projectFilesQueryState";
+import { writeExpandedDirectories } from "./fileTreeExpansion";
 // SCIENT-FORK:START
 import { resetOverleafStoreForTests } from "~/scient/overleaf/overleafStore";
 // SCIENT-FORK:END
@@ -671,5 +672,90 @@ describe("Files panel search", () => {
     await using _second = await panel();
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+  });
+  describe("revealing a folder while folders above it are still loading", () => {
+    // SCIENT-FORK:START — Scient's lazy tree lists each folder through the mocked command.
+    const roots = Array.from({ length: 12 }, (_, index) =>
+      entry(`d${String(index).padStart(2, "0")}`, "directory"),
+    );
+    const listing = (parent: string, count: number) =>
+      Array.from({ length: count }, (_, index) =>
+        entry(`${parent}/f${String(index).padStart(3, "0")}.ts`),
+      );
+    const treeRoot = () => document.querySelector("file-tree-container")?.shadowRoot ?? null;
+    const findTreeScroller = () =>
+      treeRoot()?.querySelector<HTMLElement>("[data-file-tree-virtualized-scroll]") ?? null;
+    const isTreeRowInView = (path: string) => {
+      const rowRect = treeRoot()
+        ?.querySelector<HTMLElement>(`[data-item-path="${CSS.escape(path)}"]`)
+        ?.getBoundingClientRect();
+      const scrollerRect = findTreeScroller()?.getBoundingClientRect();
+      return (
+        rowRect !== undefined &&
+        scrollerRect !== undefined &&
+        rowRect.top >= scrollerRect.top &&
+        rowRect.bottom <= scrollerRect.bottom
+      );
+    };
+    // d01 and the folder restored inside it list only when the test releases them.
+    async function renderRevealedPanel(cwd: string) {
+      setup();
+      files.directories = { "": roots };
+      writeExpandedDirectories(`${props.environmentId}:${cwd}`, ["d01/", "d01/sub/"]);
+      const pending = new Map<string, (value: unknown) => void>();
+      files.listDirectory.mockImplementation(
+        async ({ input }: { input: ProjectListDirectoryInput }) =>
+          input.relativeDirectory.startsWith("d01")
+            ? new Promise((resolve) => pending.set(input.relativeDirectory, resolve))
+            : AsyncResult.success({
+                entries: files.directories[input.relativeDirectory] ?? [],
+                complete: true,
+              }),
+      );
+      const container = document.createElement("div");
+      container.style.cssText = "display:flex;flex-direction:column;height:300px;width:300px";
+      await using stack = new AsyncDisposableStack();
+      const screen = stack.use(
+        await render(<FileBrowserPanel {...props} cwd={cwd} />, { container }),
+      );
+      // Revealed once the root is listed: a reveal requested before then is not replayed.
+      await vi.waitFor(() =>
+        expect(treeRoot()?.querySelector('[data-item-path="d09/"]')).not.toBeNull(),
+      );
+      await screen.rerender(
+        <FileBrowserPanel {...props} cwd={cwd} selectedPath="d09" selectedPathRevealId={1} />,
+      );
+      await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
+      const release = async (directory: string, entries: ProjectDirectoryEntry[]) => {
+        await vi.waitFor(() => expect(pending.has(directory)).toBe(true));
+        await act(() => pending.get(directory)!(AsyncResult.success({ entries, complete: true })));
+      };
+      const environment = stack.move();
+      return { release, [Symbol.asyncDispose]: () => environment.disposeAsync() };
+    }
+    // SCIENT-FORK:END
+
+    it("keeps the revealed folder in view as restored folders above it load", async () => {
+      await using panel = await renderRevealedPanel("/repo-reveal-follows-loading");
+
+      // d01 lists after the reveal and holds another restored folder, which lists in turn.
+      await panel.release("d01", [...listing("d01", 60), entry("d01/sub", "directory")]);
+      await vi.waitFor(() => expect(findTreeScroller()!.scrollHeight).toBeGreaterThan(60 * 24));
+      await panel.release("d01/sub", listing("d01/sub", 60));
+
+      await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
+    });
+
+    it("leaves the scroll position alone once the user scrolls the tree", async () => {
+      await using panel = await renderRevealedPanel("/repo-reveal-user-scroll");
+
+      const scroller = findTreeScroller()!;
+      scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, composed: true }));
+      scroller.scrollTop = 0;
+      await panel.release("d01", listing("d01", 60));
+      await vi.waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(60 * 24));
+
+      expect(scroller.scrollTop).toBe(0);
+    });
   });
 });

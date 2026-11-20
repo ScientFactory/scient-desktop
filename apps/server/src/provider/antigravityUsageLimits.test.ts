@@ -703,12 +703,23 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads the native CLI's keyring sign-in and reports when it has expired", () =>
+  it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
       const keyringSecret = (expiry: string) =>
         JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
+      // Google account instances keep their own sign-in; the shared entry belongs to another app.
+      const personal = yield* fixture({
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T14:00:00Z"),
+      });
+      expect((yield* personal.probe).unavailable?.message).toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(personal.requests).toEqual([]);
+
       const signedIn = yield* fixture({
+        authMethod: "oauth-business",
         missingToken: true,
         userId: "google-user-1",
         readsSystemKeyring: true,
@@ -720,6 +731,7 @@ describe("Antigravity subscription limits", () => {
       expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
 
       const expired = yield* fixture({
+        authMethod: "oauth-business",
         missingToken: true,
         readsSystemKeyring: true,
         keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
@@ -751,6 +763,7 @@ describe("Antigravity subscription limits", () => {
           () => Effect.promise(() => target.deleteCredential()),
         );
         const { probe } = yield* fixture({
+          authMethod: "oauth-business",
           missingToken: true,
           nativeKeyring: true,
           readsSystemKeyring: true,
@@ -776,12 +789,13 @@ describe("Antigravity subscription limits", () => {
     ).toBe(value);
   });
 
-  // SCIENT-FORK: the probe reads the agy CLI's shared keyring item only when a caller opts in;
-  // Scient's driver never does.
+  // SCIENT-FORK: the probe reads the agy CLI's shared keyring item for Gemini Enterprise only when
+  // a caller opts in; Scient's driver never does.
   it.effect("leaves the shared keyring alone unless a caller opts in", () =>
     Effect.gen(function* () {
       let keyringReads = 0;
       const { probe, requests } = yield* fixture({
+        authMethod: "oauth-business",
         missingToken: true,
         keyringSecret: JSON.stringify({
           token: { access_token: "a", expiry: "2099-01-01T00:00:00Z" },
