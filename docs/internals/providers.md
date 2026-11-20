@@ -905,7 +905,9 @@ Scient Agent.
   starting it. Oh My Pi is probed with `--version`. Scient Agent is probed with `--runtime-info`,
   which prints one JSON object: `product`, the Scient Agent `version`, the `upstream` Oh My Pi
   release, and `rpcProtocolVersions`. The product must be `scient-agent`, the version 0.1.0 or
-  newer below 1.0, the upstream release one this server supports for Oh My Pi, and RPC v2 offered.
+  newer below 2.0, the upstream release Oh My Pi 18.2.8 or newer on major 18 or 19 (1.x is built on
+  19), and RPC v2 offered. That upstream range is Scient Agent's own, apart from the stock Oh My Pi
+  provider's.
   An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
   runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
 - Two versions. A process reports `version` (the product's, shown to the user) and

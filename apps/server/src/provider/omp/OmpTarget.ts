@@ -57,7 +57,7 @@ export interface OmpTarget {
 }
 
 /** True for an Oh My Pi release whose RPC surface this server is qualified against. */
-export const isSupportedOmpRuntimeVersion = (version: string): boolean =>
+const isSupportedOmpRuntimeVersion = (version: string): boolean =>
   compareSemverVersions(version, OMP_MINIMUM_VERSION) >= 0 &&
   Number(version.split(".")[0] ?? "0") === OMP_SUPPORTED_MAJOR;
 
