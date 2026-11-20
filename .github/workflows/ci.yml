@@ -994,7 +994,17 @@ jobs:
         working-directory: apps/desktop
         env:
           SCIENT_CHROME_WINDOW_TEST: "1"
+          SCIENT_CHROME_WINDOW_CAPTURE: ${{ runner.temp }}\browser-window
         run: vp test run --testTimeout=120000 src/scient/accounts/chromeWindow.real.test.ts
+      - name: Upload what a stalled browser window showed
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: browser-window-capture
+          path: ${{ runner.temp }}\browser-window
+          if-no-files-found: ignore
+          retention-days: 7
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — tests only macOS can run (its Git, cloud-file flags, disk images, file
