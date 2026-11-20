@@ -53,7 +53,10 @@ const accounts = [
   account("devin", "Devin"),
 ];
 
-const provider = (operation: ProviderConnectionOperation | null): ServerProvider => ({
+const provider = (
+  operation: ProviderConnectionOperation | null,
+  listed: ReadonlyArray<ProviderConnectionAccount> = accounts,
+): ServerProvider => ({
   instanceId: ProviderInstanceId.make("scient"),
   driver: ProviderDriverKind.make("scient"),
   displayName: "Scient",
@@ -71,7 +74,7 @@ const provider = (operation: ProviderConnectionOperation | null): ServerProvider
     canDisconnect: false,
     operation: null,
     accountOperation: operation,
-    accounts,
+    accounts: listed,
   },
 });
 
@@ -88,11 +91,14 @@ const failedOperation: ProviderConnectionOperation = {
 const screenshots = import.meta.env.VITE_SCIENT_AGENT_ACCOUNTS_SCREENSHOTS as string | undefined;
 const theme = import.meta.env.VITE_SCIENT_AGENT_ACCOUNTS_THEME === "dark" ? "dark" : "light";
 
-const ui = (operation: ProviderConnectionOperation | null) => (
+const ui = (
+  operation: ProviderConnectionOperation | null,
+  listed: ReadonlyArray<ProviderConnectionAccount> = accounts,
+) => (
   <div className="w-[420px] bg-popover p-4 text-foreground">
     <ScientAgentAccounts
       environmentId={EnvironmentId.make("local")}
-      provider={provider(operation)}
+      provider={provider(operation, listed)}
     />
   </div>
 );
@@ -111,6 +117,25 @@ describe("ScientAgentAccounts in a browser", () => {
       .toHaveTextContent(`Kimi Code: ${SIGN_IN_FAILURE}`);
     if (screenshots) await page.screenshot({ path: `${screenshots}/failure-${theme}.png` });
     expect(screen.container.textContent?.split(SIGN_IN_FAILURE).length).toBe(2);
+  });
+
+  it("does not take another account's failure for the failed sign-in", async () => {
+    const signedIn = [
+      {
+        ...account("anthropic", "Anthropic (Claude Pro/Max)"),
+        connected: true,
+        canDisconnect: true,
+      },
+      ...accounts.filter((entry) => entry.id !== "anthropic"),
+    ];
+    await using screen = await render(ui(failedOperation, signedIn), { router: false });
+    // Signing out of Anthropic fails with the same text the Kimi Code sign-in failed with.
+    await screen.getByRole("button", { name: "Sign out" }).click();
+    await expect.element(screen.getByRole("alert")).toHaveTextContent(SIGN_IN_FAILURE);
+    await expect.element(screen.getByRole("alert")).not.toHaveTextContent("Kimi Code");
+    await expect
+      .element(screen.getByRole("status"))
+      .toHaveTextContent(`Kimi Code: ${SIGN_IN_FAILURE}`);
   });
 
   it("keeps a heading opaque over the rows scrolled under it", async () => {

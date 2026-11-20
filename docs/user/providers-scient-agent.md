@@ -113,12 +113,12 @@ These defaults curate the display; they do not prove subscription access.
 
 For a new automatic selection, Scient prefers GPT-6.1-Sol for ChatGPT accounts,
 Opus 5.5 for Anthropic, and Grok 4.7 for Cursor when the account reports them.
-High reasoning is the initial preference when the model offers it. Saved model and
-reasoning choices remain in effect, and custom models keep their own defaults. Hidden
-or unavailable models are excluded from automatic selection. Cursor's separate provider
-uses the same model preference, and Antigravity's separate provider prefers Gemini 3.8
-Flash; the separate Codex and Claude providers also start at high reasoning when
-supported.
+Reasoning starts at Medium for ChatGPT and Anthropic models and at High for Cursor's,
+when the model offers it. Saved model and reasoning choices remain in effect, and custom
+models keep their own defaults. Hidden or unavailable models are excluded from automatic
+selection. Cursor's separate provider uses the same model preference. Antigravity's
+separate provider prefers Gemini 4 Hydrogen at High reasoning, and the separate Codex
+and Claude providers start at Medium.
 
 If a successful refresh stops reporting a native model, the provider page retains it with an
 unavailable explanation, and selectors exclude it. A failed refresh does not establish a denial.
@@ -199,7 +199,7 @@ What the operating system asks for:
 Scient Agent can make and edit pictures, such as figures and diagrams, when it has a ChatGPT
 account signed in. Scient turns the agent's image tool on while such an account
 is connected and off when it is not; no restart is needed. The pictures show in the conversation
-and are saved as files. They use that account's quota. **Image generation** in the provider's
+and are saved as files. They count against the account or service that makes them. **Image generation** in the provider's
 settings turns it off; it is on by default.
 
 ## Where it keeps things
