@@ -383,6 +383,11 @@ test("a quarantined failure that skipped a later check blocks", () => {
   assert.equal(decide([step("Test release checks", "cancelled")]).ok, false);
 });
 
+// A step condition runs after a failure only if `always()` or `!cancelled()` opens it or one of
+// its `||` branches; `success() && !cancelled()` still skips.
+const runsAfterFailure = (condition) =>
+  /(?:^(?:\$\{\{ )?|\|\| \(?)(?:always\(\)|!cancelled\(\))/.test(condition);
+
 // The steps listed after each `- name: <step>` in the workflows, as GitHub names them.
 function stepsAfter(workflow, name) {
   const lines = workflow.split("\n");
@@ -429,10 +434,21 @@ test("every checked-in row's step is followed only by steps its waiver lets skip
         assert.ok(
           AFTER_FAILURE.test(step.name) ||
             RUN_DESPITE_FAILURE.includes(step.name) ||
-            /always\(\)|!cancelled\(\)/.test(step.if),
+            runsAfterFailure(step.if),
           `${row.id}: ${step.name} after ${row.step} would be skipped by its failure`,
         );
   }
+});
+
+test("the step-order check accepts only conditions that run after a failure", () => {
+  for (const condition of [
+    "always()",
+    "${{ !cancelled() && matrix.part == 6 }}",
+    "${{ success() || (!cancelled() && steps.voice_transcription.outcome == 'failure') }}",
+  ])
+    assert.equal(runsAfterFailure(condition), true, condition);
+  for (const condition of ["", "${{ success() && !cancelled() }}", "${{ matrix.part == 6 }}"])
+    assert.equal(runsAfterFailure(condition), false, condition);
 });
 
 test("the step-order check reads GitHub's step names and conditions", () => {
