@@ -134,7 +134,8 @@ const LATEX_CLASS_SIZE = new RegExp(
   String.raw`\\documentclass\[[^\]]*?\b(${DOCUMENT_FONT_SIZES.join("|")})\b[^\]]*\]`,
   "u",
 );
-const LATEX_FAMILY_DEFAULT = /\\renewcommand\s*\{\\familydefault\}\s*\{\\(rm|sf|tt)default\}/u;
+const LATEX_FAMILY_DEFAULT = /\\renewcommand\s*\{\\familydefault\}\s*\{\\?([A-Za-z0-9]+)\}/gu;
+const LATEX_MAIN_FONT = /\\setmainfont\s*\{([^{}]+)\}/gu;
 const LATEX_FAMILIES: Readonly<Record<string, string>> = {
   rm: "Times New Roman",
   sf: "Arial",
@@ -279,15 +280,30 @@ export function rewriteLatexSizeGroups(source: string): string {
   return counter.found ? `${LATEX_SIZE_MACRO}\n${rewritten}` : source;
 }
 
-/** The base font set by the preamble's class option and `\familydefault`, as the Visual card writes them. */
+/** The value of the last match of `pattern` in `text`. */
+const lastValue = (text: string, pattern: RegExp): string | undefined =>
+  [...text.matchAll(pattern)].at(-1)?.[1]?.trim();
+
+/**
+ * The base font set by the preamble, as the Visual card writes it: the class option size (10 pt
+ * when absent), and a generic `\familydefault`, a catalogue font code in it, or a catalogue font
+ * in `\setmainfont`.
+ */
 export function latexBaseFontOf(source: string): WordBaseFont {
   const active = withoutComments(source);
-  const size = LATEX_CLASS_SIZE.exec(active)?.[1];
-  const family = LATEX_FAMILY_DEFAULT.exec(active)?.[1];
+  const bodyStart = active.indexOf("\\begin{document}");
+  const preamble = bodyStart < 0 ? active : active.slice(0, bodyStart);
+  const familyDefault = lastValue(preamble, LATEX_FAMILY_DEFAULT);
+  const mainFont = lastValue(preamble, LATEX_MAIN_FONT);
+  const generic = familyDefault?.match(/^(rm|sf|tt)default$/u)?.[1];
+  const named = FONT_CATALOGUE.find(
+    (font) => font.latex.fontspec === mainFont || font.latex.pdftex === familyDefault,
+  );
   return {
-    sizePoints: size === undefined ? DEFAULT_WORD_BASE_FONT.sizePoints : Number.parseInt(size, 10),
+    sizePoints: latexClassSize(source),
     family:
-      (family === undefined ? undefined : LATEX_FAMILIES[family]) ?? DEFAULT_WORD_BASE_FONT.family,
+      (generic === undefined ? named?.name : LATEX_FAMILIES[generic]) ??
+      DEFAULT_WORD_BASE_FONT.family,
   };
 }
 

@@ -88,9 +88,9 @@ describe("latexBaseFontOf", () => {
     ).toEqual({ sizePoints: 12, family: "Courier New" });
   });
 
-  it("keeps the Word default when nothing is set", () => {
+  it("uses LaTeX's 10 pt and Word's default font when nothing is set", () => {
     expect(latexBaseFontOf("\\documentclass{article}")).toEqual({
-      sizePoints: 11,
+      sizePoints: 10,
       family: null,
     });
   });
@@ -176,7 +176,29 @@ describe("LaTeX font sizes", () => {
   it("ignores a commented class option and a commented family default", () => {
     const source =
       "%\\documentclass[12pt]{article}\n% \\renewcommand{\\familydefault}{\\ttdefault}";
-    expect(latexBaseFontOf(source)).toEqual({ sizePoints: 11, family: null });
+    expect(latexBaseFontOf(source)).toEqual({ sizePoints: 10, family: null });
+  });
+
+  it("reads the named font the document settings card writes, under each engine", () => {
+    expect(
+      latexBaseFontOf("\\documentclass{article}\n\\renewcommand{\\familydefault}{qtm}"),
+    ).toEqual({ sizePoints: 10, family: "Times New Roman" });
+    expect(
+      latexBaseFontOf(
+        "\\documentclass[11pt]{article}\n\\usepackage{fontspec}\n\\setmainfont{Calibri}\n\\begin{document}\nx\n\\end{document}",
+      ),
+    ).toEqual({ sizePoints: 11, family: "Calibri" });
+  });
+
+  it("ignores a font outside the catalogue and a \\setmainfont after the preamble", () => {
+    expect(latexBaseFontOf("\\setmainfont{Comic Sans MS}")).toEqual({
+      sizePoints: 10,
+      family: null,
+    });
+    expect(latexBaseFontOf("\\begin{document}\n\\setmainfont{Calibri}\n\\end{document}")).toEqual({
+      sizePoints: 10,
+      family: null,
+    });
   });
 
   it("reads the fontsize forms the editor reads", () => {
