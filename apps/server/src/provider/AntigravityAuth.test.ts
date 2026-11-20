@@ -242,6 +242,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       const attempt = yield* Fiber.join(opening);
       assert.equal(attempt.authorizationUrl, authorizationUrl);
       assert.equal(attempt.initialStatus, "waiting_for_browser");
+      assert.equal(attempt.authorizationResponseKind, "callback_url");
       if (!attempt.submitAuthorizationCode)
         return yield* Effect.die("Expected a callback handoff.");
       yield* attempt.submitAuthorizationCode(callbackUrl);
@@ -549,6 +550,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
         "catalog-published",
         "process-close",
       ]);
+    }),
+  );
+
+  it.effect("asks the bridge for the Antigravity page code when the CLI signs in", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ codeLogin: true });
+      const actions = makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller: harness.auth.controller,
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("cli-owner"),
+      });
+      const attempt = yield* actions.start("antigravity_google");
+      assert.equal(attempt.authorizationUrl, loginUrl);
+      assert.equal(attempt.authorizationResponseKind, "code");
+      if (!attempt.submitAuthorizationCode) return yield* Effect.die("Expected a code handoff.");
+      // The loopback validator would refuse this; the code interaction accepts it.
+      yield* attempt.submitAuthorizationCode("4/0Ab-code");
+      assert.deepEqual(harness.loginCodes, ["4/0Ab-code"]);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* attempt.waitForCompletion;
     }),
   );
 
