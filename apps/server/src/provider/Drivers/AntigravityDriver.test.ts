@@ -247,6 +247,14 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       resolve: () => resolveSelected(),
+      compatibility: (version) =>
+        Effect.succeed(
+          ModelManifest.providerCompatibility(
+            ModelManifest.BUNDLED_MODEL_MANIFEST,
+            ProviderDriverKind.make("antigravity"),
+            version,
+          ),
+        ),
       acquire: (binaryPath, environment) =>
         Effect.gen(function* () {
           acquisitions.push({ binaryPath, path: environment?.PATH });

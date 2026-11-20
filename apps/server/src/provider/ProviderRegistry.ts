@@ -517,6 +517,23 @@ const carrySavedAntigravityAccount = (
   return { auth: previousProvider.auth, status };
 };
 
+/** One failed check after a ready one is often transient, so its retained catalog stays offered. */
+const retainsReadyCatalog = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+  status: ServerProvider["status"],
+  models: ServerProvider["models"],
+): boolean =>
+  nextProvider.enabled &&
+  nextProvider.installed &&
+  (status === "error" || status === "warning") &&
+  nextProvider.auth.status !== "unauthenticated" &&
+  models.length > 0 &&
+  (previousProvider.status === "ready" ||
+    // Usage and metadata updates republish the same check.
+    (previousProvider.modelsRetained === true &&
+      previousProvider.checkedAt === nextProvider.checkedAt));
+
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
@@ -552,6 +569,14 @@ export const mergeProviderSnapshot = (
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models,
+    ...(retainsReadyCatalog(
+      previousProvider,
+      nextProvider,
+      savedAccount?.status ?? nextProvider.status,
+      models,
+    )
+      ? { modelsRetained: true }
+      : {}),
     // SCIENT-FORK:START — workspace inventory belongs to one live instance generation.
     ...(previousProvider.nativeInventoryGeneration === nextProvider.nativeInventoryGeneration
       ? workspaceSnapshots === undefined

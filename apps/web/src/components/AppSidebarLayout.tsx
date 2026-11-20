@@ -18,7 +18,7 @@ import { installThreadUndoShortcut } from "../hooks/threadUndoShortcut";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
-  resolveShortcutCommand,
+  isSidebarToggleShortcut,
   shortcutLabelForCommand,
 } from "../keybindings";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -298,15 +298,17 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         // the toggle stays available everywhere else.
         return;
       }
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          previewFocus: isPreviewFocused(),
-          ...readRoutePanelsOpen(router),
-          usagePageOpen,
-        },
-      });
-      if (command !== "sidebar.toggle") return;
+      if (
+        !isSidebarToggleShortcut(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            previewFocus: isPreviewFocused(),
+            ...readRoutePanelsOpen(router),
+            usagePageOpen,
+          },
+        })
+      )
+        return;
 
       event.preventDefault();
       event.stopPropagation();

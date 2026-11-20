@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { AccountsSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import { pickBrowserProfile, profileRows } from "@t3tools/shared/scientBrowserProfileChoice";
 import { AsyncResult } from "effect/reactivity";
@@ -14,7 +15,7 @@ export async function accountsSnapshot(threadRef: ScopedThreadRef) {
   if (AsyncResult.isSuccess(current)) return current.value;
   // A locked or unreachable store must not hold up opening a link.
   const read = await Promise.race([
-    accountsState.readSnapshot.run(appAtomRegistry, input),
+    runAtomCommand(appAtomRegistry, accountsState.readSnapshot, input, { reportFailure: false }),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_WAIT_MS)),
   ]);
   return read?._tag === "Success" ? read.value : undefined;

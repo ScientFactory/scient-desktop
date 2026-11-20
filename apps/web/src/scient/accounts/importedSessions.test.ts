@@ -7,22 +7,27 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 
 const calls = vi.hoisted(() => [] as string[]);
-vi.mock("./accountsState", () => ({
-  accountsState: {
-    readSnapshot: {
-      run: async () => ({
-        _tag: "Success",
-        value: { accounts: [], accountsProtocol: 1 },
-      }),
-    },
-    sessionsSeen: {
-      run: async (_registry: unknown, { input }: { input: { sessions: unknown[] } }) => {
-        calls.push(`rows:${input.sessions.length}`);
-        return { _tag: "Success", value: { created: [] } };
+vi.mock("./accountsState", async () => {
+  const { promiseCommandRun } = await import("../../../test/promiseCommandRun");
+  return {
+    accountsState: {
+      readSnapshot: {
+        run: promiseCommandRun(async () => ({
+          _tag: "Success",
+          value: { accounts: [], accountsProtocol: 1 },
+        })),
+      },
+      sessionsSeen: {
+        run: promiseCommandRun(
+          async (_registry: unknown, { input }: { input: { sessions: unknown[] } }) => {
+            calls.push(`rows:${input.sessions.length}`);
+            return { _tag: "Success", value: { created: [] } };
+          },
+        ),
       },
     },
-  },
-}));
+  };
+});
 vi.mock("./mainFill", () => ({
   fillMainFromProfile: async (_environmentId: string, profileId: string) =>
     void calls.push(`fill:${profileId}`),

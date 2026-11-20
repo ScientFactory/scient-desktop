@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { BrowserProfileId, type EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
@@ -49,10 +50,15 @@ export function watchGoogleSessions(
         if (disposed) return;
         if (generation) observeGoogleCopy(environmentId, id, generation, sessions);
         if (sessions)
-          await accountsState.googleSessionsSeen.run(registry, {
-            environmentId,
-            input: { profileId: BrowserProfileId.make(id), sessions },
-          });
+          await runAtomCommand(
+            registry,
+            accountsState.googleSessionsSeen,
+            {
+              environmentId,
+              input: { profileId: BrowserProfileId.make(id), sessions },
+            },
+            { reportFailure: false },
+          );
       }
     } finally {
       checking = false;

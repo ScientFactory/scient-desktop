@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   BrowserProfileId,
   type BrowserProfile,
@@ -81,10 +82,15 @@ export async function handleBrowserProfileMenuAction(action: string, threadRef: 
   const chosen = action.startsWith("browser-profile:set:")
     ? BrowserProfileId.make(action.slice("browser-profile:set:".length))
     : null;
-  const result = await accountsState.chooseProfile.run(appAtomRegistry, {
-    environmentId: threadRef.environmentId,
-    input: { threadId: threadRef.threadId, profileId: chosen },
-  });
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    accountsState.chooseProfile,
+    {
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, profileId: chosen },
+    },
+    { reportFailure: false },
+  );
   if (result._tag !== "Success")
     toastManager.add({ type: "error", title: m(msg("Could not change the browser profile")) });
   return true;

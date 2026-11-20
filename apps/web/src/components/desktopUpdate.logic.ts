@@ -249,6 +249,8 @@ export function getDesktopUpdateButtonTooltip(
     }
     return state.message ?? resolve(msg("Update failed"));
   }
+  // SCIENT-FORK: no off-track notice. Scient's updater still offers a newer build of the selected
+  // track to a build from another one, so "Up to date" stays true there.
   return resolve(msg("Up to date"));
 }
 

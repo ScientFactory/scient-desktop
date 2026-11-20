@@ -9,6 +9,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -290,6 +291,7 @@ function realStack(options: {
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(host),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
   );
   return {

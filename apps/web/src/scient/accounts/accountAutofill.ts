@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { ThreadId, type DesktopLoginForm, type EnvironmentId } from "@t3tools/contracts";
 import { automaticSignInOnHold } from "@t3tools/shared/scientAccountSignIn";
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
@@ -63,7 +64,12 @@ export function watchAccountAutofill(
   const snapshot = async () => {
     const current = registry.get(accountsState.snapshot({ environmentId, input: {} }));
     if (AsyncResult.isSuccess(current)) return current.value;
-    const read = await accountsState.readSnapshot.run(registry, { environmentId, input: {} });
+    const read = await runAtomCommand(
+      registry,
+      accountsState.readSnapshot,
+      { environmentId, input: {} },
+      { reportFailure: false },
+    );
     return read._tag === "Success" ? read.value : undefined;
   };
   const fill = async (form: DesktopLoginForm) => {
@@ -104,14 +110,19 @@ export function watchAccountAutofill(
       isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
     if (submit) signedBackIn.set(form.url, Date.now());
-    const values = await accountsState.fillValues.run(registry, {
-      environmentId,
-      input: {
-        accountId: account.accountId,
-        origin: form.url,
-        tab: { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url: form.url },
+    const values = await runAtomCommand(
+      registry,
+      accountsState.fillValues,
+      {
+        environmentId,
+        input: {
+          accountId: account.accountId,
+          origin: form.url,
+          tab: { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url: form.url },
+        },
       },
-    });
+      { reportFailure: false },
+    );
     if (values._tag !== "Success") return;
     const done = await bridge
       // oxlint-disable-next-line unicorn/no-array-fill-with-reference-type -- The desktop bridge's fill, not Array.fill.
@@ -138,10 +149,15 @@ export function watchAccountAutofill(
     // password no longer works: the same page may still be waiting or asking for something else.
     if (still.documentId === form.documentId) signedBackIn.set(form.url, Number.POSITIVE_INFINITY);
     else
-      await accountsState.signInSeen.run(registry, {
-        environmentId,
-        input: { accountId: account.accountId, outcome: "password-rejected" },
-      });
+      await runAtomCommand(
+        registry,
+        accountsState.signInSeen,
+        {
+          environmentId,
+          input: { accountId: account.accountId, outcome: "password-rejected" },
+        },
+        { reportFailure: false },
+      );
   };
   return bridge.onLoginFormDetected((form) => void fill(form));
 }

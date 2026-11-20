@@ -250,7 +250,10 @@ it.effect.each(
     ).pipe(Layer.provide(liveSnapshots));
     const replay = makeOrchestratorV2ReplayLayerWithRegistry(
       { name: "native-claude-revoked-auth" },
-      ProviderAdapters.layerFromProviderInstanceRegistry.pipe(Layer.provide(instanceLayer)),
+      ProviderAdapters.layerFromProviderInstanceRegistry.pipe(
+        Layer.provide(instanceLayer),
+        Layer.provide(ModelManifest.layerTest),
+      ),
       {
         providerRegistryLayer: snapshots,
         configureMcp: false,

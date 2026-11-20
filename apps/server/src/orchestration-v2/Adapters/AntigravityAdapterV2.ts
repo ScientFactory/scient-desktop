@@ -20,10 +20,14 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
+  antigravitySteersWithPrompt,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -156,6 +160,10 @@ export function makeAntigravityAcpAdapterFlavor(
     daemonToolCallIds.has(toolCall.toolCallId) ||
     (toolCall.kind === "execute" && !antigravityCommandOutlivesPrompt(toolCall));
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — only sessions that offer agy's native Auto defer to its review. Scient's
+  // managed 1.4.5 harness offers none: it runs Auto as `default`, answered by Scient's policy.
+  const nativeAutoSessionIds = new Set<string>();
+  // SCIENT-FORK:END
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -186,7 +194,6 @@ export function makeAntigravityAcpAdapterFlavor(
             ownDescendantProcessGroups: platform === "linux",
             processGroupPlatform: platform,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
-            additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -227,13 +234,24 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
+          runtime.start().pipe(
+            // SCIENT-FORK:START — see nativeAutoSessionIds.
+            Effect.tap((started) =>
+              Effect.sync(() => {
+                if (
+                  parseSessionModeState(started.sessionSetupResult)?.availableModes.some(
+                    (mode) => mode.id === "auto",
+                  ) === true
+                ) {
+                  nativeAutoSessionIds.add(started.sessionId);
+                } else {
+                  nativeAutoSessionIds.delete(started.sessionId);
+                }
+              }),
             ),
+            // SCIENT-FORK:END
+            Effect.tap((started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -262,6 +280,7 @@ export function makeAntigravityAcpAdapterFlavor(
       attachments,
       resolveAttachmentPath,
       promptCapabilities,
+      // SCIENT-FORK: the managed 1.4.5 runtime links MP4 video for Gemini models.
       agentVersion,
       currentModel,
     }) =>
@@ -305,6 +324,8 @@ export function makeAntigravityAcpAdapterFlavor(
     // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
     // has ended. A message sent while a command runs leaves the command alone.
     preserveRuntimeOnSettledInterrupt: true,
+    // `agy acp` reads a prompt sent mid-turn as a steer; cancel-and-restart killed its subagents.
+    steersWithPrompt: antigravitySteersWithPrompt,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
@@ -330,6 +351,11 @@ export function makeAntigravityAcpAdapterFlavor(
           request,
         }),
     },
+    // SCIENT-FORK: see nativeAutoSessionIds.
+    permissionDisposition: (policy, request) =>
+      nativeAutoSessionIds.has(request.sessionId)
+        ? antigravityPermissionDisposition(policy, request)
+        : acpPermissionDisposition(policy, request),
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -342,12 +368,11 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    // ACP 1.3.0 treats /compact as ordinary model input.
-    supportsCompaction: false,
+    compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
+    checksVersionAtHandshake: true,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
-    // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
     ...(profileDirectory === undefined

@@ -190,6 +190,7 @@ it.effect("classifies system, custom, and managed ACP runtimes without taking ow
     const source = { current: "path" as "path" | "override" | "managed" };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       startRelease: () => Effect.die("not used"),
@@ -261,6 +262,7 @@ it.effect("never removes a managed runtime when its repair download or verificat
     };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
+      compatibility: () => Effect.undefined,
       latestRelease: Effect.sync(() => current),
       refreshLatestRelease: Effect.sync(() => {
         refreshes++;

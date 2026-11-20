@@ -1334,8 +1334,24 @@ function deriveTurnFolds(input: {
     const isLatestInterruptedTurn =
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
-    // terminal message — take whichever ended last.
-    const lastEntryEnd = timelineEntryEnd(lastEntry);
+    // terminal message — take whichever ended last. A subagent card after it was
+    // spawned by background work once the turn settled, so it adds no turn time.
+    const lateSubagentIds = new Set(
+      group.entries.flatMap((entry, index) =>
+        index > terminalEntryIndex &&
+        entry.kind === "event" &&
+        entry.projectedItem.item.type === "subagent"
+          ? [entry.id]
+          : [],
+      ),
+    );
+    // SCIENT-FORK:START — a linked resource's lifetime is not response work, as for lastEntry.
+    const lastTurnEntry =
+      group.entries.findLast(
+        (entry) => !lateSubagentIds.has(entry.id) && !timelineEntryIsPersistentResourceCard(entry),
+      ) ?? lastEntry;
+    // SCIENT-FORK:END
+    const lastEntryEnd = timelineEntryEnd(lastTurnEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
@@ -1374,8 +1390,10 @@ function deriveTurnFolds(input: {
       if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
       const segmentMs = computeElapsedMs(
         steer.createdAt,
-        entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
-          steer.createdAt,
+        entries
+          .filter((entry) => !lateSubagentIds.has(entry.id))
+          .map(timelineEntryEnd)
+          .reduce<string | null>(maxIsoTimestamp, null) ?? steer.createdAt,
       );
       foldsByAnchorEntryId.set(anchorEntry.id, {
         runId: RunId.make(`${runId}:steer:${steer.id}`),

@@ -79,18 +79,6 @@ it.effect("a HEAD probe that never answers refuses the worktree default instead 
       Effect.flip,
     );
     assert.equal(refused.code, "orchestration_error");
-    // So does a worktree whose gitdir is gone.
-    const missing = yield* defaultWorktreeStrategy("/repo").pipe(
-      Effect.provide(gitAnswering("missing-gitdir")),
-      Effect.flip,
-    );
-    assert.equal(missing.code, "orchestration_error");
-    // And a HEAD whose commit object is missing, which exits 1 like an unborn HEAD.
-    const corrupt = yield* defaultWorktreeStrategy("/repo").pipe(
-      Effect.provide(gitAnswering("missing-object")),
-      Effect.flip,
-    );
-    assert.equal(corrupt.code, "orchestration_error");
 
     // Git's own answer still decides: no commit or no repository stays shared, a branch gets a worktree.
     assert.isUndefined(
@@ -100,6 +88,15 @@ it.effect("a HEAD probe that never answers refuses the worktree default instead 
       yield* defaultWorktreeStrategy("/repo").pipe(
         Effect.provide(gitAnswering("not-a-repository")),
       ),
+    );
+    // Upstream reads a worktree whose gitdir is gone as Git's "not a repository" too.
+    assert.isUndefined(
+      yield* defaultWorktreeStrategy("/repo").pipe(Effect.provide(gitAnswering("missing-gitdir"))),
+    );
+    // HEAD is not peeled, so a branch whose tip object is missing still gets its worktree.
+    assert.deepEqual(
+      yield* defaultWorktreeStrategy("/repo").pipe(Effect.provide(gitAnswering("missing-object"))),
+      { type: "worktree", baseRef: "main" },
     );
     assert.deepEqual(
       yield* defaultWorktreeStrategy("/repo").pipe(Effect.provide(gitAnswering("commit"))),

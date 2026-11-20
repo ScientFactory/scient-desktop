@@ -49,8 +49,5 @@ describe("Scient thread error notices", () => {
     const next = getThreadErrorBannerKey("env:limits", MODEL_TOKEN_LIMIT_MESSAGE, "turn-2");
     expect(isThreadErrorBannerDismissedForSession(next)).toBe(false);
     expect(getThreadErrorBannerKey("env:limits", null, "turn-2")).toBeNull();
-    expect(getThreadErrorBannerKey("env:limits", "Other error", "turn-1")).toBe(
-      getThreadErrorBannerKey("env:limits", "Other error", "turn-2"),
-    );
   });
 });

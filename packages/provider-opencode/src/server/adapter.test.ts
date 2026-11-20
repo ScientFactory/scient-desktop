@@ -265,6 +265,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       connectToOpenCodeServer: () =>
         Effect.succeed({
           url: "http://test.invalid",
+          version: "1.14.19",
           external: external && turnSettings.exitCode === undefined,
           exitCode: turnSettings.exitCode ?? null,
         }),
@@ -274,6 +275,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
       resolveAttachmentPath: () => null,
+      compatibility: () => Effect.undefined,
       ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
@@ -5079,6 +5081,7 @@ describe("OpenCodeAdapterV2", () => {
         Effect.provideService(ProviderHost.ProviderHost, {
           paths: { cwd: "/workspace" },
           resolveAttachmentPath: () => null,
+          compatibility: () => Effect.undefined,
         } as unknown as ProviderHost.ProviderHost["Service"]),
       );
       const threadId = ThreadId.make("thread-opencode-admission-race");
@@ -5731,6 +5734,7 @@ describe("OpenCodeAdapterV2", () => {
         Effect.provideService(ProviderHost.ProviderHost, {
           paths: { cwd: "/workspace" },
           resolveAttachmentPath: () => null,
+          compatibility: () => Effect.undefined,
         } as unknown as ProviderHost.ProviderHost["Service"]),
       );
       const threadId = ThreadId.make("thread-opencode-initial-stop");
@@ -6802,6 +6806,37 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
     assert.include(requests, "/event");
     assert.include(requests, "/global/health");
     assert.equal(managedStarts, external ? 0 : 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([
+      NodeServices.layer,
+      TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+    ]),
+  ),
+);
+
+it.effect("refuses a session on a server version the policy rates broken", () =>
+  Effect.gen(function* () {
+    const error = yield* makeOpenCodeRuntimeHarness(
+      "broken-version",
+      "ses_broken",
+      {},
+      // SCIENT-FORK: Scient's harness takes `external` and `setup` before the host.
+      true,
+      {},
+      {
+        compatibility: () =>
+          Effect.succeed({
+            status: "broken" as const,
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: ">=2.0.18",
+          }),
+      },
+    ).pipe(Effect.flip);
+    assert.include(JSON.stringify(error), "OpenCode 1.14.19 does not work");
   }).pipe(
     Effect.scoped,
     Effect.provide([

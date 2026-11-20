@@ -7,11 +7,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ModelManifest from "./ModelManifest.ts";
-import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
@@ -136,6 +139,9 @@ interface AntigravityInstallationService {
     binaryPath?: string,
     environment?: NodeJS.ProcessEnv,
   ) => Effect.Effect<AntigravityExecutable, AntigravityInstallationError, Scope.Scope>;
+  readonly compatibility: (
+    version: string,
+  ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
   readonly start: Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
   /** Install the exact locally-qualified release the user reviewed. */
   readonly startRelease: (
@@ -287,16 +293,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     message: null,
   });
 
+  const compatibility = Effect.fn("AntigravityInstallation.compatibility")(function* (
+    version: string,
+  ) {
+    return ModelManifest.providerCompatibility(yield* manifestService.current, DRIVER, version);
+  });
   const isWithdrawn = Effect.fn("AntigravityInstallation.isWithdrawn")(function* (version: string) {
-    const manifest = yield* manifestService.current;
-    const status = (
-      resolveProviderCompatibility(manifest.compatibility, DRIVER, version) ??
-      resolveProviderCompatibility(
-        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-        DRIVER,
-        version,
-      )
-    )?.status;
+    const status = (yield* compatibility(version))?.status;
     return status === "broken" || status === "unsupported";
   });
   const ensureEligible = Effect.fn("AntigravityInstallation.ensureEligible")(function* (
@@ -1458,6 +1461,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     refreshLatestRelease,
     resolve,
     acquire,
+    compatibility,
     // SCIENT-FORK: a supplied catalog keeps choosing what the generic install action installs.
     start: options.refreshLatestRelease === undefined ? start : catalogStart,
     startRelease,

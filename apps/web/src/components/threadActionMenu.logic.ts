@@ -133,6 +133,8 @@ export interface ThreadActionMenuState {
   // SCIENT-FORK:END
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  /** False where no inline title editor is rendered, such as sidebar search results. */
+  readonly canRename?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -255,7 +257,13 @@ export function buildThreadActionMenuItems(
     // thread lives in the sidebar.
     ...(state.sectionMenu ? [state.sectionMenu] : []),
     // SCIENT-FORK:END
-    { id: "rename", label: resolve(msg("Rename thread")), icon: "pencil", separatorBefore: true },
+    {
+      id: "rename",
+      label: resolve(msg("Rename thread")),
+      icon: "pencil",
+      disabled: state.canRename === false,
+      separatorBefore: true,
+    },
     ...(state.supports.titleRegeneration
       ? [
           {

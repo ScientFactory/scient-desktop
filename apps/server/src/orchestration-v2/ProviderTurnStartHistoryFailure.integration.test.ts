@@ -54,6 +54,7 @@ import {
 } from "@t3tools/provider-testing/replayTranscript";
 import { THREAD_FORK_NATIVE_SOURCE_PROMPT } from "./testkit/fixtures/shared.ts";
 import { forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { materializeCodexThreadSetup } from "./testkit/CodexReplayThreadSetup.ts";
 
 const frameJson = Schema.fromJsonString(Schema.Unknown);
 const encodeFrame = Schema.encodeEffect(frameJson);
@@ -768,7 +769,11 @@ it.live(
           },
           { type: "runtime_exit", status: "success" },
         );
-        const replayTranscript = { ...transcript, entries };
+        // SCIENT-FORK: the imported recording predates upstream's thread setup requests.
+        const replayTranscript = materializeCodexThreadSetup(
+          { ...transcript, entries },
+          () => "Completed native source",
+        );
         const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },

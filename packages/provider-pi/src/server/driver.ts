@@ -229,6 +229,8 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
         effectiveConfig,
         effectiveEnvironment,
         makeRpcClient,
+        {},
+        host.compatibility,
       );
       // Pi runs extensions' session_start in its cwd; the server's cwd is $HOME on packaged desktop.
       const probeCwd = path.join(host.paths.providerStatusCacheDir, "pi-status-probe");
@@ -237,7 +239,13 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
         .pipe(
           Effect.ignore,
           Effect.andThen(
-            checkPiProviderStatus(effectiveConfig, effectiveEnvironment, probeCwd, makeRpcClient),
+            checkPiProviderStatus(
+              effectiveConfig,
+              effectiveEnvironment,
+              probeCwd,
+              makeRpcClient,
+              host.compatibility,
+            ),
           ),
           Effect.map(stampSnapshot),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

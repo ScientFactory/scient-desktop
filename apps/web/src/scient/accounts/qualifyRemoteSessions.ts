@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, type AccountsQualifyCase } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -16,10 +17,15 @@ declare global {
 export function offerRemoteQualification(registry: AtomRegistry.AtomRegistry) {
   if (!import.meta.env.DEV || !window.desktopBridge?.accounts?.qualifySessionCopy) return;
   window.scientQualifyRemoteSessions = async (environmentId) => {
-    const result = await accountsState.sessionsQualify.run(registry, {
-      environmentId: EnvironmentId.make(environmentId),
-      input: {},
-    });
+    const result = await runAtomCommand(
+      registry,
+      accountsState.sessionsQualify,
+      {
+        environmentId: EnvironmentId.make(environmentId),
+        input: {},
+      },
+      { reportFailure: false },
+    );
     return result._tag === "Success" ? result.value : null;
   };
 }

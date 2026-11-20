@@ -617,6 +617,8 @@ const managerLayer = Effect.fn("LegacyShutdown.managerLayer")(function* (h: Harn
     Layer.succeed(McpSessionRegistry.McpSessionRegistry, mcp),
     ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
       Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
+      // The registry rates provider versions against the manifest's compatibility policy.
+      Layer.provide(ModelManifest.layerTest),
     ),
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
@@ -991,6 +993,7 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           { name: "legacy-idle-recovery", runtimePolicyOverride: { cwd } },
           ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
             Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
+            Layer.provide(ModelManifest.layerTest),
           ),
           {
             databaseLayer: SqlitePersistenceMemory,

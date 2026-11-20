@@ -6,6 +6,10 @@
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import {
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import type { PiSettings } from "../settings.ts";
 import { makePiRpcClient } from "./rpcClient.ts";
 import {
@@ -22,6 +26,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   environment: NodeJS.ProcessEnv = process.env,
   makeRpcClient: PiRpcClientFactory = makePiRpcClient,
   options: PiTextGenerationOptions = {},
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runPiJson = makePiRunJson({
@@ -30,6 +35,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     makeRpcClient,
     options,
     spawner,
+    compatibility,
   });
   return TextGenerationOperations.fromRunner(
     "PiTextGeneration",

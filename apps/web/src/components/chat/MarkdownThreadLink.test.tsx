@@ -28,6 +28,8 @@ vi.mock("@tanstack/react-router", () => ({
   }: ComponentProps<"a"> & { params: { environmentId: string; threadId: string } }) => (
     <a {...props} href={`/${params.environmentId}/${params.threadId}`} />
   ),
+  // A side chat's chip navigates to its parent's tab on click.
+  useNavigate: () => () => Promise.resolve(),
 }));
 
 const environmentId = EnvironmentId.make("remote");
