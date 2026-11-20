@@ -516,7 +516,12 @@ describe.runIf(Boolean(BARE_PYTHON))("running on what people have", () => {
             query: { offset: 0, limit: 10, sort: null, search: "" },
           });
           expect(table.rowCount).toBe(2);
-          const next = yield* interruptAndRestart(session, "import time\ntime.sleep(60)");
+          // On Windows an interrupt doesn't wake one long time.sleep, so the run sleeps in steps.
+          const next = yield* interruptAndRestart(
+            session,
+            'import time\nprint("scient-running", flush=True)\nwhile True:\n    time.sleep(0.01)',
+            "scient-running",
+          );
           // Display setup, Variables and figures all come back after a restart.
           expect(hasMedia(yield* run(figure, next), "image/png")).toBe(true);
           yield* run("kept = 1", next);
