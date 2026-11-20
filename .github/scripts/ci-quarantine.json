@@ -2,16 +2,6 @@
   "schemaVersion": 1,
   "rows": [
     {
-      "id": "windows-voice-transcription-timeout",
-      "job": "windows_packaging / Windows packaging / Installer and native runtime",
-      "step": "Transcribe with the installed voice runtime",
-      "test": null,
-      "signature": "Offline voice transcription timed out.",
-      "owner": "Voice runtime",
-      "quarantined": "2026-11-17",
-      "expires": "2026-11-24"
-    },
-    {
       "id": "windows-chrome-sign-in-window",
       "job": "Overleaf Windows",
       "step": "Sign in in a Chrome and an Edge window on Windows",

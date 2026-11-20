@@ -168,6 +168,16 @@ export function lowerWhisperProcessPriority(
   }
 }
 
+/**
+ * Half the logical CPUs, at most four. ggml's workers spin-wait for one another, so with a
+ * thread per CPU, programs holding CPUs stall a transcription for minutes.
+ */
+export function defaultWhisperThreads(
+  availableParallelism = NodeOS.availableParallelism(),
+): number {
+  return Math.max(1, Math.min(MAX_THREADS, Math.floor(availableParallelism / 2)));
+}
+
 export function isWhisperRuntimePlatformSupported(
   platform: NodeJS.Platform,
   osRelease: string,
@@ -187,6 +197,8 @@ export class LocalWhisperRuntime {
   private readonly inferenceTimeoutMs: number;
   private readonly osRelease: () => string;
   private child: NodeChildProcess.ChildProcessWithoutNullStreams | null = null;
+  /** Helpers asked to stop that have not exited; disposal waits for them too. */
+  private readonly stopping = new Set<NodeChildProcess.ChildProcessWithoutNullStreams>();
   private endpoint: string | null = null;
   private activeModelPath: string | null = null;
   private starting: Promise<string> | null = null;
@@ -204,7 +216,7 @@ export class LocalWhisperRuntime {
     this.platform = options.platform ?? NodeOS.platform();
     this.osRelease = options.osRelease ?? NodeOS.release;
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-    this.threads = Math.max(1, Math.min(MAX_THREADS, options.threads ?? MAX_THREADS));
+    this.threads = Math.max(1, Math.min(MAX_THREADS, options.threads ?? defaultWhisperThreads()));
     this.inferenceTimeoutMs = Math.max(
       1_000,
       options.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS,
@@ -266,7 +278,7 @@ export class LocalWhisperRuntime {
       this.stopProcess();
     }
     await this.queueTail;
-    await stopAndWaitForChild(child);
+    await Promise.all([...new Set([child, ...this.stopping])].map(stopAndWaitForChild));
   }
 
   async stopIdle(): Promise<void> {
@@ -459,7 +471,19 @@ export class LocalWhisperRuntime {
     this.child = null;
     this.endpoint = null;
     this.activeModelPath = null;
-    if (child && child.exitCode === null && !child.killed) child.kill();
+    if (child && child.exitCode === null && !child.killed) {
+      child.kill();
+      // On macOS and Linux the helper's SIGTERM waits for the running transcription to end.
+      const force = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode !== "SIGKILL") child.kill("SIGKILL");
+      }, STOP_TIMEOUT_MS);
+      force.unref();
+      this.stopping.add(child);
+      child.once("exit", () => {
+        clearTimeout(force);
+        this.stopping.delete(child);
+      });
+    }
     return child;
   }
 }
