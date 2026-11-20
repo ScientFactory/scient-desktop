@@ -74,6 +74,7 @@
     "dev:app:uninstall": "node scripts/local-dev-app.mjs uninstall",
     "dev:app:review": "node scripts/dev-app/controller.mjs review",
     "dev:app:stable": "node scripts/dev-app/controller.mjs",
+    "dev:identity": "node scripts/dev-identity.mjs",
     "canonical:sync:uninstall": "node scripts/canonical-main-sync.mjs --uninstall",
     "brand:check": "node scripts/check-scient-brand.ts",
     "analysis:seams:check": "node scripts/verify-scient-analysis-seams.mjs",
