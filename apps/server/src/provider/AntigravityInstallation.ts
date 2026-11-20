@@ -701,19 +701,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       if (!(yield* executableFile(candidate))) continue;
       const resolved = yield* fs.realPath(candidate).pipe(Effect.option);
       if (Option.isNone(resolved)) return null;
-      const executablePath = resolved.value;
-      if (yield* isManagedVersionCandidate(executablePath)) return null;
-      // SCIENT-FORK: a Windows launcher pairs a 1.4.5 harness, which the full lookup resolves.
-      if ((yield* launcherTarget(executablePath)) !== null) return null;
-      if (isAntigravityCli(candidate, executablePath)) {
-        return {
-          executablePath: candidate,
-          harnessPath: null,
-          source,
-          version: null,
-          managedVersionDirectory: null,
-        } satisfies AntigravityExecutable;
-      }
+      // SCIENT-FORK:START — an external 1.4.5 pair or Windows launcher resolves here too.
+      const launched = yield* launcherTarget(resolved.value);
+      if (yield* isManagedVersionCandidate(launched ?? resolved.value)) return null;
+      const selected = yield* fromExternal(candidate, source);
+      if (selected) return selected;
+      // SCIENT-FORK:END
     }
     return null;
   });
@@ -807,11 +800,14 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         Effect.catch((cause) =>
           Effect.gen(function* () {
             if (!override && !(yield* fs.exists(activePath))) {
-              const external = yield* findVerifiedExternal(
-                yield* commandCandidates("agy", processEnvironment),
-                "path",
-              );
-              if (external !== null) return external;
+              // SCIENT-FORK: the pair's server name is looked up before `agy`, as in resolveUnlocked.
+              for (const command of [names.executable, "agy"]) {
+                const external = yield* findVerifiedExternal(
+                  yield* commandCandidates(command, processEnvironment),
+                  "path",
+                );
+                if (external !== null) return external;
+              }
             }
             return yield* cause;
           }),
@@ -1383,114 +1379,112 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         if (harnessPath !== null) yield* fs.chmod(harnessPath, 0o555);
         yield* fs.chmod(path.join(pairDirectory, RELEASE_RECORD), 0o400);
       }
-      // SCIENT-FORK:START — a repair keeps the previous copy outside staging until its replacement
-      // is in place, so a failed rollback cannot delete the only copy.
-      let repairBackup: { readonly root: string; readonly runtime: string } | null = null;
-      if (replaceExisting) {
-        repairBackup = yield* gate
-          .withPermit(
-            withManagedLock(
-              "activate",
-              Effect.gen(function* () {
-                if ((leases.get(destination) ?? 0) > 0) {
-                  return yield* installationError(
-                    "repair",
-                    "Stop Antigravity sessions and sign-in flows before repairing this runtime.",
-                  );
-                }
-                const backupRoot = yield* fs.makeTempDirectory({
-                  directory: versionsDirectory,
-                  prefix: ".repair-",
-                });
-                const backup = path.join(backupRoot, "displaced");
-                yield* unlockDirectoryTree(destination);
-                yield* installerFs
-                  .rename(destination, backup)
-                  .pipe(Effect.tapError(() => installerFs.remove(backupRoot).pipe(Effect.ignore)));
-                const published = yield* installerFs
-                  .rename(pairDirectory, destination)
-                  .pipe(Effect.result);
-                if (published._tag === "Failure") {
-                  const restored = yield* installerFs
-                    .rename(backup, destination)
-                    .pipe(Effect.result);
-                  if (restored._tag === "Failure") {
-                    return yield* installationError(
-                      "repair",
-                      `Could not restore the previous runtime. Its backup is retained at ${backup}.`,
-                      restored.failure,
-                    );
-                  }
-                  yield* installerFs.remove(backupRoot).pipe(Effect.ignore);
-                  return yield* installationError(
-                    "repair",
-                    "Could not replace the runtime. The previous copy was restored.",
-                    published.failure,
-                  );
-                }
-                return { root: backupRoot, runtime: backup };
-              }),
-            ),
-          )
-          .pipe(Effect.uninterruptible);
-      } else
-        yield* gate
-          .withPermit(withManagedLock("activate", installerFs.rename(pairDirectory, destination)))
-          .pipe(
-            Effect.catch((cause) =>
-              completedRelease(releaseId).pipe(
-                Effect.flatMap((existing) =>
-                  existing.version === asset.version
-                    ? validate(existing, asset.version).pipe(Effect.scoped, validationTimeout)
-                    : Effect.fail(
-                        installationError(
-                          "activate",
-                          "Another installation published a different Antigravity release.",
-                        ),
-                      ),
-                ),
-                Effect.mapError((error) =>
-                  isInstallationError(error) && error.operation === "verify"
-                    ? error
-                    : installationError(
-                        "activate",
-                        "Could not publish the Antigravity runtime. The previous release is unchanged. Try again.",
-                        cause,
-                      ),
-                ),
-              ),
-            ),
-          );
-      // The previous copy returns if activating the repaired one fails.
-      const activated = yield* activate().pipe(Effect.result);
-      if (repairBackup !== null) {
-        const { root, runtime } = repairBackup;
-        if (activated._tag === "Success") {
-          yield* installerFs.remove(root).pipe(Effect.ignore);
-        } else {
-          const restored = yield* gate
-            .withPermit(
-              withManagedLock(
-                "activate",
-                Effect.gen(function* () {
+      // SCIENT-FORK:START — one locked step publishes and activates, as in T3; a repair keeps the
+      // previous copy outside staging, so a failed rollback cannot delete the only copy.
+      const activationFailed = wrapFailure(
+        "activate",
+        "Could not activate Antigravity. The previous runtime is unchanged. Check for locked files and try again.",
+      );
+      const pointerDirectory = yield* fs.makeTempDirectoryScoped({
+        directory: managedDirectory,
+        prefix: "active.json.",
+      });
+      const published = yield* gate.withPermit(
+        withManagedLock(
+          "activate",
+          Effect.gen(function* () {
+            yield* ensureRealManagedRoot("activate");
+            if (!replaceExisting) {
+              const renamed = yield* installerFs
+                .rename(pairDirectory, destination)
+                .pipe(Effect.result);
+              if (renamed._tag === "Failure") {
+                return { _tag: "existing" as const, cause: renamed.failure };
+              }
+              const activated = yield* writeAndActivate(pointerDirectory).pipe(Effect.result);
+              if (activated._tag === "Failure") {
+                yield* removeReleaseDirectory(destination).pipe(Effect.ignore);
+                return yield* activationFailed(activated.failure);
+              }
+              return { _tag: "published" as const };
+            }
+            if ((leases.get(destination) ?? 0) > 0) {
+              return yield* installationError(
+                "repair",
+                "Stop Antigravity sessions and sign-in flows before repairing this runtime.",
+              );
+            }
+            const backupRoot = yield* fs.makeTempDirectory({
+              directory: versionsDirectory,
+              prefix: ".repair-",
+            });
+            const backup = path.join(backupRoot, "displaced");
+            yield* unlockDirectoryTree(destination);
+            yield* installerFs
+              .rename(destination, backup)
+              .pipe(Effect.tapError(() => installerFs.remove(backupRoot).pipe(Effect.ignore)));
+            const restore = Effect.fn("AntigravityInstallation.restoreRepairBackup")(function* (
+              detail: string,
+              cause: unknown,
+            ) {
+              const restored = yield* Effect.gen(function* () {
+                if ((yield* fs.exists(destination)) || (yield* isSymlink(destination))) {
                   yield* removeReleaseDirectory(destination);
-                  yield* installerFs.rename(runtime, destination);
-                }),
-              ),
-            )
-            .pipe(Effect.uninterruptible, Effect.result);
-          if (restored._tag === "Failure") {
-            return yield* installationError(
-              "repair",
-              `Could not activate the repaired runtime or restore the previous one. Its backup is retained at ${runtime}.`,
-              restored.failure,
-            );
-          }
-          yield* installerFs.remove(root).pipe(Effect.ignore);
+                }
+                yield* installerFs.rename(backup, destination);
+              }).pipe(Effect.result);
+              if (restored._tag === "Failure") {
+                return yield* installationError(
+                  "repair",
+                  `Could not restore the previous runtime. Its backup is retained at ${backup}.`,
+                  restored.failure,
+                );
+              }
+              yield* installerFs.remove(backupRoot).pipe(Effect.ignore);
+              return yield* installationError("repair", detail, cause);
+            });
+            const replaced = yield* installerFs
+              .rename(pairDirectory, destination)
+              .pipe(Effect.result);
+            if (replaced._tag === "Failure") {
+              return yield* restore(
+                "Could not replace the runtime. The previous copy was restored.",
+                replaced.failure,
+              );
+            }
+            const activated = yield* writeAndActivate(pointerDirectory).pipe(Effect.result);
+            if (activated._tag === "Failure") {
+              return yield* restore(
+                "Could not activate the repaired runtime. The previous copy was restored.",
+                activated.failure,
+              );
+            }
+            yield* installerFs.remove(backupRoot).pipe(Effect.ignore);
+            return { _tag: "published" as const };
+          }).pipe(Effect.uninterruptible),
+        ),
+      );
+      if (published._tag === "existing") {
+        // Another installation published this release first.
+        const existing = yield* completedRelease(releaseId).pipe(
+          Effect.mapError(() =>
+            installationError(
+              "activate",
+              "Could not publish the Antigravity runtime. The previous release is unchanged. Try again.",
+              published.cause,
+            ),
+          ),
+        );
+        if (existing.version !== asset.version) {
+          return yield* installationError(
+            "activate",
+            "Another installation published a different Antigravity release.",
+          );
         }
+        yield* validate(existing, asset.version).pipe(Effect.scoped, validationTimeout);
+        yield* activate();
       }
       // SCIENT-FORK:END
-      if (activated._tag === "Failure") return yield* activated.failure;
     },
     Effect.scoped,
     Effect.mapError(
