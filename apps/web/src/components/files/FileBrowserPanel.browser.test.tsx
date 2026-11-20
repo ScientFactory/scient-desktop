@@ -715,15 +715,11 @@ describe("Files panel search", () => {
       const container = document.createElement("div");
       container.style.cssText = "display:flex;flex-direction:column;height:300px;width:300px";
       await using stack = new AsyncDisposableStack();
-      const screen = stack.use(
-        await render(<FileBrowserPanel {...props} cwd={cwd} />, { container }),
-      );
-      // Revealed once the root is listed: a reveal requested before then is not replayed.
-      await vi.waitFor(() =>
-        expect(treeRoot()?.querySelector('[data-item-path="d09/"]')).not.toBeNull(),
-      );
-      await screen.rerender(
-        <FileBrowserPanel {...props} cwd={cwd} selectedPath="d09" selectedPathRevealId={1} />,
+      stack.use(
+        await render(
+          <FileBrowserPanel {...props} cwd={cwd} selectedPath="d09" selectedPathRevealId={1} />,
+          { container },
+        ),
       );
       await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
       const release = async (directory: string, entries: ProjectDirectoryEntry[]) => {

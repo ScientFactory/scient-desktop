@@ -553,7 +553,10 @@ export default function FileBrowserPanel({
     let cancelled = false;
     void treeControllerRef.current?.ensurePath(selectedPath).then((found) => {
       if (cancelled || !found) return;
-      const selectedKind = entryKindsRef.current.get(selectedPath);
+      // The listing can land before React updates the ref; the controller already has it.
+      const selectedKind =
+        treeControllerRef.current?.entryKind(selectedPath) ??
+        entryKindsRef.current.get(selectedPath);
       if (selectedKind === undefined) return;
       const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
       const selectedItem = model.getItem(selectedTreePath);
