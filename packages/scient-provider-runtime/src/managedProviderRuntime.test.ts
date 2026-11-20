@@ -863,38 +863,48 @@ describe("ManagedProviderRuntime contract", () => {
     expect((await runtime.status(recipe)).installed).toBe(false);
   });
 
-  it("leaves the runtime installed when removal is cancelled before its commit", async () => {
+  it("leaves the runtime installed when removal is cancelled during its Windows wait", async () => {
     const cancellation = new AbortController();
-    let waiting: (() => void) | undefined;
-    const waited = new Promise<void>((resolve) => {
-      waiting = resolve;
+    let removalRenames = 0;
+    let backingOff: (() => void) | undefined;
+    const backedOff = new Promise<void>((resolve) => {
+      backingOff = resolve;
     });
+    const sharingViolation = Object.assign(new Error("EPERM"), { code: "EPERM" });
     const { runtime } = await makeRuntime({
-      filesystem: {
-        rename: async (from, to, options) => {
-          if (!to.includes(".removing-")) return runtimeFilesystem.rename(from, to, options);
-          // A Windows sharing violation keeps the removal rename waiting until cancelled.
-          waiting?.();
-          await new Promise((_, reject) =>
-            options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
-              once: true,
-            }),
-          );
+      // The real Windows retry loop: the removal rename hits a sharing violation, and its
+      // backoff sleep lasts until cancelled.
+      filesystem: makeRuntimeFilesystem({
+        platform: "win32",
+        rename: async (from, to) => {
+          if (to.includes(".removing-") && cancellation.signal.aborted === false) {
+            removalRenames += 1;
+            throw sharingViolation;
+          }
+          await NodeFSP.rename(from, to);
         },
-        remove: (path, options) => runtimeFilesystem.remove(path, options),
-      },
+        sleep: (_delay, signal) =>
+          new Promise<void>((_, reject) => {
+            backingOff?.();
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      }),
     });
     const recipe = artifact("1.0.0");
     await install(runtime, recipe);
 
     const removal = runtime.remove({ signal: cancellation.signal });
-    await waited;
+    await backedOff;
     cancellation.abort(new Error("cancelled by the user"));
 
     await expect(removal).rejects.toThrow("cancelled by the user");
+    expect(removalRenames).toBe(1);
     const status = await runtime.status(recipe);
     expect(status.installed).toBe(true);
     expect(status.activeVersion).toBe("1.0.0");
+    // The lock was released: a later removal runs and completes.
+    await runtime.remove();
+    expect((await runtime.status(recipe)).installed).toBe(false);
   });
 
   it("rejects unsupported artifacts before creating managed state", async () => {
