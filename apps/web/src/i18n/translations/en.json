@@ -4104,6 +4104,7 @@
   "2e3999c63ac1c29b": "Choose models",
   "ea8ddb5bf4b0088e": "{count, plural, one {{models}, {count} more} other {{models}, {count} more}}",
   "9ae42b0f35599fb6": "Model picker is disabled",
+  "df673eb2fcb2627d": "Costs {cost} of the provider's base token rate",
   "07d380ebce7c7cba": "Open provider setup to install {provider} on this environment.",
   "f1ab192c62a6e680": "Open provider setup to sign in with Google.",
   "6457e38508a19b22": "Open provider setup to sign in.",

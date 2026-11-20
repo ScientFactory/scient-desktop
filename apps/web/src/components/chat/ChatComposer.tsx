@@ -1437,11 +1437,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
+    // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+    modelNameHidden: restingControlsModelNameHidden,
+    // SCIENT-FORK:END
   } = useRestingComposerControlsLayout(inlineRestingControlsHost);
   const {
     attachControls: attachExpandedComposerControls,
     hiddenBlockCount: expandedControlsHiddenBlockCount,
     iconOnlyBlockCount: expandedControlsIconOnlyBlockCount,
+    // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+    modelNameHidden: expandedControlsModelNameHidden,
+    // SCIENT-FORK:END
   } = useRestingComposerControlsLayout(null, true);
   const pendingPrimaryAction = activePendingProgress
     ? {
@@ -2859,6 +2865,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : composerControlsCollapsed
       ? 0
       : expandedControlsIconOnlyBlockCount;
+  // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+  const modelNameHidden = showInlineRestingControls
+    ? restingControlsModelNameHidden
+    : !composerControlsCollapsed && expandedControlsModelNameHidden;
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — every unrunnable provider state needs onboarding, including provider-unavailable.
   // Keep provider setup/new-chat affordances alongside the model picker.
   const continueInNewChatDisabled =
@@ -2923,6 +2934,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerControlsHidden={composerControlsHidden}
       restingHiddenBlockCount={restingHiddenBlockCount}
       iconOnlyBlockCount={iconOnlyBlockCount}
+      // SCIENT-FORK:START — a model name too narrow to read leaves only the provider icon.
+      modelNameHidden={modelNameHidden}
+      // SCIENT-FORK:END
       showProviderUnavailable={showProviderUnavailable}
       providerSetupInstanceId={selectedInstanceId}
       onOpenProviderSetup={onOpenProviderSetup}
