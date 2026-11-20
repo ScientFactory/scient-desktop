@@ -237,6 +237,38 @@ async function waitForWindowsRuntimeProcesses(root: string): Promise<void> {
 }
 
 /**
+ * Remove the qualified runtime, as the app does. On Windows another program (on hosted runners,
+ * the antivirus scanning a freshly run executable) can hold the directory past the filesystem's
+ * own retries, so removal is retried twice more; each failure says what held it.
+ */
+async function removeQualifiedRuntime(
+  runtime: ManagedProviderRuntime,
+  root: string,
+): Promise<void> {
+  const windows = HostProcess.Platform.defaultValue() === "win32";
+  for (let attempt = 1; ; attempt += 1) {
+    await waitForWindowsRuntimeProcesses(root);
+    try {
+      await runtime.remove();
+      return;
+    } catch (cause) {
+      if (!windows) throw cause;
+      const running = windowsProcessesUnder(await NodeFSP.realpath(root));
+      process.stdout.write(
+        running === undefined
+          ? "Removal failed and Windows processes could not be listed.\n"
+          : running.length > 0
+            ? `Removal failed while processes ran from the runtime: ${describeProcesses(running)}.\n`
+            : "Removal failed with no process running from the runtime; another program held a file open.\n",
+      );
+      if (attempt >= 3) throw cause;
+      process.stdout.write(`Retrying removal in 15 s (retry ${attempt} of 2).\n`);
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+    }
+  }
+}
+
+/**
  * Oh My Pi is published only after the installed binary completes the app's
  * managed-activation check: the RPC v2 handshake, its version, and
  * `get_state`. The check lives with the server code that clients run, so it
@@ -524,22 +556,7 @@ try {
     }
     if (provider === "omp") await verifyRpc(provider, repaired.launchPath, artifact.version);
   }
-  await waitForWindowsRuntimeProcesses(root);
-  try {
-    await runtime.remove();
-  } catch (cause) {
-    if (HostProcess.Platform.defaultValue() === "win32") {
-      const running = windowsProcessesUnder(await NodeFSP.realpath(root));
-      process.stderr.write(
-        running === undefined
-          ? "Removal failed and Windows processes could not be listed.\n"
-          : running.length > 0
-            ? `Removal failed while processes ran from the runtime: ${describeProcesses(running)}.\n`
-            : "Removal failed with no process running from the runtime; another program held a file open.\n",
-      );
-    }
-    throw cause;
-  }
+  await removeQualifiedRuntime(runtime, root);
   const removed = await runtime.status(artifact);
   if (removed.installed || removed.selected) {
     throw new Error(`${provider} ${targetKey} did not cleanly remove the qualification runtime.`);
