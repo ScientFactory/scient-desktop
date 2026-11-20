@@ -471,11 +471,11 @@ export class LocalWhisperRuntime {
     this.child = null;
     this.endpoint = null;
     this.activeModelPath = null;
-    if (child && child.exitCode === null && !child.killed) {
+    if (child && !hasExited(child) && !child.killed) {
       child.kill();
       // On macOS and Linux the helper's SIGTERM waits for the running transcription to end.
       const force = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode !== "SIGKILL") child.kill("SIGKILL");
+        if (!hasExited(child)) child.kill("SIGKILL");
       }, STOP_TIMEOUT_MS);
       force.unref();
       this.stopping.add(child);
@@ -488,13 +488,17 @@ export class LocalWhisperRuntime {
   }
 }
 
+/** A helper ended by a signal has no exit code, only its signal. */
+const hasExited = (child: NodeChildProcess.ChildProcess) =>
+  child.exitCode !== null || child.signalCode !== null;
+
 async function stopAndWaitForChild(
   child: NodeChildProcess.ChildProcessWithoutNullStreams | null,
 ): Promise<void> {
-  if (!child || child.exitCode !== null) return;
+  if (!child || hasExited(child)) return;
   if (!child.killed) child.kill();
   if (await waitForChildExit(child, STOP_TIMEOUT_MS)) return;
-  if (child.exitCode === null) child.kill("SIGKILL");
+  if (!hasExited(child)) child.kill("SIGKILL");
   if (!(await waitForChildExit(child, FORCE_STOP_TIMEOUT_MS))) {
     throw new Error("Offline voice helper did not stop.");
   }
@@ -504,7 +508,7 @@ async function waitForChildExit(
   child: NodeChildProcess.ChildProcessWithoutNullStreams,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (child.exitCode !== null) return true;
+  if (hasExited(child)) return true;
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const finish = (exited: boolean) => {
@@ -515,7 +519,7 @@ async function waitForChildExit(
       resolve(exited);
     };
     const onExit = () => finish(true);
-    const timer = setTimeout(() => finish(child.exitCode !== null), timeoutMs);
+    const timer = setTimeout(() => finish(hasExited(child)), timeoutMs);
     timer.unref();
     child.once("exit", onExit);
   });

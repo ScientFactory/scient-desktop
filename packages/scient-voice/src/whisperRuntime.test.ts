@@ -105,6 +105,7 @@ describe("pure runtime helpers", () => {
 class FakeChild extends NodeEvents.EventEmitter {
   pid = 999_999; // improbable pid; NodeOS.setPriority will safely no-op
   exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   killed = false;
   readonly stdout = { on: (): undefined => undefined };
   readonly stderr = { on: (): undefined => undefined };
@@ -130,6 +131,18 @@ class ControlledExitChild extends FakeChild {
     if (this.exitCode !== null) return;
     this.exitCode = 0;
     this.emit("exit", 0, null);
+  }
+}
+
+/** Ends on SIGTERM as a signalled process does: a signal and no exit code. */
+class SignalledExitChild extends FakeChild {
+  override kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    if (this.signalCode === null) {
+      this.killed = true;
+      this.signalCode = signal;
+      this.emit("exit", null, signal);
+    }
+    return true;
   }
 }
 
@@ -402,6 +415,20 @@ describe("LocalWhisperRuntime lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("finishes disposal at once for a helper a signal already ended", async () => {
+    const h = await harness(new SignalledExitChild());
+    await h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal });
+    const gate = h.holdNextInference();
+    const running = h.runtime
+      .transcribe("/model.bin", CLIP, { signal: new AbortController().signal })
+      .catch(() => undefined);
+    await gate.entered;
+    const disposal = h.runtime.dispose();
+    gate.release();
+    await running;
+    await expect(disposal).resolves.toBeUndefined();
   });
 
   it("fails installation checks when the executable is missing", async () => {
