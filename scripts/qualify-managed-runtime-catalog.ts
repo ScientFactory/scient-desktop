@@ -175,10 +175,7 @@ interface WindowsRuntimeProcess {
  * (Windows only). Matched by that name, so a short-path alias (`RUNNER~1`) on either side still
  * matches. `undefined` when the listing failed: that is not an empty list.
  */
-function windowsProcessesUnder(
-  root: string,
-  timeoutMs = 30_000,
-): WindowsRuntimeProcess[] | undefined {
+function windowsProcessesUnder(root: string): WindowsRuntimeProcess[] | undefined {
   const listing = NodeChildProcess.spawnSync(
     "powershell.exe",
     [
@@ -187,7 +184,7 @@ function windowsProcessesUnder(
       "-Command",
       "Get-CimInstance Win32_Process | Where-Object ExecutablePath | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress",
     ],
-    { encoding: "utf8", windowsHide: true, timeout: Math.max(1_000, timeoutMs) },
+    { encoding: "utf8", windowsHide: true, timeout: 30_000 },
   );
   if (listing.error || listing.status !== 0 || !listing.stdout.trim()) return undefined;
   const parsed: unknown = JSON.parse(listing.stdout);
@@ -210,50 +207,11 @@ function describeProcesses(processes: readonly WindowsRuntimeProcess[]): string 
     .join("; ");
 }
 
-/**
- * Windows refuses to rename a directory while a process runs from it, and the runtime's removal
- * starts with that rename. Wait up to 60 s for processes started from the qualification directory
- * to exit, and fail naming any that outlive the wait: the app would leave them running too.
- */
-async function waitForWindowsRuntimeProcesses(root: string): Promise<void> {
-  if (HostProcess.Platform.defaultValue() !== "win32") return;
-  const deadline = performance.now() + 60_000;
-  let running = windowsProcessesUnder(root);
-  if (running === undefined) {
-    process.stdout.write("Could not list Windows processes before removal.\n");
-    return;
-  }
-  if (running.length === 0) return;
-  process.stdout.write(
-    `Waiting before removal for processes still running from the runtime: ${describeProcesses(running)}.\n`,
-  );
-  let last = running;
-  while (running === undefined || running.length > 0) {
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) break;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(500, remaining)));
-    running = windowsProcessesUnder(root, deadline - performance.now());
-    if (running !== undefined) last = running;
-  }
-  if (running === undefined) {
-    throw new Error(
-      `${provider} left processes running from its runtime after closing (last seen: ${describeProcesses(last)}); the process list could not be read again.`,
-    );
-  }
-  if (running.length > 0) {
-    throw new Error(
-      `${provider} left processes running from its runtime after closing: ${describeProcesses(running)}.`,
-    );
-  }
-  process.stdout.write("Those processes exited; removing the runtime.\n");
-}
-
 /** Remove the qualified runtime exactly as the app does; on Windows, a failure says what held it. */
 async function removeQualifiedRuntime(
   runtime: ManagedProviderRuntime,
   root: string,
 ): Promise<void> {
-  await waitForWindowsRuntimeProcesses(root);
   try {
     await runtime.remove();
   } catch (cause) {

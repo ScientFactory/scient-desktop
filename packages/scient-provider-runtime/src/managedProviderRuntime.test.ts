@@ -863,6 +863,40 @@ describe("ManagedProviderRuntime contract", () => {
     expect((await runtime.status(recipe)).installed).toBe(false);
   });
 
+  it("leaves the runtime installed when removal is cancelled before its commit", async () => {
+    const cancellation = new AbortController();
+    let waiting: (() => void) | undefined;
+    const waited = new Promise<void>((resolve) => {
+      waiting = resolve;
+    });
+    const { runtime } = await makeRuntime({
+      filesystem: {
+        rename: async (from, to, options) => {
+          if (!to.includes(".removing-")) return runtimeFilesystem.rename(from, to, options);
+          // A Windows sharing violation keeps the removal rename waiting until cancelled.
+          waiting?.();
+          await new Promise((_, reject) =>
+            options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+              once: true,
+            }),
+          );
+        },
+        remove: (path, options) => runtimeFilesystem.remove(path, options),
+      },
+    });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+
+    const removal = runtime.remove({ signal: cancellation.signal });
+    await waited;
+    cancellation.abort(new Error("cancelled by the user"));
+
+    await expect(removal).rejects.toThrow("cancelled by the user");
+    const status = await runtime.status(recipe);
+    expect(status.installed).toBe(true);
+    expect(status.activeVersion).toBe("1.0.0");
+  });
+
   it("rejects unsupported artifacts before creating managed state", async () => {
     const { root, runtime, events } = await makeRuntime();
 

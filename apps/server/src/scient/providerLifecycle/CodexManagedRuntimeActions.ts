@@ -764,7 +764,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
           message: "Removing Scient's private Codex runtime.",
         });
         yield* Effect.tryPromise({
-          try: () => runtime.remove(),
+          try: (signal) => runtime.remove({ signal }),
           catch: (cause) =>
             runtimeError("Scient could not remove its private Codex runtime.", cause),
         });
