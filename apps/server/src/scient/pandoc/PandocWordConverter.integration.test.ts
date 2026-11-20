@@ -826,5 +826,35 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         );
       }),
     );
+
+    it.live("takes the named font the document settings card writes, at LaTeX's 10 pt", () =>
+      Effect.gen(function* () {
+        const pdftex = yield* exportLatex(
+          "latex-card-font-pdftex",
+          [
+            "\\documentclass{article}",
+            "\\renewcommand{\\familydefault}{qtm}",
+            "\\begin{document}",
+            "Text.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        expect(pdftex.styles).toMatch(
+          /<w:docDefaults>[\s\S]*?Times New Roman[\s\S]*?<w:sz w:val="20"\s*\/>/u,
+        );
+        const fontspec = yield* exportLatex(
+          "latex-card-font-fontspec",
+          [
+            "\\documentclass{article}",
+            "\\usepackage{fontspec}",
+            "\\setmainfont{Calibri}",
+            "\\begin{document}",
+            "Text.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        expect(fontspec.styles).toMatch(/<w:docDefaults>[\s\S]*?Calibri/u);
+      }),
+    );
   });
 });
