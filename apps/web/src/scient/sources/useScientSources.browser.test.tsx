@@ -226,6 +226,7 @@ describe("useScientSources mounted behavior", () => {
         environmentId,
         "/project",
         undefined,
+        undefined,
       );
       await act(async () => {
         await probe.current.importReferenceFile(new File([""], "here.bib"));
@@ -239,6 +240,7 @@ describe("useScientSources mounted behavior", () => {
         environmentId,
         "/project",
         "library",
+        undefined,
       );
       expect(probe.current.overview?.scopes?.listed).toBe("library");
       expect(probe.current.overview?.records).toHaveLength(2);
@@ -265,6 +267,51 @@ describe("useScientSources mounted behavior", () => {
       ]);
       expect(probe.current.busy).toBe(false);
       expect(probe.current.error).toBeNull();
+    });
+  });
+
+  it("sends the revision it holds and keeps its rows when the list is unchanged", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const full = {
+      ...overviewWith(["one", "two"]),
+      revision: "rev-1",
+      organization: { collections: [], savedSearches: [] },
+    };
+    mocks.readScientSources
+      .mockResolvedValueOnce(full)
+      .mockResolvedValueOnce({ ...overviewWith([]), revision: "rev-1", unchanged: true })
+      .mockResolvedValueOnce({ ...overviewWith(["three"]), revision: "rev-2" });
+
+    await withMountedHook(_fixture, async (probe) => {
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project",
+        undefined,
+        undefined,
+      );
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project",
+        undefined,
+        "rev-1",
+      );
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual([
+        "one",
+        "two",
+      ]);
+      expect(probe.current.overview?.organization).toEqual(full.organization);
+      expect(probe.current.overview).not.toHaveProperty("unchanged");
+
+      // A new revision replaces the rows.
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual(["three"]);
     });
   });
 

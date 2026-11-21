@@ -6,6 +6,7 @@ import type {
   ScientSourceImportOperation,
   ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
+  ScientSourcesOverviewResult,
   ScientSourcesReadingStateResult,
   ScientSourcesScope,
   ZoteroConnection,
@@ -93,6 +94,8 @@ export function useScientSources(input: {
     notBrought?: ScientSourceImportOperation["notBrought"];
   } | null>(null);
   const overviewRequestRef = useRef(0);
+  /** The last full list of each scope here, reused when the server says it is unchanged. */
+  const heldOverviews = useRef(new Map<string, ScientSourcesOverviewResult>());
   const zoteroRequestRef = useRef(0);
   const detailFetchRef = useRef(0);
   // Collections of a library the person already left must not replace the current ones.
@@ -147,12 +150,30 @@ export function useScientSources(input: {
     // call while a durable import runs, and neither may starve the other.
     const request = nextOverviewRequestToken();
     dispatch({ type: "overviewRequestStarted", request });
-    return await readScientSources(
-      input.environmentId,
-      input.root,
-      inLibraryView() ? "library" : undefined,
-    ).then(
-      (next) => {
+    const scope = inLibraryView() ? "library" : undefined;
+    const heldKey = `${contextKey}\0${scope ?? ""}`;
+    const held = heldOverviews.current.get(heldKey);
+    return await readScientSources(input.environmentId, input.root, scope, held?.revision).then(
+      (answer) => {
+        // Same revision: the rows, collections and notices held are this answer's.
+        const { unchanged, ...fresh } = answer;
+        const next: ScientSourcesOverviewResult =
+          unchanged && held
+            ? {
+                ...fresh,
+                records: held.records,
+                recordDiagnostics: held.recordDiagnostics,
+                ...(held.organization ? { organization: held.organization } : {}),
+                ...(held.noticeChanges ? { noticeChanges: held.noticeChanges } : {}),
+              }
+            : fresh;
+        if (next.revision) {
+          // One context at a time: a list of the context left behind is never kept.
+          for (const key of heldOverviews.current.keys()) {
+            if (!key.startsWith(`${contextKey}\0`)) heldOverviews.current.delete(key);
+          }
+          heldOverviews.current.set(heldKey, next);
+        }
         if (isCurrentContext() && overviewRequestRef.current === request) {
           dispatch({ type: "overviewArrived", request, overview: next });
         }
