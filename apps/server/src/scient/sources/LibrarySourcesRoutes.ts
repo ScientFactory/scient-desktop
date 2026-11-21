@@ -231,7 +231,14 @@ const reach = (store: Store, sourceId: string) => alsoPinnedIn(store, sourceId).
 
 type Categories = Awaited<ReturnType<typeof readScientSourceCategories>>;
 /** A library record as this project sees it: under its key here when it is pinned. */
-const pinnedEntry = (record: ScientSourceRecord, group: ProjectPinGroup | undefined) => ({
+const pinnedEntry = (
+  record: ScientSourceRecord,
+  group:
+    | (Pick<ProjectPinGroup, "alsoCitedAs"> & {
+        readonly pin: Pick<ProjectPinGroup["pin"], "citationKey" | "note">;
+      })
+    | undefined,
+) => ({
   record: group ? { ...record, citationKey: group.pin.citationKey } : record,
   pinned: group !== undefined,
   projectNote: group ? (group.pin.note ?? null) : undefined,
@@ -277,7 +284,25 @@ export async function libraryOverview(
     ? await inspectScientLibrarySources(store.library)
     : { records: [], activeOperation: null };
   const works = distinctPinnedWorks(await listProjectPinnedWorks(store, ACTOR));
-  const pins = await projectPinGroupsByLibraryId(store);
+  // The works already hold each pinned record under its key here: no second resolution.
+  const pins = new Map(
+    works.flatMap((work) =>
+      work.from === "library"
+        ? [
+            [
+              work.record.sourceId,
+              {
+                pin: {
+                  citationKey: work.citationKey,
+                  ...(work.projectNote === null ? {} : { note: work.projectNote }),
+                },
+                alsoCitedAs: work.alsoCitedAs,
+              },
+            ] as const,
+          ]
+        : [],
+    ),
+  );
   const scoped =
     input.scope === "project"
       ? works.map((work) => ({
