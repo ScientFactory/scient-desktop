@@ -21,17 +21,44 @@ on:
 
 permissions: {}
 
-# Only a repeat dispatch for the same release replaces its run; a dispatch for another tag (a
-# typo, say) never cancels a sync in progress. Concurrent runs are safe for the mirror.
-concurrency:
-  group: sync-download-mirror-${{ inputs.channel }}-${{ inputs.tag }}
-  cancel-in-progress: true
-
 jobs:
+  # Only a tag that names a release on its channel reaches the sync job's concurrency group, so a
+  # mistyped dispatch (GitHub compares group names without case) cannot cancel a running sync.
+  validate:
+    name: Check the release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        shell: bash
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            pattern='^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]{8}\.[1-9][0-9]*$'
+          else
+            pattern='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          fi
+          [[ "$RELEASE_TAG" =~ $pattern ]] || {
+            echo "::error::$RELEASE_TAG is not a $RELEASE_CHANNEL release tag."
+            exit 1
+          }
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
   sync:
-    name: Publish ${{ inputs.tag }} to the ${{ inputs.channel }} update feeds
+    name: Publish ${{ needs.validate.outputs.tag }} to the ${{ inputs.channel }} update feeds
+    needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    # Only a repeat dispatch for the same release replaces its run. Concurrent runs are safe for
+    # the mirror.
+    concurrency:
+      group: sync-download-mirror-${{ inputs.channel }}-${{ needs.validate.outputs.tag }}
+      cancel-in-progress: true
     steps:
       - name: Run the mirror and wait for the update feeds
         shell: bash
@@ -39,13 +66,9 @@ jobs:
           SYNC_URL: ${{ secrets.RELEASE_MIRROR_SYNC_URL }}
           SYNC_TOKEN: ${{ secrets.RELEASE_MIRROR_SYNC_TOKEN }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]{8}\.[1-9][0-9]*)?$ ]] || {
-            echo "::error::$RELEASE_TAG is not a release tag."
-            exit 1
-          }
           version="${RELEASE_TAG#v}"
           if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
             manifests=(beta.yml beta-mac.yml beta-linux.yml)
@@ -53,19 +76,16 @@ jobs:
             manifests=(latest.yml latest-mac.yml latest-linux.yml)
           fi
           feed="https://downloads.scientfactory.com/scient-desktop/updates/$RELEASE_CHANNEL"
-          # One deadline for every check and call, inside the job's timeout.
+          # One deadline for every check and call, inside the job's timeout. A request runs only
+          # with a positive budget read from a single clock reading: curl treats 0 as no limit.
           deadline=$((SECONDS + 20 * 60))
-          remaining() {
-            local left=$((deadline - SECONDS))
-            (( left > $1 )) && left=$1
-            (( left > 0 )) || left=1
-            echo "$left"
-          }
           feeds_offer_release() {
-            local manifest offered
+            local manifest offered budget
             for manifest in "${manifests[@]}"; do
-              (( SECONDS < deadline )) || return 1
-              offered="$(curl -fsS --max-time "$(remaining 30)" "$feed/$manifest?noCache=$RANDOM" \
+              budget=$((deadline - SECONDS))
+              (( budget > 30 )) && budget=30
+              (( budget > 0 )) || return 1
+              offered="$(curl -fsS --max-time "$budget" "$feed/$manifest?noCache=$RANDOM" \
                 | sed -nE "s/^version: *['\"]?([^'\"]*)['\"]?\$/\\1/p")" || return 1
               [[ "$offered" == "$version" ]] || return 1
             done
@@ -79,12 +99,13 @@ jobs:
             exit 0
           fi
           # GitHub can take a minute to list a new release everywhere the mirror reads, so a run
-          # that publishes nothing is repeated. Each call leaves time for the feed check after it.
+          # that publishes nothing is repeated. Each call leaves 90 s for the feed check after it.
           attempt=0
-          while (( SECONDS < deadline - 120 )); do
+          while true; do
+            budget=$((deadline - SECONDS - 90))
+            (( budget > 600 )) && budget=600
+            (( budget >= 30 )) || break
             attempt=$((attempt + 1))
-            budget=$(remaining 600)
-            (( budget > deadline - SECONDS - 90 )) && budget=$((deadline - SECONDS - 90))
             echo "Mirror run $attempt for $RELEASE_TAG (up to ${budget}s)"
             curl -sS -N --fail-with-body --max-time "$budget" -X POST \
               -H "Authorization: Bearer $SYNC_TOKEN" "$SYNC_URL?channel=$RELEASE_CHANNEL" \
@@ -94,7 +115,7 @@ jobs:
               echo "The $RELEASE_CHANNEL update feeds offer $version."
               exit 0
             fi
-            (( SECONDS + 60 < deadline )) || break
+            (( deadline - SECONDS > 60 + 90 + 30 )) || break
             sleep 60
           done
           echo "::warning::The $RELEASE_CHANNEL update feeds do not offer $version yet; the mirror's schedule publishes it."
