@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
@@ -39,6 +39,7 @@ import {
 const fixtures: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -881,6 +882,33 @@ describe("project pins", () => {
     await refreshScientProjectPinSnapshots({ projectRoot, library: other.library });
     const [cleared] = await listScientProjectPinnedWorks({ projectRoot, library: null });
     expect(cleared?.record.more).toEqual({ number: "local" });
+  });
+
+  it("reads a pins.json another writer changed, also once its decoded version is kept", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const first = await addRecord(library, "A", { citationKey: "smith2020" });
+    const second = await addRecord(library, "B", { citationKey: "jones2021" });
+    await pinScientLibrarySource({ projectRoot, library, sourceId: first.sourceId, actor: "user" });
+    // Far past the file's timestamps, so the read keeps its decoded version.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2099-01-01T00:00:00.000Z"));
+    const keys = async () =>
+      (await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey);
+    expect(await keys()).toEqual(["smith2020"]);
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: second.sourceId,
+      actor: "user",
+    });
+    expect(await keys()).toEqual(["jones2021", "smith2020"]);
+
+    const pinsFile = NodePath.join(projectRoot, ".scient", "library", "pins.json");
+    const text = await NodeFSP.readFile(pinsFile, "utf8");
+    await NodeFSP.writeFile(pinsFile, text.replaceAll("jones2021", "jones2022"));
+    expect(await keys()).toEqual(["jones2022", "smith2020"]);
   });
 
   it("renames a pin's project key, refusing one another pin uses", async () => {

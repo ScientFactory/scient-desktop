@@ -1687,7 +1687,8 @@ interface LibraryRecordIndex extends RecordScan {
 /** Derived from the record files and rebuilt from them; the files stay the truth. */
 const libraryRecordIndexes = new Map<string, LibraryRecordIndex>();
 
-const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
+/** True when a file's timestamps are old enough that an unchanged stamp means unchanged bytes. */
+export const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
   scanStartedNs - stats.mtimeNs > RACY_TIMESTAMP_NS &&
   scanStartedNs - stats.ctimeNs > RACY_TIMESTAMP_NS;
 

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Pins are a file in the project folder.
 // @effect-diagnostics globalDate:off -- Project files use interoperable ISO timestamps.
+import type * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -50,6 +51,7 @@ import {
   type ScientProjectNoteVersion,
 } from "./projectNoteHistory.ts";
 import {
+  isSettled,
   listScientSourceRecords,
   readScientSourceRecord,
   scientSourceStoreInternals,
@@ -217,15 +219,42 @@ function pinsPath(root: string): string {
   return NodePath.join(root, ...SCIENT_PROJECT_PINS_PATH);
 }
 
+/**
+ * Decoded `pins.json` per file version. Decoding 5,000 pins takes about 0.6 s and almost every
+ * read finds the file unchanged; a version is reused only once its timestamps have settled.
+ */
+const decodedPins = new Map<string, { readonly stamp: string; readonly document: PinsDocument }>();
+const DECODED_PINS_LIMIT = 16;
+
+const pinsStamp = (stats: NodeFS.BigIntStats) =>
+  [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
+
 async function readPinsDocument(root: string): Promise<PinsDocument> {
   const filePath = pinsPath(root);
   const state = await snapshot(filePath);
   if (state === "missing") return { pins: [], extra: {}, text: null };
   if (state !== "file") throw new Error("pins.json is not a safe regular file.");
-  const stats = await NodeFSP.lstat(filePath);
-  if (stats.size > MAX_PINS_BYTES) throw new Error("pins.json exceeds the safe size limit.");
+  const readStartedNs = BigInt(Date.now()) * 1_000_000n;
+  const stats = await NodeFSP.lstat(filePath, { bigint: true });
+  if (stats.size > BigInt(MAX_PINS_BYTES)) {
+    throw new Error("pins.json exceeds the safe size limit.");
+  }
+  const stamp = pinsStamp(stats);
+  const cached = decodedPins.get(filePath);
+  if (cached?.stamp === stamp && isSettled(stats, readStartedNs)) return cached.document;
   const text = await NodeFSP.readFile(filePath, "utf8");
-  return { ...parsePinsText(text), text };
+  const document = { ...parsePinsText(text), text };
+  const after = await NodeFSP.lstat(filePath, { bigint: true }).catch(() => null);
+  if (after && pinsStamp(after) === stamp && isSettled(after, readStartedNs)) {
+    decodedPins.delete(filePath);
+    decodedPins.set(filePath, { stamp, document });
+    if (decodedPins.size > DECODED_PINS_LIMIT) {
+      decodedPins.delete(decodedPins.keys().next().value!);
+    }
+  } else {
+    decodedPins.delete(filePath);
+  }
+  return document;
 }
 
 /** Writes only when the bytes would change, so an unchanged project never shows a git diff. */
