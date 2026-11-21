@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- A real browser against a local page.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- A real browser against a local page, timed as a person waits.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
@@ -30,8 +30,10 @@ async function openSignInTestWindow(
   const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "chrome-sign-in-"));
   const signed = Promise.withResolvers<void>();
   const requested: string[] = [];
+  const pageAsked = new EventTarget();
   const server = NodeHttp.createServer((request, response) => {
     requested.push(request.url ?? "");
+    if (request.url === "/") pageAsked.dispatchEvent(new Event("page"));
     if (request.url === "/login")
       response.setHeader("Set-Cookie", [
         "sid=window-sign-in; Max-Age=3600; Path=/; HttpOnly",
@@ -49,11 +51,12 @@ async function openSignInTestWindow(
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
   const read = signInInWindow({ browser, folder, url, platform });
   let pageReady = false;
+  const stall: string[] = [];
   const aborted = () =>
     process.stderr.write(
       `Chrome window smoke aborted: ${browser.name}, page ready: ${pageReady}, requests: ${
         requested.join(", ") || "none"
-      }\n${describeBrowserWindows()}\n`,
+      }${stall.length > 0 ? `\nStall: ${stall.join("; ")}` : ""}\n${describeBrowserWindows()}\n`,
     );
   signal.addEventListener("abort", aborted, { once: true });
   let closing: Promise<void> | undefined;
@@ -72,6 +75,12 @@ async function openSignInTestWindow(
     return closing;
   };
   onTestFinished(close);
+  let probing: Promise<void> | undefined;
+  // A window that never asks for its page: see what the dialog's advice, a reload, does.
+  const firstLoad = pageWithin(pageAsked, STALL_AFTER_MS).then((asked) => {
+    if (!asked && platform === "win32" && !requested.includes("/"))
+      probing = probeStall({ browser, folder, url, pageAsked, requested, notes: stall, signal });
+  });
   try {
     await Promise.race([
       signed.promise,
@@ -79,11 +88,106 @@ async function openSignInTestWindow(
         throw new Error(`Sign-in ended before the page was ready: ${outcome.outcome}`);
       }),
     ]);
+    await firstLoad;
+    if (probing) {
+      await probing;
+      // The first launch failed even if a reload saved it: the case times out under its row.
+      await new Promise<never>(() => undefined);
+    }
     pageReady = true;
     return { folder, read, [Symbol.asyncDispose]: close };
   } catch (cause) {
     await close();
     throw cause;
+  }
+}
+
+/** A first page request that takes this long is a stall; fresh CI machines take up to ~25 s. */
+const STALL_AFTER_MS = 45_000;
+
+/** True once the test page is requested, false if `ms` pass first. */
+const pageWithin = (pageAsked: EventTarget, ms: number) =>
+  new Promise<boolean>((resolve) => {
+    const asked = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- how long a real browser takes to ask for a page is the thing measured; no event marks "never"
+    const timer = setTimeout(() => {
+      pageAsked.removeEventListener("page", asked);
+      resolve(false);
+    }, ms);
+    pageAsked.addEventListener("page", asked, { once: true });
+  });
+
+/** Brings the window of the browser on `profile` to the front and presses F5 there. */
+const RELOAD_SCRIPT = [
+  "$p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like \"*$env:SCIENT_PROFILE*\" -and $_.CommandLine -notlike '*--type=*' } | Select-Object -First 1",
+  "if (-not $p) { 'no browser process'; exit }",
+  "$w = (Get-Process -Id $p.ProcessId).MainWindowHandle",
+  "if ($w -eq 0) { 'no window'; exit }",
+  'Add-Type \'using System; using System.Runtime.InteropServices; public static class ScientWindow { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }\'',
+  "[void][ScientWindow]::SetForegroundWindow($w); Start-Sleep -Milliseconds 300",
+  "if ([ScientWindow]::GetForegroundWindow() -ne $w) { 'not in front'; exit }",
+  "(New-Object -ComObject WScript.Shell).SendKeys('{F5}'); 'sent'",
+].join("\n");
+
+/** PowerShell's output, without blocking the test page's server while it runs. */
+const powershell = (script: string, extra: Record<string, string> = {}) =>
+  new Promise<string>((resolve) => {
+    NodeChildProcess.execFile(
+      "powershell",
+      ["-NoProfile", "-Command", script],
+      { encoding: "utf8", timeout: 15_000, env: { ...env, ...extra } },
+      (error, stdout) => resolve(error ? `failed: ${error.message}` : stdout.trim()),
+    );
+  });
+
+/**
+ * Windows: a window still blank after STALL_AFTER_MS. Notes what a reload in it does, then what
+ * opening the page again on the same profile does, for the failure to tell which recovers it.
+ */
+async function probeStall(input: {
+  readonly browser: ChromiumBrowser;
+  readonly folder: string;
+  readonly url: string;
+  readonly pageAsked: EventTarget;
+  readonly requested: ReadonlyArray<string>;
+  readonly notes: string[];
+  readonly signal: AbortSignal;
+}) {
+  const { browser, folder, url, pageAsked, requested, notes } = input;
+  const pages = () => requested.filter((path) => path === "/").length;
+  notes.push(`no request for the page after ${STALL_AFTER_MS / 1000} s`);
+  const processes = await powershell(
+    "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'chrome|msedge|update' } | ForEach-Object { \"$($_.ProcessId)<-$($_.ParentProcessId) $($_.Name) $($_.CommandLine)\" }",
+  );
+  process.stderr.write(`Browser processes at the stall:\n${processes}\n`);
+  if (pages() > 0) {
+    notes.push("the page was asked for while processes were listed");
+    return;
+  }
+  const reload = await powershell(RELOAD_SCRIPT, { SCIENT_PROFILE: folder });
+  if (reload !== "sent") notes.push(`reload not tried: ${reload}`);
+  else if (await pageWithin(pageAsked, 20_000)) {
+    notes.push("a reload in the window brought the page");
+    return;
+  } else notes.push("a reload in the window brought nothing");
+  if (input.signal.aborted) return;
+  // A second launch on the profile hands the address to the browser already running on it.
+  const again = NodeChildProcess.spawn(browser.executable, [`--user-data-dir=${folder}`, url], {
+    stdio: "ignore",
+  });
+  again.on("error", () => undefined);
+  input.signal.addEventListener("abort", () => again.kill(), { once: true });
+  notes.push(
+    (await pageWithin(pageAsked, 20_000))
+      ? "opening the page again brought it"
+      : "opening the page again brought nothing",
+  );
+  if (again.exitCode === null && again.signalCode === null) {
+    notes.push("the second launch kept running, so it was stopped");
+    again.kill();
   }
 }
 
