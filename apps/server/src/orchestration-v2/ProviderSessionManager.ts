@@ -986,13 +986,14 @@ export const layerWithOptions = (
               Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
               Effect.orElseSucceed(() => false),
             );
-            // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
+            // SCIENT-FORK:START — background-wait recovery: a session whose runtime can wait gets the grant.
             const backgroundWait =
               "awaitBackgroundTasks" in adapter
                 ? adapter.awaitBackgroundTasks !== undefined
                 : "backgroundWait" in adapter && adapter.backgroundWait !== undefined
                   ? yield* adapter.backgroundWait
                   : false;
+            if (backgroundWait) capabilities.add("background-wait");
             // SCIENT-FORK:END
             const existing = yield* mcpSessions.read(threadId);
             if (existing !== undefined) {
@@ -1014,9 +1015,6 @@ export const layerWithOptions = (
                 resolved.thread.providerInstanceId === providerInstanceId &&
                 // A credential issued while the lineage read failed is replaced once it works.
                 (resolved.thread.subagent === true) === subagent &&
-                // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
-                (resolved.thread.backgroundWait === true) === backgroundWait &&
-                // SCIENT-FORK:END
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
@@ -1080,9 +1078,6 @@ export const layerWithOptions = (
               browserToolsAvailable,
               capabilities,
               subagent,
-              // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
-              backgroundWait,
-              // SCIENT-FORK:END
               ...(capabilities.has("skills:read")
                 ? {
                     skillScope: {
@@ -1619,23 +1614,36 @@ export const layerWithOptions = (
         // after each pass: queued events can also store more cut-off items.
         let pending = yield* readCutOff;
         for (let pass = 0; pass < 3 && pending.length > 0; pass++) {
+          const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
+            nodeIds: pending.flatMap((item) => (item.nodeId === null ? [] : [item.nodeId])),
+          });
           for (const item of pending) {
             const now = yield* DateTime.now;
-            yield* eventSink.writeIfTurnItemUnchanged({
-              expected: item,
-              events: [
-                {
-                  id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-                  type: "turn-item.updated",
-                  threadId,
-                  ...(item.runId === null ? {} : { runId: item.runId }),
-                  ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-                  driver,
-                  occurredAt: now,
-                  payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
-                },
-              ],
+            const node = nodes.find((candidate) => candidate.id === item.nodeId);
+            const events: Array<OrchestrationV2DomainEvent> = [];
+            if (node !== undefined && isOrchestrationV2WorkActive(node.status)) {
+              events.push({
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                type: "node.updated",
+                threadId,
+                ...(node.runId === null ? {} : { runId: node.runId }),
+                nodeId: node.id,
+                driver,
+                occurredAt: now,
+                payload: { ...node, status: "interrupted", completedAt: now },
+              });
+            }
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "turn-item.updated",
+              threadId,
+              ...(item.runId === null ? {} : { runId: item.runId }),
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              driver,
+              occurredAt: now,
+              payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
             });
+            yield* eventSink.writeIfTurnItemUnchanged({ expected: item, events });
           }
           pending = yield* readCutOff;
         }

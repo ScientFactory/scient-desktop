@@ -707,6 +707,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`c5514042adfb2cb2323c75b449ffd5e950c6a40b` is recorded in
+[the 2026-11-21 f2d4df0367 receipt](docs/internals/t3-upstream-sync-20261121-f2d4df0367.md).
+Literal merge `649f43e495936493337c6091b430a807ba01e7e1` has owned base
+`f50f249d2b8015de70d23aa3d319a8c532239cb8` and the frozen official target as parents, retaining
+the 112 official commits after `f2d4df0367`. The range adds a map of linked environments, reading
+their threads, MCP sign-in from an agent's warning, multi-value secret cards, Cursor agents out of
+process and typed turn results, plus many fixes. Scient keeps its WSL home, its cross-track update
+offers and its watcher-driven HTML previews, and keeps T3's Apple Speech dictation dormant with
+the rest of T3 voice. Release remains separate.
+
+The previous committed alignment through
 `f2d4df0367451f1771e94619021dfbb9982b463f` is recorded in
 [the 2026-11-20 f6d941fa4f receipt](docs/internals/t3-upstream-sync-20261120-f6d941fa4f.md).
 Literal merge `7baaaf047c8c698fa9ea8c383184b73c1a5922a5` has owned base
@@ -716,7 +727,7 @@ rules and its managed CLI, credential scoping, delegation and chat, plus linking
 environments at once. Google-account Antigravity instances keep their own sign-in, so limits need
 no keychain. The alignment is Scient PR #1038. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `f6d941fa4fa41741a881b8f646c6737d845ea91c` is recorded in
 [the 2026-11-20 0317d4f4e5 receipt](docs/internals/t3-upstream-sync-20261120-0317d4f4e5.md).
 Literal merge `c3ab5cc489c6598120ecbf6c571da9db1f7e2016` has owned base

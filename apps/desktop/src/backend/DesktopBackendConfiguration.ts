@@ -467,7 +467,10 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   // SCIENT-FORK:END
 
   if (input.runtimeArchive !== null) {
-    const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
+    // SCIENT-FORK:START — WSL state stays in ~/.scient-next (scientWslBackendEnv), so a T3CODE_HOME
+    // exported by the distro's profile belongs to T3 and moves neither state nor the runtime cache.
+    const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive, null);
+    // SCIENT-FORK:END
     if (runtime.ok) {
       const stagedNodePty = yield* wslEnv.ensureNodePty(
         runningDistro,

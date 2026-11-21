@@ -302,6 +302,7 @@ const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
     clear: () => Effect.void,
     close: () => Effect.void,
     hasRunningSessionsForThread: () => Effect.succeed(false),
+    hasActiveSubprocess: () => Effect.succeed(false),
     closeOnSettle: () => Effect.void,
     closeIdle: () => Effect.void,
     subscribe: () => Effect.succeed(() => undefined),

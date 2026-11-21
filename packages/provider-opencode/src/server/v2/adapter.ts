@@ -207,6 +207,7 @@ const OpenCode2ProviderCapabilities = {
     emitsToolOutput: true,
     supportsMcpTools: false,
     supportsDynamicToolCallbacks: false,
+    supportsBackgroundWait: true,
   },
   approvals: {
     supportsCommandApproval: true,

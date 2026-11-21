@@ -1611,10 +1611,12 @@ it.effect(
         // SCIENT-FORK: Scient registers upstream's background wait as `scient_background_wait`.
         .callTool({ name: "scient_background_wait", arguments: { taskIds: ["checks"] } })
         .pipe(
-          // SCIENT-FORK: Scient offers the wait only to sessions whose provider has one.
           Effect.provideService(McpInvocationContext.McpInvocationContext, {
             ...scope,
-            thread: { ...scope.thread!, backgroundWait: true },
+            capabilities: new Set<McpInvocationContext.McpCapability>([
+              "orchestration",
+              "background-wait",
+            ]),
           }),
           Effect.provideService(McpSchema.McpServerClient, client),
         );

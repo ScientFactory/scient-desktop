@@ -42,7 +42,7 @@ import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityCli
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
-  antigravityCommandOutlivesPrompt,
+  antigravityToolOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
@@ -158,7 +158,7 @@ export function makeAntigravityAcpAdapterFlavor(
   type ToolCall = Parameters<NonNullable<AcpAdapterV2Flavor["extractBackgroundTaskId"]>>[0];
   const isDaemonCommand = (toolCall: ToolCall) =>
     daemonToolCallIds.has(toolCall.toolCallId) ||
-    (toolCall.kind === "execute" && !antigravityCommandOutlivesPrompt(toolCall));
+    (toolCall.kind === "execute" && !antigravityToolOutlivesPrompt(toolCall));
   // SCIENT-FORK:END
   // SCIENT-FORK:START — only sessions that offer agy's native Auto defer to its review. Scient's
   // managed 1.4.5 harness offers none: it runs Auto as `default`, answered by Scient's policy.
@@ -306,7 +306,7 @@ export function makeAntigravityAcpAdapterFlavor(
     deferFinalizeForBackgroundWork: true,
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
-    toolOutlivesPrompt: antigravityCommandOutlivesPrompt,
+    toolOutlivesPrompt: antigravityToolOutlivesPrompt,
     // SCIENT-FORK:START — a daemon (a dev server) never reports its end, so it does not hold the
     // turn; tracking it as background work keeps its row running and gives Stop its process.
     extractBackgroundTaskId: (toolCall) => {

@@ -41,6 +41,7 @@ const ALL_MCP_CAPABILITIES = [
   // The handoff-summary reader retains its own read-only grant alongside native orchestration tools.
   "threads:read",
   // SCIENT-FORK:END
+  "background-wait",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -62,10 +63,6 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
-  // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
-  /** The session's provider implements background waits. */
-  readonly backgroundWait?: boolean;
-  // SCIENT-FORK:END
 }
 
 export interface McpClientCaller {
@@ -241,15 +238,6 @@ export const hiddenFromSubagents = (): boolean => {
   return scope?.thread?.subagent !== true;
 };
 
-// SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
-/** `McpSchema.EnabledWhen` for the background wait: only thread sessions whose provider has one. */
-export const shownWithBackgroundWait = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.thread?.backgroundWait === true;
-};
-// SCIENT-FORK:END
-
 /**
  * `McpSchema.EnabledWhen` for tools that act as the calling thread: a client
  * from outside has none. Discovery only; `McpToolAccess` still refuses the
@@ -259,6 +247,15 @@ export const hiddenFromOutsideClients = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope === undefined || scope.thread !== undefined;
+};
+
+/** `hiddenFromOutsideClients`, and hidden from a thread whose provider cannot hold for background work. */
+export const hiddenWithoutBackgroundWait = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return (
+    scope === undefined || (scope.thread !== undefined && scope.capabilities.has("background-wait"))
+  );
 };
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */

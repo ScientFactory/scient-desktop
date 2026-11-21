@@ -27,6 +27,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   closestCenter,
   DndContext,
@@ -71,6 +72,7 @@ import {
 
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
+import { linkedThreadTitle } from "~/linkedThreadSurface";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { issueStatePresentation } from "~/components/issue/issuePresentation";
@@ -164,6 +166,10 @@ export interface RightPanelTabsProps {
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
+  /** Moves a subagent, side chat or linked thread tab to the main screen. */
+  onOpenInMainView?: (
+    surface: Extract<RightPanelSurface, { kind: "thread" | "linked-thread" }>,
+  ) => void;
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
@@ -274,6 +280,7 @@ type TabContextMenuAction =
   | "open-in-new-window"
   | "duplicate"
   // SCIENT-FORK:END
+  | "open-in-main-view"
   | "rename"
   | "copy-relative-path"
   | "copy-full-path"
@@ -837,8 +844,14 @@ function surfaceTitle(
 
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
-    case "side-chat":
-      return resolve(msg("Side chat"));
+    case "thread":
+      // Until the thread's own title loads.
+      return resolve(msg("Thread"));
+    case "linked-thread":
+      return linkedThreadTitle(
+        surface,
+        resolve(msg("Thread on {label}", { label: surface.label })),
+      );
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return resolve(msg("Browser"));
@@ -936,8 +949,10 @@ function SurfaceIcon({
     case "scient":
       return <ScientRightPanelSurfaceIcon surface={surface} />;
 
-    case "side-chat":
+    case "thread":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
+    case "linked-thread":
+      return <MessagesSquare className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -967,16 +982,16 @@ function sideChatTabState(shell: EnvironmentThreadShell | null) {
   return threadRuntimeIsActive(shell.runtime) ? "running" : null;
 }
 
-// Static dots: a side chat tab can stay open for a whole run.
+// Static dots: a side chat or subagent tab can stay open for a whole run.
 function SideChatTabIcon(props: { environmentId: EnvironmentId | null; threadId: ThreadId }) {
-  const state = sideChatTabState(
-    useQuietThreadShell(
-      props.environmentId === null ? null : scopeThreadRef(props.environmentId, props.threadId),
-    ),
+  const shell = useQuietThreadShell(
+    props.environmentId === null ? null : scopeThreadRef(props.environmentId, props.threadId),
   );
+  const state = sideChatTabState(shell);
+  const Icon = shell !== null && shell.lineage.sideChat !== true ? Bot : MessagesSquare;
   return (
     <>
-      <MessagesSquare className="size-3 shrink-0" />
+      <Icon className="size-3 shrink-0" />
       {state === null ? null : (
         <span
           className={cn(
@@ -1205,11 +1220,16 @@ function RightPanelTab(
     disabled: props.dragDisabled,
   });
   const sideChatShell = useQuietThreadShell(
-    surface.kind === "side-chat" && props.environmentId !== null
+    surface.kind === "thread" && props.environmentId !== null
       ? scopeThreadRef(props.environmentId, surface.threadId)
       : null,
   );
-  const title = sideChatShell?.title ?? props.title;
+  const title =
+    sideChatShell === null
+      ? props.title
+      : sideChatShell.lineage.sideChat === true
+        ? sideChatShell.title
+        : formatSubagentDisplayTitle(sideChatShell.title);
   const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>
@@ -1411,6 +1431,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
+  const addSurfaceMenuBlocked = () =>
+    !addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
   const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing) return;
     if (
@@ -1419,7 +1441,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       }) !== "rightPanel.new"
     )
       return;
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+    if (addSurfaceMenuBlocked()) return;
     event.preventDefault();
     event.stopPropagation();
     // SCIENT-FORK:START
@@ -1433,11 +1455,27 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       setAddSurfaceMenuOpen(true);
     }
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
+  // Forwarded from a focused browser page. Focusing the trigger here would let ChatView's
+  // window-focus handler see a plain button and refocus the composer, closing the menu.
+  const onMenuAction = useEffectEvent((action: string) => {
+    if (action !== "rightPanel.new" || addSurfaceMenuBlocked()) return;
+    // SCIENT-FORK:START — Scient opens a New tab launcher; the menu is not rendered.
+    if (props.onAddNewTab) {
+      props.onAddNewTab();
+      return;
+    }
+    // SCIENT-FORK:END
+    setAddSurfaceMenuOpen(true);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes document keydown and the desktop menu action (forwarded from a focused browser page) for the new surface shortcut while the panel is open
   useEffect(() => {
     if (props.open === false) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
-    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+    const unsubscribe = window.desktopBridge?.onMenuAction(onMenuAction);
+    return () => {
+      document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+      unsubscribe?.();
+    };
   }, [props.open]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
@@ -1605,6 +1643,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ? ([{ id: "duplicate", label: gt("Duplicate") }] as const)
         : []),
       // SCIENT-FORK:END
+      ...((surface.kind === "thread" || surface.kind === "linked-thread") && props.onOpenInMainView
+        ? ([{ id: "open-in-main-view", label: gt("Open in main view") }] as const)
+        : []),
       ...(surface.kind === "device" && props.onRenameDevice
         ? ([{ id: "rename", label: gt("Rename") }] as const)
         : []),
@@ -1632,6 +1673,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
     const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
     switch (action) {
+      case "open-in-main-view":
+        if (surface.kind === "thread" || surface.kind === "linked-thread") {
+          props.onOpenInMainView?.(surface);
+        }
+        break;
       // SCIENT-FORK:START
       case "open-in-new-window":
         props.onOpenSurfaceInNewWindow?.(surface);

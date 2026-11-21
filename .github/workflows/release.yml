@@ -590,7 +590,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/${{ matrix.rust_target }}/release/scient-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
-          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Cache Linux capture helpers
         if: matrix.platform == 'linux'

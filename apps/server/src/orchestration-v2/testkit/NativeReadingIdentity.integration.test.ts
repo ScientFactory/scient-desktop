@@ -202,6 +202,9 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
+            mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+            mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+            reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
             setPermissionMode: () =>
