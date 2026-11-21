@@ -395,6 +395,16 @@ Electron Builder derives the active GitHub repository from the release run.
 Stable releases publish `latest*.yml` and their installers/blockmaps from
 `ScientFactory/scient-desktop`.
 
+Installed apps check the copies at `downloads.scientfactory.com`, which the
+website's release mirror worker makes from those GitHub releases. Right after
+publishing, the release workflow's `Publish to the download mirror` job calls the
+mirror's `POST /sync` for the release's channel and waits until all three update
+feeds offer the new version, repeating the call up to five times a minute apart.
+It needs the repository secrets `RELEASE_MIRROR_SYNC_URL` and
+`RELEASE_MIRROR_SYNC_TOKEN` (the website README sets both). Without them, or if
+the call fails, the job only warns: the mirror's own run, every ten minutes,
+publishes the release anyway. The job cannot fail the release.
+
 Scient does not publish T3's npm package: upstream's npm launcher sources are
 not carried, and the inherited `apps/server/scripts/cli.ts publish` command is
 not called by any Scient workflow. Each release instead contains
