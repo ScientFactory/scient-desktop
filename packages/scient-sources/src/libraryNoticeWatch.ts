@@ -238,6 +238,7 @@ export async function recordScientLibraryNoticeCheck(input: {
     : { records: null };
   const made: Array<Pick<ScientLibraryNoticeChange, "sourceId" | "kind" | "change">> = [];
   let changedSources = 0;
+  let missed = false;
   for (const record of records ?? []) {
     const keys = watchedIdentifiers(record);
     // A source added or re-identified while the file was read was not asked about: next check.
@@ -264,7 +265,10 @@ export async function recordScientLibraryNoticeCheck(input: {
       editorialStatus: editorialStatusFromNotices([...kept, ...added], input.checkedAt),
       actor: "user",
     });
-    if (written.outcome !== "updated") continue;
+    if (written.outcome !== "updated") {
+      missed = true;
+      continue;
+    }
     changedSources += 1;
     for (const kind of WatchedKind.literals) {
       if (added.some((notice) => notice.kind === kind)) {
@@ -288,9 +292,12 @@ export async function recordScientLibraryNoticeCheck(input: {
       changes.set(changeKey(change), { ...change, at: input.checkedAt });
     }
     const etag = input.found ? input.etag : previous?.etag;
-    const covered = input.found
-      ? scientLibraryNoticeCoverage(input.found.notices.keys())
-      : previous?.covered;
+    // A source that did not take its notices: the next check reads the whole file again.
+    const covered = !input.found
+      ? previous?.covered
+      : missed
+        ? undefined
+        : scientLibraryNoticeCoverage(input.found.notices.keys());
     await writeNoticeWatch(input.library, {
       formatVersion: 1,
       checkedAt: input.checkedAt,
@@ -300,6 +307,27 @@ export async function recordScientLibraryNoticeCheck(input: {
     });
   });
   return { changedSources };
+}
+
+/**
+ * The notices on a source that the weekly check put there and has not taken off. A registry
+ * check that does not report one keeps it: only a reinstatement in the file takes one off.
+ */
+export async function scientLibraryWatchNotices(
+  library: ScientLibraryLocation,
+  record: ScientSourceRecord,
+): Promise<ReadonlyArray<ScientSourceEditorialNotice>> {
+  const notices = (record.editorialStatus?.notices ?? []).filter(
+    (notice) => notice.source === RETRACTION_WATCH,
+  );
+  if (notices.length === 0) return [];
+  const watch = await readScientLibraryNoticeWatch(library);
+  const put = new Set<string>(
+    (watch?.changes ?? []).flatMap((change) =>
+      change.sourceId === record.sourceId && change.change === "added" ? [change.kind] : [],
+    ),
+  );
+  return notices.filter((notice) => put.has(notice.kind));
 }
 
 /** The changes the person has not dismissed, for the line above the Library list. */

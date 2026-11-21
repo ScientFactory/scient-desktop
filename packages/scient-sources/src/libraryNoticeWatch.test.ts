@@ -5,10 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import {
   dismissScientLibraryNoticeChanges,
   listScientLibraryNoticeChanges,
+  readScientLibraryNoticeWatch,
   recordScientLibraryNoticeCheck,
   retractionWatchReader,
 } from "./libraryNoticeWatch.ts";
@@ -18,6 +20,7 @@ import type {
   ScientSourceEditorialNotice,
   ScientSourceIdentifier,
 } from "./model.ts";
+import * as Store from "./store.ts";
 import {
   importScientSource,
   listScientSourceRevisions,
@@ -48,6 +51,8 @@ function fileNotices(wanted: ReadonlyArray<string>, text = slice) {
   reader.push(text.slice(1000));
   return reader.end();
 }
+
+vi.mock("./store.ts", { spy: true });
 
 const fixtures: string[] = [];
 
@@ -229,6 +234,21 @@ describe("the weekly notice check", () => {
     expect(await listScientLibraryNoticeChanges(library)).toEqual([
       { sourceId, kind: "retraction", change: "withdrawn" },
     ]);
+  });
+
+  it("reads the whole file at the next check when a source did not take its notice", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add("Edited while the file was read", [RETRACTED], []);
+    // Someone edits the source between the check's read of it and its write.
+    vi.spyOn(Store, "recordScientSourceCheck").mockImplementationOnce(async () => ({
+      outcome: "stale",
+      record: await record(sourceId),
+    }));
+
+    expect(await check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z")).toEqual({ changedSources: 0 });
+    expect(await readScientLibraryNoticeWatch(library)).not.toHaveProperty("covered");
+    expect(await check([RETRACTED_KEY], "2026-11-22T10:00:00.000Z")).toEqual({ changedSources: 1 });
+    expect(await readScientLibraryNoticeWatch(library)).toHaveProperty("covered");
   });
 
   it("does not read a paper it never asked about as withdrawn", async () => {

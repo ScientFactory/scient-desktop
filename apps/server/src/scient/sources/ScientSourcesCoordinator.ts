@@ -58,6 +58,7 @@ import {
   type ScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
+import { scientLibraryWatchNotices } from "@scientfactory/scient-sources/library-notice-watch";
 import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   bulkUpdateScientSources,
@@ -603,6 +604,15 @@ export async function checkSourceIdentifier(input: {
     !titlesAgree(record.title!, resolution.metadata.title!);
   const registry: SourceCheckRegistryOutcome =
     resolution === null ? "none" : mismatch ? "mismatch" : resolution.status;
+  const found = resolution?.status === "found" && !mismatch ? resolution : null;
+  const reported = found?.metadata.editorialNotices;
+  const watched =
+    found && isScientLibraryLocation(input.root)
+      ? (await scientLibraryWatchNotices(input.root, record)).filter(
+          (notice) => !reported?.some((other) => other.kind === notice.kind),
+        )
+      : [];
+  const notices = reported || watched.length > 0 ? [...(reported ?? []), ...watched] : null;
   const check: {
     readonly verification: ScientSourceVerification;
     readonly editorialStatus: ScientSourceEditorialStatus | null;
@@ -616,11 +626,8 @@ export async function checkSourceIdentifier(input: {
               identifier: resolution.identifier,
               checkedAt: resolution.retrievedAt,
             },
-            editorialStatus: resolution.metadata.editorialNotices
-              ? editorialStatusFromNotices(
-                  resolution.metadata.editorialNotices,
-                  resolution.retrievedAt,
-                )
+            editorialStatus: notices
+              ? editorialStatusFromNotices(notices, resolution.retrievedAt)
               : null,
           }
         : resolution.status === "unavailable"

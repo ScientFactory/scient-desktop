@@ -2609,7 +2609,8 @@ The status is built by `editorialStatusFromNotices` and written by
 `recordScientSourceCheck` with the source's verification unchanged, so each
 change is a revision in the source's history, credited to the user like the
 pass's other writes; a source edited meanwhile answers `stale` and is matched
-the next week. The Trash is not checked.
+the next week: the check then records no `covered`, so that request is not
+conditional. The Trash is not checked.
 
 **Told once.** `notice-watch.json` in the Library holds the time of the last
 successful check, the file's `ETag` and the papers its read matched
@@ -2618,9 +2619,12 @@ what the check did there (`added` or `withdrawn`, when, and `dismissed`). The
 overview carries the entries not yet dismissed, for sources still held, as
 `noticeChanges`, whatever the scope; the panel shows them as one line with
 **Show** (the list narrowed to those sources) and **Dismiss** (the organize
-action `dismiss-notice-changes`). A notice the check puts back after a refresh
-took it off (a registry that does not repeat it) corrects the source and is
-not listed again, since its entry already says `added`. Entries of sources no
+action `dismiss-notice-changes`). A registry check of a Library source keeps
+the `retraction-watch` notices whose entry says `added` and whose kind the
+registry did not report (`scientLibraryWatchNotices`): only the file's
+reinstatement takes one off. A notice the check puts back after it was taken
+off otherwise corrects the source and is not listed again, since its entry
+already says `added`. Entries of sources no
 longer in the Library are dropped at the next check that reads the file. A
 state file that cannot be read counts as none: the check runs again.
 

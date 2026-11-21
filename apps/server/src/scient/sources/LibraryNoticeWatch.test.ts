@@ -9,10 +9,16 @@ import {
   ensureScientLibrary,
   scientLibraryLocation,
 } from "@scientfactory/scient-sources/library-root";
-import { importScientSource, readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import {
+  importScientSource,
+  listScientSourceRecords,
+  readScientSourceRecord,
+} from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { runLibraryNoticeWatch } from "./LibraryNoticeWatch.ts";
+import { checkSourceIdentifier } from "./ScientSourcesCoordinator.ts";
+import { resolveSourceIdentifier } from "./SourceIdentifierResolver.ts";
 
 // The header and one row of https://gitlab.com/crossref/retraction-watch-data (2026-11-13).
 const FILE = `Record ID,Title,Subject,Institution,Journal,Publisher,Country,Author,URLS,ArticleType,RetractionDate,RetractionDOI,RetractionPubMedID,OriginalPaperDate,OriginalPaperDOI,OriginalPaperPubMedID,RetractionNature,Reason,Paywalled,Notes,
@@ -130,6 +136,37 @@ describe("the weekly notice check", () => {
 
     later(WEEK);
     expect(await run(unlessUnchanged)).toBe("unchanged");
+  });
+
+  it("keeps a retraction it found when a registry check of the paper does not report it", async () => {
+    const { library, later, state, run } = await setup({ scheme: "doi", value: "10.1002/jcb.21852" });
+    expect(await run(theFile)).toBe("checked");
+    const [record] = await listScientSourceRecords(library);
+
+    // doi.org's answer for the paper, which carries no update notice.
+    const checked = await checkSourceIdentifier({
+      root: library,
+      sourceId: record!.sourceId,
+      actor: "user",
+      resolveIdentifier: (identifiers) =>
+        resolveSourceIdentifier(identifiers, {
+          request: async (url) => ({
+            status: 200,
+            url,
+            body: JSON.stringify({
+              type: "journal-article",
+              title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
+              DOI: "10.1002/jcb.21852",
+            }),
+          }),
+        }),
+    });
+    expect(checked).toMatchObject({ registry: "found", record: { verification: { state: "verified" } } });
+    expect(await state()).toBe("retracted");
+
+    later(WEEK);
+    expect(await run(() => new Response(null, { status: 304 }))).toBe("unchanged");
+    expect(await state()).toBe("retracted");
   });
 
   it.each([
