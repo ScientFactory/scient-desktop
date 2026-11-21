@@ -587,6 +587,10 @@ export const ScientProjectPackageReport = Schema.Struct({
   changedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Export: whether the folder is inside the project (committed with it). */
   insideProject: Schema.optionalKey(Schema.Boolean),
+  /** Export: values kept after a merge Undo, which stay in the project and are not packaged. */
+  keptCopiesLeftOut: Schema.optionalKey(Count),
+  /** Export: files of such kept values that could not be read. */
+  keptCopiesUnreadable: Schema.optionalKey(Count),
   /** Import: undo-import takes it. */
   importId: Schema.optionalKey(NonEmptyString),
   /** Highlights changed apart on both computers: this one's stays, the other is history. */
