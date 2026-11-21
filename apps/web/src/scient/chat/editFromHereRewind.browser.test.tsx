@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   revertThreadCheckpoint: vi.fn(),
   waitForRevertedMessage: vi.fn(),
   readPreparedConnection: vi.fn(),
+  prepareRevertedMessageAttachments: vi.fn(),
 }));
 
 vi.mock(import("../../state/session"), async (original) => ({
@@ -52,7 +53,8 @@ vi.mock(import("../../localApi"), async (original) => ({
 }));
 vi.mock(import("../../components/ChatView.logic"), async (original) => ({
   ...(await original()),
-  prepareRevertedMessageAttachments: async () => [],
+  prepareRevertedMessageAttachments: ((...args: unknown[]) =>
+    mocks.prepareRevertedMessageAttachments(...args)) as never,
   waitForRevertedMessage: ((...args: unknown[]) => mocks.waitForRevertedMessage(...args)) as never,
 }));
 vi.mock(import("../../state/use-orchestration-command"), () => ({
@@ -63,7 +65,7 @@ vi.mock(import("../../state/use-atom-query-runner"), () => ({
 }));
 
 const run = (ordinal: number) => ({ id: `run-${ordinal}`, ordinal, status: "completed" });
-const checkpoint = (ordinal: number, files: ReadonlyArray<string>) => ({
+const checkpoint = (ordinal: number, files: ReadonlyArray<string>, changesKnown = true) => ({
   id: `checkpoint-${ordinal}`,
   scopeId: "scope-root",
   runId: `run-${ordinal}`,
@@ -71,17 +73,20 @@ const checkpoint = (ordinal: number, files: ReadonlyArray<string>) => ({
   appRunOrdinal: ordinal,
   status: "ready",
   files: files.map((path) => ({ path, kind: "modified", additions: 1, deletions: 1 })),
+  ...(changesKnown ? { changesKnown: true } : {}),
 });
 // The message started run 2; editing it rewinds to after run 1.
-const threadWhereRun2Changed = (files: ReadonlyArray<string>) =>
+const threadAfterRun2 = (later: ReadonlyArray<ReturnType<typeof checkpoint>>) =>
   ({
-    runs: [run(1), run(2)],
-    checkpoints: [checkpoint(1, ["setup.py"]), checkpoint(2, files)],
+    runs: [run(1), ...later.map((entry) => run(entry.ordinalWithinScope))],
+    checkpoints: [checkpoint(1, ["setup.py"]), ...later],
     checkpointScopes: [{ id: "scope-root" }],
   }) as unknown as ThreadStructure;
+const unchangedAfterRun1 = threadAfterRun2([checkpoint(2, [])]);
 
 function Harness(props: {
   readonly projection: ThreadStructure;
+  readonly worktreePath: string | null;
   readonly composer: Pick<
     ChatComposerHandle,
     "resetCursorState" | "focusAtEnd" | "hasPendingAttachments"
@@ -100,7 +105,7 @@ function Harness(props: {
     routeThreadKey: threadKey,
     currentRouteThreadKeyRef,
     serverProjection: props.projection,
-    activeThread: { id: threadRef.threadId } as never,
+    activeThread: { id: threadRef.threadId, worktreePath: props.worktreePath } as never,
     timelineMessages: [message],
     phase: "ready",
     isSendBusy: false,
@@ -121,11 +126,12 @@ function Harness(props: {
       <RevertConfirmHost
         threadKey={threadKey}
         environmentId={environmentId}
-        taskFolderPath={null}
+        taskFolderPath={props.worktreePath}
         projection={props.projection}
-        worktreePath="/worktree"
+        worktreePath={props.worktreePath}
         onConfirm={onConfirmRevertStable}
         reverting={isRevertingCheckpoint}
+        describeUnrestorableFiles={() => "Files stay as they are."}
         renderDetails={(error) => (
           <ScientRevertDialogDiagnostics fileHistoryIssue={null} error={error} />
         )}
@@ -157,6 +163,8 @@ function setup() {
   });
   mocks.revertThreadCheckpoint.mockReset();
   mocks.revertThreadCheckpoint.mockResolvedValue(AsyncResult.success(undefined));
+  mocks.prepareRevertedMessageAttachments.mockReset();
+  mocks.prepareRevertedMessageAttachments.mockResolvedValue([]);
   mocks.waitForRevertedMessage.mockReset();
   mocks.waitForRevertedMessage.mockImplementation(
     async (_thread: unknown, _count: unknown, _id: unknown, revert: () => Promise<void>) => {
@@ -172,24 +180,28 @@ function setup() {
   return { composer, [Symbol.dispose]: () => stack.dispose() };
 }
 
-const renderHarness = (
+const PROJECT_FOLDER = null;
+const WORKTREE = "/worktree";
+
+const harness = (
   projection: ThreadStructure,
+  worktreePath: string | null,
   composer: ReturnType<typeof setup>["composer"],
-) =>
-  render(
-    <AppAtomRegistryProvider>
-      <Harness projection={projection} composer={composer} />
-    </AppAtomRegistryProvider>,
-    { router: false },
-  );
+) => (
+  <AppAtomRegistryProvider>
+    <Harness projection={projection} worktreePath={worktreePath} composer={composer} />
+  </AppAtomRegistryProvider>
+);
+const renderHarness = (...args: Parameters<typeof harness>) =>
+  render(harness(...args), { router: false });
 
 const editFromHere = () => userEvent.click(page.getByRole("button", { name: "Edit from here" }));
 const dialog = () => page.getByRole("alertdialog");
 
 describe("Edit from here", () => {
-  it("rewinds without asking when no later turn changed files", async () => {
+  it("rewinds a project-folder thread without asking when no later turn changed files", async () => {
     using fixture = setup();
-    await using _screen = await renderHarness(threadWhereRun2Changed([]), fixture.composer);
+    await using _screen = await renderHarness(unchangedAfterRun1, PROJECT_FOLDER, fixture.composer);
     await editFromHere();
     await vi.waitFor(() =>
       expect(fixture.composer.resetCursorState).toHaveBeenCalledWith({
@@ -205,31 +217,62 @@ describe("Edit from here", () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
-  it("asks first when a later turn changed files", async () => {
+  it("asks in a worktree thread, where files can be reverted, even when nothing changed", async () => {
+    using fixture = setup();
+    await using _screen = await renderHarness(unchangedAfterRun1, WORKTREE, fixture.composer);
+    await editFromHere();
+    await expect.element(dialog()).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Revert files too" })).toBeEnabled();
+    expect(mocks.prepareRevertedMessageAttachments).not.toHaveBeenCalled();
+    expect(mocks.revertThreadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("asks when the server could not tell what a later turn changed", async () => {
     using fixture = setup();
     await using _screen = await renderHarness(
-      threadWhereRun2Changed(["figure.png"]),
+      threadAfterRun2([checkpoint(2, [], false)]),
+      PROJECT_FOLDER,
       fixture.composer,
     );
     await editFromHere();
     await expect.element(dialog()).toBeVisible();
-    await expect.element(page.getByRole("button", { name: "Revert files too" })).toBeEnabled();
+    await expect.element(page.getByRole("button", { name: "Rewind chat" })).toBeEnabled();
     expect(mocks.revertThreadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("asks instead when a turn that changed files finished while attachments were prepared", async () => {
+    using fixture = setup();
+    const prepared = Promise.withResolvers<File[]>();
+    mocks.prepareRevertedMessageAttachments.mockReturnValue(prepared.promise);
+    await using screen = await renderHarness(unchangedAfterRun1, PROJECT_FOLDER, fixture.composer);
+    await editFromHere();
+    await vi.waitFor(() => expect(mocks.prepareRevertedMessageAttachments).toHaveBeenCalled());
+    await screen.rerender(
+      harness(
+        threadAfterRun2([checkpoint(2, []), checkpoint(3, ["results.csv"])]),
+        PROJECT_FOLDER,
+        fixture.composer,
+      ),
+    );
+    prepared.resolve([]);
+    await expect.element(dialog()).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Rewind chat" })).toBeEnabled();
+    expect(document.querySelector('[role="alertdialog"] [role="alert"]')).toBeNull();
+    expect(mocks.revertThreadCheckpoint).not.toHaveBeenCalled();
+    expect(fixture.composer.resetCursorState).not.toHaveBeenCalled();
   });
 
   it("opens the dialog with the failure when the direct rewind fails", async () => {
     using fixture = setup();
     mocks.waitForRevertedMessage.mockRejectedValue(new Error("checkpoint ref missing"));
-    await using _screen = await renderHarness(threadWhereRun2Changed([]), fixture.composer);
+    await using _screen = await renderHarness(unchangedAfterRun1, PROJECT_FOLDER, fixture.composer);
     await editFromHere();
     await expect.element(dialog()).toBeVisible();
     await expect.element(dialog().getByRole("alert")).toBeVisible();
     expect(document.querySelector('[role="alertdialog"] [role="alert"]')?.textContent).toContain(
       "checkpoint ref missing",
     );
-    await expect
-      .element(page.getByRole("button", { name: "Revert and keep changes" }))
-      .toBeEnabled();
+    await expect.element(page.getByRole("button", { name: "Rewind chat" })).toBeEnabled();
     expect(fixture.composer.resetCursorState).not.toHaveBeenCalled();
   });
 });

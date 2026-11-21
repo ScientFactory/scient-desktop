@@ -1,7 +1,7 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { laterTurnsChangedNoFiles } from "./editFromHereRewind";
+import { editFromHereSkipsDialog, laterTurnsChangedNoFiles } from "./editFromHereRewind";
 
 type Projection = Pick<
   OrchestrationV2ThreadProjection,
@@ -23,16 +23,18 @@ const checkpoint = (
     readonly status?: Checkpoint["status"];
     readonly files?: ReadonlyArray<string>;
     readonly filesTotal?: number;
+    readonly changesKnown?: boolean;
   } = {},
 ) => {
   const scopeId = options.scopeId ?? ROOT_SCOPE;
+  const status = options.status ?? "ready";
   return {
     id: `checkpoint-${scopeId}-${ordinal}`,
     scopeId,
     runId: `run-${ordinal}`,
     ordinalWithinScope: ordinal,
     appRunOrdinal: scopeId === ROOT_SCOPE ? ordinal : null,
-    status: options.status ?? "ready",
+    status,
     files: (options.files ?? []).map((path) => ({
       path,
       kind: "modified",
@@ -42,6 +44,8 @@ const checkpoint = (
     ...(options.filesTotal === undefined
       ? {}
       : { filesTotal: { count: options.filesTotal, additions: 1, deletions: 1 } }),
+    // The server records this only for a ready snapshot whose comparison ran.
+    ...((options.changesKnown ?? status === "ready") ? { changesKnown: true } : {}),
   } as unknown as Checkpoint;
 };
 
@@ -74,6 +78,15 @@ describe("laterTurnsChangedNoFiles", () => {
     const thread = projection(
       [run(1), run(2), run(3)],
       [checkpoint(1), checkpoint(2), checkpoint(3, { files: ["analysis.py"] })],
+    );
+    expect(laterTurnsChangedNoFiles(thread, 1)).toBe(false);
+  });
+
+  // regression: a snapshot whose diff failed also lists no file.
+  it("is false when the server could not tell what a later turn changed", () => {
+    const thread = projection(
+      [run(1), run(2)],
+      [checkpoint(1), checkpoint(2, { changesKnown: false })],
     );
     expect(laterTurnsChangedNoFiles(thread, 1)).toBe(false);
   });
@@ -135,5 +148,58 @@ describe("laterTurnsChangedNoFiles", () => {
       ],
     );
     expect(laterTurnsChangedNoFiles(thread, 1)).toBe(true);
+  });
+});
+
+describe("editFromHereSkipsDialog", () => {
+  const unchanged = projection(
+    [run(1), run(2)],
+    [checkpoint(1, { files: ["a.md"] }), checkpoint(2)],
+  );
+
+  it("skips the dialog in a project folder when no later turn changed files", () => {
+    expect(
+      editFromHereSkipsDialog({ projection: unchanged, worktreePath: null, turnCount: 1 }),
+    ).toBe(true);
+  });
+
+  it("asks in a worktree, where the dialog can revert files, even with no later change", () => {
+    expect(
+      editFromHereSkipsDialog({ projection: unchanged, worktreePath: "/worktree", turnCount: 1 }),
+    ).toBe(false);
+  });
+
+  it("skips the dialog in a worktree whose rewind target has no snapshot to restore", () => {
+    const thread = projection(
+      [run(1), run(2)],
+      [checkpoint(1, { status: "error" }), checkpoint(2)],
+    );
+    expect(
+      editFromHereSkipsDialog({ projection: thread, worktreePath: "/worktree", turnCount: 1 }),
+    ).toBe(true);
+  });
+
+  it("asks in a task folder whose repositories the dialog may offer to revert", () => {
+    const repositoryBaseline = {
+      ...checkpoint(1, { scopeId: REPOSITORY_SCOPE }),
+      runId: null,
+    } as unknown as Checkpoint;
+    const thread = projection(
+      [run(1), run(2)],
+      [checkpoint(1, { status: "missing" }), repositoryBaseline, checkpoint(2)],
+    );
+    expect(
+      editFromHereSkipsDialog({ projection: thread, worktreePath: "/task-folder", turnCount: 1 }),
+    ).toBe(false);
+  });
+
+  it("asks in a project folder when a later turn changed files", () => {
+    const thread = projection(
+      [run(1), run(2)],
+      [checkpoint(1), checkpoint(2, { files: ["b.md"] })],
+    );
+    expect(editFromHereSkipsDialog({ projection: thread, worktreePath: null, turnCount: 1 })).toBe(
+      false,
+    );
   });
 });

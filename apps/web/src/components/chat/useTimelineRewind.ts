@@ -24,7 +24,7 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { rewindToMessage } from "./chatViewSend";
 import { makeThreadErrorSetter } from "../ChatView.logic";
 // SCIENT-FORK:START
-import { laterTurnsChangedNoFiles } from "../../scient/chat/editFromHereRewind";
+import { editFromHereSkipsDialog, sendIfStillDirect } from "../../scient/chat/editFromHereRewind";
 // SCIENT-FORK:END
 interface TimelineRewindInput {
   readonly hasProjectWorkspace: boolean;
@@ -80,13 +80,20 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  // SCIENT-FORK:START — reads the thread as last rendered, so a rewind decides again after waiting.
+  const editFromHereSkipsDialogNow = useStableCallback((turnCount: number) =>
+    editFromHereSkipsDialog({
+      projection: serverProjection,
+      worktreePath: activeThread?.worktreePath ?? null,
+      turnCount,
+    }),
+  );
+  // SCIENT-FORK:END
 
   const onRevertToTurnCount = async (
     turnCount: number,
     messageId: MessageId,
     restoreFiles?: boolean,
-    // SCIENT-FORK: rewinding without the dialog, which then opens only to show a failure.
-    direct = false,
   ) => {
     const localApi = readLocalApi();
     if (
@@ -133,20 +140,19 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       });
       return;
     }
-    if (restoreFiles === undefined) {
-      // SCIENT-FORK:START — no turn after this message changed files, so there is nothing to
-      // choose: rewind as "Revert and keep changes" does.
-      if (laterTurnsChangedNoFiles(serverProjection, turnCount)) {
-        await onRevertToTurnCount(turnCount, messageId, false, true);
-        return;
-      }
-      // SCIENT-FORK:END
+    // SCIENT-FORK:START — when the dialog could only rewind the chat and no later turn changed
+    // files, Edit from here rewinds as "Rewind chat" does. The dialog then opens only if the rewind
+    // fails, or if by the time it is sent a later turn did change files.
+    const direct = restoreFiles === undefined && editFromHereSkipsDialogNow(turnCount);
+    const restore = direct ? false : restoreFiles;
+    if (restore === undefined) {
       openRevertConfirm(routeThreadKey, { turnCount, messageId });
       return;
     }
-
-    // SCIENT-FORK: a retry clears the last failure while the dialog stays open.
+    // A retry clears the last failure while the dialog stays open.
     if (!direct) openRevertConfirm(routeThreadKey, { turnCount, messageId });
+    const decision = { changed: false };
+    // SCIENT-FORK:END
     useComposerDraftStore.setState((store) => ({
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
@@ -158,13 +164,25 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       routeThreadRef,
       threadId: activeThread.id,
       turnCount,
-      restoreFiles,
+      // SCIENT-FORK:START
+      restoreFiles: restore,
+      // SCIENT-FORK:END
       // Keep the live checkpoint identity when command context refetches a bounded window.
       checkpoint: findRevertCheckpoint(serverProjection, turnCount),
       draftTarget: composerDraftTarget,
       composerHasPendingAttachments: composerRef.current?.hasPendingAttachments() === true,
       createAssetUrl: createAttachmentAssetUrl,
-      revertThreadCheckpoint,
+      // SCIENT-FORK:START — a direct rewind decides again just before it is sent.
+      revertThreadCheckpoint: direct
+        ? sendIfStillDirect(
+            revertThreadCheckpoint,
+            () => editFromHereSkipsDialogNow(turnCount),
+            () => {
+              decision.changed = true;
+            },
+          )
+        : revertThreadCheckpoint,
+      // SCIENT-FORK:END
     });
     useComposerDraftStore.setState((store) => {
       const remaining = new Set(store.rewindingThreadKeys);
@@ -173,8 +191,14 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     });
     // SCIENT-FORK:START — the rewind dialog stays open on failure and shows why; success closes it.
     // A failure on a thread the user has left lands in that thread's banner, as in T3. A direct
-    // rewind's failure opens the dialog to show it.
-    if (direct && rewind.error !== null && currentRouteThreadKeyRef.current === routeThreadKey) {
+    // rewind's failure opens the dialog to show it, as does a later turn's change found meanwhile.
+    if (decision.changed) {
+      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+    } else if (
+      direct &&
+      rewind.error !== null &&
+      currentRouteThreadKeyRef.current === routeThreadKey
+    ) {
       openRevertConfirm(routeThreadKey, { turnCount, messageId, error: rewind.error });
     } else if (!settleRevertConfirm(routeThreadKey, rewind.error) && rewind.error !== null) {
       setThreadError(activeThread.id, rewind.error);
