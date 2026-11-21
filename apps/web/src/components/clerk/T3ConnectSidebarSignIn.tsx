@@ -1,5 +1,7 @@
 import { UserButton, useAuth } from "@clerk/react";
+// SCIENT-FORK:START — the icon rail's account item labels itself with gt().
 import { T, useGT, useMessages } from "gt-react";
+// SCIENT-FORK:END
 import { LogInIcon, RotateCwIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";

@@ -12,7 +12,9 @@ import {
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
+// SCIENT-FORK:START — the utility actions moved to scient/sidebar/useSidebarUtilityActions.
 import { Link, useLocation } from "@tanstack/react-router";
+// SCIENT-FORK:END
 
 import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -23,7 +25,9 @@ import {
   type HistoryDirection,
 } from "../../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+// SCIENT-FORK:START — the environment checks moved with the utility actions.
 import { cn } from "../../lib/utils";
+// SCIENT-FORK:END
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -34,6 +38,7 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+// SCIENT-FORK:START — the mobile-close helper moved with the utility actions.
 import {
   SidebarFooter,
   SidebarMenu,
@@ -42,6 +47,7 @@ import {
   SidebarTrigger,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+// SCIENT-FORK:END
 import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 // SCIENT-FORK:START — the footer row and the Scient icon rail share the utility actions.
@@ -297,12 +303,12 @@ function SidebarUtilityItem({
 
 // SCIENT-FORK: exported for Scient's update-pill and utility-row tests.
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+  // SCIENT-FORK:START — the footer row and the Scient icon rail share the utility actions.
   const navigateToMainApp = useNavigateToMainApp();
   const gt = useGT();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  // SCIENT-FORK:START — the footer row and the Scient icon rail share the utility actions.
   const {
     closeMobileSidebar,
     pullRequestsSupported,
@@ -434,16 +440,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
+// SCIENT-FORK:START — with the icon rail on, the rail holds the utility buttons and the footer
+// keeps only notices.
 export const SidebarChromeFooter = memo(function SidebarChromeFooter({
-  // SCIENT-FORK:START — with the icon rail on, the rail holds the utility buttons and the footer
-  // keeps only notices.
   utilities = true,
-  // SCIENT-FORK:END
 }: {
-  // SCIENT-FORK:START
   utilities?: boolean;
-  // SCIENT-FORK:END
 }) {
+  // SCIENT-FORK:END
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">

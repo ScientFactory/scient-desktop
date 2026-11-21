@@ -1,5 +1,7 @@
 import type { PullRequestInvolvement, PullRequestListState } from "@t3tools/contracts";
+// SCIENT-FORK:START — the title moved to CodeReviewTitle, which owns its own <T>.
 import { useGT, useMessages } from "gt-react";
+// SCIENT-FORK:END
 import { Plug2Icon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
