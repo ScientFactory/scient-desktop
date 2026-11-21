@@ -467,7 +467,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       const manifest = decodePluginManifest(manifestContents);
       if (Option.isNone(manifest)) continue;
       const pluginName = manifest.value.name.trim();
-      if (!pluginName) continue;
+      if (!pluginName || disabled.has(pluginName)) continue;
       yield* scanDirectory(path.join(pluginDirectory, "skills"), "plugin", true, pluginName);
     }
   });
@@ -567,17 +567,14 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     );
   }
 
-  // SCIENT-FORK:START — the instance profile is where agy loads plugins; Scient keeps each
-  // plugin's manifest namespace there too and skips plugins its config turns off.
-  const profilePlugins = path.join(input.profileDirectory, "config", "plugins");
-  const profilePluginEntries = yield* readIfPresent(
-    fileSystem.readDirectory(profilePlugins),
-    profilePlugins,
-  );
-  if (profilePluginEntries !== undefined && profilePluginEntries.length > 0) {
-    // A config that cannot be read leaves out only these plugins, whose switches it holds; the
-    // other skills still load.
-    const configPath = path.join(input.profileDirectory, "config", "config.json");
+  // SCIENT-FORK:START — the instance profile is where a paired runtime loads plugins; Scient
+  // keeps each plugin's manifest namespace there too and skips plugins a config turns off.
+  // A config that cannot be read leaves out only the plugins whose switches it holds; the
+  // other skills still load.
+  const readDisabledPlugins = Effect.fn("readAntigravityDisabledPlugins")(function* (
+    configDirectory: string,
+  ) {
+    const configPath = path.join(configDirectory, "config.json");
     const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath).pipe(
       Effect.orElseSucceed(() => null),
     );
@@ -590,17 +587,38 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
               Effect.orElseSucceed(() => null),
             )
           : undefined;
-    const preferences =
-      config === undefined || config === null ? undefined : decodePluginPreferences(config);
-    const disabledPlugins = new Set(
+    if (config === null) return null;
+    const preferences = config === undefined ? undefined : decodePluginPreferences(config);
+    return new Set(
       Object.entries(
         (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
       ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
     );
-    if (config !== null) yield* scanPluginDirectory(profilePlugins, disabledPlugins);
+  });
+  // `agy plugin disable` records its switch in the user's config, not the instance profile.
+  const userDisabledPlugins = yield* readDisabledPlugins(path.join(userGeminiHome, "config"));
+  const profilePlugins = path.join(input.profileDirectory, "config", "plugins");
+  const profilePluginEntries = yield* readIfPresent(
+    fileSystem.readDirectory(profilePlugins),
+    profilePlugins,
+  );
+  if (
+    userDisabledPlugins !== null &&
+    profilePluginEntries !== undefined &&
+    profilePluginEntries.length > 0
+  ) {
+    const profileDisabledPlugins = yield* readDisabledPlugins(
+      path.join(input.profileDirectory, "config"),
+    );
+    if (profileDisabledPlugins !== null) {
+      yield* scanPluginDirectory(
+        profilePlugins,
+        new Set([...profileDisabledPlugins, ...userDisabledPlugins]),
+      );
+    }
   }
+  if (userDisabledPlugins !== null) yield* scanPluginDirectory(globalPlugins, userDisabledPlugins);
   // SCIENT-FORK:END
-  yield* scanPluginDirectory(globalPlugins);
   if (input.cwd) {
     yield* scanPluginDirectory(path.resolve(input.cwd, ".agents", "plugins"));
   }
