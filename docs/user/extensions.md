@@ -299,6 +299,11 @@ for your user account on the computer Scient runs on, so the Antigravity app
 there gets it too. Installed lists it with an On/Off switch and **Remove from
 Antigravity**.
 
+Gmail, Google Drive, Google Calendar and other services with a matching
+Antigravity plugin list Antigravity under **Your agents** on their page, with
+**Add to Antigravity** right there. Once added, the row says the plugin signs in
+the first time a chat uses it; Scient does not see that sign-in.
+
 ## See what a conversation received
 
 When a conversation's agent has received connected services, a small plug
