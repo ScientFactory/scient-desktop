@@ -861,14 +861,17 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   projects it, whether or not a notice follows, together with the `state` and
   `code_challenge` of any challenge seen. A stream holds a possible partial URL,
   secret or card (bounded) until that stream ends: a tool's output with its call,
-  a reply at the next tool call or the prompt's end. A challenge needs exactly one
+  a reply or thought at the prompt's end, never at another tool's update. A challenge needs exactly one
   well-formed card and one URL in the tool's result, never in its input; streamed
   output counts once its call ends. It earns a notice only from a plain shell run
   (no pipes, chaining, redirection or substitution) of a CLI that the installed
   plugin's `auth.json` lists under `providers.*.clis`, read bounded from
   `~/.gemini/config/plugins/<slug>/`, whose `plugin.json` name equals the card's
   `catalog-id`, and whose `oauth2.authorizeUrl` and `oauth2.clientId` match the
-  page's origin, path and `client_id`. The page must also be HTTPS with no
+  page's origin, path and `client_id`. The command name is the same evidence
+  agy itself uses to hand the plugin its Google token (`delivery: env` for the
+  bare CLI), so a different program by that name already gets the token from
+  agy; the action adds no reach beyond it. The page must also be HTTPS with no
   userinfo or fragment, one `state`, and one `redirect_uri` that is HTTP loopback
   with a port of 1024 or above and path `/callback`. Partner plugins that sign in
   through MCP OAuth declare no CLI, so they get no button until their challenge
@@ -956,19 +959,32 @@ other stays listed. Partner entries carry `publisherType: "third-party"` and
 show a developer notice before Add. Discover categories come from a reviewed
 per-plugin map, then the feed's own category and keywords.
 
-Add does not use agy's named installs, which need the CLI's own sign-in.
-Scient downloads the entry's gstatic archive (64 MiB cap), checks the feed's
+Add first runs agy's own `agy plugin install <name>@<catalog>`, which records
+the catalog as the plugin's `source`, keeps it updated and refuses a folder
+another source holds (verified on agy 1.5.12). It needs agy's own sign-in, not
+Scient's per-instance profile. Whatever the command reported, Scient then reads
+agy's raw list: the name listed with that catalog as `source` is an Add, any
+other copy of the name is refused, and only an absent name falls back. The
+fallback downloads the entry's gstatic archive (64 MiB cap), checks the feed's
 SHA-256 before opening it, unpacks it without links, special files, escaping or
-colliding names, keeps executable bits, checks `plugin.json`'s name and
-version, then runs `agy plugin install <staging-dir>` with a minimal
-environment. The plugin lands in the OS user's `~/.gemini/config/plugins`,
-shared with the Antigravity app. agy's listing does not keep the catalog, so
-`<stateDir>/antigravity-plugins/receipts.json` records name, catalog, version,
-digest and folder; only a matching receipt makes a listed plugin the catalog
-entry's installation. Installed state, enable/disable and Remove use
-`agy plugin list --json`, `enable|disable` and `uninstall`. A catalog outage
-keeps Installed and Remove; an unreadable listing pauses Add and Remove. A
-paired-harness instance lists the catalogs with Add disabled and says why.
+colliding names, keeps executable bits, checks `plugin.json`'s name and version,
+re-reads agy's raw list as the last step before `agy plugin install
+<staging-dir>` (which replaces a same-name folder), and runs it with a minimal
+environment. A receipt in `<stateDir>/antigravity-plugins/receipts.json` records
+name, catalog, version, source, digest, folder and the installed copy's identity
+(folder device, inode, birth time and `plugin.json` digest), written only when
+that digest equals the staged one. Writes to one plugin folder, its receipts
+included, take one permit shared by every instance using that folder.
+
+An installed copy is the catalog entry when agy's `source` names the catalog or
+a receipt matches that exact copy; it then carries the entry's id and Marketplace
+Remove acts on it. A copy with no recorded origin (`source` null or
+`antigravity`) whose `plugin.json` has the same name and the catalog's
+repository, author or description shows as added but keeps its own
+`antigravity:<name>` id, so only Installed removes it. Installed state,
+enable/disable and Remove use `agy plugin list --json`, `enable|disable` and
+`uninstall`. A catalog outage keeps Installed and Remove; an unreadable listing
+pauses Add and Remove. A paired-harness instance lists the catalogs with Add disabled and says why.
 
 `providerPlugins.act` accepts `install` (entry id, with an optional source
 instance for shared stores), `add-official-store`, and the existing lifecycle

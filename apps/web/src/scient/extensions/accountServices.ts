@@ -192,14 +192,19 @@ export function accountServiceForApp(app: {
     id: slug(app.name),
     name: app.name,
     tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "",
-    description: claude
-      ? msg("Each agent reaches {name} through its own sign-in. Scient never holds that sign-in.", {
-          name: app.name,
-        })
-      : msg(
-          "Codex and Scient Agent reach {name} through your ChatGPT account. Scient never holds that sign-in.",
-          { name: app.name },
-        ),
+    // Another agent's own route besides ChatGPT's: every agent has its own sign-in.
+    description:
+      claude || antigravity
+        ? msg(
+            "Each agent reaches {name} through its own sign-in. Scient never holds that sign-in.",
+            {
+              name: app.name,
+            },
+          )
+        : msg(
+            "Codex and Scient Agent reach {name} through your ChatGPT account. Scient never holds that sign-in.",
+            { name: app.name },
+          ),
     categories: [],
     chatgptAppId: id,
     claude,
