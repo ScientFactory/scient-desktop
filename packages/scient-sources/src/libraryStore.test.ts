@@ -255,6 +255,34 @@ describe("personal library store", () => {
     expect(after?.note ?? null).toBeNull();
   });
 
+  it("edits a source starred after a write that stopped once its earlier version was kept", async () => {
+    const { root, library } = await newLibrary();
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("STOP1", "Source STOP1"),
+    });
+    const sourceId = imported.record!.sourceId;
+    // What a note edit stopped between keeping revision 1 and writing revision 2 leaves.
+    const history = NodePath.join(root, "history", sourceId, "1.json");
+    await NodeFSP.mkdir(NodePath.dirname(history), { recursive: true });
+    await NodeFSP.copyFile(NodePath.join(root, "records", `${sourceId}.json`), history);
+    await setScientLibraryReadingState({ library, sourceIds: [sourceId], starred: true });
+
+    const noted = await updateScientSourceNote({
+      root: library,
+      sourceId,
+      expectedRevision: 1,
+      note: "Written after the star.",
+    });
+    expect(noted.outcome).toBe("updated");
+    expect(await readScientSourceRecord(library, sourceId)).toMatchObject({
+      revision: 2,
+      starred: true,
+      note: "Written after the star.",
+    });
+  });
+
   it("refuses a library record that names a project", () => {
     expect(() =>
       decodePersistedScientSourceRecord({

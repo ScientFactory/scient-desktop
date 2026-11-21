@@ -980,8 +980,10 @@ async function preserveSourceRevision(
 ): Promise<void> {
   const historyPath = sourceHistoryPath(paths, record.sourceId, record.revision);
   if (await atomicCreateJson(historyPath, record, MAX_RECORD_BYTES)) return;
-  const history = await readBoundedSourceRecord(historyPath);
-  if (JSON.stringify(history) !== JSON.stringify(record)) {
+  // Reading state changes without a revision: a star since this copy was kept is no conflict.
+  const versioned = (value: ScientSourceRecord) =>
+    JSON.stringify({ ...value, readingStatus: undefined, starred: undefined });
+  if (versioned(await readBoundedSourceRecord(historyPath)) !== versioned(record)) {
     throw new Error("The source revision history conflicts with the current record.");
   }
 }

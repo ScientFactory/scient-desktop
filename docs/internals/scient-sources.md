@@ -591,7 +591,9 @@ goes through the central record decoder.
 source or many under the library lock. It writes the record file in place with
 no new revision and no history entry: reading state is about the person, so an
 editor open on the record is never made stale. For the same reason revisions
-never list it as a change, and a revert keeps the current values. A merge keeps
+never list it as a change, a revert keeps the current values, and a write that
+finds its revision already kept in history (one stopped before) compares that
+copy without them. A merge keeps
 the survivor read if either record was read and starred if either was, as
 ordinary merge changes, so Undo puts each record's own values back. A source
 that arrives through the move starts unread and not starred.
