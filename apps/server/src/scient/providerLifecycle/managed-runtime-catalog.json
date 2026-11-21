@@ -223,76 +223,76 @@
     "antigravityAcp": {
       "contractRevision": 2,
       "channel": "stable",
-      "version": "1.5.0",
+      "version": "1.5.2",
       "artifacts": {
         "darwin-arm64": {
-          "artifactName": "agy-acp-server-1.5.0-darwin-arm64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.5.0-darwin-arm64.zip",
+          "artifactName": "agy-acp-server-1.5.2-darwin-arm64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.5.2-darwin-arm64.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "c82ecb4ef476bfc35cbe5b2745cdddef873b99c9f5bd7fd11e5ca1fc1667a3fc"
+            "digest": "123a16d5c40a8ac99e20f01a62b68dd860fd96b1c528dfb8eaa37ca8733d4845"
           },
-          "size": 100401185,
+          "size": 100309778,
           "antigravityAcp": {
-            "version": "1.5.0",
-            "executableBytes": 179756208,
-            "harnessBytes": 129572384
+            "version": "1.5.2",
+            "executableBytes": 179921328,
+            "harnessBytes": 129208672
           }
         },
         "linux-x64": {
-          "artifactName": "agy-acp-server-1.5.0-linux-x86_64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.0-linux-x86_64.zip",
+          "artifactName": "agy-acp-server-1.5.2-linux-x86_64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.2-linux-x86_64.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "36f373e8948edf1727b39c7d62b5722d6a4474bdfd72b04ad3d6def571808c9f"
+            "digest": "99dd8612450805011619d7b8447ce374c289e00549d8557f36790e1dd6256852"
           },
-          "size": 274069093,
+          "size": 273964075,
           "antigravityAcp": {
-            "version": "1.5.0",
-            "executableBytes": 714224576,
-            "harnessBytes": 139570072
+            "version": "1.5.2",
+            "executableBytes": 714384320,
+            "harnessBytes": 139194456
           }
         },
         "linux-arm64": {
-          "artifactName": "agy-acp-server-1.5.0-linux-arm64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.0-linux-arm64.zip",
+          "artifactName": "agy-acp-server-1.5.2-linux-arm64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.2-linux-arm64.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "1e184f439477b54138e94440056b26a78c0a8075a8fd2ffda637ec31267c6459"
+            "digest": "e729e05ef54ef0763e48900032466b47fa7c9939cde257f93ba49410ab577acb"
           },
-          "size": 264366319,
+          "size": 264270419,
           "antigravityAcp": {
-            "version": "1.5.0",
-            "executableBytes": 721489411,
-            "harnessBytes": 132951888
+            "version": "1.5.2",
+            "executableBytes": 721649155,
+            "harnessBytes": 132598576
           }
         },
         "win32-x64": {
-          "artifactName": "agy-acp-server-1.5.0-windows-x86_64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.0-windows-x86_64.zip",
+          "artifactName": "agy-acp-server-1.5.2-windows-x86_64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.2-windows-x86_64.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "6163f6b59b381bae419652dbae167bc8cda0ef29d665c0ba8af3d8c7fddd8867"
+            "digest": "5cbadd4f4df698572473d8890fc26ec2dc1724501f06e3a963941daec2bd21d6"
           },
-          "size": 105513364,
+          "size": 105407645,
           "antigravityAcp": {
-            "version": "1.5.0",
-            "executableBytes": 58314376,
-            "harnessBytes": 155782808
+            "version": "1.5.2",
+            "executableBytes": 58368800,
+            "harnessBytes": 155357336
           }
         },
         "win32-arm64": {
-          "artifactName": "agy-acp-server-1.5.0-windows-arm64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.0-windows-arm64.zip",
+          "artifactName": "agy-acp-server-1.5.2-windows-arm64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.2-windows-arm64.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "340092b8af6dafc71eb15f4a8ec54b4d1f0bce16d1fa4d163b562c50b905f8f4"
+            "digest": "8a4b2ea8df2ffefae33309348752e9119d21a6d36090c0eb48631c2e8f5781ab"
           },
-          "size": 108145235,
+          "size": 108049351,
           "antigravityAcp": {
-            "version": "1.5.0",
-            "executableBytes": 65077040,
-            "harnessBytes": 147104920
+            "version": "1.5.2",
+            "executableBytes": 65130848,
+            "harnessBytes": 146707096
           }
         }
       }
