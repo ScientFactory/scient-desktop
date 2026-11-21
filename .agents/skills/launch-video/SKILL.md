@@ -65,6 +65,7 @@ There are two ways to build one:
    full-size frames in `probe/` to check small text. A probe takes about 2 s a frame.
 7. **Render:** `scripts/render.sh ~/launch-videos/<slug> t3code-<slug>` gives
    `t3code-<slug>.mp4` and `outro.png`. A 30 s video takes 3–6 minutes.
+   <!-- markdown-link-check: ignore-next-line -->
 8. **Hand back** with the video and outro embedded (`![...](/abs/path.mp4)`), the caption
    copy, any `Kit.text` edits, and anything you assumed rather than verified.
 
