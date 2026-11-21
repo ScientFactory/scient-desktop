@@ -351,8 +351,8 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
-  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  useRightPanelStore.getState().openThread(parentRef, otherSide.id);
+  useRightPanelStore.getState().openThread(parentRef, side.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );

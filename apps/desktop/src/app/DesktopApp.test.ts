@@ -83,6 +83,7 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopVoice from "./DesktopVoice.ts";
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
+import * as AppleSpeech from "../speech/AppleSpeech.ts";
 
 interface StubbedDesktop {
   readonly localEnvironmentEnabled: boolean;
@@ -246,6 +247,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
           Layer.mock(DesktopVoice.DesktopVoice, {}),
           // SCIENT-FORK:END
+          Layer.mock(AppleSpeech.AppleSpeech, {}),
           Layer.mock(LoopbackTunnel.LoopbackTunnel, {}),
           Layer.mock(PreviewManager.PreviewManager, {
             isBrowserPartition: () => {

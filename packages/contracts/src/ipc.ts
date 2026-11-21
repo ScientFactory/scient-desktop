@@ -312,6 +312,8 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
   /** Off only because a managed policy rules out this channel; switching channels turns it on. */
   channelBlockedByPolicy?: true;
+  /** The check failed only because this build's track differs from the saved `channel`. */
+  trackMismatch?: { readonly buildChannel: DesktopUpdateChannel };
 }
 
 export interface DesktopUpdateReleaseNote {
@@ -356,6 +358,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
   channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
+  trackMismatch: Schema.optionalKey(Schema.Struct({ buildChannel: DesktopUpdateChannelSchema })),
 });
 
 /** Scient-owned terminal shortcuts managed from desktop Settings. */
@@ -1173,6 +1176,22 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+/** `value` is the resolved locale from `prepare` and the transcript from `transcribe`. */
+export const DesktopAppleSpeechResultSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), value: Schema.String }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: Schema.Literals(["unavailable", "unsupported-locale", "failed"]),
+  }),
+]);
+export type DesktopAppleSpeechResult = typeof DesktopAppleSpeechResultSchema.Type;
+
+export const DesktopAppleSpeechTranscribeInputSchema = Schema.Struct({
+  locale: Schema.String.check(Schema.isMaxLength(64)),
+  // 16 kHz mono Float32 PCM, at most five minutes.
+  pcm: Schema.Uint8Array,
+});
+
 export const SystemSettingsPaneSchema = Schema.Literals([
   "full-disk-access",
   "microphone",
@@ -1325,6 +1344,12 @@ export interface DesktopBridge extends ScientDesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview: DesktopPreviewBridge;
+  /** On-device dictation through macOS 26 SpeechAnalyzer; absent in older desktop builds. */
+  appleSpeech?: {
+    supportedLocales: () => Promise<readonly string[]>;
+    prepare: (locale: string) => Promise<DesktopAppleSpeechResult>;
+    transcribe: (input: { locale: string; pcm: Uint8Array }) => Promise<DesktopAppleSpeechResult>;
+  };
 }
 
 // SCIENT-FORK:START — the local voice bridge lives in scient/desktopVoiceBridge.ts.

@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as AssetSigner from "../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
@@ -62,6 +63,7 @@ const testLayer = Layer.mergeAll(
   WorkspacePaths.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
+  WorkspacePreviewRevisions.layer,
   AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(config)))),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)));
 

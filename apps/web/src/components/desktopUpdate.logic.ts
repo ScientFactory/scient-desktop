@@ -1,3 +1,4 @@
+import { desktopTrackMismatchText } from "@t3tools/client-runtime/state/server";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
@@ -246,6 +247,14 @@ export function getDesktopUpdateButtonTooltip(
     }
     if (state.downloadedVersion) {
       return resolve(msg("Restart and update to {version}", { version: state.downloadedVersion }));
+    }
+    if (state.trackMismatch !== undefined) {
+      return resolve(
+        desktopTrackMismatchText({
+          buildChannel: state.trackMismatch.buildChannel,
+          savedChannel: state.channel,
+        }),
+      );
     }
     return state.message ?? resolve(msg("Update failed"));
   }

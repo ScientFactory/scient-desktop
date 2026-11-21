@@ -141,6 +141,13 @@ export const layer = Api.make(
       placement: { region: "aws:us-east-1" },
       // SCIENT-FORK:END
       domain: relayPublicDomain,
+      // Workers Logs bills per GB, and every request, queue batch, and DO call is
+      // an invocation log. Axiom traces carry the full detail; keep a sample for
+      // crashes and limit errors that never export a span.
+      observability: {
+        enabled: true,
+        logs: { enabled: true, invocationLogs: true, headSamplingRate: 0.01 },
+      },
     })),
     Effect.orDie,
   ),

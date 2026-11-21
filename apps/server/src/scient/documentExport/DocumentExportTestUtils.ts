@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
@@ -65,6 +66,7 @@ export const documentExportTestLayer = (prefix: string) => {
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),
     ),
+    WorkspacePreviewRevisions.layer,
     AssetSigner.layer.pipe(
       Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
     ),

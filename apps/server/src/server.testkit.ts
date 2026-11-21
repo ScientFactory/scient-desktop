@@ -205,6 +205,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -1460,7 +1461,9 @@ export const buildAppUnderTest = (options?: {
           };
         }),
         Layer.provideMerge(makeAuthTestLayer()),
-        Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
+        Layer.provideMerge(
+          Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer, WorkspacePreviewRevisions.layer),
+        ),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
         // Reuse the same fixture owners for dependencies introduced by later layers.

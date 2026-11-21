@@ -443,6 +443,11 @@ const linksUnavailable = new OrchestratorMcpFailure({
   message: "This environment cannot reach linked environments.",
 });
 
+const THREAD_ONLY = new Set<unknown>([
+  McpInvocationContext.hiddenFromOutsideClients,
+  McpInvocationContext.hiddenWithoutBackgroundWait,
+]);
+
 /**
  * Every tool that takes a linked environment runs there the same way: its
  * declaration checks the caller here, and the same call goes to the other
@@ -461,13 +466,9 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     const tool = toolkit.tools[name];
     if (tool === undefined) continue;
     const remote = remoteCheckOf(declaration);
-    const enabledWhen = Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen);
     if (
       remote === undefined &&
-      enabledWhen !== McpInvocationContext.hiddenFromOutsideClients &&
-      // SCIENT-FORK:START — the background wait is shown only to threads, never outside clients.
-      enabledWhen !== McpInvocationContext.shownWithBackgroundWait
-      // SCIENT-FORK:END
+      !THREAD_ONLY.has(Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen))
     )
       return yield* Effect.die(
         `${name} acts as its calling thread, so outside clients must not be offered it.`,

@@ -71,6 +71,7 @@ import { Route as ChatSettingsExtensionsAllRouteImport } from './routes/_chat.se
 import { Route as ChatCloudComputerIdConversationIdRouteImport } from './routes/_chat.cloud.$computerId.$conversationId'
 import { Route as ChatSettingsExtensionsStoreInstanceIdRouteImport } from './routes/_chat.settings.extensions_.store.$instanceId'
 import { Route as ChatSettingsExtensionsCategoryCategoryRouteImport } from './routes/_chat.settings.extensions_.category.$category'
+import { Route as ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRouteImport } from './routes/_chat.linked.$viaEnvironmentId.$linkedEnvironmentId.$linkedThreadId'
 import { Route as ChatSettingsExtensionsItemServerSplatRouteImport } from './routes/_chat.settings.extensions_.item.server.$'
 import { Route as ChatSettingsExtensionsItemPluginPluginIdRouteImport } from './routes/_chat.settings.extensions_.item.plugin.$pluginId'
 import { Route as ChatSettingsExtensionsItemConnectorConnectorIdRouteImport } from './routes/_chat.settings.extensions_.item.connector.$connectorId'
@@ -405,6 +406,14 @@ const ChatSettingsExtensionsCategoryCategoryRoute =
     path: '/extensions/category/$category',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute =
+  ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRouteImport.update(
+    {
+      id: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId',
+      path: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId',
+      getParentRoute: () => ChatRoute,
+    } as any,
+  )
 const ChatSettingsExtensionsItemServerSplatRoute =
   ChatSettingsExtensionsItemServerSplatRouteImport.update({
     id: '/extensions_/item/server/$',
@@ -510,6 +519,7 @@ export interface FileRoutesByFullPath {
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/settings/skills/external': typeof ChatSettingsSkillsExternalRoute
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
+  '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
   '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
@@ -580,6 +590,7 @@ export interface FileRoutesByTo {
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/settings/skills/external': typeof ChatSettingsSkillsExternalRoute
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
+  '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
   '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
@@ -652,6 +663,7 @@ export interface FileRoutesById {
   '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/_chat/settings/skills_/external': typeof ChatSettingsSkillsExternalRoute
   '/_chat/settings/skills_/project': typeof ChatSettingsSkillsProjectRoute
+  '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
   '/_chat/settings/extensions_/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/_chat/settings/extensions_/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
   '/_chat/settings/extensions_/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
@@ -724,6 +736,7 @@ export interface FileRouteTypes {
     | '/settings/scientific-computing/$languageId'
     | '/settings/skills/external'
     | '/settings/skills/project'
+    | '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
     | '/settings/extensions/item/account/$serviceId'
@@ -794,6 +807,7 @@ export interface FileRouteTypes {
     | '/settings/scientific-computing/$languageId'
     | '/settings/skills/external'
     | '/settings/skills/project'
+    | '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
     | '/settings/extensions/item/account/$serviceId'
@@ -865,6 +879,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/scientific-computing_/$languageId'
     | '/_chat/settings/skills_/external'
     | '/_chat/settings/skills_/project'
+    | '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
     | '/_chat/settings/extensions_/category/$category'
     | '/_chat/settings/extensions_/store/$instanceId'
     | '/_chat/settings/extensions_/item/account/$serviceId'
@@ -1325,6 +1340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsExtensionsCategoryCategoryRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId': {
+      id: '/_chat/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
+      path: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
+      fullPath: '/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId'
+      preLoaderRoute: typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings/extensions_/item/server/$': {
       id: '/_chat/settings/extensions_/item/server/$'
       path: '/extensions/item/server/$'
@@ -1505,6 +1527,7 @@ interface ChatRouteChildren {
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
   ChatCloudIndexRoute: typeof ChatCloudIndexRoute
   ChatCloudComputerIdConversationIdRoute: typeof ChatCloudComputerIdConversationIdRoute
+  ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute: typeof ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -1520,6 +1543,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatCloudIndexRoute: ChatCloudIndexRoute,
   ChatCloudComputerIdConversationIdRoute:
     ChatCloudComputerIdConversationIdRoute,
+  ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute:
+    ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

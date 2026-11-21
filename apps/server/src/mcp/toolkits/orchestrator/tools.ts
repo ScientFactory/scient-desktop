@@ -179,9 +179,7 @@ const BackgroundWaitTool = Tool.make("scient_background_wait", {
   // Only marks which tasks keep the thread Working; Claude Plan mode blocks tools without this.
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.shownWithBackgroundWait);
-// SCIENT-FORK:END
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutBackgroundWait);
 
 const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
@@ -224,7 +222,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    'Ask for one secret per single-line card; never combine values. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
+    'Ask for secrets in a private card, one value per single-line input; never combine values in one. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
   parameters: OrchestratorMcpRequestSecretInput,
   success: OrchestratorMcpRequestSecretResult,
   failure: OrchestratorMcpFailure,

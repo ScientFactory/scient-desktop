@@ -627,6 +627,10 @@
       "types": "./src/diffCacheKey.ts",
       "import": "./src/diffCacheKey.ts"
     },
+    "./oauthCallback": {
+      "types": "./src/oauthCallback.ts",
+      "import": "./src/oauthCallback.ts"
+    },
     "./codexArtifactTemplates": {
       "types": "./src/codexArtifactTemplates.ts",
       "import": "./src/codexArtifactTemplates.ts"

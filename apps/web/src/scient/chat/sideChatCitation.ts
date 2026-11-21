@@ -1,4 +1,5 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import type { ComposerCitation, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { createContext, useEffect, useRef } from "react";
@@ -8,6 +9,7 @@ import { toastManager } from "~/components/ui/toast";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { readThreadShell } from "~/state/entities";
 
 /** The chat a quote goes to. */
 export type CitationDestination = "chat" | "side-chat";
@@ -28,7 +30,15 @@ function openSideChatId(parentRef: ScopedThreadRef): ThreadId | null {
     useRightPanelStore.getState().byThreadKey,
     parentRef,
   );
-  const sideChats = surfaces.flatMap((surface) => (surface.kind === "side-chat" ? [surface] : []));
+  // Thread tabs also hold subagents; a quote joins only a side chat. A side chat started a moment
+  // ago may have no shell here yet, so only a known subagent is left out.
+  const sideChats = surfaces.flatMap((surface) => {
+    if (surface.kind !== "thread") return [];
+    const kind = sideThreadKindOf(
+      readThreadShell(scopeThreadRef(parentRef.environmentId, surface.threadId)),
+    );
+    return kind === "subagent" || kind === "provider-subagent" ? [] : [surface];
+  });
   return (
     sideChats.find((surface) => surface.id === activeSurfaceId)?.threadId ??
     sideChats.at(-1)?.threadId ??
@@ -51,7 +61,7 @@ async function citeInSideChat(
   }
   const threadId = openSideChatId(parentRef);
   if (threadId === null) return;
-  useRightPanelStore.getState().openSideChat(parentRef, threadId);
+  useRightPanelStore.getState().openThread(parentRef, threadId);
   const key = scopedThreadKey({ environmentId: parentRef.environmentId, threadId });
   useSideChatInbox.setState(({ byThread }) => ({
     byThread: { ...byThread, [key]: [...(byThread[key] ?? []), citation] },
