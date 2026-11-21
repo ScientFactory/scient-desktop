@@ -20,6 +20,7 @@ import {
   mergeScientLibrarySources,
 } from "@scientfactory/scient-sources/library-merge";
 import { bulkUpdateScientSources } from "@scientfactory/scient-sources/collections";
+import { keepScientDisplacedCopies } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   pinScientLibrarySource,
   readScientProjectPins,
@@ -441,6 +442,38 @@ describe("Sources tools on the library backend", () => {
       expect(yield* pin(detail.projectNoteHistory![0]!.note!, "Second reading")).toMatchObject({
         outcome: "existing",
         pin: { note: "First reading" },
+      });
+    }),
+  );
+
+  it.effect("an agent reads the values kept after a merge Undo with the source", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Kept trial", "10.1000/kept");
+      const sourceId = added.sourceId!;
+      const before = yield* run(getScientSourceForInvocation({ sourceId }), fixture);
+      expect(before).not.toHaveProperty("keptCopies");
+      yield* Effect.promise(() =>
+        keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
+          {
+            sourceId,
+            heldBy: before.citationKey!,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            differs: ["containerTitle"],
+            work: { title: "Kept trial", containerTitle: "Journal before the merge" },
+          },
+        ]),
+      );
+      const detail = yield* run(getScientSourceForInvocation({ sourceId }), fixture);
+      expect(detail).toMatchObject({
+        keptCopies: [
+          {
+            holder: "citation-key",
+            heldBy: before.citationKey,
+            holderPresent: true,
+            fields: [{ field: "containerTitle", earlier: "Journal before the merge" }],
+          },
+        ],
       });
     }),
   );

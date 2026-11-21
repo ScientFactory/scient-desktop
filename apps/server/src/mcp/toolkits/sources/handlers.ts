@@ -180,6 +180,7 @@ import {
   libraryRecentChanges,
   libraryPinMatches,
   isPinRepairAction,
+  keptCopiesOf,
   repairLibraryPin,
   moveBackResult,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
@@ -1379,6 +1380,11 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
             : listProjectSourceUses({ root: store.root, sourceId }),
         )
       : null;
+    // Only after a merge Undo replaced this project's saved details; absent otherwise.
+    const kept =
+      store.kind === "library" && !fromSnapshot
+        ? yield* attempt(() => keptCopiesOf(store, sourceId, record))
+        : {};
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;
@@ -1388,6 +1394,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstractTruncated,
       note: store.kind === "library" ? null : (record.note ?? null),
       revisions: revisions ?? [],
+      ...kept,
       ...(categories
         ? {
             categories: {

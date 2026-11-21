@@ -880,7 +880,11 @@ export async function repairLibraryPin(
  * What this project's saved details held before a merge Undo replaced them, beside the record's
  * values now; copies whose citation key or review has since gone are included.
  */
-async function keptCopiesOf(store: Store, sourceId: string, record: Readonly<object> | null) {
+export async function keptCopiesOf(
+  store: Store,
+  sourceId: string,
+  record: Readonly<object> | null,
+) {
   const copies = (await readScientDisplacedCopiesInProject(store.root)).copies.filter(
     (copy) => copy.sourceId === sourceId,
   );
