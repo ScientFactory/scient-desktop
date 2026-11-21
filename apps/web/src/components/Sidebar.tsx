@@ -3234,6 +3234,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   // SCIENT-FORK:END
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
+    // SCIENT-FORK:START — the picker rule comes first, so a sidebar filtered to one
+    // project still asks, like chat.new; Shift+click on the row and chat.newLocal
+    // start directly.
+    if (opensNewThreadTargetPicker) {
+      if (isMobile) setOpenMobile(false);
+      openCommandPalette({ open: "new-thread-in" });
+      return;
+    }
+    // SCIENT-FORK:END
     const scopedProjectRef = resolveScopedNewThreadProjectRef({
       shiftKey: event?.shiftKey ?? false,
       // The folder sidebar's header button always opens the picker.
@@ -3246,21 +3255,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     // SCIENT-FORK:START
-    if (!opensNewThreadTargetPicker) {
-      if (isMobile) setOpenMobile(false);
-      // With no current or open project, such as when every project is archived, pick one.
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread,
-      }).then((started) => {
-        if (!started) openCommandPalette({ open: "new-thread-in" });
-      });
-      return;
-    }
     if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
+    // With no current or open project, such as when every project is archived, pick one.
+    void startNewThreadFromContext({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread,
+    }).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
+    });
   };
   // The New thread row: Shift+click starts straight in the current project,
   // and a separate button starts without a project.

@@ -21,8 +21,8 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 A worktree needs a commit to start from. In a Git repository with no commits, no
 branches and no remote, a thread or scheduled task set to use a new worktree works
 in the project folder instead, as it would in a folder that is not a Git repository.
-While the sidebar is filtered to one project, the sidebar's **New thread** button
-starts the thread in that project instead of asking which project to use.
+The sidebar's **New thread** button asks which project to use even while the sidebar is
+filtered to one project, so **Add project** stays one step away.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.

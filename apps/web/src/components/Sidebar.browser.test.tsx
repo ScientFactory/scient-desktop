@@ -30,6 +30,11 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
+// SCIENT-FORK:START
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { useUiStateStore } from "../uiStateStore";
+// SCIENT-FORK:END
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
@@ -86,8 +91,13 @@ describe("sidebar header new thread", () => {
     { mode: "normal", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: true, picker: false },
-    // SCIENT-FORK: the picker opens with one project too, so Add project stays one step away.
+    // SCIENT-FORK:START — the picker opens with one project too, and in a sidebar
+    // filtered to one project, so Add project stays one step away.
     { mode: "boring", count: 1, shift: false, picker: true },
+    // A normal sidebar filtered to one project.
+    { mode: "filtered", count: 2, shift: false, picker: true },
+    { mode: "filtered", count: 2, shift: true, picker: false },
+    // SCIENT-FORK:END
   ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
     using stack = new DisposableStack();
     const previousSettings = getClientSettings();
@@ -113,6 +123,19 @@ describe("sidebar header new thread", () => {
       routeThreadRef: null,
     });
     vi.mocked(openCommandPalette).mockClear();
+    // SCIENT-FORK:START — filter the sidebar to the project the current context is not in.
+    if (scenario.mode === "filtered") {
+      const previousScopeKeys = useUiStateStore.getState().sidebarProjectScopeKeys;
+      stack.defer(() => useUiStateStore.setState({ sidebarProjectScopeKeys: previousScopeKeys }));
+      const idleGroup = buildSidebarProjectSnapshots({
+        projects,
+        settings: selectProjectGroupingSettings(DEFAULT_CLIENT_SETTINGS),
+        primaryEnvironmentId: null,
+        resolveEnvironmentLabel: () => null,
+      }).find((group) => group.memberProjectRefs.some((ref) => ref.projectId === "idle"));
+      useUiStateStore.setState({ sidebarProjectScopeKeys: [idleGroup!.projectKey] });
+    }
+    // SCIENT-FORK:END
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
