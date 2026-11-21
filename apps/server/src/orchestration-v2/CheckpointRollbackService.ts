@@ -256,7 +256,24 @@ export const layer: Layer.Layer<
           checkpointId: input.checkpointId,
         });
 
-      if (taskFolder !== null && branch != null) {
+      // SCIENT-FORK:START task-folder-rewind — a shared task folder is refused before any of its
+      // checkouts is rebuilt; a conversation-only rewind rebuilds them only when the folder the
+      // provider works in is gone.
+      if (taskFolder !== null && restoreFiles && !(yield* isolated))
+        return yield* sharedWorkspace();
+      const keepTaskFolder =
+        taskFolder !== null &&
+        !restoreFiles &&
+        worktreePath !== null &&
+        (yield* fileSystem.exists(worktreePath));
+      // SCIENT-FORK:END task-folder-rewind
+      if (
+        taskFolder !== null &&
+        branch != null &&
+        // SCIENT-FORK:START task-folder-rewind
+        !keepTaskFolder
+        // SCIENT-FORK:END task-folder-rewind
+      ) {
         // Cleanup can remove any of the folder's checkouts; the linked project folder has none.
         yield* taskFolders.restore({
           taskFolder,

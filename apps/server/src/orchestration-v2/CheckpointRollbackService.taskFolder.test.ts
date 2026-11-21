@@ -749,3 +749,81 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
       }),
     ),
 );
+
+// SCIENT-FORK:START task-folder-rewind
+it.live.each([
+  { label: "is gone", replacement: "none" },
+  { label: "holds another checkout", replacement: "repository" },
+] as const)(
+  "rewinds only the conversation when a secondary checkout $label, leaving the folder as it is",
+  ({ replacement }) =>
+    withThread({ projectIsRepository: true }, (thread) =>
+      Effect.gen(function* () {
+        const { path, folders, write, read, fileSystem } = thread;
+        const rollbacks = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        yield* thread.turn(1, write(path.join(folders.api, "a.txt"), "1"));
+        yield* thread.turn(2, write(path.join(folders.api, "a.txt"), "2"));
+        yield* fileSystem.remove(folders.web, { recursive: true });
+        if (replacement === "repository") {
+          yield* write(path.join(folders.web, "other.txt"), "other\n");
+          yield* thread.run(folders.web, "init", "-b", "main");
+        }
+        const { checkpointScopes } = yield* thread.records;
+        const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
+        const checkpointId = yield* ids.allocate
+          .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
+          .pipe(Effect.orDie);
+
+        yield* rollbacks.execute({
+          threadId,
+          providerThreadId,
+          checkpointId,
+          scopeId: rootScope.id,
+          restoreFiles: false,
+        });
+
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
+        assert.deepEqual(
+          yield* Effect.all([
+            read(path.join(folders.api, "a.txt")),
+            read(path.join(folders.web, "README.md")),
+            read(path.join(folders.web, "other.txt")),
+          ]),
+          ["2", null, replacement === "repository" ? "other\n" : null],
+        );
+      }),
+    ),
+);
+
+it.live(
+  "rebuilds a removed task folder before a conversation-only rewind, as its provider works there",
+  () =>
+    withThread({ projectIsRepository: true }, (thread) =>
+      Effect.gen(function* () {
+        const { path, folders, read, taskFolder, fileSystem } = thread;
+        const rollbacks = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        yield* thread.turn(1, Effect.void);
+        yield* thread.turn(2, Effect.void);
+        yield* fileSystem.remove(taskFolder.root, { recursive: true });
+        const { checkpointScopes } = yield* thread.records;
+        const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
+        const checkpointId = yield* ids.allocate
+          .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
+          .pipe(Effect.orDie);
+
+        yield* rollbacks.execute({
+          threadId,
+          providerThreadId,
+          checkpointId,
+          scopeId: rootScope.id,
+          restoreFiles: false,
+        });
+
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
+        assert.equal(yield* read(path.join(folders.shop, "AGENTS.md")), "rules\n");
+      }),
+    ),
+);
+// SCIENT-FORK:END task-folder-rewind
