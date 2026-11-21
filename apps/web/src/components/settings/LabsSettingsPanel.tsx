@@ -13,6 +13,9 @@ import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+// SCIENT-FORK:START — the sidebar's icon rail, on by default.
+import { SidebarNavRailSettingRow } from "~/scient/sidebar/SidebarNavRailSettingRow";
+// SCIENT-FORK:END
 
 /** Features still settling in. */
 export function LabsSettingsPanel() {
@@ -21,6 +24,9 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
         <BoringSidebarRow />
+        {/* SCIENT-FORK:START — the sidebar's icon rail, on by default. */}
+        <SidebarNavRailSettingRow />
+        {/* SCIENT-FORK:END */}
         {/* SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links. */}
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : null}

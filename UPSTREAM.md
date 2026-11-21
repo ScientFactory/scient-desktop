@@ -202,6 +202,23 @@ seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
 `desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
 installation remain inherited. Do not copy the updater into a second component
 or restore upstream's muted active-state styling during alignment.
+Scient's sidebar icon rail (`apps/web/src/scient/sidebar/SidebarNavRail.tsx`, on by default,
+`sidebarNavRailEnabled` in Settings → Labs) moves the footer's utility buttons into a column along
+the sidebar's edge; `Sidebar.tsx`, `AppSidebarLayout.tsx`, `SidebarChrome.tsx`,
+`LabsSettingsPanel.tsx` and `settingsSearch.ts` carry marked mounts, and the footer row and the
+rail share `scient/sidebar/useSidebarUtilityActions.ts`. The rail's one Code review item opens pull
+requests or issues; both pages' titles are `scient/codeReview/CodeReviewTitle.tsx`, a switch
+between them, mounted in `PullRequestsColumn.tsx` and `IssuesPage.tsx`. With the rail on,
+`SidebarChromeHeader` renders the same update control in the brand's place
+(`placement="header"`): the brand while idle, without the idle check icon or its animation latch;
+the compact Update after the Scient symbol when there is something to act on; its cards open
+below. The header control keeps owning `useUpdateEverything`, so the other-updates circle reaches
+the rail through a portal (`scient/sidebar/railOtherUpdatesSlot.ts`) rather than a second control.
+An empty draft asks one question, "What should we work on?", and picks its project in a chip
+above the composer; marked regions in `DraftHeroHeadline.tsx` restyle upstream's project combobox
+as that chip and add **No project** as its last item in place of the line under the heading.
+Upstream's `DraftHeroProjectHeading.tsx`, which puts the picker in the sentence, stays unmounted
+(a knip entry) so its changes still merge.
 Scient downloads an offered update in the background (`autoDownloadLoop` in
 `DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
 download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a

@@ -3,8 +3,8 @@ import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { DownloadIcon, LoaderCircleIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { type ComponentProps, useEffect, useId, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { type ComponentProps, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
 import { m } from "../../i18n/messages";
@@ -62,6 +62,8 @@ import { shouldRunUpdateEverything } from "./updateEverything.logic";
 // SCIENT-FORK:START — other machines and providers have their own circle beside the pill.
 import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic";
 import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
+import { OTHER_UPDATES_TONE } from "../../scient/desktopUpdate/otherUpdatesTone";
+import { useRailOtherUpdatesSlot } from "../../scient/sidebar/railOtherUpdatesSlot";
 import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — a downloaded update restarts at once only while nothing here is working.
@@ -208,11 +210,33 @@ export async function downloadLocalUpdate(
   }
 }
 
-export function SidebarUpdatePill() {
-  return <SidebarUpdateControl />;
+// SCIENT-FORK:START — with the icon rail, the header shows this app's update in the brand's place.
+interface SidebarUpdatePillProps {
+  /**
+   * `header` (icon rail): while there is an update to act on, the pill stands in the sidebar header
+   * after `activeLeading` (the Scient symbol), in place of the brand name; otherwise the header
+   * shows `idleContent`. It has no idle check-for-updates button, its cards open below, and the
+   * circle for other updates sits in the rail.
+   */
+  readonly placement?: "footer" | "header";
+  readonly idleContent?: ReactNode;
+  readonly activeLeading?: ReactNode;
+  /** Over the stage artwork the header pill takes the other-updates blue, which reads there. */
+  readonly onStage?: boolean;
 }
 
-function SidebarUpdateControl() {
+export function SidebarUpdatePill(props: SidebarUpdatePillProps) {
+  return <SidebarUpdateControl {...props} />;
+}
+
+function SidebarUpdateControl({
+  placement = "footer",
+  idleContent = null,
+  activeLeading = null,
+  onStage = false,
+}: SidebarUpdatePillProps) {
+  const inHeader = placement === "header";
+  // SCIENT-FORK:END
   const state = useDesktopUpdateState();
   const gt = useGT();
   const messages = useMessages();
@@ -300,6 +324,9 @@ function SidebarUpdateControl() {
   // SCIENT-FORK:END
   const everything = useUpdateEverything(localUpdateVersion);
   const checkProviderUpdates = useCheckProviderUpdates();
+  // SCIENT-FORK:START — the icon rail's slot for the other-updates circle.
+  const railOtherUpdatesSlot = useRailOtherUpdatesSlot();
+  // SCIENT-FORK:END
   // SCIENT-FORK:START
   const runsEverything = shouldRunUpdateEverything(
     everything.hasUpdates && !isUpdateRunActive(run),
@@ -334,7 +361,10 @@ function SidebarUpdateControl() {
   );
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
-    isAnimationLatched: isCheckAnimationLatched,
+    // SCIENT-FORK:START — the icon rail's header shows no check animation, so nothing would end
+    // its latch.
+    isAnimationLatched: !inHeader && isCheckAnimationLatched,
+    // SCIENT-FORK:END
     isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
@@ -574,9 +604,39 @@ function SidebarUpdateControl() {
       : null;
   const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
     everything.run({ admitServer });
+  // In the header (icon rail), this app's update stays up top and the circle for other updates
+  // sits in the rail. Every header layout renders the portal first, so the circle and its card
+  // stay mounted when this app's update appears or goes.
+  const railOtherUpdates =
+    inHeader && railOtherUpdatesSlot
+      ? createPortal(
+          <SidebarOtherUpdates
+            placement="rail"
+            servers={everything.otherServers}
+            updateAll={updateOthers}
+          />,
+          railOtherUpdatesSlot,
+        )
+      : null;
+  if (
+    inHeader &&
+    (!isElectron ||
+      (!showUpdateIconState && !isPreparing && !restartNotice.open && askingPass === null))
+  ) {
+    return (
+      <>
+        {railOtherUpdates}
+        {idleContent}
+      </>
+    );
+  }
   if (!isElectron) {
     return (
-      <SidebarOtherUpdates servers={everything.otherServers} standalone updateAll={updateOthers} />
+      <SidebarOtherUpdates
+        placement="footer"
+        servers={everything.otherServers}
+        updateAll={updateOthers}
+      />
     );
   }
   // SCIENT-FORK:END
@@ -608,10 +668,17 @@ function SidebarUpdateControl() {
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState || isPreparing
           ? cn(
-              // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
-              "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
-              "w-16 gap-0.5 px-0.5",
-              !isInteractionDisabled && "hover:bg-primary/90",
+              // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing; the icon rail's
+              // header pill is a step larger and, over the stage artwork, the other-updates blue.
+              "rounded-(--control-radius) font-medium whitespace-nowrap",
+              inHeader ? "text-xs" : "text-2xs",
+              "h-5 w-16 gap-0.5 px-0.5",
+              onStage && inHeader
+                ? OTHER_UPDATES_TONE
+                : cn(
+                    "bg-primary text-primary-foreground",
+                    !isInteractionDisabled && "hover:bg-primary/90",
+                  ),
             )
           : cn(
               // SCIENT-FORK: idle circle 32px -> 20px to match the pill.
@@ -678,8 +745,11 @@ function SidebarUpdateControl() {
         </span>
       )}
       {updateLabel ? (
-        // SCIENT-FORK: label weight 650 (variable-font axis; font-medium is 500).
-        <span className="tabular-nums" style={{ fontVariationSettings: '"wght" 650' }}>
+        // SCIENT-FORK: label weight 650 (variable-font axis; font-medium is 500), 750 in the header.
+        <span
+          className="tabular-nums"
+          style={{ fontVariationSettings: inHeader ? '"wght" 750' : '"wght" 650' }}
+        >
           {updateLabel}
         </span>
       ) : null}
@@ -697,15 +767,14 @@ function SidebarUpdateControl() {
   ) : null;
   // SCIENT-FORK:END
 
-  return (
-    <SidebarMenuItem
-      // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
-      className="ml-auto flex shrink-0 items-center"
-      // SCIENT-FORK:END
-      data-update-active={showUpdateDetails || undefined}
-    >
-      {/* SCIENT-FORK:START */}
-      <SidebarOtherUpdates servers={everything.otherServers} updateAll={updateOthers} />
+  // SCIENT-FORK:START — the controls sit in the footer item or, with the icon rail, in the header.
+  const controls = (
+    // SCIENT-FORK:END
+    <>
+      {/* SCIENT-FORK:START — in the header the circle is in the rail. */}
+      {inHeader ? null : (
+        <SidebarOtherUpdates servers={everything.otherServers} updateAll={updateOthers} />
+      )}
       {/* SCIENT-FORK:END */}
       <Popover
         handle={releaseNotesPopoverHandle}
@@ -760,7 +829,9 @@ function SidebarUpdateControl() {
                     ? "max-w-48 text-left"
                     : undefined
               }
-              side="top"
+              // SCIENT-FORK:START — the icon rail's header control opens its cards below.
+              side={inHeader ? "bottom" : "top"}
+              // SCIENT-FORK:END
               variant={showUpdateDetails ? "glass" : "default"}
             >
               {restartNoticeContent ??
@@ -789,7 +860,9 @@ function SidebarUpdateControl() {
               }
             }}
             ref={releaseNotesPopupRef}
-            side="top"
+            // SCIENT-FORK:START — the icon rail's header control opens its cards below.
+            side={inHeader ? "bottom" : "top"}
+            // SCIENT-FORK:END
             tooltipStyle
           >
             <SidebarUpdateReleaseNotes
@@ -803,6 +876,7 @@ function SidebarUpdateControl() {
       {/* SCIENT-FORK:START — replaces upstream's confirmation dialog mount. */}
       <UpdateEverythingAsk
         anchorId={releaseNotesTriggerId}
+        side={inHeader ? "bottom" : "top"}
         stops={askingPass?.stops ?? null}
         onCancel={() => setAskingPass(null)}
         onUpdate={() => {
@@ -810,6 +884,31 @@ function SidebarUpdateControl() {
         }}
       />
       {/* SCIENT-FORK:END */}
+    </>
+  );
+  // SCIENT-FORK:START — the icon rail's header puts the control after the Scient symbol.
+  return inHeader ? (
+    <>
+      {railOtherUpdates}
+      <div className="flex shrink-0 items-center gap-2.5">
+        {activeLeading}
+        <div
+          className="relative z-10 flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
+          data-update-active={showUpdateDetails || undefined}
+        >
+          {controls}
+        </div>
+      </div>
+    </>
+  ) : (
+    // SCIENT-FORK:END
+    <SidebarMenuItem
+      // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
+      className="ml-auto flex shrink-0 items-center"
+      // SCIENT-FORK:END
+      data-update-active={showUpdateDetails || undefined}
+    >
+      {controls}
     </SidebarMenuItem>
   );
 }

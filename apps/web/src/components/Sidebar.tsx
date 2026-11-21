@@ -275,6 +275,9 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+// SCIENT-FORK:START — Scient's icon rail along the sidebar's edge.
+import { SidebarNavRail } from "../scient/sidebar/SidebarNavRail";
+// SCIENT-FORK:END
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 // SCIENT-FORK:START
 import type { SectionsLifecycle } from "../scient/sections/logic";
@@ -1065,6 +1068,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  // SCIENT-FORK:START
+  const navRailEnabled = useClientSettings((settings) => settings.sidebarNavRailEnabled);
+  // SCIENT-FORK:END
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -3356,7 +3362,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // SCIENT-FORK:END
   return (
     <SidebarFolderDrop>
-      <SidebarChromeHeader isElectron={isElectron} />
+      {/* SCIENT-FORK:START — with the icon rail, the header holds this app's update. */}
+      <SidebarChromeHeader isElectron={isElectron} updateInBrand={navRailEnabled} />
+      {navRailEnabled ? <SidebarNavRail collapsed={false} /> : null}
+      {/* SCIENT-FORK:END */}
       <SidebarContent
         ref={sidebarContentRef}
         className="min-h-full"
@@ -4205,7 +4214,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter />
+      {/* SCIENT-FORK:START */}
+      <SidebarChromeFooter utilities={!navRailEnabled} />
+      {/* SCIENT-FORK:END */}
       {/* SCIENT-FORK:START */}
       {sections.popover}
       {/* SCIENT-FORK:END */}

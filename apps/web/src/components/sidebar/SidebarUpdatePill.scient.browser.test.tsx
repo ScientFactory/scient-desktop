@@ -31,8 +31,8 @@ vi.mock(import("../../scient/desktopUpdate/SidebarOtherUpdates"), async (origina
 }));
 
 // Offered updates download in the background, so the pill presents a ready one.
-function setup(channel: "beta" | "latest") {
-  state.update = {
+function setup(channel: "beta" | "latest"): DesktopUpdateState {
+  const update: DesktopUpdateState = {
     enabled: true,
     status: "downloaded",
     channel,
@@ -52,6 +52,8 @@ function setup(channel: "beta" | "latest") {
     errorContext: null,
     canRetry: true,
   };
+  state.update = update;
+  return update;
 }
 
 it.each(["beta", "latest"] as const)(
@@ -74,3 +76,22 @@ it.each(["beta", "latest"] as const)(
     } else expect(document.body.textContent).not.toContain("A reviewed Beta change");
   },
 );
+
+it("shows the icon rail's header brand through a check, then the Update button once ready", async () => {
+  const ready = setup("latest");
+  state.update = { ...ready, status: "checking", availableVersion: null, downloadedVersion: null };
+  const header = () => (
+    <SidebarProvider>
+      <SidebarUpdatePill placement="header" idleContent={<span>Scient</span>} />
+    </SidebarProvider>
+  );
+  await using screen = await render(header());
+  await expect.element(screen.getByText("Scient")).toBeVisible();
+  expect(screen.container.querySelector("button")).toBeNull();
+
+  // A check must not leave the header holding the brand once an update is ready.
+  state.update = ready;
+  await screen.rerender(header());
+  await expect.element(screen.getByRole("button", { name: /^Update:/ })).toBeVisible();
+  expect(screen.container.textContent).not.toContain("Scient");
+});

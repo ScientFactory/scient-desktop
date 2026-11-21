@@ -320,7 +320,7 @@ bug report. See [Antigravity](./providers-antigravity.md) for the complete flow.
 ## Keep versions aligned
 
 When the remote server version differs from the desktop client, Scient offers
-the appropriate action from the update control at the bottom of the sidebar and
+the appropriate action from the sidebar's update controls and
 in **Settings → Environments**. Use that
 exact action or copied command; see [Update Scient](updating.md). Changing the
 package or version can produce an incompatible server.

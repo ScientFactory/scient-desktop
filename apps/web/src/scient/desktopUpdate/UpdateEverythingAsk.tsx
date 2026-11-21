@@ -6,17 +6,20 @@ import { stopsThreadsLabel } from "./otherUpdates.logic";
 import { UpdateTextButton } from "./UpdateTextButton";
 
 /**
- * Asks once, above this app's Update pill, before a pass that would stop running threads on
+ * Asks once, beside this app's Update pill, before a pass that would stop running threads on
  * other machines. A pass that stops none runs without asking.
  */
 export function UpdateEverythingAsk({
   anchorId,
+  side,
   stops,
   onUpdate,
   onCancel,
 }: {
   /** The Update pill's element id. */
   readonly anchorId: string;
+  /** Above the footer pill; below the icon rail's header pill. */
+  readonly side: "top" | "bottom";
   /** Running threads the pass would stop, or null when not asking. */
   readonly stops: number | null;
   readonly onUpdate: () => void;
@@ -48,7 +51,7 @@ export function UpdateEverythingAsk({
           aria-labelledby={questionId}
           finalFocus={() => document.getElementById(anchorId)}
           initialFocus={cancelRef}
-          side="top"
+          side={side}
           tooltipStyle
         >
           <div className="flex items-center gap-2.5 whitespace-nowrap" data-update-ask>
