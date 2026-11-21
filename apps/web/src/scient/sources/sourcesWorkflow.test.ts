@@ -934,6 +934,37 @@ describe("sources workflow transient flags", () => {
     expect(cleared.request).toBe(started.request);
   });
 
+  it("drops cached detail when a Library source is pinned or unpinned at the same revision", () => {
+    const unpinnedOverview: ScientSourcesOverviewResult = {
+      ...overviewWith([{ sourceId: "s1", revision: 1, pinned: false }]),
+      libraryBackend: true,
+    };
+    const withOverview = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewArrived",
+      request: 0,
+      overview: unpinnedOverview,
+    });
+    const withDetail = sourcesWorkflowReducer(withOverview, {
+      type: "sourceDetailArrived",
+      sourceId: "s1",
+      atDetailFetch: 1,
+      detail: { ...detail({ sourceId: "s1", revision: 1 }), pinned: false },
+    });
+    expect(shownSourceRecord(withDetail, "s1")?.pinned).toBe(false);
+
+    const pinnedOverview: ScientSourcesOverviewResult = {
+      ...overviewWith([{ sourceId: "s1", revision: 1, pinned: true }]),
+      libraryBackend: true,
+    };
+    const afterPin = sourcesWorkflowReducer(withDetail, {
+      type: "overviewArrived",
+      request: 0,
+      overview: pinnedOverview,
+    });
+    expect(afterPin.sourceDetails["s1"]).toBeUndefined();
+    expect(shownSourceRecord(afterPin, "s1")).toBeNull();
+  });
+
   it("lets an error ride along with import preparation for skip messages", () => {
     const state = sourcesWorkflowReducer(initialSourcesWorkflowState, {
       type: "importPreparationChanged",
