@@ -2179,11 +2179,31 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 }
 
 /** The library's records, its running import and its trash count; reading writes nothing. */
+const recordRevisions = new WeakMap<LibraryRecordIndex, string>();
+
+/**
+ * Changes whenever a record file is added, removed or rewritten: a digest of every file's stamp,
+ * the same stamps the index trusts. Kept per index, which is replaced when anything changed.
+ */
+function recordsRevisionOf(scan: RecordScan): string | undefined {
+  if (!("files" in scan)) return undefined;
+  const index = scan as LibraryRecordIndex;
+  const known = recordRevisions.get(index);
+  if (known) return known;
+  const hash = NodeCrypto.createHash("sha256");
+  for (const [name, file] of index.files) hash.update(`${name}\0${file.stamp}\n`);
+  const revision = hash.digest("base64url");
+  recordRevisions.set(index, revision);
+  return revision;
+}
+
 export async function inspectScientLibrarySources(library: ScientLibraryLocation): Promise<{
   readonly records: ReadonlyArray<ScientSourceRecord>;
   readonly activeOperation: ScientSourceImportOperation | null;
   readonly unreadableRecords?: ReadonlyArray<ScientSourceStoreIssue>;
   readonly trashedCount?: number;
+  /** See `recordsRevisionOf`; absent when the records were not read through the index. */
+  readonly recordsRevision?: string;
 }> {
   const paths = await sourceStorePaths(library);
   const [scan, activeOperation, trash] = await Promise.all([
@@ -2191,7 +2211,9 @@ export async function inspectScientLibrarySources(library: ScientLibraryLocation
     findActiveOperation(paths, "read"),
     scanTrash(paths),
   ]);
+  const recordsRevision = recordsRevisionOf(scan);
   return {
+    ...(recordsRevision ? { recordsRevision } : {}),
     records: scan.records,
     activeOperation,
     ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),

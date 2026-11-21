@@ -68,6 +68,7 @@ import {
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
 import { setLibraryReadingState } from "./LibraryProjectSources.ts";
+import { createScientSourceCollection } from "@scientfactory/scient-sources/collections";
 import { advanceSourceImport, beginZoteroImport } from "./ScientSourcesCoordinator.ts";
 import {
   ScientSourcesBackend,
@@ -276,6 +277,68 @@ describe("Library routes on the library backend", () => {
         yield* Effect.promise(async () => {
           await expect(NodeFSP.stat(recovery.pending)).rejects.toMatchObject({ code: "ENOENT" });
         });
+      }),
+  );
+
+  it.effect(
+    "answers unchanged while the list would be the same, and in full after any change",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const { a, b } = yield* Effect.promise(() => threeSources(fixture));
+        const store = yield* storeFor(fixture, "write");
+        const list = (scope: "library" | "project", knownRevision?: string) =>
+          Effect.promise(() =>
+            libraryOverview(store, {
+              scope,
+              background: false,
+              ...(knownRevision ? { knownRevision } : {}),
+            }),
+          );
+        const first = yield* list("library");
+        expect(first.records).toHaveLength(2);
+        expect(first.revision).toBeDefined();
+        const again = yield* list("library", first.revision);
+        expect(again).toMatchObject({ unchanged: true, records: [], revision: first.revision });
+        expect(again.scopes).toEqual(first.scopes);
+        expect(again).not.toHaveProperty("organization");
+
+        // A star rewrites the record; a new collection changes no record but the list's collections.
+        yield* Effect.promise(() =>
+          setLibraryReadingState(store, { sourceIds: [b.sourceId], starred: true }),
+        );
+        const starred = yield* list("library", first.revision);
+        expect(starred).not.toHaveProperty("unchanged");
+        expect(starred.records.find((row) => row.sourceId === b.sourceId)?.starred).toBe(true);
+        yield* Effect.promise(() =>
+          createScientSourceCollection({
+            root: fixture.library,
+            name: "Methods",
+            sourceIds: [b.sourceId],
+            actor: "user",
+          }),
+        );
+        const filed = yield* list("library", starred.revision);
+        expect(filed).not.toHaveProperty("unchanged");
+        expect(filed.organization?.collections.map((collection) => collection.name)).toEqual([
+          "Methods",
+        ]);
+
+        // The project's own key for a record changes its row, though no record file changes.
+        const project = yield* list("project");
+        expect(yield* list("project", project.revision)).toMatchObject({ unchanged: true });
+        yield* Effect.promise(() =>
+          renameScientProjectPinKey({
+            projectRoot: fixture.root,
+            citationKey: "vasopressinHere",
+            to: "vasopressinNow",
+          }),
+        );
+        const renamed = yield* list("project", project.revision);
+        expect(renamed).not.toHaveProperty("unchanged");
+        expect(renamed.records.find((row) => row.sourceId === a.sourceId)?.citationKey).toBe(
+          "vasopressinNow",
+        );
       }),
   );
 

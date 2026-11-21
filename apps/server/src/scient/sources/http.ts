@@ -240,6 +240,9 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                     ...(args.payload.starred !== undefined
                       ? { starred: args.payload.starred }
                       : {}),
+                    ...(args.payload.knownRevision
+                      ? { knownRevision: args.payload.knownRevision }
+                      : {}),
                   })
                 : getScientSourcesOverview(args.payload.root),
             ).pipe(

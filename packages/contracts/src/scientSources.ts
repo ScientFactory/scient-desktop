@@ -81,6 +81,8 @@ export const ScientSourcesOverviewRequest = Schema.Struct({
   /** Library servers list only records with this reading state; `scopes` still counts them all. */
   readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
   starred: Schema.optionalKey(Schema.Boolean),
+  /** The `revision` of the answer the client holds for this request; see `unchanged`. */
+  knownRevision: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourcesOverviewRequest = typeof ScientSourcesOverviewRequest.Type;
 
@@ -1397,6 +1399,13 @@ export type ScientSourcesOverviewRecord = typeof ScientSourcesOverviewRecord.Typ
 
 export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
+  /** Library servers: changes whenever the records, diagnostics, collections or notices would. */
+  revision: Schema.optionalKey(NonEmptyString),
+  /**
+   * The request's `knownRevision` is still this answer's: `records`, `recordDiagnostics`,
+   * `organization` and `noticeChanges` are not sent, and the client keeps the ones it holds.
+   */
+  unchanged: Schema.optionalKey(Schema.Literal(true)),
   records: Schema.Array(ScientSourcesOverviewRecord),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
   // Optional so a client can read an older server's overview.

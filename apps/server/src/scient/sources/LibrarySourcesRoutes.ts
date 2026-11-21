@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The list revision is a digest of its parts.
+import * as NodeCrypto from "node:crypto";
+
 import {
   citationKeyValidationMessage,
   scientLibraryIdentityProblem,
@@ -279,6 +282,8 @@ export async function libraryOverview(
     readonly background: boolean;
     readonly readingStatus?: ScientSourceReadingStatus;
     readonly starred?: boolean;
+    /** The revision of the list the caller holds; when it still holds, no rows are sent. */
+    readonly knownRevision?: string;
   },
 ) {
   const inspected = store.exists
@@ -341,7 +346,26 @@ export async function libraryOverview(
     void scheduleSourceFullTextIndexing(store.library);
     void scheduleSourceCategorization(store.library);
   }
-  return {
+  const scopes = {
+    listed: input.scope,
+    project: works.length,
+    library: inspected.records.length,
+  };
+  const revision =
+    "recordsRevision" in inspected && inspected.recordsRevision
+      ? overviewRevision({
+          input,
+          recordsRevision: inspected.recordsRevision,
+          listed,
+          categories,
+          organization,
+          noticeChanges,
+          scopes,
+          unreadable: "unreadableRecords" in inspected ? inspected.unreadableRecords : undefined,
+          trashedCount: "trashedCount" in inspected ? inspected.trashedCount : undefined,
+        })
+      : undefined;
+  const status = {
     projectState: "initialized" as const,
     issues: [],
     activeOperation: inspected.activeOperation,
@@ -351,21 +375,85 @@ export async function libraryOverview(
     ...("trashedCount" in inspected && inspected.trashedCount !== undefined
       ? { trashedCount: inspected.trashedCount }
       : {}),
-    records: listed.map((entry) => overviewRow(entry, categories)),
+    ...(revision ? { revision } : {}),
+  };
+  // The caller already holds this answer: only the status and counts are sent.
+  const unchanged = revision !== undefined && revision === input.knownRevision;
+  return {
+    ...status,
+    ...(unchanged ? { unchanged: true as const } : {}),
+    records: unchanged ? [] : listed.map((entry) => overviewRow(entry, categories)),
     // Only the sources that have one: the list looks each source up and takes a missing entry
     // as none, and at 20,000 sources the empty entries were 1.6 MB of the answer.
-    recordDiagnostics: listed.flatMap(({ record }) => {
-      const diagnostics = sourceMetadataDiagnostics(record);
-      return diagnostics.length > 0 ? [{ sourceId: record.sourceId, diagnostics }] : [];
-    }),
-    ...(organization ? { organization } : {}),
-    scopes: {
-      listed: input.scope,
-      project: works.length,
-      library: inspected.records.length,
-    },
-    ...(noticeChanges.length > 0 ? { noticeChanges } : {}),
+    recordDiagnostics: unchanged
+      ? []
+      : listed.flatMap(({ record }) => {
+          const diagnostics = sourceMetadataDiagnostics(record);
+          return diagnostics.length > 0 ? [{ sourceId: record.sourceId, diagnostics }] : [];
+        }),
+    ...(organization && !unchanged ? { organization } : {}),
+    scopes,
+    ...(noticeChanges.length > 0 && !unchanged ? { noticeChanges } : {}),
   };
+}
+
+/** Raise when a row's shape or content changes, so a client never keeps rows built the old way. */
+const OVERVIEW_ROWS_FORMAT = 1;
+
+/**
+ * What the listed rows, collections and notices are made of: the record files' stamps, each
+ * listed entry's place in this project, the categories, collections and notices, and the filter.
+ * Equal digests mean an equal answer apart from the operation status, which is always sent.
+ */
+function overviewRevision(parts: {
+  readonly input: {
+    readonly scope: ScientSourcesScope;
+    readonly readingStatus?: ScientSourceReadingStatus;
+    readonly starred?: boolean;
+  };
+  readonly recordsRevision: string;
+  readonly listed: ReadonlyArray<{
+    readonly record: ScientSourceRecord;
+    readonly pinned: boolean;
+    readonly projectNote?: string | null | undefined;
+    readonly fromSnapshot: boolean;
+    readonly alsoCitedAs?: ReadonlyArray<string> | undefined;
+  }>;
+  readonly categories: unknown;
+  readonly organization: unknown;
+  readonly noticeChanges: unknown;
+  readonly scopes: unknown;
+  readonly unreadable: unknown;
+  readonly trashedCount: unknown;
+}): string {
+  const hash = NodeCrypto.createHash("sha256");
+  const { scope, readingStatus, starred } = parts.input;
+  hash.update(JSON.stringify([OVERVIEW_ROWS_FORMAT, scope, readingStatus, starred]));
+  hash.update(parts.recordsRevision);
+  for (const entry of parts.listed) {
+    // A project's rows also take values from its pins (and snapshots are pins alone), so there
+    // the whole record counts; an All Library row is its record file's, stamped above.
+    hash.update(
+      JSON.stringify([
+        scope === "project" || entry.fromSnapshot ? entry.record : entry.record.sourceId,
+        entry.record.citationKey,
+        entry.pinned,
+        entry.projectNote,
+        entry.alsoCitedAs,
+      ]),
+    );
+  }
+  for (const part of [
+    parts.categories,
+    parts.organization,
+    parts.noticeChanges,
+    parts.scopes,
+    parts.unreadable,
+    parts.trashedCount,
+  ]) {
+    hash.update(`\0${JSON.stringify(part) ?? ""}`);
+  }
+  return hash.digest("base64url");
 }
 
 /** A work's fields two copies can differ in, in the order a Merged row lists them. */
