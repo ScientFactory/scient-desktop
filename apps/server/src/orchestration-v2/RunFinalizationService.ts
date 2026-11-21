@@ -6,6 +6,9 @@ import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:START repository-refresh-per-cwd
+import * as Semaphore from "effect/Semaphore";
+// SCIENT-FORK:END repository-refresh-per-cwd
 
 import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -129,7 +132,11 @@ export const layerObserver = Layer.effect(
     const projects = yield* ProjectService.ProjectService;
     const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
     const pullRequestLookups = yield* FiberMap.make<string>();
-    const repositoryRefreshes = yield* FiberMap.make<ThreadId>();
+    // SCIENT-FORK:START repository-refresh-per-cwd — keyed by folder, so a newer request replaces
+    // only the folders it re-reads and a rewind's other folders still refresh; also offered upstream.
+    const repositoryRefreshes = yield* FiberMap.make<string>();
+    const repositoryRefreshPermits = yield* Semaphore.make(REPOSITORY_REFRESH_CONCURRENCY);
+    // SCIENT-FORK:END repository-refresh-per-cwd
     const identityRefreshes = yield* FiberMap.make<ProjectId>();
     // A turn can add the first remote (`git remote add`, `gh repo create --push`), which the
     // enrichment and resolver caches would otherwise keep reporting as missing for a minute.
@@ -161,6 +168,7 @@ export const layerObserver = Layer.effect(
         threadId,
         cwds,
       }) {
+        // SCIENT-FORK:START repository-refresh-per-cwd
         yield* Effect.forEach(
           cwds,
           (cwd) =>
@@ -172,9 +180,12 @@ export const layerObserver = Layer.effect(
                   detail: error.message,
                 }),
               ),
+              repositoryRefreshPermits.withPermits(1),
+              FiberMap.run(repositoryRefreshes, cwd),
             ),
-          { concurrency: REPOSITORY_REFRESH_CONCURRENCY, discard: true },
-        ).pipe(FiberMap.run(repositoryRefreshes, threadId));
+          { discard: true },
+        );
+        // SCIENT-FORK:END repository-refresh-per-cwd
       }),
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {

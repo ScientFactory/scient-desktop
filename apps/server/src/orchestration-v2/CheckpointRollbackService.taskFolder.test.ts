@@ -604,10 +604,14 @@ it.live("rewinds a linked project folder's repositories to how each was before t
 );
 
 // SCIENT-FORK:START rewind-status-refresh — also offered upstream.
-it.live.each([{ restoreFiles: true }, { restoreFiles: false }])(
-  "re-reads Git status of the repositories a rewind restored, restoreFiles=$restoreFiles",
-  ({ restoreFiles }) =>
-    withThread({ projectIsRepository: false }, (thread) =>
+it.live.each([
+  { projectIsRepository: true, restoreFiles: true },
+  { projectIsRepository: false, restoreFiles: true },
+  { projectIsRepository: false, restoreFiles: false },
+])(
+  "re-reads Git status of the folders a rewind restored, projectIsRepository=$projectIsRepository restoreFiles=$restoreFiles",
+  ({ projectIsRepository, restoreFiles }) =>
+    withThread({ projectIsRepository }, (thread) =>
       Effect.gen(function* () {
         const { path, folders, write } = thread;
         yield* thread.turn(
@@ -641,7 +645,15 @@ it.live.each([{ restoreFiles: true }, { restoreFiles: false }])(
         // Restoring files moves no ref, so only this re-read updates the repositories' totals.
         assert.deepEqual(
           thread.statusRefreshes.map((cwds) => cwds.toSorted()),
-          restoreFiles ? [[folders.api, folders.web].toSorted()] : [],
+          restoreFiles
+            ? [
+                [
+                  ...(projectIsRepository ? [folders.shop] : []),
+                  folders.api,
+                  folders.web,
+                ].toSorted(),
+              ]
+            : [],
         );
       }),
     ),
