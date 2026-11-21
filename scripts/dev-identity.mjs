@@ -520,12 +520,23 @@ export function scrubAccountsState(state) {
   return next;
 }
 
-const accountIdOf = (account) => account?.summary?.id;
+const accountIdOf = (account) => account?.summary?.accountId;
+const profileIdOf = (profile) => profile?.profileId;
+
+/** `emptyState` in AccountPersistence.ts: the Accounts document of an app with no accounts. */
+const EMPTY_ACCOUNTS = {
+  format: 1,
+  agentAccess: true,
+  accounts: [],
+  profiles: [],
+  onePasswordStatus: { state: "not-connected" },
+};
 
 /**
  * The owner's accounts copied over a target, keeping what belongs to the target itself: its
- * senders, sender keys and per-thread profile choices, each profile's sharing records and each
- * account's copies still waiting to be written to the target's stores.
+ * senders, sender keys and per-thread profile choices, each profile's sharing records, each
+ * account's copies still waiting to be written to the target's stores, and the whole row of any
+ * browser profile only the target has, so its controls are not reset to the defaults.
  */
 export function keepLocalAccounts(next, local) {
   if (local === null || typeof local !== "object") return next;
@@ -534,23 +545,32 @@ export function keepLocalAccounts(next, local) {
     if (Object.hasOwn(local, key)) merged[key] = local[key];
   }
   const keep = (items, localItems, idOf, keys) => {
-    if (!Array.isArray(items) || !Array.isArray(localItems)) return items;
-    const own = new Map(localItems.map((item) => [idOf(item), item]));
-    return items.map((item) => {
-      const mine = own.get(idOf(item));
-      if (mine === null || typeof mine !== "object" || idOf(item) === undefined) return item;
+    if (!Array.isArray(localItems)) return items;
+    const list = Array.isArray(items) ? items : [];
+    const own = new Map(
+      localItems
+        .filter((item) => item !== null && typeof item === "object" && idOf(item) !== undefined)
+        .map((item) => [idOf(item), item]),
+    );
+    return list.map((item) => {
+      const mine = idOf(item) === undefined ? undefined : own.get(idOf(item));
+      if (mine === undefined) return item;
       const copy = { ...item };
       for (const key of keys) if (Object.hasOwn(mine, key)) copy[key] = mine[key];
       return copy;
     });
   };
   merged.accounts = keep(merged.accounts, local.accounts, accountIdOf, ["pendingCopies"]);
-  merged.profiles = keep(
-    merged.profiles,
-    local.profiles,
-    (profile) => profile?.profileId,
-    LOCAL_PROFILE_KEYS,
-  );
+  merged.profiles = keep(merged.profiles, local.profiles, profileIdOf, LOCAL_PROFILE_KEYS);
+  if (Array.isArray(local.profiles)) {
+    const present = new Set((merged.profiles ?? []).map(profileIdOf));
+    merged.profiles = [
+      ...(merged.profiles ?? []),
+      ...local.profiles.filter(
+        (profile) => profileIdOf(profile) !== undefined && !present.has(profileIdOf(profile)),
+      ),
+    ];
+  }
   return merged;
 }
 
@@ -558,38 +578,41 @@ export function keepLocalAccounts(next, local) {
 class TargetVaultError extends Error {}
 
 /**
- * The target's own vault: its key and Accounts document when the key is a file that opens it.
- * A Keychain or unreadable vault is replaced only when it holds nothing of the target's own.
+ * The target's own vault: its key and Accounts document when a file key opens them. A file key
+ * whose sentinel is missing is kept too: the app rebuilds the sentinel from it. A Keychain,
+ * unreadable or keyless vault is replaced only when it holds nothing of the target's own.
  */
 function readTargetVault(stateDir) {
   const secrets = NodePath.join(stateDir, "secrets");
+  const names = exists(secrets) ? NodeFS.readdirSync(secrets) : [];
+  const ownData =
+    names.includes(`${ACCOUNTS_STATE}.bin`) ||
+    names.some((name) => SEALED_INSTALL_RECORD.test(name));
   const protection = vaultProtection(stateDir);
-  if (protection === "none") return {};
-  if (protection === "file") {
+  const key = readBytes(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`));
+  if (protection === "file" || (protection === "none" && key !== undefined)) {
     try {
-      const key = readBytes(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`));
+      if (key?.length !== 32) throw new Error("no usable key");
       const sentinel = readBytes(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`));
-      if (key?.length !== 32 || sentinel === undefined) throw new Error("no usable key");
-      vaultDecrypt(key, VAULT_SENTINEL, sentinel.subarray(1));
+      if (sentinel !== undefined) vaultDecrypt(key, VAULT_SENTINEL, sentinel.subarray(1));
       const blob = readBytes(NodePath.join(secrets, `${ACCOUNTS_STATE}.bin`));
       const accounts =
         blob === undefined
           ? undefined
           : JSON.parse(vaultDecrypt(key, ACCOUNTS_STATE, blob).toString("utf8"));
-      return { key, accounts };
+      return { key, accounts, sentinel: sentinel !== undefined };
     } catch (error) {
-      throw new TargetVaultError(`its accounts key does not open its own accounts`, {
+      if (!ownData) return {};
+      throw new TargetVaultError("its accounts key does not open its own accounts", {
         cause: error,
       });
     }
   }
-  const names = NodeFS.readdirSync(secrets);
-  if (
-    names.includes(`${ACCOUNTS_STATE}.bin`) ||
-    names.some((name) => SEALED_INSTALL_RECORD.test(name))
-  ) {
+  if (ownData) {
     throw new TargetVaultError(
-      "its accounts key is in the Keychain, and replacing it would lose this app's own accounts data",
+      protection === "keychain"
+        ? "its accounts key is in the Keychain, and replacing it would lose this app's own accounts data"
+        : "its accounts data has no key here to open it, and replacing it would lose that data",
     );
   }
   return {};
@@ -674,21 +697,19 @@ function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
     ),
   );
   for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
+  const sealAccounts = (accounts) =>
+    vaultEncrypt(
+      key,
+      ACCOUNTS_STATE,
+      Buffer.from(JSON.stringify(keepLocalAccounts(accounts, target.accounts))),
+    );
   const written = [];
   for (const [name, bytes] of capture.secrets) {
     let output;
     try {
       output =
         name === `${ACCOUNTS_STATE}.bin` && capture.accounts !== undefined
-          ? vaultEncrypt(
-              key,
-              ACCOUNTS_STATE,
-              Buffer.from(
-                JSON.stringify(
-                  keepLocalAccounts(scrubAccountsState(capture.accounts), target.accounts),
-                ),
-              ),
-            )
+          ? sealAccounts(scrubAccountsState(capture.accounts))
           : reencryptSecret(name, bytes, sourceKey ?? key, key);
     } catch (error) {
       throw new Error(`${name.replace(/\.bin$/u, "")} could not be decrypted.`, { cause: error });
@@ -698,8 +719,18 @@ function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
     changes.write(NodePath.join(targetSecrets, name), output);
     written.push(name);
   }
+  // A home without an Accounts document yet still leaves the target its own part of one.
+  if (!capture.secrets.has(`${ACCOUNTS_STATE}.bin`) && target.accounts !== undefined) {
+    removed.delete(`${ACCOUNTS_STATE}.bin`);
+    changes.write(
+      NodePath.join(targetSecrets, `${ACCOUNTS_STATE}.bin`),
+      sealAccounts(EMPTY_ACCOUNTS),
+    );
+  }
   if (target.key === undefined) {
     changes.write(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`), key);
+  }
+  if (!target.sentinel) {
     changes.write(NodePath.join(targetSecrets, `${VAULT_SENTINEL}.bin`), makeSentinel(key));
   }
   for (const name of removed) changes.remove(NodePath.join(targetSecrets, name));
@@ -1036,7 +1067,7 @@ const isHomeTarget = (targetStateDir, home) =>
  * before the launcher touches the checkout's runner or app state.
  */
 export function assertHomeCheckout({ checkoutRoot, stateRoot, home = resolveDevIdentityHome() }) {
-  if (!within(stateRoot, home.root) && !within(home.root, stateRoot)) return;
+  if (!within(stateRoot, home.root)) return;
   const registered = homeCheckout(home);
   if (
     sameFile(stateRoot, home.root) &&
@@ -1052,16 +1083,19 @@ export function assertHomeCheckout({ checkoutRoot, stateRoot, home = resolveDevI
   );
 }
 
-/** Changes whenever a seed or setup publishes into the home, holds it, or stopped partway. */
-const homeGeneration = (home) =>
-  [
-    homeIsLocked(home) ? "locked" : "",
-    exists(NodePath.join(home.stateDir, JOURNAL)) ? "journal" : "",
+/**
+ * What the home looked like with no seed or setup in it: undefined while one holds the home or
+ * left a journal. Two equal readings around a copy mean nothing was published in between.
+ */
+const homeGeneration = (home) => {
+  if (homeIsLocked(home) || exists(NodePath.join(home.stateDir, JOURNAL))) return undefined;
+  return [
     readBytes(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER))?.toString("base64") ?? "",
     readBytes(NodePath.join(home.stateDir, "secrets", `${VAULT_SENTINEL}.bin`))?.toString(
       "base64",
     ) ?? "",
   ].join("|");
+};
 
 /** Removes the private staging folder an earlier copy left behind if it stopped. */
 const clearStaging = (stateDir) =>
@@ -1096,6 +1130,7 @@ export async function importDevIdentity({
     }
     // A seed that stopped while publishing is finished before the home opens its vault.
     recoverInterruptedCopy(home.stateDir);
+    clearStaging(home.stateDir);
     return { status: "home" };
   }
   if (isProtectedTarget(targetStateDir, home, installed)) return { status: "refused-target" };
@@ -1104,13 +1139,13 @@ export async function importDevIdentity({
   clearStaging(targetStateDir);
   if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
   if (!exists(home.stateDir)) return { status: "no-home" };
+  if (exists(NodePath.join(home.stateDir, JOURNAL))) return { status: "home-interrupted" };
+  const generation = homeGeneration(home);
+  if (generation === undefined) return { status: "home-busy" };
   const protection = vaultProtection(home.stateDir);
   if (protection !== "file" && protection !== "none") {
     return { status: "home-vault-not-portable", protection };
   }
-  if (exists(NodePath.join(home.stateDir, JOURNAL))) return { status: "home-interrupted" };
-  if (homeIsLocked(home)) return { status: "home-busy" };
-  const generation = homeGeneration(home);
   const capture = captureIdentity(home.stateDir);
   if (capture === undefined) return { status: "home-busy" };
   let target = {};
@@ -1181,8 +1216,9 @@ export async function importDevIdentity({
   } finally {
     clearStaging(targetStateDir);
   }
-  // A seed that began, finished or stopped in the home during the read voids what was read.
-  if (homeGeneration(home) !== generation) {
+  // A seed that began, held, finished or stopped in the home during the read voids what was read.
+  const after = homeGeneration(home);
+  if (after === undefined || after !== generation) {
     changes.abort();
     return { status: "home-busy" };
   }
@@ -1494,6 +1530,7 @@ export function setupHomeCheckout({
     }
   },
   isAlive = processIsAlive,
+  isRunning = homeAppIsRunning,
 }) {
   if (NodePath.basename(checkout) !== HOME_CHECKOUT_NAME) {
     throw new Error(`The home checkout folder must be named ${HOME_CHECKOUT_NAME}.`);
@@ -1512,6 +1549,13 @@ export function setupHomeCheckout({
   const release = acquireHomeLock(home, isAlive);
   try {
     assertHomeLayout(home, installed);
+    // Moving the home to another checkout while its app runs would let a second app open it.
+    const registered = homeCheckout(home);
+    if (registered !== undefined && !sameFile(registered, checkout) && isRunning(home)) {
+      throw new Error(
+        `The identity home is running from ${registered}; stop it there (pnpm dev:app:stop) before moving it to ${checkout}.`,
+      );
+    }
     NodeFS.mkdirSync(home.stateDir, { recursive: true, mode: 0o700 });
     if (!exists(checkout)) {
       if (ref === "origin/main") run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", "main"]);

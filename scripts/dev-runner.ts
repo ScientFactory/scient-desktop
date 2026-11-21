@@ -123,6 +123,23 @@ export class DevRunnerConfigurationError extends Schema.TaggedError<DevRunnerCon
   }
 }
 
+// SCIENT-FORK:START — only the dev identity home's registered checkout may open the home.
+export class DevRunnerIdentityHomeError extends Schema.TaggedError<DevRunnerIdentityHomeError>()(
+  "DevRunnerIdentityHomeError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+/**
+ * Loaded by a runtime path: it is plain JS beside this file, and this TS project does not type
+ * JS modules (no `allowJs`), so a static import would not compile.
+ */
+const IDENTITY_MODULE = "./dev-identity.mjs";
+// SCIENT-FORK:END
+
 export class DevRunnerInvalidPortOffsetError extends Schema.TaggedError<DevRunnerInvalidPortOffsetError>()(
   "DevRunnerInvalidPortOffsetError",
   {
@@ -822,6 +839,18 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
       ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
       : "";
   const baseDir = env.SCIENT_NEXT_HOME ?? (yield* DEFAULT_T3_HOME);
+  // SCIENT-FORK:START — every entry point refuses the identity home outside its own checkout.
+  const checkoutRoot = worktreePath ?? (yield* HostProcess.WorkingDirectory);
+  yield* Effect.tryPromise({
+    try: async () => {
+      const identity = (await import(IDENTITY_MODULE)) as {
+        assertHomeCheckout: (input: { checkoutRoot: string; stateRoot: string }) => void;
+      };
+      identity.assertHomeCheckout({ checkoutRoot, stateRoot: baseDir });
+    },
+    catch: (cause) => new DevRunnerIdentityHomeError({ cause }),
+  });
+  // SCIENT-FORK:END
 
   yield* Effect.logInfo(
     `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,

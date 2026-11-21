@@ -284,11 +284,14 @@ describe("importDevIdentity", () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));
     const checkout = linkHomeCheckout(root, home);
+    const leftover = NodePath.join(home.stateDir, "dev-identity-staging", "cookies-x", "Cookies");
+    write(leftover, "plain jar from a seed that stopped");
     const result = await importDevIdentity({
       targetStateDir: NodePath.join(checkout, ".scient-next", "scient-next-dev"),
       home,
     });
     assert.equal(result.status, "home");
+    assert.equal(NodeFS.existsSync(leftover), false);
   });
 
   it("refuses a second checkout whose app data is the home", async () => {
@@ -647,7 +650,11 @@ describe("what a copy must not carry over", () => {
           JSON.stringify({
             format: 1,
             accounts: [
-              { summary: { id: "a" }, values: { password: valueName }, pendingCopies: { x: [] } },
+              {
+                summary: { accountId: "a" },
+                values: { password: valueName },
+                pendingCopies: { x: [] },
+              },
             ],
             senders: [{ source: "env" }],
             senderKeys: [{ environmentId: "env", key: "k" }],
@@ -675,14 +682,17 @@ describe("what a copy must not carry over", () => {
       );
     assert.deepEqual(readState(), {
       format: 1,
-      accounts: [{ summary: { id: "a" }, values: { password: valueName } }],
+      accounts: [{ summary: { accountId: "a" }, values: { password: valueName } }],
     });
 
-    // The candidate's own senders, choices and pending copies survive the next copy.
+    // The candidate's own senders, choices, pending copies and own profiles survive the next copy.
     const own = {
       format: 1,
-      accounts: [{ summary: { id: "a" }, values: {}, pendingCopies: { y: ["chrome"] } }],
-      profiles: [{ profileId: "p", access: "ask", sharedWith: ["env-2"] }],
+      accounts: [{ summary: { accountId: "a" }, values: {}, pendingCopies: { y: ["chrome"] } }],
+      profiles: [
+        { profileId: "p", access: "ask", sharedWith: ["env-2"] },
+        { profileId: "q", access: "ask", scriptSignIn: false },
+      ],
       senders: [{ source: "env-2" }],
       profileChoices: { thread: "mine" },
     };
@@ -698,7 +708,7 @@ describe("what a copy must not carry over", () => {
         Buffer.from(
           JSON.stringify({
             format: 1,
-            accounts: [{ summary: { id: "a" }, values: { password: valueName } }],
+            accounts: [{ summary: { accountId: "a" }, values: { password: valueName } }],
             profiles: [{ profileId: "p", access: "allowed" }],
           }),
         ),
@@ -712,9 +722,32 @@ describe("what a copy must not carry over", () => {
     assert.deepEqual(readState(), {
       format: 1,
       accounts: [
-        { summary: { id: "a" }, values: { password: valueName }, pendingCopies: { y: ["chrome"] } },
+        {
+          summary: { accountId: "a" },
+          values: { password: valueName },
+          pendingCopies: { y: ["chrome"] },
+        },
       ],
-      profiles: [{ profileId: "p", access: "allowed", sharedWith: ["env-2"] }],
+      profiles: [
+        { profileId: "p", access: "allowed", sharedWith: ["env-2"] },
+        { profileId: "q", access: "ask", scriptSignIn: false },
+      ],
+      senders: [{ source: "env-2" }],
+      profileChoices: { thread: "mine" },
+    });
+
+    // A home with no Accounts document yet still leaves the candidate its own part.
+    NodeFS.rmSync(NodePath.join(home.stateDir, "secrets", "accounts-state.bin"));
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(readState(), {
+      format: 1,
+      agentAccess: true,
+      accounts: [],
+      profiles: [
+        { profileId: "p", access: "allowed", sharedWith: ["env-2"] },
+        { profileId: "q", access: "ask", scriptSignIn: false },
+      ],
+      onePasswordStatus: { state: "not-connected" },
       senders: [{ source: "env-2" }],
       profileChoices: { thread: "mine" },
     });
@@ -810,6 +843,34 @@ describe("what a copy must not carry over", () => {
     assert.match(describeImport(result), /keeps its own accounts/u);
     assert.deepEqual(NodeFS.readdirSync(secrets).sort(), before);
     assert.equal(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8"), "{}");
+  });
+
+  it("keeps a file key whose sentinel is missing, and refuses data with no key at all", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    const secrets = NodePath.join(target, "secrets");
+    const own = makePortableVault();
+    write(NodePath.join(secrets, "accounts-master-key.bin"), own.key);
+    const request = "secret-request-11111111111111111111111111111111";
+    const sealed = Buffer.concat([
+      Buffer.from([0xff]),
+      encrypt(own.key, request, Buffer.from("answer")),
+    ]);
+    write(NodePath.join(secrets, `${request}.bin`), sealed);
+    assert.equal((await importDevIdentity({ targetStateDir: target, home })).status, "imported");
+    assert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(secrets, "accounts-master-key.bin")),
+      own.key,
+    );
+    assert.deepEqual(NodeFS.readFileSync(NodePath.join(secrets, `${request}.bin`)), sealed);
+    assert.equal(vaultProtection(target), "file");
+
+    const keyless = NodePath.join(root, "keyless", "scient-next-dev");
+    write(NodePath.join(keyless, "secrets", `${request}.bin`), sealed);
+    const result = await importDevIdentity({ targetStateDir: keyless, home });
+    assert.equal(result.status, "target-vault-not-portable");
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(keyless, "secrets")), [`${request}.bin`]);
   });
 
   it("refuses a home whose settings point at a record that has not landed", async () => {
@@ -1138,6 +1199,57 @@ describe("code review guards", () => {
     assert.deepEqual(NodeFS.readdirSync(NodePath.join(target, "secrets")), []);
   });
 
+  it("voids a copy when a seed takes the home while it is read", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    write(NodePath.join(home.stateDir, "environment-id"), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n");
+    makeCookieDatabase(
+      NodePath.join(
+        home.stateDir,
+        "electron-userdata",
+        "Partitions",
+        previewPartitionDirectory("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "Cookies",
+      ),
+      [{ host: ".example.org", name: "session", value: "plain" }],
+    );
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "settings.json"), "{}");
+    const pending = importDevIdentity({ targetStateDir: target, home });
+    // A seed (this live process) holds the home, its marker not yet replaced.
+    write(NodePath.join(home.root, "dev-identity.lock"), String(process.pid));
+    assert.deepEqual(await pending, { status: "home-busy" });
+    assert.equal(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8"), "{}");
+  });
+
+  it("does not move the home to another checkout while its app runs", () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    linkHomeCheckout(root, home);
+    const other = NodePath.join(root, "other", "scient-desktop-identity");
+    write(NodePath.join(other, "scripts", "dev-identity.mjs"), PROTOCOL_LINE);
+    assert.throws(
+      () =>
+        setupHomeCheckout({
+          repoRoot: root,
+          checkout: other,
+          home,
+          run: () => {},
+          isRunning: () => true,
+        }),
+      /stop it there/u,
+    );
+    assert.equal(NodeFS.existsSync(NodePath.join(other, ".scient-next")), false);
+    setupHomeCheckout({
+      repoRoot: root,
+      checkout: other,
+      home,
+      run: () => {},
+      isRunning: () => false,
+    });
+    assert.equal(readJson(NodePath.join(home.root, "dev-identity-home.json")).checkout, other);
+  });
+
   it("never writes into a data folder linked to the home or the installed app", async () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));
@@ -1170,7 +1282,7 @@ describe("code review guards", () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));
     const target = NodePath.join(root, "candidate", "scient-next-dev");
-    write(NodePath.join(target, "secrets", "accounts-state.bin"), "old");
+    write(NodePath.join(target, "secrets", "custom-model-old.bin"), "old");
     write(NodePath.join(target, "settings.json"), "{}");
     // The connectors folder cannot be staged, after the secrets were staged.
     NodeFS.chmodSync(target, 0o500);
@@ -1182,7 +1294,7 @@ describe("code review guards", () => {
     }
     assert.equal(result.status, "copy-failed");
     assert.equal(
-      NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-state.bin"), "utf8"),
+      NodeFS.readFileSync(NodePath.join(target, "secrets", "custom-model-old.bin"), "utf8"),
       "old",
     );
     assert.deepEqual(
