@@ -671,8 +671,9 @@ export function IssuesPage() {
           >
             <WorkspaceBreadcrumb ariaLabel={gt("Issues breadcrumb")}>
               <WorkspaceBreadcrumbItem current>
-                {/* SCIENT-FORK: the title switches between pull requests and issues. */}
+                {/* SCIENT-FORK:START — the title switches between pull requests and issues. */}
                 <CodeReviewTitle current="issues" />
+                {/* SCIENT-FORK:END */}
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
             <div className="min-w-0 flex-1" />

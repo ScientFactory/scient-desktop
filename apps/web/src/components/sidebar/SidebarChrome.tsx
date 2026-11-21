@@ -94,8 +94,9 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
   return (
     <div
-      // SCIENT-FORK: the icon rail's styles find the header by this attribute.
+      // SCIENT-FORK:START — the icon rail's styles find the header by this attribute.
       data-sidebar-chrome-header=""
+      // SCIENT-FORK:END
       className={cn(
         "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
         isElectron && "drag-region",

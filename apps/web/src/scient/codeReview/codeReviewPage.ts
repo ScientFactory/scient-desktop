@@ -3,13 +3,25 @@ export type CodeReviewPage = "pull-requests" | "issues";
 
 const STORAGE_KEY = "scient.codeReview.page";
 
-/** The page the switch last showed, so Code review reopens it; pull requests until then. */
+/** Kept for this session when the browser refuses storage, so navigation never depends on it. */
+let sessionPage: CodeReviewPage = "pull-requests";
+
+/** The page last shown, so Code review reopens it; pull requests until then. */
 export function readCodeReviewPage(): CodeReviewPage {
-  if (typeof window === "undefined") return "pull-requests";
-  return window.localStorage.getItem(STORAGE_KEY) === "issues" ? "issues" : "pull-requests";
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (stored === "issues" || stored === "pull-requests") return stored;
+  } catch {
+    // Storage denied: the session's page stands.
+  }
+  return sessionPage;
 }
 
 export function rememberCodeReviewPage(page: CodeReviewPage): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, page);
+  sessionPage = page;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, page);
+  } catch {
+    // Storage denied or full: the session still remembers.
+  }
 }

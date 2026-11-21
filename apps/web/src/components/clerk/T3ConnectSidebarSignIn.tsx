@@ -37,8 +37,9 @@ function ConfiguredT3ConnectSidebarAvatar({ compact = false }: { compact?: boole
     <UserButton
       appearance={{
         elements: {
-          // SCIENT-FORK: the icon rail's compact avatar.
+          // SCIENT-FORK:START — the icon rail's compact avatar.
           avatarBox: compact ? "size-6 ring-1 ring-sidebar-border" : "size-7",
+          // SCIENT-FORK:END
           // Clerk's unlayered trigger reset (padding, radius, background) beats layered utilities.
           userButtonTrigger: "mb-1! rounded-lg! p-1! hover:bg-sidebar-row-hover!",
         },

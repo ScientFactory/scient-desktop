@@ -18,7 +18,6 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { getNewThreadNavigationIntentCoordinator } from "../../lib/newThreadNavigationIntent";
 import {
   initializeScientProjectForOpening,
   inspectScientProjectForOpening,
@@ -83,17 +82,14 @@ function useOpenWholeLibrary() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const handleNewThread = useNewThreadHandler();
+  const locationKey = () =>
+    router.state.location.state.__TSR_key ??
+    router.state.location.state.key ??
+    router.state.location.href;
   return async () => {
-    // Claimed before setup yields, so navigating elsewhere meanwhile cancels the Library.
-    const navigationIntent = getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
-      router.subscribe("onBeforeNavigate", invalidate);
-    }).claim({
-      kind: "explicit",
-      scope:
-        router.state.location.state.__TSR_key ??
-        router.state.location.state.key ??
-        router.state.location.href,
-    });
+    // A navigation while the scratch folder is set up cancels the Library. Claiming the new-thread
+    // navigation only once setup is done leaves the page's own navigation alone if setup fails.
+    const clickedAt = locationKey();
     const environmentId = scratchEnvironmentId(primaryEnvironmentId);
     const prepared = environmentId === null ? null : readPreparedConnection(environmentId);
     if (environmentId === null || prepared === null) {
@@ -127,9 +123,8 @@ function useOpenWholeLibrary() {
         }),
       );
     }
-    const started = await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
-      navigationIntent,
-    });
+    if (locationKey() !== clickedAt) return;
+    const started = await handleNewThread(scopeProjectRef(project.environmentId, project.id));
     if (!started) return;
     openWholeLibrary({
       threadRef: scopeThreadRef(project.environmentId, started.threadId),

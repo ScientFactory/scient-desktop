@@ -361,8 +361,10 @@ function SidebarUpdateControl({
   );
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
-    // SCIENT-FORK: the icon rail's header shows no check animation, so nothing would end its latch.
+    // SCIENT-FORK:START — the icon rail's header shows no check animation, so nothing would end
+    // its latch.
     isAnimationLatched: !inHeader && isCheckAnimationLatched,
+    // SCIENT-FORK:END
     isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
@@ -765,8 +767,9 @@ function SidebarUpdateControl({
   ) : null;
   // SCIENT-FORK:END
 
-  // SCIENT-FORK: the controls sit in the footer item or, with the icon rail, in the header.
+  // SCIENT-FORK:START — the controls sit in the footer item or, with the icon rail, in the header.
   const controls = (
+    // SCIENT-FORK:END
     <>
       {/* SCIENT-FORK:START — in the header the circle is in the rail. */}
       {inHeader ? null : (
@@ -826,8 +829,9 @@ function SidebarUpdateControl({
                     ? "max-w-48 text-left"
                     : undefined
               }
-              // SCIENT-FORK: the icon rail's header control opens its cards below.
+              // SCIENT-FORK:START — the icon rail's header control opens its cards below.
               side={inHeader ? "bottom" : "top"}
+              // SCIENT-FORK:END
               variant={showUpdateDetails ? "glass" : "default"}
             >
               {restartNoticeContent ??
@@ -856,8 +860,9 @@ function SidebarUpdateControl({
               }
             }}
             ref={releaseNotesPopupRef}
-            // SCIENT-FORK: the icon rail's header control opens its cards below.
+            // SCIENT-FORK:START — the icon rail's header control opens its cards below.
             side={inHeader ? "bottom" : "top"}
+            // SCIENT-FORK:END
             tooltipStyle
           >
             <SidebarUpdateReleaseNotes

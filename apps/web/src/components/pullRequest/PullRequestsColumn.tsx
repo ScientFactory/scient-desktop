@@ -185,8 +185,10 @@ export function PullRequestsColumn({
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel={gt("Pull request scope")} className="overflow-hidden">
             <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>
-              {/* SCIENT-FORK: the title switches between pull requests and issues. */}
-              <CodeReviewTitle current="pull-requests" />
+              {/* SCIENT-FORK:START — the title switches between pull requests and issues; an open
+              search leaves only its heading. */}
+              <CodeReviewTitle current="pull-requests" headingOnly={searchExpanded} />
+              {/* SCIENT-FORK:END */}
             </WorkspaceBreadcrumbItem>
             {searchExpanded ? null : <WorkspaceBreadcrumbSeparator />}
             <WorkspaceBreadcrumbItem className="shrink gap-1.5">
@@ -216,8 +218,9 @@ export function PullRequestsColumn({
         ) : (
           <WorkspaceBreadcrumb ariaLabel={gt("Pull requests breadcrumb")}>
             <WorkspaceBreadcrumbItem current>
-              {/* SCIENT-FORK: the title switches between pull requests and issues. */}
+              {/* SCIENT-FORK:START — the title switches between pull requests and issues. */}
               <CodeReviewTitle current="pull-requests" />
+              {/* SCIENT-FORK:END */}
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}
