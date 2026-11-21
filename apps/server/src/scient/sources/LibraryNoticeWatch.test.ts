@@ -139,7 +139,10 @@ describe("the weekly notice check", () => {
   });
 
   it("keeps a retraction it found when a registry check of the paper does not report it", async () => {
-    const { library, later, state, run } = await setup({ scheme: "doi", value: "10.1002/jcb.21852" });
+    const { library, later, state, run } = await setup({
+      scheme: "doi",
+      value: "10.1002/jcb.21852",
+    });
     expect(await run(theFile)).toBe("checked");
     const [record] = await listScientSourceRecords(library);
 
@@ -161,7 +164,10 @@ describe("the weekly notice check", () => {
           }),
         }),
     });
-    expect(checked).toMatchObject({ registry: "found", record: { verification: { state: "verified" } } });
+    expect(checked).toMatchObject({
+      registry: "found",
+      record: { verification: { state: "verified" } },
+    });
     expect(await state()).toBe("retracted");
 
     later(WEEK);

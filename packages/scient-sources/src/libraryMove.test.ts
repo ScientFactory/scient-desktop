@@ -927,7 +927,12 @@ describe("crash tests: each crash, then a rerun that ends in done with nothing l
       otherSourceIds: ["s1", "s2"],
       screening: [],
       duplicates: [
-        { sourceId, duplicateOf, decidedAt: "2026-01-02T00:00:00.000Z", decidedBy: "user" as const },
+        {
+          sourceId,
+          duplicateOf,
+          decidedAt: "2026-01-02T00:00:00.000Z",
+          decidedBy: "user" as const,
+        },
       ],
     });
     const opposite = combineScientReviews({

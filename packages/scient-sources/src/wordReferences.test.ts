@@ -118,6 +118,7 @@ describe("Word references", () => {
       works: [
         {
           id: "endnote:z2asfrdsndpezaeta27x5ff5d022r5x9x9x0:19",
+          addresses: [],
           listed: true,
           item: {
             title: "Bayesian Analysis of Radiocarbon Dates & more",
