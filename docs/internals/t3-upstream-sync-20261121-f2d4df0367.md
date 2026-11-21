@@ -137,8 +137,10 @@ shell's live-profile variables.
   `ClaudeSkills`, the real LaTeX engine and the two `ChatMarkdown.permissions` keyboard-menu cases.
   `EnvironmentFileOpen` failed under load and passed alone. `readerScrolling`'s "fresh open
   settles" case also fails one run in two on owned main.
-- **Web:** the whole unit project passes (12,097 tests). The local browser run hung twice on a
-  closed browser connection, so the browser tests of every area this range touches ran on their
-  own (437 tests); the full browser suite runs in hosted CI.
+- **Web:** the whole unit project passes (12,097 tests). The browser suite hung, locally and in
+  one CI shard, on the PDF route test: T3 made the right-panel and closed-view stores import each
+  other, and that test's module mock awaited the original store. It now spies on the store.
+- **Packaged WSL:** the Linux qualification of the WSL payload passed no home to T3's install
+  script builder, which now takes one; fixed after the first hosted run.
 - **Codex review** (gpt-6.1-sol, high), read independently of this record: no findings.
 - **Hosted CI and live review:** recorded in the PR.
