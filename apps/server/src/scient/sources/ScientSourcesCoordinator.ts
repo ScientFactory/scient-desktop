@@ -608,8 +608,8 @@ export async function checkSourceIdentifier(input: {
   const found = resolution?.status === "found" && !mismatch ? resolution : null;
   const reported = found?.metadata.editorialNotices;
   const write = async (kept: ReadonlyArray<ScientSourceEditorialNotice>) => {
-    const watched = kept.filter((notice) => !reported?.some((other) => other.kind === notice.kind));
-    const notices = reported || watched.length > 0 ? [...(reported ?? []), ...watched] : null;
+    const mergeWatched = (existing: ReadonlyArray<ScientSourceEditorialNotice>) =>
+      kept.filter((notice) => !existing.some((other) => other.kind === notice.kind));
     const check: {
       readonly verification: ScientSourceVerification;
       readonly editorialStatus: ScientSourceEditorialStatus | null;
@@ -617,24 +617,38 @@ export async function checkSourceIdentifier(input: {
       resolution === null
         ? { verification: { state: "unverified" }, editorialStatus: null }
         : resolution.status === "found" && !mismatch
-          ? {
-              verification: {
-                state: "verified",
-                identifier: resolution.identifier,
-                checkedAt: resolution.retrievedAt,
-              },
-              editorialStatus: notices
-                ? editorialStatusFromNotices(notices, resolution.retrievedAt)
-                : null,
-            }
+          ? (() => {
+              const watched = mergeWatched(reported ?? []);
+              const notices =
+                reported || watched.length > 0 ? [...(reported ?? []), ...watched] : null;
+              return {
+                verification: {
+                  state: "verified",
+                  identifier: resolution.identifier,
+                  checkedAt: resolution.retrievedAt,
+                },
+                editorialStatus: notices
+                  ? editorialStatusFromNotices(notices, resolution.retrievedAt)
+                  : null,
+              };
+            })()
           : resolution.status === "unavailable"
-            ? {
-                verification:
-                  sameIdentifier && previous
-                    ? previous
-                    : { state: "unchecked", identifier: resolution.identifier },
-                editorialStatus: sameIdentifier ? (record.editorialStatus ?? null) : null,
-              }
+            ? (() => {
+                const existing = sameIdentifier ? (record.editorialStatus?.notices ?? []) : [];
+                const watched = mergeWatched(existing);
+                return {
+                  verification:
+                    sameIdentifier && previous
+                      ? previous
+                      : { state: "unchecked", identifier: resolution.identifier },
+                  editorialStatus:
+                    watched.length > 0
+                      ? editorialStatusFromNotices([...existing, ...watched], checkedAt)
+                      : sameIdentifier
+                        ? (record.editorialStatus ?? null)
+                        : null,
+                };
+              })()
             : {
                 verification: {
                   state: "unverified",
@@ -642,7 +656,8 @@ export async function checkSourceIdentifier(input: {
                   checkedAt,
                   problem: mismatch ? "mismatch" : "not-found",
                 },
-                editorialStatus: null,
+                editorialStatus:
+                  kept.length > 0 ? editorialStatusFromNotices(kept, checkedAt) : null,
               };
     return recordScientSourceCheck({
       root: input.root,
@@ -652,10 +667,9 @@ export async function checkSourceIdentifier(input: {
       actor: input.actor,
     });
   };
-  const result =
-    found && isScientLibraryLocation(input.root)
-      ? await withScientLibraryWatchNotices(input.root, record, write)
-      : await write([]);
+  const result = isScientLibraryLocation(input.root)
+    ? await withScientLibraryWatchNotices(input.root, record, write)
+    : await write([]);
   return { ...result, registry };
 }
 

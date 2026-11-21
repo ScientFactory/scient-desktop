@@ -35,6 +35,8 @@ const ScientLibraryNoticeChange = Schema.Struct({
   dismissed: Schema.optionalKey(Schema.Literal(true)),
   /** The file's notices of this kind, kept by a registry check when the source has none of them. */
   notices: Schema.optionalKey(Schema.Array(ScientSourceEditorialNotice)),
+  /** The normalized DOIs or PMIDs that matched this notice; kept only while the source holds one. */
+  identifiers: Schema.optionalKey(Schema.Array(NonEmptyString)),
 });
 type ScientLibraryNoticeChange = typeof ScientLibraryNoticeChange.Type;
 type NoticeChangeMade = Omit<ScientLibraryNoticeChange, "at">;
@@ -81,9 +83,12 @@ export async function scientLibraryWatchedIdentifiers(
  * Names a set of watched papers. An unchanged file says nothing of a paper the last whole read
  * did not match, so the check asks for the file again whenever the set differs.
  */
+/** Bumped when ownership rules change so an upgraded Library runs one full pass to backfill. */
+const COVERAGE_VERSION = "v2";
+
 export function scientLibraryNoticeCoverage(keys: Iterable<string>): string {
   return NodeCrypto.createHash("sha256")
-    .update([...keys].toSorted().join("\n"))
+    .update(`${COVERAGE_VERSION}\0${[...keys].toSorted().join("\n")}`)
     .digest("hex");
 }
 
@@ -239,16 +244,18 @@ export async function recordScientLibraryNoticeCheck(input: {
   readonly etag: string | null;
   readonly checkedAt: string;
 }): Promise<{ readonly changedSources: number }> {
-  const { records } = input.found
-    ? await inspectScientLibrarySources(input.library)
-    : { records: null };
   const made: NoticeChangeMade[] = [];
   let changedSources = 0;
   let missed = false;
-  // One locked change for the notices and who keeps them, which a registry check reads with its write.
+  // One locked change for the records read, the notices written and who keeps them.
   await withScientLibraryLock(input.library.root, async () => {
+    const { records } = input.found
+      ? await inspectScientLibrarySources(input.library)
+      : { records: null };
+    const currentIdentifiers = new Map<string, ReadonlySet<string>>();
     for (const record of records ?? []) {
       const keys = watchedIdentifiers(record);
+      currentIdentifiers.set(record.sourceId, new Set(keys));
       // A source added or re-identified while the file was read was not asked about: next check.
       if (keys.length === 0 || keys.some((key) => !input.found?.notices.has(key))) continue;
       const listed = keys.flatMap((key) => input.found?.notices.get(key) ?? []);
@@ -266,8 +273,11 @@ export async function recordScientLibraryNoticeCheck(input: {
       const changes = WatchedKind.literals.flatMap(
         (kind): ReadonlyArray<Omit<NoticeChangeMade, "sourceId">> => {
           const notices = listed.filter((notice) => notice.kind === kind);
+          const identifiers = keys.filter((key) =>
+            (input.found?.notices.get(key) ?? []).some((notice) => notice.kind === kind),
+          );
           if (added.some((notice) => notice.kind === kind)) {
-            return [{ kind, change: "added", notices }];
+            return [{ kind, change: "added", notices, identifiers }];
           }
           if (currentKinds.has(kind) && !keptKinds.has(kind))
             return [{ kind, change: "withdrawn" }];
@@ -275,7 +285,9 @@ export async function recordScientLibraryNoticeCheck(input: {
           if (kind === "retraction" && reinstated) {
             return [{ kind, change: "withdrawn", dismissed: true }];
           }
-          return notices.length > 0 ? [{ kind, change: "added", dismissed: true, notices }] : [];
+          return notices.length > 0
+            ? [{ kind, change: "added", dismissed: true, notices, identifiers }]
+            : [];
         },
       );
       if (added.length > 0 || kept.length < current.length) {
@@ -300,13 +312,30 @@ export async function recordScientLibraryNoticeCheck(input: {
     const live = records ? new Set(records.map((record) => record.sourceId)) : null;
     const changes = new Map(
       (previous?.changes ?? [])
-        .filter((change) => live?.has(change.sourceId) ?? true)
+        .filter((change) => {
+          if (live && !live.has(change.sourceId)) return false;
+          if (change.change === "added" && change.identifiers) {
+            const ids = currentIdentifiers.get(change.sourceId);
+            if (ids && !change.identifiers.some((id) => ids.has(id))) return false;
+          }
+          return true;
+        })
         .map((change) => [changeKey(change), change]),
     );
     for (const change of made) {
       const before = changes.get(changeKey(change));
       // Put back after a refresh took it off: the source is corrected, the person is not told twice.
-      if (before?.change === change.change) continue;
+      // Same-direction entries from an older pass gain their notices and identifiers, keeping dismissal.
+      if (before?.change === change.change) {
+        if (change.notices || change.identifiers) {
+          changes.set(changeKey(change), {
+            ...before,
+            ...(change.notices ? { notices: change.notices } : {}),
+            ...(change.identifiers ? { identifiers: change.identifiers } : {}),
+          });
+        }
+        continue;
+      }
       if (change.dismissed && change.change === "withdrawn" && !before) continue;
       changes.set(changeKey(change), { ...change, at: input.checkedAt });
     }
@@ -340,14 +369,19 @@ export function withScientLibraryWatchNotices<A>(
 ): Promise<A> {
   return withScientLibraryLock(library.root, async () => {
     const watch = await readScientLibraryNoticeWatch(library);
+    const currentIds = new Set(watchedIdentifiers(record));
     const held = (record.editorialStatus?.notices ?? []).filter(
       (notice) => notice.source === RETRACTION_WATCH,
     );
     return write(
       (watch?.changes ?? []).flatMap((change) => {
         if (change.sourceId !== record.sourceId || change.change !== "added") return [];
+        if (change.identifiers && !change.identifiers.some((id) => currentIds.has(id))) {
+          return [];
+        }
         const here = held.filter((notice) => notice.kind === change.kind);
-        return here.length > 0 ? here : (change.notices ?? []);
+        if (here.length > 0) return here;
+        return change.identifiers ? (change.notices ?? []) : [];
       }),
     );
   });

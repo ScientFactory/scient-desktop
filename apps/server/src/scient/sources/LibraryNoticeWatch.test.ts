@@ -212,6 +212,102 @@ describe("the weekly notice check", () => {
     expect(await state()).toBe("retracted");
   });
 
+  it.each([
+    ["not-found", 404, "unverified", "not-found"],
+    ["unavailable", 503, "unchecked", undefined],
+  ] as const)(
+    "keeps a weekly retraction when a registry check is %s",
+    async (_label, status, expectedState, expectedProblem) => {
+      const { library, state, run } = await setup({ scheme: "doi", value: "10.1002/jcb.21852" });
+      expect(await run(theFile)).toBe("checked");
+      const [record] = await listScientSourceRecords(library);
+
+      const checked = await checkSourceIdentifier({
+        root: library,
+        sourceId: record!.sourceId,
+        actor: "user",
+        resolveIdentifier: (identifiers) =>
+          resolveSourceIdentifier(identifiers, {
+            request: async (url) => ({ status, url, body: "" }),
+          }),
+      });
+      expect(checked.record.verification).toMatchObject({
+        state: expectedState,
+        ...(expectedProblem ? { problem: expectedProblem } : {}),
+      });
+      expect(await state()).toBe("retracted");
+    },
+  );
+
+  it("backfills ownership once after upgrade from old coverage without resetting dismissal", async () => {
+    const { library, asked, later, state, run } = await setup(
+      { scheme: "doi", value: "10.1002/jcb.21852" },
+      [{ kind: "retraction", date: "2015-02-03", source: "publisher" }],
+    );
+    const [record] = await listScientSourceRecords(library);
+    // Simulate a pre-upgrade watch file: old unversioned coverage hash, ETag set, dismissed entry lacking notices/identifiers.
+    const oldCoverage = NodeCrypto.createHash("sha256")
+      .update("doi:10.1002/jcb.21852")
+      .digest("hex");
+    await NodeFSP.writeFile(
+      NodePath.join(library.root, "notice-watch.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        checkedAt: "2026-11-01T10:00:00.000Z",
+        etag: '"v1"',
+        covered: oldCoverage,
+        changes: [
+          {
+            sourceId: record!.sourceId,
+            kind: "retraction",
+            change: "added",
+            at: "2026-11-01T10:00:00.000Z",
+            dismissed: true,
+          },
+        ],
+      }),
+    );
+
+    later(WEEK);
+    // First due check after upgrade must NOT send If-None-Match so it backfills ownership.
+    expect(
+      await run(() =>
+        asked.at(-1)?.["If-None-Match"] ? new Response(null, { status: 304 }) : theFile(),
+      ),
+    ).toBe("checked");
+    expect(asked[0]).not.toHaveProperty("If-None-Match");
+    const watch = await readScientLibraryNoticeWatch(library);
+    expect(watch?.changes).toMatchObject([
+      {
+        sourceId: record!.sourceId,
+        kind: "retraction",
+        change: "added",
+        dismissed: true,
+        identifiers: ["doi:10.1002/jcb.21852"],
+      },
+    ]);
+
+    // A subsequent registry check returning no notice now preserves the retraction.
+    await checkSourceIdentifier({
+      root: library,
+      sourceId: record!.sourceId,
+      actor: "user",
+      resolveIdentifier: (identifiers) =>
+        resolveSourceIdentifier(identifiers, {
+          request: async (url) => ({
+            status: 200,
+            url,
+            body: JSON.stringify({
+              type: "journal-article",
+              title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
+              DOI: "10.1002/jcb.21852",
+            }),
+          }),
+        }),
+    });
+    expect(await state()).toBe("retracted");
+  });
+
   it("asks for nothing while no source has a DOI or PMID", async () => {
     const { library, asked, run } = await setup({ scheme: "isbn", value: "9780306406157" });
 

@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
+import { editableMetadataFromRecord } from "./editable.ts";
 import { editorialStatusFromNotices } from "./editorialStatus.ts";
 import * as Lock from "./libraryLock.ts";
 import {
@@ -29,6 +30,7 @@ import {
   listScientSourceRevisions,
   readScientSourceRecord,
   recordScientSourceCheck,
+  updateScientSourceMetadata,
 } from "./store.ts";
 import { sourceCandidate } from "./testing/sourceFixtures.ts";
 
@@ -303,6 +305,74 @@ describe("the weekly notice check", () => {
     const sourceId = await add("Added during the download", [RETRACTED], [WATCH_RETRACTION]);
 
     expect(await check([], "2026-11-15T10:00:00.000Z")).toEqual({ changedSources: 0 });
+    expect((await record(sourceId)).editorialStatus?.state).toBe("retracted");
+  });
+
+  it("drops watch ownership once a source's identifier is corrected to another paper", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add("Misidentified paper", [RETRACTED], []);
+    await check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z");
+    const flagged = await record(sourceId);
+    expect(flagged.editorialStatus?.state).toBe("retracted");
+
+    // Correcting the DOI clears editorialStatus; a later registry check must not reattach the old retraction.
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId,
+      expectedRevision: flagged.revision,
+      metadata: {
+        ...editableMetadataFromRecord(flagged),
+        identifiers: [{ scheme: "doi", value: "10.1000/clean-paper" }],
+      },
+      actor: "user",
+    });
+    expect(edited.record.editorialStatus).toBeUndefined();
+
+    let keptByWatch: ReadonlyArray<ScientSourceEditorialNotice> = [];
+    await withScientLibraryWatchNotices(library, edited.record, async (kept) => {
+      keptByWatch = kept;
+    });
+    expect(keptByWatch).toEqual([]);
+
+    // The next full read clears stale ownership for the old identifier too.
+    await check(["doi:10.1000/clean-paper"], "2026-11-22T10:00:00.000Z");
+    expect((await readScientLibraryNoticeWatch(library))?.changes).toEqual([]);
+  });
+
+  it("re-reads a source under the lock when a registry check clears a publisher retraction before the lock", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add(
+      "Publisher retraction cleared mid-check",
+      [RETRACTED],
+      [{ kind: "retraction", date: "2015-02-03", source: "publisher" }],
+    );
+    const initial = await record(sourceId);
+    let releaseLock!: () => void;
+    const locked = Promise.withResolvers<void>();
+    const waiting = Promise.withResolvers<void>();
+    const holder = actual.withScientLibraryLock(library.root, async () => {
+      locked.resolve();
+      await waiting.promise;
+      // Refresh clears the publisher retraction while the weekly check waits for the lock.
+      await actual.recordScientSourceCheck({
+        root: library,
+        sourceId,
+        expectedRevision: initial.revision,
+        editorialStatus: { state: "none", notices: [], checkedAt: "2026-11-15T09:59:00.000Z" },
+      });
+      await new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+    });
+    await locked.promise;
+
+    const checked = check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z");
+    waiting.resolve();
+    // Let the holder finish its write before releasing the lock.
+    await vi.waitFor(() => expect(releaseLock).toBeDefined());
+    releaseLock();
+    await Promise.all([holder, checked]);
+
     expect((await record(sourceId)).editorialStatus?.state).toBe("retracted");
   });
 
