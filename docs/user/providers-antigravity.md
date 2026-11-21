@@ -209,10 +209,11 @@ the running agent receives the approval itself. Then ask the agent to try again.
 **Signed in** once the plugin's next call works, or after you choose **I've signed in**.
 
 The sign-in page works only while the agent that asked for it is still running, for up to ten
-minutes, and only in a browser on the computer that runs the agent. If the notice says to ask the
-agent to try again, send a message so the plugin asks for a new sign-in. Scient keeps the sign-in
-link out of the conversation, and never reads or stores the plugin's credentials. Signing in needs
-permission to manage providers.
+minutes, and only from the Scient desktop app on the computer that runs the agent. If the notice
+says to ask the agent to try again, send a message so the plugin asks for a new sign-in. Scient
+keeps sign-in links out of the conversation, and never reads or stores the plugin's credentials.
+Only Google's plugins that sign in through their own command offer the button for now. Signing in
+needs permission to manage providers.
 
 ## Run a native goal
 

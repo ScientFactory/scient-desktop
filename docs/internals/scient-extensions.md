@@ -840,7 +840,8 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   `complete` without a callback address waits up to five minutes for Codex's
   `mcpServer/oauthLogin/completed`, which Codex sends when a browser on its
   computer reached its own callback page; the dialog starts that wait when it
-  opens the page and keeps the paste field for remote setups. Claude reports no
+  opens the page, only on a connection the desktop app proves is on the agent's
+  computer, and keeps the paste field for every setup. Claude reports no
   finished sign-in, so without an address it succeeds only when the server
   already shows as connected. A finished or already-valid sign-in refreshes the
   provider instance, so this section stops showing needs-sign-in.
@@ -852,23 +853,33 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   live in `CODEX_HOME/.credentials.json`, which a shadow home links to the shared
   home only if the file existed when the shadow home was built. Two instances
   sharing a home can then disagree until each signs in.
-- **Antigravity plugins** (`scient/antigravity/pluginSignIn.ts`): a plugin's
-  failed tool call prints a `<plugin-card catalog-id="…">` and a sign-in link
-  whose loopback redirect the running agy process serves. The adapter accepts a
-  challenge only from a tool result with exactly one well-formed card and one
-  URL, never from the call's own input or model text. The URL must be HTTPS at a
-  listed authorization endpoint (Google's today; a partner's joins once its
-  challenge is captured), without userinfo or fragment, with one `state` and one
-  `redirect_uri` that is HTTP loopback with a port of 1024 or above and path
-  `/callback`. The page stays server-side for ten minutes, bound to the session,
+- **Antigravity plugins** (`scient/antigravity/pluginSignIn.ts`,
+  `pluginAuthManifest.ts`): a plugin's failed tool call prints a
+  `<plugin-card catalog-id="…">` and a sign-in link whose loopback redirect the
+  running agy process serves. Every URL whose `redirect_uri` is loopback is
+  scrubbed from tool snapshots and from every streamed channel before anything
+  projects it, whether or not a notice follows, together with the `state` and
+  `code_challenge` of any challenge seen. A stream holds a possible partial URL,
+  secret or card (bounded) until that stream ends: a tool's output with its call,
+  a reply at the next tool call or the prompt's end. A challenge needs exactly one
+  well-formed card and one URL in the tool's result, never in its input; streamed
+  output counts once its call ends. It earns a notice only from a plain shell run
+  (no pipes, chaining, redirection or substitution) of a CLI that the installed
+  plugin's `auth.json` lists under `providers.*.clis`, read bounded from
+  `~/.gemini/config/plugins/<slug>/`, whose `plugin.json` name equals the card's
+  `catalog-id`, and whose `oauth2.authorizeUrl` and `oauth2.clientId` match the
+  page's origin, path and `client_id`. The page must also be HTTPS with no
+  userinfo or fragment, one `state`, and one `redirect_uri` that is HTTP loopback
+  with a port of 1024 or above and path `/callback`. Partner plugins that sign in
+  through MCP OAuth declare no CLI, so they get no button until their challenge
+  is captured. The page stays server-side for ten minutes, bound to the session,
   the agent process (an exit or replacement retires it) and the thread that
-  showed the notice; a newer challenge for the plugin replaces it. Tool output and
-  streamed text are scrubbed of the URL, `state` and `code_challenge` before
-  anything projects them, holding back text that could begin one until the next
-  update or the prompt's end. A model-repeated card on its own line is dropped
-  while the attempt is live. `scient.pluginSignIn.open` (providers-manage grant)
-  returns the page only on a click from the agent's own computer; the next
-  successful call of the plugin's command raises a signed-in notice.
+  showed the notice; a newer challenge for the plugin replaces it. A
+  model-repeated card on its own line is dropped while the attempt is live.
+  `scient.pluginSignIn.open` (providers-manage grant) returns the page only on a
+  click from a connection the desktop app proves is on the agent's computer
+  (`scient/sameHost.ts`); the next successful run of one of the plugin's CLIs
+  raises a signed-in notice.
 
 ### Shared plugins source
 
