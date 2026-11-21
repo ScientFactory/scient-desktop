@@ -2180,10 +2180,22 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 
 /** The library's records, its running import and its trash count; reading writes nothing. */
 const recordRevisions = new WeakMap<LibraryRecordIndex, string>();
+const fileDigests = new WeakMap<IndexedRecordFile, string>();
+
+/** What was decoded, not the stamp: a file can change between its stat and its read. */
+function fileDigest(file: IndexedRecordFile): string {
+  const known = fileDigests.get(file);
+  if (known) return known;
+  const digest = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify(file.result))
+    .digest("base64url");
+  fileDigests.set(file, digest);
+  return digest;
+}
 
 /**
- * Changes whenever a record file is added, removed or rewritten: a digest of every file's stamp,
- * the same stamps the index trusts. Kept per index, which is replaced when anything changed.
+ * Changes whenever a record file is added, removed or read with other contents. Each entry's
+ * digest is kept with the entry, which the index reuses while its file is unchanged.
  */
 function recordsRevisionOf(scan: RecordScan): string | undefined {
   if (!("files" in scan)) return undefined;
@@ -2191,7 +2203,7 @@ function recordsRevisionOf(scan: RecordScan): string | undefined {
   const known = recordRevisions.get(index);
   if (known) return known;
   const hash = NodeCrypto.createHash("sha256");
-  for (const [name, file] of index.files) hash.update(`${name}\0${file.stamp}\n`);
+  for (const [name, file] of index.files) hash.update(`${name}\0${fileDigest(file)}\n`);
   const revision = hash.digest("base64url");
   recordRevisions.set(index, revision);
   return revision;

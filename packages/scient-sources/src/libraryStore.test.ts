@@ -6,7 +6,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { organizeScientSources, readScientSourcesOrganization } from "./collections.ts";
 import {
@@ -21,6 +22,7 @@ import type { ScientSourceCandidate } from "./model.ts";
 import {
   decodePersistedScientSourceRecord,
   importScientSource,
+  inspectScientLibrarySources,
   listScientSourceRecords,
   listScientSourceTrash,
   listScientSourceRevisions,
@@ -33,6 +35,8 @@ import {
   warmScientLibraryRecordIndex,
 } from "./store.ts";
 import { sourceCandidate } from "./testing/sourceFixtures.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const fixtures: string[] = [];
 
@@ -341,6 +345,31 @@ describe("personal library store", () => {
     await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
     vi.setSystemTime(Date.now() + 60 * 1000);
     expect((await listScientSourceRecords(library))[0]?.title).toBe("After");
+  });
+
+  it("changes the list revision when a record is rewritten between its stat and its read", async () => {
+    const { root, library } = await newLibrary();
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("RACE", "Before"),
+    });
+    if (!imported.record) throw new Error("Expected an imported record.");
+    const before = await inspectScientLibrarySources(library);
+    const filePath = NodePath.join(root, "records", `${imported.record.sourceId}.json`);
+    const statsBefore = await NodeFSP.lstat(filePath, { bigint: true });
+    const file = JSON.parse(await NodeFSP.readFile(filePath, "utf8")) as Record<string, unknown>;
+    await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
+    const { lstat } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    // The scan's stat saw the file before the rewrite; its read sees the new contents.
+    using _stale = vi.spyOn(NodeFSP, "lstat").mockImplementation((async (
+      path: Parameters<typeof lstat>[0],
+      options?: Parameters<typeof lstat>[1],
+    ) => (path === filePath ? statsBefore : lstat(path, options))) as typeof lstat);
+    const after = await inspectScientLibrarySources(library);
+    expect(after.records[0]?.title).toBe("After");
+    expect(after.recordsRevision).toBeDefined();
+    expect(after.recordsRevision).not.toBe(before.recordsRevision);
   });
 
   it("warms the record index only at its threshold, and a stopped warming keeps none", async () => {
