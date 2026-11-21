@@ -88,17 +88,19 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("a conversation-only rewind goes on once its provider's folder is back", () =>
-    Effect.gen(function* () {
-      const { failure, restored } = yield* prepare({
-        restoreFiles: false,
-        isolated: false,
-        present: false,
-        restoresIt: true,
-      });
-      assert.equal(failure, null);
-      assert.equal(restored, 1);
-    }).pipe(Effect.scoped),
+  it.effect(
+    "a conversation-only rewind that rebuilds its provider's folder stops on any failure",
+    () =>
+      Effect.gen(function* () {
+        const { failure, restored } = yield* prepare({
+          restoreFiles: false,
+          isolated: false,
+          present: false,
+          restoresIt: true,
+        });
+        assert.equal(failure, "SiblingUnrestorable");
+        assert.equal(restored, 1);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("a conversation-only rewind is blocked while its provider's folder is still gone", () =>

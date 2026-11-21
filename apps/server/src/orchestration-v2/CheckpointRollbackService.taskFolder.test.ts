@@ -828,7 +828,7 @@ it.live(
 );
 
 it.live(
-  "rebuilds the provider's folder for a conversation-only rewind past a sibling it cannot restore",
+  "stops a conversation-only rewind that cannot rebuild its whole task folder, leaving the other checkout",
   () =>
     withThread({ projectIsRepository: true }, (thread) =>
       Effect.gen(function* () {
@@ -848,22 +848,24 @@ it.live(
           .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
           .pipe(Effect.orDie);
 
-        yield* rollbacks.execute({
-          threadId,
-          providerThreadId,
-          checkpointId,
-          scopeId: rootScope.id,
-          restoreFiles: false,
-        });
+        const result = yield* Effect.result(
+          rollbacks.execute({
+            threadId,
+            providerThreadId,
+            checkpointId,
+            scopeId: rootScope.id,
+            restoreFiles: false,
+          }),
+        );
 
-        assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
+        assert.equal(result._tag, "Failure");
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "completed"]);
         assert.deepEqual(
           yield* Effect.all([
-            read(path.join(folders.shop, "AGENTS.md")),
             read(path.join(folders.web, "other.txt")),
             read(path.join(folders.web, "README.md")),
           ]),
-          ["rules\n", "other\n", null],
+          ["other\n", null],
         );
       }),
     ),
