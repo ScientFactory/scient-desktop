@@ -1709,6 +1709,8 @@ describe("library merge engine", () => {
     });
     expect(deleted).toMatchObject({ outcome: "deleted" });
     expect(await readScientSourceTrashEntries(library)).toEqual([]);
+    // A Refresh still running when a paper went writes its base last.
+    await writeScientSourceZoteroSync(library, zoteroBase("source_other"));
     // Nothing of a deleted paper's Zotero note stays behind for a backup to carry.
     for (const sourceId of ["source_keep", "source_copy", "source_other"]) {
       expect(await readScientSourceZoteroSync(library, sourceId)).toBeNull();

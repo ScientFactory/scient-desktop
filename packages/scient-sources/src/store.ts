@@ -3667,9 +3667,17 @@ export async function writeScientSourceZoteroSync(
   state: ScientSourceZoteroSyncType,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
-  await asLibraryWriter(paths, () =>
-    atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES),
-  );
+  // Under deletion's lock: a sync finishing after Delete for good must not bring its base back.
+  await withStoreLock(paths, "source-write", async () => {
+    const gone = async (path: string) => (await snapshot(path)) === "missing";
+    if (
+      (await gone(sourceRecordPath(paths, state.sourceId))) &&
+      (await gone(trashEntryPath(paths, state.sourceId)))
+    ) {
+      return;
+    }
+    await atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES);
+  });
 }
 
 /** Replaces a source's links to other reference managers, as a new revision. */

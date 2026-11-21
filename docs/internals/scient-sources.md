@@ -807,7 +807,9 @@ trash. A record deleted for good (Empty trash, `deletePermanently`, the agent's
 Library: its trash entry with the record cut to what identifies the work (no
 abstract, note, PDFs or history), written before the trash entry is erased and
 under the same lock. The source's Zotero base, which holds Zotero's note text,
-is removed before the trash entry too. The resolver treats tombstones as it treats the trash (by
+is removed before the trash entry too, and a base is written only under that lock
+while the source is live or in the trash, so a Zotero sync still running when
+the source went does not bring it back. The resolver treats tombstones as it treats the trash (by
 ID, alias, hydration identity, or a corroborated match of the pin's `work`, a
 merged-away copy only while its survivor is gone), so such a pin stays
 `removed` and its snapshot serves it; a `removed` resolution names the removed
