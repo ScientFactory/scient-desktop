@@ -15,9 +15,18 @@ its agents can do, regardless of who owns it:
 | Account apps: Codex store apps, ChatGPT apps and claude.ai connectors | The provider account                 | Codex, Scient Agent or Claude, each through its own sign-in |
 | Codex plugins (skills and MCP servers)                                | Codex's plugin system                | Codex, and Scient Agent when its build loads them           |
 
-Discover prefers Scient's connector where the curated catalog's `agentStores`
-mapping identifies the same service in an agent store. Google's account apps
-remain in the account layer; Scient does not add Google's official MCP servers.
+Discover prefers Scient's connector where it is the same service as an agent
+store's entry (`storeMatches`: the curated catalog's `agentStores` mapping, or a
+matching name or website). The store shelves and category store lists hide those
+entries. Google's account apps remain in the account layer; Scient does not add
+Google's official MCP servers.
+
+A service several agents' stores list (Stripe in Claude's, Codex's and
+Antigravity's) is one row on a category page, in the first store's section
+(`areStoreTwins`: the same name once case and punctuation go, and the same site
+domain when both entries give a website). Its store page adds **Your agents**
+(`StoreEntryAgents`): the twins become one service's store routes, so each
+agent's row adds its own store's copy.
 
 **Account services** (`apps/web/src/scient/extensions/accountServices.ts`) are
 services Scient lists once and connects to every agent from one page, whichever

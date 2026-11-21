@@ -842,3 +842,54 @@ export function splitCommandLine(text: string): ReadonlyArray<string> | null {
   if (started) parts.push(current);
   return parts;
 }
+
+function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.href.replace(/\/$/u, "");
+  } catch {
+    return value;
+  }
+}
+
+/** Whether an agent-store entry is the same service as one of Scient's curated connectors. */
+export function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
+  return (
+    curated.agentStores?.codex === entry.name ||
+    curated.agentStores?.antigravity === entry.id ||
+    curated.name === entry.id ||
+    curated.name === entry.name ||
+    curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
+    (entry.website !== undefined &&
+      [curated.websiteUrl, ...curated.remotes.map((remote) => remote.url)].some(
+        (url) => url !== undefined && canonicalUrl(url) === canonicalUrl(entry.website!),
+      ))
+  );
+}
+
+/**
+ * The same service listed in several agents' stores: entries whose names agree once case and
+ * punctuation go, and whose websites, when both give one, share a domain.
+ */
+function storeTwinKey(entry: Pick<ProviderStoreEntry, "displayName">): string {
+  return entry.displayName.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** A website's last two host labels: developers.zoom.us and zoom.us are one site. */
+const siteDomain = (url: string | undefined) => {
+  try {
+    return url ? new URL(url).hostname.split(".").slice(-2).join(".") : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export function areStoreTwins(
+  a: Pick<ProviderStoreEntry, "displayName" | "website">,
+  b: Pick<ProviderStoreEntry, "displayName" | "website">,
+): boolean {
+  if (storeTwinKey(a) !== storeTwinKey(b)) return false;
+  const [domainA, domainB] = [siteDomain(a.website), siteDomain(b.website)];
+  return domainA === undefined || domainB === undefined || domainA === domainB;
+}

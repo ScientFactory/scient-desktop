@@ -1,5 +1,7 @@
-import { RegistryContext } from "@effect/atom-react";
-import type { ServerProvider, ServerProviderPlugin } from "@t3tools/contracts";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import type { ProviderStoreEntry, ServerProvider, ServerProviderPlugin } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
 import { Link } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { PlusIcon } from "lucide-react";
@@ -21,12 +23,18 @@ import {
   type StorePluginRoute,
 } from "./accountServices";
 import { useProviderPluginActions } from "./extensionActions";
+import { DetailSection } from "./ExtensionDetailPages";
 import { ActionFeedback } from "./ExtensionItems";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
-import { actOnProviderPlugin, extensionsProviderStoreEntry } from "./extensionsState";
+import {
+  actOnProviderPlugin,
+  extensionsProviderStoreEntry,
+  extensionsProviderStorePage,
+} from "./extensionsState";
+import { areStoreTwins } from "./extensionsView";
 import { needsAntigravityConnectionSignIn } from "./ProviderStorePages";
 import { openAuthorizationPage } from "./openAuthorizationPage";
-import { StoreInstall, useStoreInstall } from "./StoreInstall";
+import { StoreInstall, storeProviders, useStoreInstall } from "./StoreInstall";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 function CardRow({ children }: { readonly children: ReactNode }) {
@@ -408,5 +416,64 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
         );
       })}
     </div>
+  );
+}
+
+const STORE_KINDS = ["shared", "codex", "antigravity"] as const;
+
+/**
+ * A store plugin's page lists every agent, when other agents' stores have the same service: each
+ * agent's row adds its own store's copy, as a service page does.
+ */
+export function StoreEntryAgents({ entry }: { readonly entry: ProviderStoreEntry }) {
+  const gt = useGT();
+  const { environmentId, providers } = useExtensionsEnvironment();
+  // One reader per other store, searched for this entry's name.
+  const others = STORE_KINDS.filter((kind) => kind !== entry.kind).flatMap((kind) => {
+    const reader = storeProviders(providers, kind)[0];
+    return reader ? [{ kind, reader }] : [];
+  });
+  const found = useAtomValue(
+    Atom.make((get) =>
+      others.map(({ kind, reader }) => {
+        const result = get(
+          extensionsProviderStorePage({
+            environmentId,
+            input: {
+              instanceId: reader.instanceId,
+              query: entry.displayName,
+              preview: false,
+              limit: 10,
+            },
+          }),
+        );
+        const twin = (Option.getOrNull(AsyncResult.value(result))?.entries ?? []).find(
+          (candidate) => areStoreTwins(candidate, entry),
+        );
+        return twin ? ([kind, twin.id] as const) : undefined;
+      }),
+    ),
+  ).filter((pair) => pair !== undefined);
+  if (found.length === 0) return null;
+  const ids: Partial<Record<ProviderStoreEntry["kind"], string>> = Object.fromEntries([
+    [entry.kind, entry.id],
+    ...found,
+  ]);
+  const service: AccountService = {
+    id: `store:${entry.kind}:${entry.id}`,
+    name: entry.displayName,
+    tagline: entry.tagline ?? "",
+    description: entry.description,
+    categories: [],
+    stores: {
+      ...(ids.shared ? { claude: ids.shared } : {}),
+      ...(ids.codex ? { codex: ids.codex } : {}),
+      ...(ids.antigravity ? { antigravity: ids.antigravity } : {}),
+    },
+  };
+  return (
+    <DetailSection title={gt("Your agents")}>
+      <ServiceAgents service={service} />
+    </DetailSection>
   );
 }

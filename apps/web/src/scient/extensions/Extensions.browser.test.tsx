@@ -2533,6 +2533,77 @@ describe("Antigravity Marketplace", () => {
     expect(fixture.container.querySelector('[aria-label="From Antigravity’s store"]')).toBeNull();
   });
 
+  const codexStripe: ProviderStoreEntry = {
+    id: "stripe@openai-curated",
+    name: "stripe",
+    displayName: "Stripe",
+    marketplace: "openai-curated",
+    description: "Payments",
+    website: "https://docs.stripe.com",
+    kind: "codex",
+    installed: false,
+    includes: [],
+    apps: [],
+  };
+  const agyStripe = storeEntry("stripe", {
+    id: "stripe@antigravity-plugins-partners",
+    marketplace: "antigravity-plugins-partners",
+    website: "https://stripe.com",
+    publisherType: "third-party",
+    publisher: "Stripe",
+  });
+
+  it("lists a service several stores have once, in the first store's section", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    const plotter = { ...codexStripe, id: "plotter@openai-curated", name: "plotter" };
+    state.storePages[codex] = {
+      entries: [codexStripe, { ...plotter, displayName: "Plotter", website: "https://a.dev" }],
+      total: 2,
+    };
+    state.storePages[antigravity] = {
+      entries: [
+        agyStripe,
+        storeEntry("chemistry"),
+        storeEntry("plotter", { website: "https://b.io" }),
+      ],
+      total: 3,
+    };
+    await fixture.render(<CategoryPage category="code" />);
+    await vi.waitFor(() =>
+      expect(fixture.rowNames(fixture.section("From Codex’s store"))).toEqual([
+        "Stripe",
+        "Plotter",
+      ]),
+    );
+    // Same name, same site: one row. The same name on another site is another service.
+    expect(fixture.rowNames(fixture.section("From Antigravity’s store"))).toEqual([
+      "Chemistry",
+      "Plotter",
+    ]);
+  });
+
+  it("gives a store plugin's page every agent whose store has the same service", async () => {
+    await using fixture = setup();
+    withAntigravity({ plugins: [] });
+    state.storeEntry = agyStripe;
+    state.storePages[codex] = { entries: [codexStripe], total: 1 };
+    await fixture.render(
+      <ProviderStoreDetailPage instanceId="antigravity" entryId={agyStripe.id} />,
+    );
+    const agents = fixture.section("Your agents");
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Codex")).not.toBeNull());
+    expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull();
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await userEvent.click(buttonIn(agents, "Add to Codex")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: { instanceId: codex, action: { type: "install", entryId: codexStripe.id } },
+      }),
+    );
+  });
+
   it("offers a curated item's Antigravity Marketplace entry instead of repeating it", async () => {
     await using fixture = setup();
     withAntigravity();

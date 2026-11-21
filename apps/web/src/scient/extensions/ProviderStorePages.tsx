@@ -34,10 +34,12 @@ import {
   extensionsProviderStoreEntry,
   extensionsProviderStorePage,
 } from "./extensionsState";
-import { providerAvailable } from "./extensionsView";
+import { storeMatches } from "./extensionsView";
 import { isAccountServiceStoreEntry, storeEntryAudience } from "./accountServices";
+import { StoreEntryAgents } from "./ServiceAgents";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
+import { isThirdPartyPlugin, StoreInstall, storeProviders, ThirdPartyNotice } from "./StoreInstall";
 
 /**
  * agy loads a plugin's MCP servers only once they are signed in through its own plugin manager,
@@ -76,24 +78,6 @@ const storePageInput = (
 });
 
 /**
- * The agents reading one store; Claude's marketplaces serve Claude and Scient Agent alike, while
- * Codex's store and the Antigravity Marketplace each serve their own agent.
- */
-function storeProviders(
-  providers: ReadonlyArray<ServerProvider>,
-  store: ProviderStoreEntry["kind"],
-): ReadonlyArray<ServerProvider> {
-  const available = providers.filter(providerAvailable);
-  // Claude first: its instance installs a shared plugin for Scient Agent too.
-  return store === "shared"
-    ? [
-        ...available.filter((provider) => provider.driver === "claudeAgent"),
-        ...available.filter((provider) => provider.driver === "scient"),
-      ]
-    : available.filter((provider) => provider.driver === store);
-}
-
-/**
  * One store's plugins merged across every agent instance that reads it, each plugin once. A
  * preview shelf with nothing to show and nothing to say is left out; the full list says once
  * that nothing matched.
@@ -111,7 +95,8 @@ function StoreList({
   readonly title?: string;
 }) {
   const gt = useGT();
-  const { environmentId, providers: allProviders } = useExtensionsEnvironment();
+  const { environmentId, providers: allProviders, catalog } = useExtensionsEnvironment();
+  const connectors = catalog?.sections.flatMap((section) => section.entries) ?? [];
   const registry = useContext(RegistryContext);
   const act = useAtomCommand(actOnProviderPlugin);
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
@@ -138,11 +123,13 @@ function StoreList({
   for (const { provider, result } of pages) {
     for (const entry of Option.getOrNull(AsyncResult.value(result))?.entries ?? []) {
       const key = `${entry.kind}:${entry.id}`;
-      // A shelf leaves out what Discover lists as a service of its own.
+      // A shelf leaves out what Discover lists as a service or a Scient connector of its own.
       if (
         seen.has(key) ||
         (preview &&
-          ((entry.kind === "codex" && entry.installed) || isAccountServiceStoreEntry(entry)))
+          ((entry.kind === "codex" && entry.installed) ||
+            isAccountServiceStoreEntry(entry) ||
+            connectors.some((connector) => storeMatches(entry, connector))))
       )
         continue;
       seen.add(key);
@@ -441,6 +428,7 @@ function StoreDetail({
       {needsAntigravityConnectionSignIn(entry) ? (
         <AntigravityConnectionSignIn entry={entry} />
       ) : null}
+      <StoreEntryAgents entry={entry} />
       <PluginContents
         key={JSON.stringify([provider.instanceId, entry.id])}
         provider={provider}

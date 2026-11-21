@@ -14,6 +14,24 @@ import { actOnProviderPlugin } from "./extensionsState";
 import { providerAvailable } from "./extensionsView";
 
 /**
+ * The agents reading one store; Claude's marketplaces serve Claude and Scient Agent alike, while
+ * Codex's store and the Antigravity Marketplace each serve their own agent.
+ */
+export function storeProviders(
+  providers: ReadonlyArray<ServerProvider>,
+  store: ProviderStoreEntry["kind"],
+): ReadonlyArray<ServerProvider> {
+  const available = providers.filter(providerAvailable);
+  // Claude first: its instance installs a shared plugin for Scient Agent too.
+  return store === "shared"
+    ? [
+        ...available.filter((provider) => provider.driver === "claudeAgent"),
+        ...available.filter((provider) => provider.driver === "scient"),
+      ]
+    : available.filter((provider) => provider.driver === store);
+}
+
+/**
  * Antigravity's partner catalog lists plugins other developers make; Google's own are not. An
  * entry known only by id (a service page's route) says which catalog listed it.
  */

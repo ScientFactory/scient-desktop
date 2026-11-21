@@ -239,7 +239,12 @@ the rest.
 Discover lists plugins from Claude Code's locally available stores and stores
 configured in Scient Agent. Select the heading to search and browse the full
 list. A plugin's page shows its contents when available and the store's review
-state, such as **Reviewed by Anthropic** or **Reviewed by a partner**.
+state, such as **Reviewed by Anthropic** or **Reviewed by a partner**. When other
+agents' stores have the same service, such as Stripe in Claude's, Codex's and
+Antigravity's stores, Discover lists it once and its page shows **Your agents**,
+with an Add for each agent's own copy. The store shelves leave out a plugin that
+is the same service as one of Scient's connectors, which every agent gets from
+one Add.
 
 Choose **Install in Claude Code** when Claude is available. Scient uses Claude
 Code's own installer; if the store was configured only in Scient Agent,

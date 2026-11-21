@@ -52,6 +52,8 @@ import {
   isExtensionCategory,
   matchesQuery,
   showsKind,
+  areStoreTwins,
+  storeMatches,
 } from "./extensionsView";
 import { AgentSkills } from "../skills/AgentSkills";
 import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
@@ -464,29 +466,6 @@ export function DiscoverPage({ kind }: { readonly kind?: ExtensionKind | undefin
   );
 }
 
-function canonicalUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.hash = "";
-    return url.href.replace(/\/$/u, "");
-  } catch {
-    return value;
-  }
-}
-function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
-  return (
-    curated.agentStores?.codex === entry.name ||
-    curated.agentStores?.antigravity === entry.id ||
-    curated.name === entry.id ||
-    curated.name === entry.name ||
-    curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
-    (entry.website !== undefined &&
-      [curated.websiteUrl, ...curated.remotes.map((remote) => remote.url)].some(
-        (url) => url !== undefined && canonicalUrl(url) === canonicalUrl(entry.website!),
-      ))
-  );
-}
-
 interface StoreGroup {
   readonly key: "claude" | "codex" | "antigravity";
   readonly title: string;
@@ -777,6 +756,22 @@ function CategoryContents({
     matchesQuery(query, [entry.title, entry.description, entry.name]),
   );
   const ready = picks.data !== null || picks.error !== null;
+  // A service several stores list shows once, in the first store's section; its page then lists
+  // every agent's copy.
+  const listed: Array<ProviderStoreEntry> = [];
+  const groupRows = (group: StoreGroup) =>
+    stores.filter(({ provider, entry }) => {
+      if (
+        !group.providers.includes(provider) ||
+        curated.some((pick) => storeMatches(entry, pick)) ||
+        isAccountServiceStoreEntry(entry) ||
+        !matchesQuery(query, [entry.name, entry.displayName, entry.description]) ||
+        listed.some((kept) => areStoreTwins(kept, entry))
+      )
+        return false;
+      listed.push(entry);
+      return true;
+    });
   return (
     <>
       <ExtensionsSection title={gt("Scient’s picks")}>
@@ -810,13 +805,7 @@ function CategoryContents({
               ready={ready}
               slow={slow}
               pages={pages.filter(({ provider }) => group.providers.includes(provider))}
-              rows={stores.filter(
-                ({ provider, entry }) =>
-                  group.providers.includes(provider) &&
-                  !curated.some((pick) => storeMatches(entry, pick)) &&
-                  !isAccountServiceStoreEntry(entry) &&
-                  matchesQuery(query, [entry.name, entry.displayName, entry.description]),
-              )}
+              rows={groupRows(group)}
               more={more}
               onMore={(cursors) =>
                 setMore((current) => {
