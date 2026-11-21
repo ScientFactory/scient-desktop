@@ -49,8 +49,6 @@ function notPrepared(result: Exclude<ScientLibraryRestorePrepared, { outcome: "r
       return "Another restore is being prepared.";
     case "unfinished":
       return "An earlier restore is part way through. Quit Scient and open it again to finish it, then restore.";
-    case "stopped":
-      return "The restore was stopped.";
   }
 }
 

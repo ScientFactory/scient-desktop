@@ -1168,7 +1168,6 @@ export type ScientLibraryJoinResult =
       /** Collections some added source could not be put in, by name. */
       readonly unplacedIn: ReadonlyArray<string>;
     }
-  | { readonly outcome: "stopped"; readonly joinId: string; readonly added: number }
   /** Another join, or an Undo of one, is running in this Library. */
   | { readonly outcome: "busy" }
   | { readonly outcome: "not-a-library" | "damaged" | "same-library" };
@@ -1191,14 +1190,13 @@ export async function joinScientLibrary(input: {
   }) => void;
   /** Called once the join has its record, before it adds anything. */
   readonly onStarted?: (joinId: string) => void;
-  /** Asked between parts; true stops the join where it is. */
-  readonly shouldStop?: () => boolean;
   /** Tests only: a smaller part, and stops at named points as a killed process would. */
   readonly faults?: {
     readonly partSize?: number;
     readonly stopAfter?: number;
     readonly afterFiles?: () => void;
     readonly beforeOrganise?: () => void;
+    readonly beforePart?: () => void;
   };
 }): Promise<ScientLibraryJoinResult> {
   const source = await openScientLibraryJoinSource(input.library, input.folder);
@@ -1259,7 +1257,7 @@ export async function joinScientLibrary(input: {
     /** This Library as last read in full; null while the first comparison still stands. */
     let state: LocalState | null = null;
     for (let start = 0, number = 1; start < compared.fresh.length; start += size, number += 1) {
-      if (input.shouldStop?.()) return { outcome: "stopped", joinId, added: own.size };
+      input.faults?.beforePart?.();
       const records = compared.fresh.slice(start, start + size);
       const part: JoinPart = {
         formatVersion: 1,

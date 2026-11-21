@@ -69,10 +69,6 @@ export function startLibraryJoin(
               unplacedIn: [...result.unplacedIn],
             });
             return;
-          case "stopped":
-            added = result.added;
-            failed("Adding from the other Library was stopped.");
-            return;
           case "busy":
             failed(
               "Another addition, or the Undo of one, is running. Try again when it has finished.",

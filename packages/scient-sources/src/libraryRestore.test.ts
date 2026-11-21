@@ -227,8 +227,9 @@ describe("restoring a backup of the Library", () => {
         libraryRoot: restoredRoot,
         backup,
         // Called synchronously after enumeration and before the first payload copy.
-        shouldStop: () => {
-          if (!swapped) {
+        faults: {
+          beforeCopy: () => {
+            if (swapped) return;
             swapped = true;
             const target = NodePath.join(backup, "library", "future");
             if (kind === "parent") {
@@ -241,8 +242,7 @@ describe("restoring a backup of the Library", () => {
                 NodePath.join(target, "kept.txt"),
               );
             }
-          }
-          return false;
+          },
         },
       });
       expect(swapped).toBe(true);
@@ -892,20 +892,10 @@ describe("restoring a backup of the Library", () => {
     }
   });
 
-  it("drops a waiting copy on Cancel, replaces it on a second request, and can be stopped", async () => {
+  it("drops a waiting copy on Cancel and replaces it on a second request", async () => {
     const { scenario } = await build();
     const backup = await backUp(scenario);
     const root = NodePath.join(scenario.root, "elsewhere", "scient", "library");
-
-    let asked = 0;
-    expect(
-      await prepareScientLibraryRestore({
-        libraryRoot: root,
-        backup,
-        shouldStop: () => (asked += 1) > 3,
-      }),
-    ).toEqual({ outcome: "stopped" });
-    expect(await besideOf(root)).toEqual(["library.restore.lock"]);
 
     const first = await prepareScientLibraryRestore({ libraryRoot: root, backup });
     const second = await prepareScientLibraryRestore({ libraryRoot: root, backup });

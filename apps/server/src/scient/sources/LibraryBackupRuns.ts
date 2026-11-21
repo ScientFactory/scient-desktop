@@ -53,9 +53,6 @@ export function startLibraryBackup(
           return;
         case "unsafe-destination":
           failed("Choose a folder that exists and is not inside the Library.");
-          return;
-        case "stopped":
-          failed("The backup was stopped.");
       }
     },
     (cause: unknown) => failed(reasonOf(cause)),

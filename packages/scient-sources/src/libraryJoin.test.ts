@@ -1507,38 +1507,39 @@ describe("what differs between the two Libraries, and taking one thing at a time
       library: ours.library,
       folder: backup,
       actor: "user",
-      faults: { partSize: 1 },
-      shouldStop: () => {
-        asked += 1;
-        if (asked !== 2) return false;
-        // Between the parts, the paper here is given the details of the one still to come.
-        const coming = ["t1", "t2"]
-          .map((label) => workOf(theirs.model, label).sourceId)
-          .find(
-            (sourceId) =>
-              !NodeFS.existsSync(
-                NodePath.join(ours.scenario.libraryRoot, "records", `${sourceId}.json`),
-              ),
-          )!;
-        const other = JSON.parse(
-          NodeFS.readFileSync(
-            NodePath.join(theirs.scenario.libraryRoot, "records", `${coming}.json`),
-            "utf8",
-          ),
-        ) as Record<string, unknown>;
-        const here = JSON.parse(NodeFS.readFileSync(mine, "utf8")) as Record<string, unknown>;
-        NodeFS.writeFileSync(
-          mine,
-          JSON.stringify({
-            ...here,
-            title: other.title,
-            creators: other.creators,
-            issuedRaw: other.issuedRaw,
-            issuedYear: other.issuedYear,
-            identifiers: other.identifiers,
-          }),
-        );
-        return false;
+      faults: {
+        partSize: 1,
+        beforePart: () => {
+          asked += 1;
+          if (asked !== 2) return;
+          // Between the parts, the paper here is given the details of the one still to come.
+          const coming = ["t1", "t2"]
+            .map((label) => workOf(theirs.model, label).sourceId)
+            .find(
+              (sourceId) =>
+                !NodeFS.existsSync(
+                  NodePath.join(ours.scenario.libraryRoot, "records", `${sourceId}.json`),
+                ),
+            )!;
+          const other = JSON.parse(
+            NodeFS.readFileSync(
+              NodePath.join(theirs.scenario.libraryRoot, "records", `${coming}.json`),
+              "utf8",
+            ),
+          ) as Record<string, unknown>;
+          const here = JSON.parse(NodeFS.readFileSync(mine, "utf8")) as Record<string, unknown>;
+          NodeFS.writeFileSync(
+            mine,
+            JSON.stringify({
+              ...here,
+              title: other.title,
+              creators: other.creators,
+              issuedRaw: other.issuedRaw,
+              issuedYear: other.issuedYear,
+              identifiers: other.identifiers,
+            }),
+          );
+        },
       },
     });
     expect(result).toMatchObject({ outcome: "joined", added: 1, skipped: 1 });
@@ -1559,34 +1560,35 @@ describe("what differs between the two Libraries, and taking one thing at a time
       library: ours.library,
       folder: backup,
       actor: "user",
-      faults: { partSize: 1 },
-      shouldStop: () => {
-        asked += 1;
-        if (asked !== 2) return false;
-        // Between the parts, the paper that has just arrived is given, here, the details of
-        // the one still to come (the other Library keeps the two apart; this edit does not).
-        const [arrived, coming] = NodeFS.existsSync(
-          NodePath.join(records(ours.scenario), `${first}.json`),
-        )
-          ? [first!, second!]
-          : [second!, first!];
-        const other = JSON.parse(
-          NodeFS.readFileSync(NodePath.join(records(theirs.scenario), `${coming}.json`), "utf8"),
-        ) as Record<string, unknown>;
-        const file = NodePath.join(records(ours.scenario), `${arrived}.json`);
-        const here = JSON.parse(NodeFS.readFileSync(file, "utf8")) as Record<string, unknown>;
-        NodeFS.writeFileSync(
-          file,
-          JSON.stringify({
-            ...here,
-            title: other.title,
-            creators: other.creators,
-            issuedRaw: other.issuedRaw,
-            issuedYear: other.issuedYear,
-            identifiers: other.identifiers,
-          }),
-        );
-        return false;
+      faults: {
+        partSize: 1,
+        beforePart: () => {
+          asked += 1;
+          if (asked !== 2) return;
+          // Between the parts, the paper that has just arrived is given, here, the details of
+          // the one still to come (the other Library keeps the two apart; this edit does not).
+          const [arrived, coming] = NodeFS.existsSync(
+            NodePath.join(records(ours.scenario), `${first}.json`),
+          )
+            ? [first!, second!]
+            : [second!, first!];
+          const other = JSON.parse(
+            NodeFS.readFileSync(NodePath.join(records(theirs.scenario), `${coming}.json`), "utf8"),
+          ) as Record<string, unknown>;
+          const file = NodePath.join(records(ours.scenario), `${arrived}.json`);
+          const here = JSON.parse(NodeFS.readFileSync(file, "utf8")) as Record<string, unknown>;
+          NodeFS.writeFileSync(
+            file,
+            JSON.stringify({
+              ...here,
+              title: other.title,
+              creators: other.creators,
+              issuedRaw: other.issuedRaw,
+              issuedYear: other.issuedYear,
+              identifiers: other.identifiers,
+            }),
+          );
+        },
       },
     });
     expect(result).toMatchObject({ outcome: "joined", added: 1, skipped: 1 });
