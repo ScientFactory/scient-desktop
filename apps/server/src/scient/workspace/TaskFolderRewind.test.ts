@@ -87,7 +87,7 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
   );
 
   it.effect(
-    "a conversation-only rewind that rebuilds its provider's folder stops on any failure",
+    "a conversation-only rewind that rebuilds its provider's folder stops on any failure, as a failed rebuild",
     () =>
       Effect.gen(function* () {
         const { failure, restored } = yield* prepare({
@@ -96,7 +96,7 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
           present: false,
           restoresIt: true,
         });
-        assert.equal(failure, "SiblingUnrestorable");
+        assert.equal(failure, "TaskFolderRebuildError");
         assert.equal(restored, 1);
       }).pipe(Effect.scoped),
   );
@@ -109,7 +109,7 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
         present: false,
         restoresIt: false,
       });
-      assert.equal(failure, "SiblingUnrestorable");
+      assert.equal(failure, "TaskFolderRebuildError");
       assert.equal(restored, 1);
     }).pipe(Effect.scoped),
   );
@@ -129,7 +129,7 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
           restoresIt: false,
           ...(linked === undefined ? {} : { linked }),
         });
-        assert.equal(failure, restores ? "SiblingUnrestorable" : null);
+        assert.equal(failure, restores ? "TaskFolderRebuildError" : null);
         assert.equal(restored, restores ? 1 : 0);
         assert.deepEqual(checked, linked === undefined ? [] : ["project"]);
       }).pipe(Effect.scoped),

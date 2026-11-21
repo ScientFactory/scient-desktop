@@ -1,12 +1,34 @@
 /**
  * A file rewind refuses a shared task folder before rebuilding any checkout. A conversation-only
- * rewind skips the restore only while the provider's folder is there and, in a Git project, is
- * still the thread's worktree (a failed rebuild can leave another checkout there for a retry to
- * find); otherwise the full restore runs, and any failure blocks the rewind.
+ * rewind skips the restore while the provider's folder is the thread's own; otherwise a failed
+ * rebuild is final, as a retry would find the provider's folder rebuilt and skip the rest.
  */
 import type { TaskFolder } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
+
+/** A conversation-only rewind needed the task folder rebuilt, and the rebuild failed. */
+export class TaskFolderRebuildError extends Schema.TaggedError<TaskFolderRebuildError>()(
+  "TaskFolderRebuildError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "The thread's task folder could not be rebuilt, so the conversation was not rewound.";
+  }
+}
+
+const isTaskFolderRebuildError = Schema.is(TaskFolderRebuildError);
+
+/** True when a failure, through its wrapping causes, is a failed rebuild: final for its request. */
+export const isTaskFolderRebuildFailure = (failure: unknown): boolean => {
+  let current = failure;
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth++) {
+    if (isTaskFolderRebuildError(current)) return true;
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return false;
+};
 
 export const prepareTaskFolderForRewind = Effect.fn("TaskFolderRewind.prepare")(function* <
   E,
@@ -47,5 +69,7 @@ export const prepareTaskFolderForRewind = Effect.fn("TaskFolderRewind.prepare")(
       })))
   )
     return;
-  return yield* input.restore;
+  return yield* input.restore.pipe(
+    Effect.mapError((cause) => new TaskFolderRebuildError({ cause })),
+  );
 });

@@ -49,7 +49,8 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 // SCIENT-FORK:START task-folder-rewind
 import * as Exit from "effect/Exit";
-import type * as EffectOutbox from "./EffectOutbox.ts";
+import * as Option from "effect/Option";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
@@ -892,6 +893,30 @@ it.live(
     ),
 );
 
+/** The worker's executor over the rollback service; the thread commands it sends land in `dispatched`. */
+const layerRollbackExecutor = (dispatched: Array<string>) =>
+  EffectWorker.layerExecutor.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+        Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+        Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+        Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+        Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command.type);
+              return { sequence: 1, storedEvents: [] };
+            }),
+        }),
+        Layer.mock(ConversationForkService)({}),
+        ServerSettings.layerTest(),
+      ),
+    ),
+  );
+
 it.live(
   "never rewinds the conversation over a foreign checkout a failed rebuild left, on any attempt",
   () =>
@@ -938,27 +963,7 @@ it.live(
           lastError: null,
         };
         const dispatched: Array<string> = [];
-        const layerExecutor = EffectWorker.layerExecutor.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
-              Layer.mock(RunFinalizationService.RunFinalizationService)({}),
-              Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
-              Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
-              Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
-              Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
-              Layer.mock(ThreadManagementService.ThreadManagementService)({
-                dispatch: (command) =>
-                  Effect.sync(() => {
-                    dispatched.push(command.type);
-                    return { sequence: 1, storedEvents: [] };
-                  }),
-              }),
-              Layer.mock(ConversationForkService)({}),
-              ServerSettings.layerTest(),
-            ),
-          ),
-        );
+        const layerExecutor = layerRollbackExecutor(dispatched);
         providerRollbacks.count = 0;
 
         const attempts = yield* Effect.gen(function* () {
@@ -973,10 +978,111 @@ it.live(
 
         assert.deepEqual(attempts.map(Exit.isFailure), [true, true]);
         assert.equal(providerRollbacks.count, 0);
-        assert.deepEqual(dispatched, ["checkpoint.rollback.fail"]);
+        // A failed rebuild is final, so each attempt records the failure.
+        assert.deepEqual(dispatched, ["checkpoint.rollback.fail", "checkpoint.rollback.fail"]);
         assert.deepEqual((yield* thread.recorded).runs, ["completed", "completed"]);
         // The clone is left for the user to move away.
         assert.equal(yield* read(path.join(folders.shop, "AGENTS.md")), "rules\n");
+      }),
+    ),
+);
+
+it.live(
+  "never retries a conversation-only rewind whose task folder rebuild failed past its provider's folder",
+  () =>
+    withThread({ projectIsRepository: true }, (thread) =>
+      Effect.gen(function* () {
+        const { path, folders, write, read, fileSystem } = thread;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        yield* thread.turn(1, Effect.void);
+        yield* thread.turn(2, Effect.void);
+        // The provider's folder is gone, and another checkout now sits where web's was: the
+        // rebuild puts the provider's folder back, then stops at web.
+        yield* fileSystem.remove(folders.shop, { recursive: true });
+        yield* fileSystem.remove(folders.web, { recursive: true });
+        yield* write(path.join(folders.web, "other.txt"), "other\n");
+        yield* thread.run(folders.web, "init", "-b", "main");
+        const { checkpointScopes } = yield* thread.records;
+        const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
+        const checkpointId = yield* ids.allocate
+          .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
+          .pipe(Effect.orDie);
+        const now = DateTime.formatIso(yield* DateTime.now);
+        const workerId = "test-worker";
+        // One queued rollback, settled as the outbox would settle it.
+        let queued: EffectOutbox.OrchestrationEffectV2 = {
+          id: "effect:rewind:partial-rebuild",
+          commandId: CommandId.make("command:rewind:partial-rebuild"),
+          threadId,
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId,
+            checkpointId,
+            scopeId: rootScope.id,
+            restoreFiles: false,
+          },
+          status: "pending",
+          attemptCount: 0,
+          availableAt: now,
+          leaseOwner: null,
+          createdAt: now,
+          updatedAt: now,
+          completedAt: null,
+          lastError: null,
+        };
+        const settle = (
+          status: EffectOutbox.OrchestrationEffectV2["status"],
+          error: string | null = null,
+        ) =>
+          Effect.sync(() => {
+            queued = { ...queued, status, leaseOwner: null, lastError: error };
+            return true;
+          });
+        const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+          claimNext: () =>
+            Effect.sync(() => {
+              if (queued.status !== "pending") return Option.none();
+              queued = {
+                ...queued,
+                status: "running",
+                attemptCount: queued.attemptCount + 1,
+                leaseOwner: workerId,
+              };
+              return Option.some(queued);
+            }),
+          get: () => Effect.sync(() => Option.some(queued)),
+          awaitCancellation: () => Effect.never,
+          clearCancellation: () => Effect.void,
+          succeed: () => settle("succeeded"),
+          retry: ({ error }) => settle("pending", error),
+          fail: ({ error }) => settle("failed", error),
+        });
+        const dispatched: Array<string> = [];
+        const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
+          Layer.provide(Layer.merge(layerOutbox, layerRollbackExecutor(dispatched))),
+        );
+        providerRollbacks.count = 0;
+
+        const claims = yield* Effect.gen(function* () {
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          return [yield* worker.runOnce(), yield* worker.runOnce()];
+        }).pipe(Effect.provide(layerWorker));
+
+        assert.equal(providerRollbacks.count, 0);
+        // The first attempt fails for good: nothing is left for a retry to claim.
+        assert.deepEqual(claims, [true, false]);
+        assert.equal(queued.status, "failed");
+        assert.equal(queued.attemptCount, 1);
+        assert.deepEqual(dispatched, ["checkpoint.rollback.fail"]);
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "completed"]);
+        assert.deepEqual(
+          yield* Effect.all([
+            read(path.join(folders.shop, "AGENTS.md")),
+            read(path.join(folders.web, "other.txt")),
+            read(path.join(folders.web, "README.md")),
+          ]),
+          ["rules\n", "other\n", null],
+        );
       }),
     ),
 );
