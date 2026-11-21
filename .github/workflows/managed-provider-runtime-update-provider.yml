@@ -345,6 +345,7 @@ jobs:
             apps/server/src/scient/providerLifecycle/antigravityBrowserHelperPreflight.ts \
             apps/server/scripts/qualify-antigravity-acp-catalog.ts \
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
+            apps/server/src/scient/providerLifecycle/antigravityRuntimeRelease.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/secrets/secretProviderDefinitions.ts \
