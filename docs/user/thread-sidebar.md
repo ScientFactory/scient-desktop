@@ -225,10 +225,16 @@ The small dashed chat button to the left of **New thread**, separated by a verti
 line, starts a chat without a project directly. Its tooltip is **Chat without a
 project**. It appears when the current environment offers scratch conversations.
 
+A new thread, and **Home**, which opens one in your most recent project, ask **What should we
+work on?** The chip above the message box shows the project. Open it to search your projects,
+**Add project**, or choose **No project**; a thread you have typed in keeps its text when you
+switch.
+
 ### Threads without a project
 
-**No project** opens the usual composer. Before sending, its project picker lets you switch
-to a real project without losing the draft. The sidebar row and Add project flow stay the same.
+**No project** opens the usual composer. Before sending, the project chip above the message box
+lets you switch to a real project without losing the draft. The sidebar row and Add project flow
+stay the same.
 
 Scient creates one internal scratch project per machine and a separate plain folder for
 each conversation under its data directory. Files, Library, Documents, and Compute use

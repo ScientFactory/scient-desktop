@@ -214,6 +214,11 @@ between them, mounted in `PullRequestsColumn.tsx` and `IssuesPage.tsx`. With the
 the compact Update after the Scient symbol when there is something to act on; its cards open
 below. The header control keeps owning `useUpdateEverything`, so the other-updates circle reaches
 the rail through a portal (`scient/sidebar/railOtherUpdatesSlot.ts`) rather than a second control.
+An empty draft asks one question, "What should we work on?", and picks its project in a chip
+above the composer; marked regions in `DraftHeroHeadline.tsx` restyle upstream's project combobox
+as that chip and add **No project** as its last item in place of the line under the heading.
+Upstream's `DraftHeroProjectHeading.tsx`, which puts the picker in the sentence, stays unmounted
+(a knip entry) so its changes still merge.
 Scient downloads an offered update in the background (`autoDownloadLoop` in
 `DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
 download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a

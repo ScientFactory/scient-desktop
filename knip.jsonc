@@ -170,6 +170,10 @@
         // unmounted so upstream changes still merge.
         "src/components/sidebar/SidebarUpdateCapsule.tsx",
         "src/components/sidebar/UpdateEverythingDialog.tsx",
+        // Retained donor heading with the project picker in its sentence: Scient asks one question
+        // and picks the project in a chip above the composer. Kept unmounted so upstream changes
+        // still merge.
+        "src/components/chat/DraftHeroProjectHeading.tsx",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
