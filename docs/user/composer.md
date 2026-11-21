@@ -360,10 +360,11 @@ changed files are too large, the dialog offers only **Rewind chat**, which leave
 the files as they are. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
 
-When no reply from that message on changed any files, in the thread's folder or its repositories,
-there is nothing to choose: **Edit from here** rewinds right away, without the dialog, and leaves
-the files as they are. If a reply changed files, or Scient cannot tell, the dialog asks first. If
-the rewind fails, the dialog opens to show why.
+When the dialog would offer only **Rewind chat**, such as in a thread that works in the project
+directory, and no reply from that message on changed any files, in the thread's folder or its
+repositories, **Edit from here** rewinds right away, without the dialog. If a reply changed files,
+or Scient cannot tell, the dialog asks first. A thread whose files can be reverted always asks,
+since you may want to undo your own edits. If the rewind fails, the dialog opens to show why.
 
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
