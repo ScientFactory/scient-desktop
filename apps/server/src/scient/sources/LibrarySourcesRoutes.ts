@@ -999,7 +999,7 @@ export async function libraryTrash(store: Store, projects?: ReadonlyArray<KnownP
 
 /** The Library's recent changes; the whole Library's, whichever project asks. */
 export async function libraryRecentChanges(
-  store: Store,
+  store: Pick<Store, "library" | "exists">,
   input: {
     readonly limit?: number;
     readonly sourcesOfImport?: string;
