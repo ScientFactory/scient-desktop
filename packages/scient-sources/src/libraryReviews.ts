@@ -903,6 +903,21 @@ export async function listScientLibraryReviewIds(
   return reviews.flatMap((review) => (review.deletedAt === undefined ? [review.reviewId] : []));
 }
 
+/** The titles of the named reviews that are live, reading only their review files. */
+export async function readScientLibraryReviewTitles(
+  projectRoot: string,
+  reviewIds: ReadonlyArray<string>,
+): Promise<ReadonlyMap<string, string>> {
+  const folder = libraryFolder(await projectRootFor(projectRoot));
+  const titles = new Map<string, string>();
+  for (const reviewId of new Set(reviewIds)) {
+    // An ID that cannot name a review file, or a file that cannot be read, names no live review.
+    const review = await readReviewFile(folder, reviewId).catch(() => null);
+    if (review && review.deletedAt === undefined) titles.set(reviewId, review.title);
+  }
+  return titles;
+}
+
 /**
  * Live reviews, newest change first. With `write`, a snapshot whose review was never created
  * (a crash between the two) is removed.

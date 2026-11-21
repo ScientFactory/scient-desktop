@@ -31,7 +31,7 @@ import {
   type ScientReviewWork,
 } from "./libraryReviews.ts";
 import { registerScientLibraryInstance, type ScientLibraryLocation } from "./libraryRoot.ts";
-import { readScientDisplacedCopiesInProject } from "./projectDisplacedCopies.ts";
+import { countScientDisplacedCopiesInProject } from "./projectDisplacedCopies.ts";
 import { SCIENT_ANNOTATION_FILE_MAX_BYTES } from "./projectFiles.ts";
 import type { ScientSourceActor, ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
@@ -452,8 +452,8 @@ async function buildPackage(input: {
     files,
     unavailable,
   };
-  const kept = await readScientDisplacedCopiesInProject(root);
-  const keptCopies = { leftOut: kept.copies.length, unreadable: kept.unreadable };
+  const kept = await countScientDisplacedCopiesInProject(root);
+  const keptCopies = { leftOut: kept.copies, unreadable: kept.unreadable };
   await NodeFSP.writeFile(
     NodePath.join(staging, "README.md"),
     readme(manifest, keptCopies),

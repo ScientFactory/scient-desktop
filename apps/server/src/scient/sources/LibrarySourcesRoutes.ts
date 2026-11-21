@@ -55,7 +55,7 @@ import {
   readScientReviewVersions,
   resolveScientReviewConflict,
 } from "@scientfactory/scient-sources/library-review-conflicts";
-import { readScientDisplacedCopiesInProject } from "@scientfactory/scient-sources/project-displaced-copies";
+import { readScientDisplacedCopiesOf } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   changeScientLibraryReview,
   listScientLibraryReviewIds,
@@ -63,6 +63,8 @@ import {
   listScientLibraryReviews,
   readScientLibraryReview,
   readScientLibraryReviewRecord,
+  readScientLibraryReviewTitles,
+  ScientReviewWork,
   type ScientLibraryReviewRecord,
 } from "@scientfactory/scient-sources/library-reviews";
 import {
@@ -79,7 +81,9 @@ import {
   resolveScientProjectPins,
   pinScientLibrarySource,
   readScientProjectPinNoteHistory,
+  readScientProjectPins,
   renameScientProjectPinKey,
+  ScientPinWork,
   setScientProjectPinNote,
   unpinScientLibrarySource,
   type ScientProjectPin,
@@ -719,6 +723,7 @@ export async function librarySourceDetail(
     projectNote: snapshot.projectNote,
     ...(match ? { libraryMatch: match } : {}),
     ...(await noteHistoryOf(store, snapshot.citationKey)),
+    ...(await keptCopiesOf(store, sourceId, snapshot.record)),
   };
 }
 
@@ -876,28 +881,34 @@ export async function repairLibraryPin(
   }
 }
 
+/** What each kind of holder saves of a source; a kept copy shows no other field. */
+const KEPT_FIELDS = {
+  "citation-key": new Set(Object.keys(ScientPinWork.fields)),
+  review: new Set(Object.keys(ScientReviewWork.fields)),
+};
+
 /**
- * What this project's saved details held before a merge Undo replaced them, beside the record's
- * values now; copies whose citation key or review has since gone are included.
+ * What this project's saved details held before a merge Undo replaced them, beside the values
+ * the details show now; copies whose citation key or review has since gone are included.
  */
-export async function keptCopiesOf(
-  store: Store,
-  sourceId: string,
-  record: Readonly<object> | null,
-) {
-  const copies = (await readScientDisplacedCopiesInProject(store.root)).copies.filter(
-    (copy) => copy.sourceId === sourceId,
-  );
+export async function keptCopiesOf(store: Store, sourceId: string, shown: Readonly<object> | null) {
+  const copies = (await readScientDisplacedCopiesOf(store.root, sourceId)).flatMap((copy) => {
+    const differs = copy.differs.filter((field) => KEPT_FIELDS[copy.holder].has(field));
+    return differs.length > 0 ? [{ ...copy, differs }] : [];
+  });
   if (copies.length === 0) return {};
   const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
-  const keys = new Set(group ? [group.pin.citationKey, ...group.alsoCitedAs] : []);
-  const reviews = copies.some((copy) => copy.holder === "review")
-    ? new Map(
-        (
-          await listScientLibraryReviews({ ...reviewAccess(store), projectRoot: store.root })
-        ).reviews.map((review) => [review.reviewId, review.title]),
-      )
-    : new Map<string, string>();
+  // A pin served from its snapshot is in no group: its own ID names it.
+  const keys = new Set([
+    ...(group ? [group.pin.citationKey, ...group.alsoCitedAs] : []),
+    ...(await readScientProjectPins(store.root)).flatMap((pin) =>
+      pin.sourceId === sourceId ? [pin.citationKey] : [],
+    ),
+  ]);
+  const reviews = await readScientLibraryReviewTitles(
+    store.root,
+    copies.flatMap((copy) => (copy.holder === "review" ? [copy.heldBy] : [])),
+  );
   const valueOf = (from: unknown, field: string) =>
     typeof from === "object" && from !== null
       ? ((from as Record<string, unknown>)[field] ?? null)
@@ -914,7 +925,7 @@ export async function keptCopiesOf(
         fields: copy.differs.map((field) => ({
           field,
           earlier: valueOf(copy.work, field),
-          current: valueOf(record, field),
+          current: valueOf(shown, field),
         })),
       };
     }),

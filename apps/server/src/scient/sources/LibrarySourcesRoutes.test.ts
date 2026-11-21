@@ -929,7 +929,7 @@ describe("Library routes on the library backend", () => {
   );
 
   it.effect(
-    "shows values kept after a merge Undo beside the record's, also for a key now gone",
+    "shows values kept after a merge Undo beside the details', for a key now gone or a pin's snapshot",
     () =>
       Effect.gen(function* () {
         const fixture = yield* Effect.promise(setup);
@@ -937,12 +937,23 @@ describe("Library routes on the library backend", () => {
           libraryRecord(fixture, "kept", { title: "Vasopressin timing", abstract: null }),
         );
         const pinned = yield* Effect.promise(() => pin(fixture, record.sourceId));
+        const writer = yield* storeFor(fixture, "write");
+        yield* Effect.promise(() =>
+          updateLibraryPersonalNote(writer, {
+            sourceId: record.sourceId,
+            expectedRevision: record.revision,
+            expectedNote: null,
+            note: "Private reading note",
+          }),
+        );
+        // Each shows only fields its holder keeps (a key has no abstract, a review no pages),
+        // whatever the file names.
         const copy = (heldBy: string) => ({
           sourceId: record.sourceId,
           heldBy,
           undoneAt: "2026-11-01T00:00:00.000Z",
-          differs: ["abstract"],
-          work: { title: "Vasopressin timing", abstract: "Imported by the review" },
+          differs: ["abstract", "pages", "note"],
+          work: { abstract: "Imported by the review", pages: "1-9", note: null },
         });
         yield* Effect.promise(async () => {
           await keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
@@ -956,33 +967,74 @@ describe("Library routes on the library backend", () => {
           );
         });
         const store = yield* storeFor(fixture, "read");
-        const detail = yield* Effect.promise(() =>
-          librarySourceDetail(store, { sourceId: record.sourceId }),
+        const detail = encodeDetail(
+          yield* Effect.promise(() => librarySourceDetail(store, { sourceId: record.sourceId })),
         );
-        const field = { field: "abstract", earlier: "Imported by the review", current: null };
-        expect(encodeDetail(detail).keptCopies).toEqual([
+        expect(JSON.stringify(detail)).not.toContain("Private reading note");
+        const pages = { field: "pages", earlier: "1-9", current: null };
+        expect(detail.keptCopies).toEqual([
           {
             holder: "citation-key",
             heldBy: pinned.citationKey,
             holderPresent: true,
             undoneAt: "2026-11-01T00:00:00.000Z",
-            fields: [field],
+            fields: [pages],
           },
           {
             holder: "citation-key",
             heldBy: "RemovedKey2020",
             holderPresent: false,
             undoneAt: "2026-11-01T00:00:00.000Z",
-            fields: [field],
+            fields: [pages],
           },
           {
             holder: "review",
             heldBy: "review_gone",
             holderPresent: false,
             undoneAt: "2026-11-01T00:00:00.000Z",
-            fields: [field],
+            fields: [{ field: "abstract", earlier: "Imported by the review", current: null }],
           },
         ]);
+
+        // A source in Trash is shown from its pin's snapshot, and compared with what that shows.
+        const removed = yield* Effect.promise(async () => {
+          const trashed = await libraryRecord(fixture, "trashed", { title: "Fluid balance" });
+          const trashedPin = await pin(fixture, trashed.sourceId);
+          await removeScientSource({
+            root: fixture.library,
+            sourceId: trashed.sourceId,
+            expectedRevision: trashed.revision,
+          });
+          await keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
+            {
+              sourceId: trashed.sourceId,
+              heldBy: trashedPin.citationKey,
+              undoneAt: "2026-11-02T00:00:00.000Z",
+              differs: ["containerTitle"],
+              work: { title: "Fluid balance", containerTitle: "Journal before the merge" },
+            },
+          ]);
+          return { sourceId: trashed.sourceId, citationKey: trashedPin.citationKey };
+        });
+        const fromSnapshot = encodeDetail(
+          yield* Effect.promise(() => librarySourceDetail(store, { sourceId: removed.sourceId })),
+        );
+        expect(fromSnapshot).toMatchObject({
+          fromSnapshot: true,
+          keptCopies: [
+            {
+              heldBy: removed.citationKey,
+              holderPresent: true,
+              fields: [
+                {
+                  field: "containerTitle",
+                  earlier: "Journal before the merge",
+                  current: "Scient Journal",
+                },
+              ],
+            },
+          ],
+        });
       }),
   );
 

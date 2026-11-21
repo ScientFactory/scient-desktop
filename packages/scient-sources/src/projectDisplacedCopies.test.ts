@@ -6,9 +6,10 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
+  countScientDisplacedCopiesInProject,
   keepScientDisplacedCopies,
   readScientDisplacedCopies,
-  readScientDisplacedCopiesInProject,
+  readScientDisplacedCopiesOf,
   scientValuesChangedBy,
 } from "./projectDisplacedCopies.ts";
 
@@ -78,12 +79,47 @@ describe("copies a project held and a merge Undo replaced", () => {
 
     // Read across the project: each copy with its kind of holder, and the files it could not read.
     await NodeFSP.writeFile(NodePath.join(folder, "reviews", "review_2.json"), "[");
-    const all = await readScientDisplacedCopiesInProject(root);
-    expect(all.copies.map((entry) => [entry.holder, entry.heldBy, entry.work])).toEqual([
+    const all = await readScientDisplacedCopiesOf(root, "source_a");
+    expect(all.map((entry) => [entry.holder, entry.heldBy, entry.work])).toEqual([
       ["citation-key", "key0", { title: "After damage" }],
       ["review", "review_1", { title: "In a review" }],
     ]);
-    expect(all.unreadable).toBe(2);
+    expect(await readScientDisplacedCopiesOf(root, "source_b")).toEqual([]);
+    expect(await countScientDisplacedCopiesInProject(root)).toEqual({ copies: 2, unreadable: 2 });
+  });
+
+  it("never reads or writes through a linked folder into another checkout", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-displaced-")),
+    );
+    fixtures.push(base);
+    const [root, other] = [NodePath.join(base, "project"), NodePath.join(base, "other")];
+    await Promise.all([root, other].map((folder) => NodeFSP.mkdir(folder)));
+    const first = "2026-11-01T00:00:00.000Z";
+    await keepScientDisplacedCopies(other, { kind: "project" }, [copy("key0", first, "Other")]);
+    await keepScientDisplacedCopies(other, { kind: "review", reviewId: "review_1" }, [
+      copy("review_1", first, "Other review"),
+    ]);
+    const otherFolder = NodePath.join(other, ".scient", "library", "displaced");
+    const before = await NodeFSP.readFile(NodePath.join(otherFolder, "project.json"), "utf8");
+    // The link is above the kept-copy folder, where a check of the file alone would not look.
+    await NodeFSP.mkdir(NodePath.join(root, ".scient"));
+    await NodeFSP.symlink(
+      NodePath.join(other, ".scient", "library"),
+      NodePath.join(root, ".scient", "library"),
+      "dir",
+    );
+
+    expect(await readScientDisplacedCopiesOf(root, "source_a")).toEqual([]);
+    expect(await countScientDisplacedCopiesInProject(root)).toEqual({ copies: 0, unreadable: 1 });
+    await expect(readScientDisplacedCopies(root, { kind: "project" })).rejects.toThrow(
+      "not a safe directory",
+    );
+    await expect(
+      keepScientDisplacedCopies(root, { kind: "project" }, [copy("key1", first, "Here")]),
+    ).rejects.toThrow("not a safe directory");
+    expect(await NodeFSP.readdir(otherFolder)).toEqual(["project.json", "reviews"]);
+    expect(await NodeFSP.readFile(NodePath.join(otherFolder, "project.json"), "utf8")).toBe(before);
   });
 
   it("names the fields a replacement changes or drops, not how the copy was captured", () => {

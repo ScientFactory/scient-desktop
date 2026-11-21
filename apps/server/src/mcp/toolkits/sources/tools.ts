@@ -40,6 +40,7 @@ import {
   ScientCitationStyleSummary,
   ScientManagedBibliographyFileName,
   ScientManagedBibliographyStatus,
+  ScientSourceDetailResult,
   ScientSourceLibraryMatch,
   ScientSourcesDuplicateReason,
   ScientSourcesLibraryCopies,
@@ -283,6 +284,12 @@ export const ScientSourceAgentDetail = Schema.Struct({
   uses: Schema.optionalKey(ScientSourceUses),
 });
 
+/** Library mode adds what the details show after a merge Undo replaced the project's copy. */
+const ScientSourceAgentLibraryDetail = Schema.Struct({
+  ...ScientSourceAgentDetail.fields,
+  keptCopies: ScientSourceDetailResult.fields.keptCopies,
+});
+
 type SourcesBackendMode = "project" | "library";
 
 const LIST_FILTERS = ` query matches citation key, title, authors, year, journal, identifiers and tags. tags must all match; collectionId includes subcollections; savedSearchId comes from scient_sources_collections. inTrash lists removed sources. citationStyles finds CSL styles by journal or style name instead, with the project's style.`;
@@ -348,7 +355,7 @@ const sourceGetTool = (mode: SourcesBackendMode) =>
             citationKey: Schema.optionalKey(CitationKey),
             uses: Schema.optionalKey(Schema.Boolean),
           }),
-    success: ScientSourceAgentDetail,
+    success: mode === "project" ? ScientSourceAgentDetail : ScientSourceAgentLibraryDetail,
     failure: ScientSourcesToolError,
     dependencies,
   })

@@ -37,7 +37,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ScientSourceAgentDetail } from "./tools.ts";
+import { ScientSourceAgentDetail, ScientSourcesLibraryToolkit } from "./tools.ts";
 
 import { ServerConfig } from "../../../config.ts";
 import { exportLibraryProjectPackage } from "../../../scient/sources/LibraryProjectPackage.ts";
@@ -446,12 +446,21 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
-  it.effect("an agent reads the values kept after a merge Undo with the source", () =>
+  it.effect("an agent reads the values kept after a merge Undo, also from a pin's snapshot", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
       const added = yield* addSource(fixture, "Kept trial", "10.1000/kept");
       const sourceId = added.sourceId!;
-      const before = yield* run(getScientSourceForInvocation({ sourceId }), fixture);
+      // As the tool answers: encoded against its own result schema.
+      const get = () =>
+        run(getScientSourceForInvocation({ sourceId }), fixture).pipe(
+          Effect.flatMap(
+            Schema.encodeUnknownEffect(
+              ScientSourcesLibraryToolkit.tools.scient_sources_get.successSchema,
+            ),
+          ),
+        );
+      const before = yield* get();
       expect(before).not.toHaveProperty("keptCopies");
       yield* Effect.promise(() =>
         keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
@@ -464,17 +473,26 @@ describe("Sources tools on the library backend", () => {
           },
         ]),
       );
-      const detail = yield* run(getScientSourceForInvocation({ sourceId }), fixture);
-      expect(detail).toMatchObject({
-        keptCopies: [
+      const kept = {
+        holder: "citation-key",
+        heldBy: before.citationKey,
+        holderPresent: true,
+        fields: [
           {
-            holder: "citation-key",
-            heldBy: before.citationKey,
-            holderPresent: true,
-            fields: [{ field: "containerTitle", earlier: "Journal before the merge" }],
+            field: "containerTitle",
+            earlier: "Journal before the merge",
+            current: "Scient Journal",
           },
         ],
-      });
+      };
+      expect(yield* get()).toMatchObject({ keptCopies: [kept] });
+
+      // In Trash, the pin is served from its snapshot, and the kept values still show.
+      yield* run(
+        removeScientSourceForInvocation({ sourceId, expectedRevision: before.revision }),
+        fixture,
+      );
+      expect(yield* get()).toMatchObject({ fromSnapshot: true, keptCopies: [kept] });
     }),
   );
 

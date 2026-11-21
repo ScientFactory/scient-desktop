@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
 
+import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { atomicWriteJson, readBoundedJson, snapshot } from "./storeFiles.ts";
 
 const DISPLACED_DIRECTORY = [".scient", "library", "displaced"] as const;
@@ -65,52 +66,95 @@ export function scientValuesChangedBy(
   );
 }
 
+/** False when the folder is not there; throws when it, or a folder above it, is a link. */
+async function safeFolder(root: string, folder: string): Promise<boolean> {
+  try {
+    await assertScientProjectDirectory(root, folder);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 export async function readScientDisplacedCopies(
   root: string,
   holder: ScientDisplacedHolder,
 ): Promise<ReadonlyArray<ScientDisplacedCopy>> {
-  const filePath = displacedPath(root, holder);
+  const canonicalRoot = await NodeFSP.realpath(root);
+  const filePath = displacedPath(canonicalRoot, holder);
+  if (!(await safeFolder(canonicalRoot, NodePath.dirname(filePath)))) return [];
   if ((await snapshot(filePath)) !== "file") return [];
   return (await readBoundedJson(filePath, MAX_DISPLACED_BYTES, DisplacedFile)).copies;
 }
 
-export interface ScientDisplacedCopiesInProject {
-  /** `holder` says whether `heldBy` is a citation key or a review's ID. */
-  readonly copies: ReadonlyArray<
-    ScientDisplacedCopy & { readonly holder: "citation-key" | "review" }
-  >;
-  /** Files of kept copies that could not be read, including ones already set aside as such. */
-  readonly unreadable: number;
-}
+type DisplacedHolderKind = "citation-key" | "review";
 
-/** Every kept copy in the project, whoever held it and whether or not that holder remains. */
-export async function readScientDisplacedCopiesInProject(
+/** `holder` says whether `heldBy` is a citation key or a review's ID. */
+export type ScientDisplacedCopyInProject = ScientDisplacedCopy & {
+  readonly holder: DisplacedHolderKind;
+};
+
+/**
+ * Gives `visit` every kept copy in the project, file by file, and returns how many files could
+ * not be read, counting ones already set aside as such and a linked folder as one.
+ */
+async function visitDisplacedCopies(
   root: string,
-): Promise<ScientDisplacedCopiesInProject> {
-  const directory = NodePath.join(root, ...DISPLACED_DIRECTORY);
-  const reviews = NodePath.join(directory, "reviews");
-  const names = async (folder: string) =>
-    (await NodeFSP.readdir(folder).catch(() => [] as string[])).toSorted();
-  const files = [
-    ...(await names(directory)).map((name) => ({ path: NodePath.join(directory, name), name })),
-    ...(await names(reviews)).map((name) => ({ path: NodePath.join(reviews, name), name })),
-  ];
-  const copies: Array<ScientDisplacedCopiesInProject["copies"][number]> = [];
+  visit: (copy: ScientDisplacedCopy, holder: DisplacedHolderKind) => void,
+): Promise<number> {
+  const canonicalRoot = await NodeFSP.realpath(root);
+  const directory = NodePath.join(canonicalRoot, ...DISPLACED_DIRECTORY);
+  const folders = [
+    { path: directory, holder: "citation-key" },
+    { path: NodePath.join(directory, "reviews"), holder: "review" },
+  ] as const;
   let unreadable = 0;
-  for (const file of files) {
-    if (file.name.includes(".unreadable-")) {
+  for (const folder of folders) {
+    const present = await safeFolder(canonicalRoot, folder.path).catch(() => null);
+    if (present === null) {
       unreadable += 1;
-      continue;
+      break;
     }
-    if (!file.name.endsWith(".json") || (await snapshot(file.path)) !== "file") continue;
-    const holder = file.path.startsWith(reviews) ? "review" : "citation-key";
-    try {
-      const read = await readBoundedJson(file.path, MAX_DISPLACED_BYTES, DisplacedFile);
-      copies.push(...read.copies.map((copy) => ({ ...copy, holder }) as const));
-    } catch {
-      unreadable += 1;
+    if (!present) continue;
+    for (const name of (await NodeFSP.readdir(folder.path)).toSorted()) {
+      const filePath = NodePath.join(folder.path, name);
+      if (name.includes(".unreadable-")) {
+        unreadable += 1;
+        continue;
+      }
+      if (!name.endsWith(".json") || (await snapshot(filePath)) !== "file") continue;
+      try {
+        const read = await readBoundedJson(filePath, MAX_DISPLACED_BYTES, DisplacedFile);
+        for (const copy of read.copies) visit(copy, folder.holder);
+      } catch {
+        unreadable += 1;
+      }
     }
   }
+  return unreadable;
+}
+
+/** One source's kept copies in the project, whoever held them and whether or not that holder remains. */
+export async function readScientDisplacedCopiesOf(
+  root: string,
+  sourceId: string,
+): Promise<ReadonlyArray<ScientDisplacedCopyInProject>> {
+  const copies: Array<ScientDisplacedCopyInProject> = [];
+  await visitDisplacedCopies(root, (copy, holder) => {
+    if (copy.sourceId === sourceId) copies.push({ ...copy, holder });
+  });
+  return copies;
+}
+
+/** How many kept copies the project holds, and how many of their files could not be read. */
+export async function countScientDisplacedCopiesInProject(
+  root: string,
+): Promise<{ readonly copies: number; readonly unreadable: number }> {
+  let copies = 0;
+  const unreadable = await visitDisplacedCopies(root, () => {
+    copies += 1;
+  });
   return { copies, unreadable };
 }
 
@@ -125,9 +169,12 @@ export async function keepScientDisplacedCopies(
   copies: ReadonlyArray<Omit<ScientDisplacedCopy, "at">>,
 ): Promise<void> {
   if (copies.length === 0) return;
-  const filePath = displacedPath(root, holder);
+  const canonicalRoot = await NodeFSP.realpath(root);
+  const filePath = displacedPath(canonicalRoot, holder);
+  // Before anything is read or moved aside: a linked folder would reach another checkout.
+  await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(filePath), { create: true });
   const kept = [
-    ...(await readScientDisplacedCopies(root, holder).catch(async () => {
+    ...(await readScientDisplacedCopies(canonicalRoot, holder).catch(async () => {
       await NodeFSP.rename(filePath, `${filePath}.unreadable-${Date.now()}`);
       return [];
     })),

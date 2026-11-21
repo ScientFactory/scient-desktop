@@ -364,8 +364,9 @@ in the project folder under `.scient/library/displaced/`. The paper's details
 show them under **Earlier values kept after merge Undo**: for each citation key
 or review that held them, each value before and now, side by side, each with a
 copy button. Values a key or review held that has since been removed are shown
-too, marked as no longer in this project. Nothing is put back on its own: copy
-what you need. A project package does not include them and says how many it
+too, marked as no longer in this project, and so are values kept for a paper
+now in Trash. Only citation details a key or review keeps are shown, never your
+personal note. Nothing is put back on its own: copy what you need. A project package does not include them and says how many it
 left in the project. If Scient stopped in the middle of a merge or an Undo,
 it finishes it the next time it opens your Library. After a
 project moves into your Library, its summary line offers **Review** when some

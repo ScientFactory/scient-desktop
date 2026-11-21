@@ -1382,9 +1382,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       : null;
     // Only after a merge Undo replaced this project's saved details; absent otherwise.
     const kept =
-      store.kind === "library" && !fromSnapshot
-        ? yield* attempt(() => keptCopiesOf(store, sourceId, record))
-        : {};
+      store.kind === "library" ? yield* attempt(() => keptCopiesOf(store, sourceId, record)) : {};
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;

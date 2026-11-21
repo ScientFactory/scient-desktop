@@ -726,12 +726,19 @@ sources in `<project>/.scient/library/pins.json`:
   `displaced/reviews/<review-id>.json` for a review. One copy per holder,
   source and Undo, so a retry or a later edit of the paper adds none; no cap;
   a file that cannot be read is moved aside under a dated name; a failed keep
-  stops the replacement. Nothing puts them back on its own.
-  `readScientDisplacedCopiesInProject` reads every holder's file and counts
-  unreadable ones (including those set aside); a Library source's detail
-  carries its copies as `keptCopies` (holder, whether the key or review is still
-  in the project, and each differing field with the record's value now), which
-  source details show. A project package does not carry them: the export
+  stops the replacement, as does a folder on the way that is a link (checked
+  from the project root, as every read checks it). Nothing puts them back on
+  its own. `readScientDisplacedCopiesOf` reads one source's copies from every
+  holder's file, and `countScientDisplacedCopiesInProject` counts copies and
+  unreadable files (including those set aside, and a linked folder) without
+  keeping them. A Library source's detail, live or from a pin's snapshot,
+  carries its copies as `keptCopies` (holder, whether the key or review is
+  still in the project, and each differing field beside the value the details
+  show now), in HTTP and in `scient_sources_get`. Only fields the holder's
+  projection has are shown (`ScientPinWork` for a key, `ScientReviewWork` for a
+  review), so a file naming another field, such as the personal note, shows
+  nothing of it; review titles come from the named review files alone. A
+  project package does not carry them: the export
   result (`keptCopiesLeftOut`, `keptCopiesUnreadable`), the panel's summary and
   the package README say how many stay in the project. Limits: a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
