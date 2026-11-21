@@ -14,6 +14,7 @@ import type {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
@@ -39,7 +40,9 @@ import {
   type AntigravityMarketplace,
 } from "./AntigravityPluginCatalog.ts";
 import {
+  ARCHIVE_LIMITS,
   isAntigravityPluginArchiveError,
+  sha256Hex,
   stageAntigravityPlugin,
 } from "./AntigravityPluginArchive.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
@@ -72,6 +75,10 @@ const Receipt = Schema.Struct({
   sha256: Schema.String,
   path: Schema.String,
   displayName: Schema.optional(Schema.String),
+  /** agy's own `source` for the installed copy, when it reported one. */
+  source: Schema.optional(Schema.String),
+  /** The installed folder's identity and its plugin.json digest at Add (`installationIdentity`). */
+  installation: Schema.optional(Schema.String),
 });
 type Receipt = typeof Receipt.Type;
 const ReceiptFile = Schema.fromJsonString(
@@ -86,6 +93,7 @@ const encodeReceipts = Schema.encodeEffect(ReceiptFile);
 /** One plugin `agy plugin list --json` reported, with its folder. */
 export type AntigravityInstalledPlugin = ServerProviderPlugin & {
   readonly path: string;
+  readonly nativeSource?: string | undefined;
   readonly skills: ReadonlyArray<string>;
   readonly mcpServers: ReadonlyArray<string>;
 };
@@ -97,20 +105,56 @@ export const ANTIGRAVITY_NOT_CLI =
 const INVENTORY_UNAVAILABLE =
   "Scient could not read Antigravity's installed plugins, so Add and Remove are paused. Refresh to try again.";
 
-/** Which listed plugin a receipt vouches for: same name, same folder and, when known, same version. */
-function receiptFor(
+/**
+ * One installed copy: its folder's device, inode and birth time, and its plugin.json digest. A
+ * copy replaced in Antigravity, even at the same name, version and folder, gets another identity.
+ */
+const installationIdentity = Effect.fn("AntigravityProviderStore.installationIdentity")(function* (
+  folder: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* fs.stat(folder);
+  const manifestFile = path.join(folder, "plugin.json");
+  const manifestInfo = yield* fs.stat(manifestFile);
+  if (
+    info.type !== "Directory" ||
+    manifestInfo.type !== "File" ||
+    Number(manifestInfo.size) > ARCHIVE_LIMITS.manifestBytes
+  )
+    return yield* fail("Not a plugin folder.");
+  const manifest = yield* fs.readFile(manifestFile);
+  const born = Option.match(info.birthtime, { onNone: () => "", onSome: (at) => at.getTime() });
+  const inode = Option.getOrElse(info.ino, () => 0n);
+  return `${info.dev}:${inode}:${born}:${sha256Hex(manifest)}`;
+});
+
+/**
+ * The receipt for this exact listed copy: same name, folder, version and native source, and the
+ * identity recorded at Add. Anything else is a local plugin of its own.
+ */
+const receiptFor = Effect.fn("AntigravityProviderStore.receiptFor")(function* (
   receipts: ReadonlyArray<Receipt>,
-  plugin: { readonly name: string; readonly path: string; readonly version?: string | undefined },
-): Receipt | undefined {
-  return receipts.find(
+  plugin: {
+    readonly name: string;
+    readonly path: string;
+    readonly version?: string | undefined;
+    readonly source?: string | undefined;
+  },
+) {
+  const candidate = receipts.find(
     (receipt) =>
       receipt.name === plugin.name &&
       receipt.path === plugin.path &&
-      (receipt.version === undefined ||
-        plugin.version === undefined ||
-        receipt.version === plugin.version),
+      receipt.version !== undefined &&
+      receipt.version === plugin.version &&
+      receipt.source === plugin.source &&
+      receipt.installation !== undefined,
   );
-}
+  if (!candidate) return undefined;
+  const identity = yield* installationIdentity(plugin.path).pipe(Effect.option);
+  return Option.getOrUndefined(identity) === candidate.installation ? candidate : undefined;
+});
 
 /** `agy plugin list --json` as provider plugins; any malformed listing fails as a whole. */
 const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList")(function* (
@@ -126,7 +170,13 @@ const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList
       return yield* fail("Antigravity listed its plugins in an unexpected form.");
     names.add(item.name);
     const version = item.version?.trim() || undefined;
-    const receipt = receiptFor(receipts, { name: item.name, path: item.path, version });
+    const source = item.source?.trim() || undefined;
+    const receipt = yield* receiptFor(receipts, {
+      name: item.name,
+      path: item.path,
+      version,
+      source,
+    });
     plugins.push({
       id: receipt ? entryId(item.name, receipt.marketplace) : `antigravity:${item.name}`,
       name: item.name,
@@ -140,6 +190,7 @@ const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList
       sourceLabel: receipt ? "Antigravity Marketplace" : "Antigravity's plugins",
       scope: "user",
       path: item.path,
+      ...(source ? { nativeSource: source } : {}),
       skills: item.skills ?? [],
       mcpServers: item.mcpServers ?? [],
     });
@@ -226,6 +277,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
       return { plugins, sequence };
     },
     Effect.provideService(Path.Path, path),
+    Effect.provideService(FileSystem.FileSystem, fs),
     Effect.mapError(() => ({ message: "Could not read Antigravity's installed plugins." })),
   );
   const list = Effect.fn("AntigravityProviderStore.list")(function* () {
@@ -406,17 +458,24 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     const after = yield* list();
     const listed = after.plugins.find((plugin) => plugin.name === item.plugin.name);
     if (!listed) return yield* fail("Antigravity did not list the plugin after adding it.");
+    const installation = yield* installationIdentity(listed.path).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(() => ({
+        message: "The plugin was added, but Scient could not read its installed folder.",
+      })),
+    );
     yield* writeReceipts((receipts) => [
       ...receipts.filter((receipt) => receipt.name !== listed.name),
       {
         name: listed.name,
         marketplace: item.plugin.marketplace,
-        ...((listed.version ?? item.plugin.version)
-          ? { version: listed.version ?? item.plugin.version }
-          : {}),
+        ...(listed.version ? { version: listed.version } : {}),
+        ...(listed.nativeSource ? { source: listed.nativeSource } : {}),
         sha256: archive.sha256,
         path: listed.path,
         displayName: item.plugin.displayName,
+        installation,
       },
     ]).pipe(
       Effect.mapError(() => ({

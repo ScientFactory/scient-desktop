@@ -16,6 +16,9 @@ import type * as Yauzl from "yauzl";
 import { openZipArchive } from "../../zipArchive.ts";
 import { getGstatic, isAntigravityGstaticUrl } from "./AntigravityPluginCatalog.ts";
 
+export const sha256Hex = (bytes: Uint8Array) =>
+  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+
 export const ARCHIVE_LIMITS = {
   archiveBytes: 64 * 1024 * 1024,
   unpackedBytes: 256 * 1024 * 1024,

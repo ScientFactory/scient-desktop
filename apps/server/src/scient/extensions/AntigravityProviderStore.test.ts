@@ -404,6 +404,49 @@ describe("AntigravityProviderStore", () => {
     ),
   );
 
+  it.effect("treats a replaced copy at the same name, version and folder as a local plugin", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, actions, fixture, pluginPath, fs, path } = yield* setup();
+        const id = "gmail@antigravity-plugins-official";
+        yield* store.install(id);
+        expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe(id);
+        // Removed and installed again in the Antigravity app: same name, version and folder.
+        yield* fs.remove(pluginPath("gmail"), { recursive: true });
+        yield* fs.makeDirectory(pluginPath("gmail"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(pluginPath("gmail"), "plugin.json"),
+          encode({ name: "gmail", version: "0.0.7", description: "another copy" }),
+        );
+        const [replaced] = (yield* actions.listPlugins({})).plugins;
+        expect(replaced).toMatchObject({ id: "antigravity:gmail" });
+        expect((yield* store.entry(id)).installed).toBe(false);
+        expect((yield* actions.uninstall({ pluginId: id }).pipe(Effect.flip)).message).toMatch(
+          /no longer installed/,
+        );
+        expect(fixture.calls.some((call) => call[1] === "uninstall")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("needs agy's version and source to match the receipt", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, actions, fixture } = yield* setup();
+        const id = "gmail@antigravity-plugins-official";
+        yield* store.install(id);
+        const gmail = fixture.installed.get("gmail")!;
+        const { version: _version, ...unversioned } = gmail;
+        fixture.installed.set("gmail", unversioned);
+        expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe("antigravity:gmail");
+        fixture.installed.set("gmail", { ...gmail, source: "gemini" });
+        expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe("antigravity:gmail");
+        fixture.installed.set("gmail", gmail);
+        expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe(id);
+      }),
+    ),
+  );
+
   it.effect("treats a malformed installed list as unknown, never as empty", () =>
     provide(
       Effect.gen(function* () {
