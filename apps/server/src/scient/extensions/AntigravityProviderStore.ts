@@ -11,6 +11,7 @@ import type {
   ProviderStoreSearchInput,
   ServerProviderPlugin,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -593,8 +594,9 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
           return yield* fail(
             `Antigravity got a plugin named ${name} while Scient was preparing this one, so Scient did not replace it.`,
           );
+        const startedAt = yield* Clock.currentTimeMillis;
         yield* options.run(["plugin", "install", directory]);
-        return staged;
+        return { staged, startedAt };
       }),
     ).pipe(
       Effect.provideService(HttpClient.HttpClient, http),
@@ -610,8 +612,14 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
         message: "The plugin was added, but Scient could not read its installed folder.",
       })),
     );
-    // The receipt vouches only for the copy this Add installed, never one swapped in after.
-    if (!installation.endsWith(`:${added}`))
+    // The receipt vouches only for the copy this Add installed, never one swapped in after: the
+    // folder agy created (born after the install began, where the system records births) with
+    // the staged plugin.json.
+    const born = installation.split(":")[2];
+    if (
+      !installation.endsWith(`:${added.staged}`) ||
+      (born !== undefined && born !== "" && Number(born) < added.startedAt - 2_000)
+    )
       return yield* fail(
         `The plugin named ${name} changed while Scient added it, so Scient did not claim it.`,
       );

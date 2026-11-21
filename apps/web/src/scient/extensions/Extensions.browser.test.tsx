@@ -2662,6 +2662,23 @@ describe("Antigravity Marketplace", () => {
       }),
     );
 
+    // An older copy the store recognised by its manifest keeps its own id; Turn on acts on it.
+    agents = await show(
+      { plugins: [{ ...added(false), id: "antigravity:gmail" }] },
+      { ...gmail, installed: true },
+    );
+    await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
+    await userEvent.click(buttonIn(agents, "Turn on")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenLastCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "set-enabled", pluginId: "antigravity:gmail", enabled: true },
+        },
+      }),
+    );
+
     // A different plugin of the same name: the reason and where to act, never a dead Add.
     const clash = "Antigravity already has a different plugin named gmail.";
     agents = await show({ plugins: [] }, { ...gmail, disabledReason: clash });

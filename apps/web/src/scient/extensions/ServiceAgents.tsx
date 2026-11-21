@@ -176,14 +176,21 @@ function AntigravityServiceRow({
     input: { instanceId: route.instanceId, entryId: route.storeEntryId },
   });
   const entry = useEnvironmentQuery(atom);
-  const plugin = provider.plugins?.find((item) => item.id === route.storeEntryId);
+  // The store also knows copies installed before agy recorded origins, by their manifest; those
+  // keep their own id, so find them by name and act on that copy.
+  const plugin =
+    provider.plugins?.find((item) => item.id === route.storeEntryId) ??
+    (entry.data?.installed
+      ? provider.plugins?.find((item) => item.name === entry.data?.name)
+      : undefined);
   if (entry.error || entry.data?.storeUnavailable) return null;
-  // The store also knows copies installed before agy recorded origins, by their manifest.
   const state =
     entry.data === null || entry.data.installationStateKnown === false
       ? "checking"
-      : route.state === "add" && entry.data.installed
-        ? "added"
+      : route.state === "add" && plugin !== undefined
+        ? plugin.enabled
+          ? "added"
+          : "off"
         : route.state;
   return (
     <CardRow>

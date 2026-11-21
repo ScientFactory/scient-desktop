@@ -973,7 +973,11 @@ re-reads agy's raw list as the last step before `agy plugin install
 environment. A receipt in `<stateDir>/antigravity-plugins/receipts.json` records
 name, catalog, version, source, digest, folder and the installed copy's identity
 (folder device, inode, birth time and `plugin.json` digest), written only when
-that digest equals the staged one. Writes to one plugin folder, its receipts
+that digest equals the staged one and the folder was born after the install
+began (where the system records birth times). agy has no no-replace directory
+install, so a same-name install by another program in the moment between that
+last list and the install can still be replaced; the named route has no such
+window. Writes to one plugin folder, its receipts
 included, take one permit shared by every instance using that folder.
 
 An installed copy is the catalog entry when agy's `source` names the catalog or
