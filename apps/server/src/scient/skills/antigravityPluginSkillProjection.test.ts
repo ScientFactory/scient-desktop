@@ -10,10 +10,11 @@ import * as Schema from "effect/Schema";
 import { prepareAntigravityProfile } from "../../provider/antigravityAuthSupport.ts";
 import {
   projectAntigravityPluginSkills,
-  removeAntigravityPluginSkillProjection,
+  linkAntigravityUserPlugins,
 } from "./antigravityPluginSkillProjection.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const makeHome = Effect.fn("test.makeAntigravityPluginHome")(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -65,7 +66,7 @@ it.layer(NodeServices.layer)("Antigravity plugin skill projection", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "removes only the projection link Scient made when the agy CLI loads plugins",
+    "links the agy CLI's profile to the user's own plugins, replacing only Scient's link",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -84,26 +85,63 @@ it.layer(NodeServices.layer)("Antigravity plugin skill projection", (it) => {
         expect(yield* isLink).toBe(true);
         const generation = yield* fs.readLink(pluginsLink);
 
+        // agy --gemini-dir reads plugins and their sign-ins from the profile.
         yield* prepareAntigravityProfile({
           profileDirectory: home.profileDirectory,
           userHome: home.userHome,
           nativePlugins: true,
         });
-        expect(yield* fs.exists(pluginsLink)).toBe(false);
+        expect(yield* fs.readLink(pluginsLink)).toBe(home.plugins);
+        expect(yield* fs.exists(path.join(pluginsLink, "gmail", "plugin.json"))).toBe(true);
         // A paired session that is still running keeps reading its generation.
         expect(yield* fs.exists(path.join(generation, "science", "skills"))).toBe(true);
 
-        const remove = removeAntigravityPluginSkillProjection({
+        const link = linkAntigravityUserPlugins({
           profileDirectory: home.profileDirectory,
+          userHome: home.userHome,
+          platform: yield* HostProcess.Platform,
         });
-        yield* fs.symlink(home.plugins, pluginsLink);
-        yield* remove;
-        expect(yield* fs.readLink(pluginsLink)).toBe(home.plugins);
-
+        // Someone else's link and a real folder stay as they are.
+        const elsewhere = path.join(home.root, "elsewhere");
+        yield* fs.makeDirectory(elsewhere);
+        yield* fs.remove(pluginsLink);
+        yield* fs.symlink(elsewhere, pluginsLink);
+        yield* link;
+        expect(yield* fs.readLink(pluginsLink)).toBe(elsewhere);
         yield* fs.remove(pluginsLink);
         yield* fs.makeDirectory(path.join(pluginsLink, "own-plugin"), { recursive: true });
-        yield* remove;
+        yield* link;
         expect(yield* fs.exists(path.join(pluginsLink, "own-plugin"))).toBe(true);
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "copies the user's plugin switches into the profile beside Scient's own",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* makeHome();
+        const profileConfig = path.join(home.profileDirectory, "config", "config.json");
+        yield* fs.makeDirectory(path.dirname(profileConfig), { recursive: true });
+        yield* fs.writeFileString(
+          profileConfig,
+          encodeJson({ plugins: { swarm: { enabled: false } } }),
+        );
+        yield* fs.writeFileString(
+          path.join(home.userHome, ".gemini", "config", "config.json"),
+          encodeJson({
+            plugins: { gmail: { enabled: false }, science: { installedFrom: { id: "x" } } },
+          }),
+        );
+        yield* linkAntigravityUserPlugins({
+          profileDirectory: home.profileDirectory,
+          userHome: home.userHome,
+          platform: yield* HostProcess.Platform,
+        });
+        expect(yield* decodeJson(yield* fs.readFileString(profileConfig))).toEqual({
+          plugins: { swarm: { enabled: false }, gmail: { enabled: false } },
+        });
       }),
   );
 });

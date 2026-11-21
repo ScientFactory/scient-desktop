@@ -25,7 +25,7 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 // SCIENT-FORK:START — plugin skills are projected without their other components.
 import {
   projectAntigravityPluginSkills,
-  removeAntigravityPluginSkillProjection,
+  linkAntigravityUserPlugins,
 } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
@@ -528,7 +528,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   readonly userHome?: string;
   readonly tempDirectory?: string;
-  // SCIENT-FORK:START — the agy CLI loads plugins itself; only a paired runtime needs projection.
+  // SCIENT-FORK:START — the agy CLI reads the user's plugins through a link; paired runtimes get a projection.
   readonly nativePlugins?: boolean;
   // SCIENT-FORK:END
 }) {
@@ -681,7 +681,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   }
   // SCIENT-FORK:START — see nativePlugins.
   yield* input.nativePlugins
-    ? removeAntigravityPluginSkillProjection({ profileDirectory: geminiHome })
+    ? linkAntigravityUserPlugins({ profileDirectory: geminiHome, userHome, platform })
     : projectAntigravityPluginSkills({ profileDirectory: geminiHome, userHome, platform });
   // SCIENT-FORK:END
   return profile;
