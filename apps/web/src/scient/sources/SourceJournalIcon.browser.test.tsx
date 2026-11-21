@@ -409,6 +409,81 @@ it("renews expiring signed artwork without clearing a displayed image on a trans
   expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(secondUrl);
 });
 
+it("asks nothing for a preprint, which has no journal cover to fetch", async () => {
+  using _observer = stubGlobal("IntersectionObserver", undefined);
+  const resolveIcon = vi.fn(async () => icon());
+  // These covers have no routing behavior.
+  await using screen = await render(
+    <>
+      <SourceJournalCover
+        environmentId={environmentId}
+        root="/preprints"
+        record={{ ...record, sourceId: "preprint", type: "preprint" }}
+        resolveIcon={resolveIcon}
+      />
+      <SourceJournalCover
+        environmentId={environmentId}
+        root="/preprints"
+        record={record}
+        resolveIcon={resolveIcon}
+      />
+    </>,
+    { router: false },
+  );
+  await vi.waitFor(() => expect(screen.container.querySelectorAll("img")).toHaveLength(1));
+  expect(resolveIcon).toHaveBeenCalledOnce();
+  expect(resolveIcon).toHaveBeenCalledWith(environmentId, {
+    root: "/preprints",
+    sourceId: record.sourceId,
+  });
+});
+
+it("renews a cover that several papers of one journal share once, not once per card", async ({
+  signal,
+}) => {
+  using _observer = stubGlobal("IntersectionObserver", undefined);
+  const initial = Promise.withResolvers<JournalIcon>();
+  const renewed = Promise.withResolvers<JournalIcon>();
+  const resolveIcon = vi
+    .fn()
+    .mockImplementationOnce(() => initial.promise)
+    .mockImplementationOnce(() => initial.promise)
+    .mockImplementationOnce(() => initial.promise)
+    .mockImplementation(() => renewed.promise);
+  await using fixture = new AsyncDisposableStack();
+  // These covers have no routing behavior. The clock outlives the mounted screen.
+  const screen = await render(
+    <>
+      {["first", "second", "third"].map((sourceId) => (
+        <SourceJournalCover
+          key={sourceId}
+          environmentId={environmentId}
+          root="/shared-renewal"
+          record={{ ...record, sourceId }}
+          resolveIcon={resolveIcon}
+        />
+      ))}
+    </>,
+    { router: false },
+  );
+  fixture.use(fakeTimers({ now: CLOCK_NOW }));
+  fixture.use(screen);
+  await act(() => initial.resolve(icon(firstUrl, CLOCK_NOW + 60_000)));
+  await vi.waitFor(() => expect(screen.container.querySelectorAll("img")).toHaveLength(3));
+  const looked = resolveIcon.mock.calls.length;
+  // Every card's renewal falls due while the first one is still on its way.
+  await advanceTestClock(signal, 50_000);
+  expect(resolveIcon).toHaveBeenCalledTimes(looked + 1);
+  await act(() => renewed.resolve(icon(secondUrl)));
+  await advanceTestClock(signal, 1_000);
+  await vi.waitFor(() =>
+    expect(
+      [...screen.container.querySelectorAll("img")].map((image) => image.getAttribute("src")),
+    ).toEqual([secondUrl, secondUrl, secondUrl]),
+  );
+  expect(resolveIcon).toHaveBeenCalledTimes(looked + 1);
+});
+
 it("does not reuse expired signed URLs on remount and recovers a failed image with a renewed URL", async ({
   signal,
 }) => {

@@ -10,11 +10,13 @@ import * as NodePath from "node:path";
 import * as NodeTimers from "node:timers";
 import * as NodeTimersPromises from "node:timers/promises";
 
+import type { ScientSourceRecord } from "@scientfactory/scient-sources";
 import {
-  normalizePersistentIdentifier,
-  type ScientSourceRecord,
-} from "@scientfactory/scient-sources";
-import { journalIconIdentity } from "@t3tools/shared/scientJournalIdentity";
+  journalCoverDoiParts,
+  journalCoverEligible,
+  journalIconIdentity,
+  journalRecordDoi,
+} from "@t3tools/shared/scientJournalIdentity";
 
 import { shrinkJournalCover } from "./JournalCoverImage.ts";
 import { MAX_COVER_INPUT_BYTES, MAX_COVER_OUTPUT_BYTES } from "./JournalCoverImageWorker.ts";
@@ -108,18 +110,8 @@ export interface JournalCoverResolverOptions {
 
 const activeResolutions = new Map<string, Promise<JournalCoverMaterial | null>>();
 
-function sourceDoi(record: ScientSourceRecord): string | null {
-  const doi = record.identifiers.find(
-    (identifier) => identifier.scheme.trim().toLowerCase() === "doi",
-  );
-  if (!doi) return null;
-  const normalized = normalizePersistentIdentifier("doi", doi.value);
-  return normalized.startsWith("doi:") ? normalized.slice(4).toLowerCase() : null;
-}
-
 /** The record's ISSNs, then one embedded in an older Wiley or Elsevier DOI (`j.1553-2712.…`, `S0140-6736(…)`). */
-function sourceIssns(record: ScientSourceRecord, doi: string | null): readonly string[] {
-  const embedded = doi?.match(/^10\.\d+\/(?:j\.|s)(\d{4}-\d{3}[\dx])[.(]/u)?.[1];
+function sourceIssns(record: ScientSourceRecord, embedded: string | null): readonly string[] {
   return [
     ...new Set(
       [
@@ -143,6 +135,7 @@ const normalized = (value: string | null) =>
     .replace(/\s+/gu, " ")
     .trim();
 
+const springerPrefixes = new Set(["10.1007", "10.1038", "10.1186"]);
 const elsevierPrefixes = new Set(["10.1016", "10.1053", "10.1054", "10.1067", "10.1078"]);
 const wileyPrefixes = new Set(["10.1002", "10.1111", "10.1113", "10.1155"]);
 
@@ -176,17 +169,16 @@ const atyponCodes: Readonly<Record<string, readonly [host: string, code: string]
 
 /** Where each publisher serves the journal's current cover, most specific first. */
 export function journalCoverCandidates(record: ScientSourceRecord): readonly URL[] {
-  if (!["article", "conference-paper"].includes(record.type)) return [];
-  const doi = sourceDoi(record);
-  const prefix = doi?.split("/")[0] ?? "";
+  if (!journalCoverEligible(record)) return [];
+  const doi = journalCoverDoiParts(journalRecordDoi(record));
+  const prefix = doi?.prefix ?? "";
   const publisher = normalized(record.publisher);
-  const issns = sourceIssns(record, doi);
+  const issns = sourceIssns(record, doi?.embeddedIssn ?? null);
   const candidates: URL[] = [];
-  const springer = doi?.match(/^10\.(?:1007|1038|1186)\/s(\d{5})-/u);
-  if (springer) {
+  if (doi?.springerJournal && springerPrefixes.has(prefix)) {
     candidates.push(
       new URL(
-        `https://media.springernature.com/w300/springer-static/cover/journal/${Number(springer[1])}.jpg`,
+        `https://media.springernature.com/w300/springer-static/cover/journal/${Number(doi.springerJournal)}.jpg`,
       ),
     );
   }
