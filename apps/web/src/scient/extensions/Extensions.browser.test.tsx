@@ -2475,6 +2475,172 @@ describe("Detail pages", () => {
   });
 });
 
+describe("Antigravity Marketplace", () => {
+  const antigravity = ProviderInstanceId.make("antigravity");
+  const storeEntry = (
+    name: string,
+    patch: Partial<ProviderStoreEntry> = {},
+  ): ProviderStoreEntry => ({
+    id: `${name}@antigravity-plugins-official`,
+    name,
+    displayName: name.charAt(0).toUpperCase() + name.slice(1),
+    marketplace: "antigravity-plugins-official",
+    description: `${name} tools`,
+    kind: "antigravity",
+    installed: false,
+    includes: [],
+    apps: [],
+    publisherType: "google",
+    publisher: "Google",
+    ...patch,
+  });
+  const canva = storeEntry("canva", {
+    id: "canva@antigravity-plugins-partners",
+    marketplace: "antigravity-plugins-partners",
+    publisherType: "third-party",
+    publisher: "Canva",
+  });
+  const withAntigravity = (patch: Partial<ServerProvider> = {}) => {
+    state.providersByEnvironment.local!.push(
+      provider(antigravity, "antigravity", { displayName: "Antigravity", ...patch }),
+    );
+  };
+
+  it("lists a category's Antigravity entries in their own store section", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = { entries: [storeEntry("chemistry")], total: 1 };
+    await fixture.render(<CategoryPage category="chemistry" />);
+    const section = fixture.section("From Antigravity’s store");
+    expect(fixture.rowNames(section)).toEqual(["Chemistry"]);
+    expect(buttonIn(fixture.row("Chemistry"), "Add")).not.toBeNull();
+    // Most used lists Scient's picks only.
+    await fixture.reset();
+    await fixture.render(<CategoryPage category="most-used" />);
+    expect(fixture.container.querySelector('[aria-label="From Antigravity’s store"]')).toBeNull();
+  });
+
+  it("offers a curated item's Antigravity Marketplace entry instead of repeating it", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    const pick = entry("scient.curated/canva", {
+      title: "Canva Connector",
+      categories: ["figures"],
+      agentStores: { antigravity: "canva@antigravity-plugins-partners" },
+    });
+    state.discoverPages[JSON.stringify({ scope: "curated", category: "figures" })] = {
+      entries: [pick],
+      fetchedAt: "2026-10-21T00:00:00.000Z",
+    };
+    state.storePages[antigravity] = { entries: [canva, storeEntry("chemistry")], total: 2 };
+    await fixture.render(<CategoryPage category="figures" />);
+    expect(fixture.rowNames(fixture.section("From Antigravity’s store"))).toEqual(["Chemistry"]);
+    await fixture.reset();
+    state.entries = { "scient.curated/canva": pick };
+    await fixture.render(<ServerDetailPage name="scient.curated/canva" />);
+    expect(
+      linkIn(fixture.container, "Also in the Antigravity Marketplace")?.getAttribute("href"),
+    ).toBe(
+      hrefOf("/settings/extensions/item/store/$instanceId/$entryId", {
+        instanceId: "antigravity",
+        entryId: "canva@antigravity-plugins-partners",
+      }),
+    );
+  });
+
+  it("lists its own section and asks before adding a partner plugin from a list", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = { entries: [storeEntry("chemistry"), canva], total: 2 };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<CategoryPage category="files" />);
+    const section = fixture.section("From Antigravity’s store");
+    expect(fixture.rowNames(section)).toEqual(["Chemistry", "Canva"]);
+    expect(section.textContent).toContain("Antigravity only");
+
+    state.confirm.mockResolvedValueOnce(false);
+    await userEvent.click(buttonIn(fixture.row("Canva"), "Add")!);
+    expect(state.confirm).toHaveBeenCalledOnce();
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+    expect(state.commands.providerAct).not.toHaveBeenCalled();
+
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.row("Canva"), "Add")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
+        },
+      }),
+    );
+
+    await userEvent.click(buttonIn(fixture.row("Chemistry"), "Add")!);
+    await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledTimes(2));
+    // Google's own plugins need no third-party notice.
+    expect(state.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a partner plugin's notice and catalog on its page and adds after the notice", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storeEntry = canva;
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(
+      <ProviderStoreDetailPage
+        instanceId="antigravity"
+        entryId="canva@antigravity-plugins-partners"
+      />,
+    );
+    expect(fixture.container.textContent).toContain("Canva makes this plugin, not Google.");
+    expect(fixture.aboutValue("Catalog")).toBe("Partner plugins from other developers");
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.container, "Add to Antigravity")!);
+    await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledOnce());
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+  });
+
+  it("removes an added plugin from the user's Antigravity after saying what that affects", async () => {
+    await using fixture = setup();
+    withAntigravity({
+      plugins: [
+        {
+          id: "gmail@antigravity-plugins-official",
+          name: "gmail",
+          displayName: "Gmail",
+          marketplace: "antigravity-plugins-official",
+          source: "local",
+          enabled: true,
+          canUninstall: true,
+          canSetEnabled: true,
+        },
+      ],
+    });
+    state.storeEntry = storeEntry("gmail", { installed: true });
+    state.confirm.mockResolvedValueOnce(true);
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(
+      <ProviderStoreDetailPage
+        instanceId="antigravity"
+        entryId="gmail@antigravity-plugins-official"
+      />,
+    );
+    expect(fixture.container.textContent).not.toContain("makes this plugin");
+    await userEvent.click(buttonIn(fixture.container, "Remove from Antigravity")!);
+    expect(state.confirm.mock.calls[0]![0]).toContain("including the Antigravity app");
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "uninstall", pluginId: "gmail@antigravity-plugins-official" },
+        },
+      }),
+    );
+  });
+});
+
 describe("Codex store connection", () => {
   it("shows connection actions from the owner's verified installation and refreshed app state", async () => {
     await using fixture = setup();

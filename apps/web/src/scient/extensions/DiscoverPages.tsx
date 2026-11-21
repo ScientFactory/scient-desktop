@@ -475,6 +475,7 @@ function canonicalUrl(value: string): string {
 function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
   return (
     curated.agentStores?.codex === entry.name ||
+    curated.agentStores?.antigravity === entry.id ||
     curated.name === entry.id ||
     curated.name === entry.name ||
     curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
@@ -486,32 +487,43 @@ function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
 }
 
 interface StoreGroup {
-  readonly key: "claude" | "codex";
+  readonly key: "claude" | "codex" | "antigravity";
   readonly title: string;
   readonly providers: ReadonlyArray<ServerProvider>;
 }
 
+const STORE_GROUP_KIND = {
+  claude: "shared",
+  codex: "codex",
+  antigravity: "antigravity",
+} as const satisfies Record<StoreGroup["key"], ProviderStoreEntry["kind"]>;
+
 /**
- * One section per store: Codex's plugins reach Codex; Claude's marketplaces serve Claude and
- * Scient Agent alike, so their entries share one section whichever agent listed them.
+ * One section per store: Codex's plugins reach Codex and the Antigravity Marketplace's reach
+ * Antigravity; Claude's marketplaces serve Claude and Scient Agent alike, so their entries share
+ * one section whichever agent listed them.
  */
 function storeGroups(
   targets: ReadonlyArray<ServerProvider>,
   resolve: MessageResolver,
 ): ReadonlyArray<StoreGroup> {
   const groups: StoreGroup[] = [];
-  for (const key of ["claude", "codex"] as const) {
+  for (const key of ["claude", "codex", "antigravity"] as const) {
     const providers = targets.filter((provider) =>
-      key === "codex" ? provider.driver === "codex" : provider.driver !== "codex",
+      key === "claude"
+        ? provider.driver !== "codex" && provider.driver !== "antigravity"
+        : provider.driver === key,
     );
     const first = providers.find((provider) => provider.driver === "claudeAgent") ?? providers[0];
     if (!first) continue;
     const name =
       first.driver === "codex"
         ? "Codex"
-        : first.driver === "claudeAgent"
-          ? "Claude"
-          : (first.displayName ?? "Scient Agent");
+        : first.driver === "antigravity"
+          ? "Antigravity"
+          : first.driver === "claudeAgent"
+            ? "Claude"
+            : (first.displayName ?? "Scient Agent");
     groups.push({ key, title: resolve(msg("From {name}’s store", { name })), providers });
   }
   return groups;
@@ -554,10 +566,7 @@ function StoreSection({
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const audience = providerStoreAudience(
-    group.providers[0]!,
-    group.key === "codex" ? "codex" : "shared",
-  );
+  const audience = providerStoreAudience(group.providers[0]!, STORE_GROUP_KIND[group.key]);
   // Each store's latest page says whether it has more; one button asks every store in the group.
   const next = group.providers.flatMap((provider): Array<readonly [string, string]> => {
     const latest = pages.filter((page) => page.provider === provider).at(-1);
@@ -639,7 +648,7 @@ function categoryStoreTargets(
     (provider) =>
       category !== "most-used" &&
       providerAvailable(provider) &&
-      ["codex", "claudeAgent", "scient"].includes(provider.driver),
+      ["codex", "claudeAgent", "scient", "antigravity"].includes(provider.driver),
   );
 }
 

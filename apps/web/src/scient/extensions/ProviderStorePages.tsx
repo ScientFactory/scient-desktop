@@ -10,6 +10,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { T, useGT, Var } from "gt-react";
 import { useContext, useState } from "react";
+import { ensureLocalApi } from "../../localApi";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useEnvironmentQuery } from "../../state/query";
@@ -38,6 +39,27 @@ import { providerAvailable, providerStoreAudience } from "./extensionsView";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
+/** Antigravity's partner catalog lists plugins other developers make; Google's own are not. */
+function isThirdPartyPlugin(entry: ProviderStoreEntry) {
+  return entry.kind === "antigravity" && entry.publisherType === "third-party";
+}
+
+function useThirdPartyNoticeText(entry: ProviderStoreEntry) {
+  const gt = useGT();
+  return entry.publisher
+    ? gt(
+        "{developer} makes this plugin, not Google. It can run its own code and connect to {developer}’s services. Add it only if you trust {developer}.",
+        { developer: entry.publisher },
+      )
+    : gt(
+        "A third-party developer makes this plugin, not Google. It can run its own code and connect to that developer’s services. Add it only if you trust them.",
+      );
+}
+
+function ThirdPartyNotice({ entry }: { readonly entry: ProviderStoreEntry }) {
+  return <MutedLine>{useThirdPartyNoticeText(entry)}</MutedLine>;
+}
+
 export function StoreInstall({
   provider,
   entry,
@@ -64,6 +86,28 @@ export function StoreInstall({
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const act = useAtomCommand(actOnProviderPlugin);
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
+  const notice = useThirdPartyNoticeText(entry);
+  const add = async () => {
+    // Every Add, in a list or on the detail page, shows a third-party notice first.
+    if (isThirdPartyPlugin(entry) && !(await ensureLocalApi().dialogs.confirm(notice))) return;
+    await lock.run("install", async () => {
+      const result = await act({
+        environmentId,
+        input: {
+          instanceId: target.instanceId,
+          action: {
+            type: "install",
+            entryId: entry.id,
+            ...(target.instanceId !== provider.instanceId
+              ? { sourceInstanceId: provider.instanceId }
+              : {}),
+          },
+        },
+      });
+      refresh();
+      return result;
+    });
+  };
   if (installed && plugin?.canUninstall)
     return <StoreRemove provider={target} plugin={plugin} refresh={refresh} compact={compact} />;
   if (compact && installed)
@@ -77,25 +121,7 @@ export function StoreInstall({
       <PrimaryAction
         icon={PlusIcon}
         disabled={!allowed || lock.locked || installed || Boolean(entry.disabledReason)}
-        onClick={() =>
-          void lock.run("install", async () => {
-            const result = await act({
-              environmentId,
-              input: {
-                instanceId: target.instanceId,
-                action: {
-                  type: "install",
-                  entryId: entry.id,
-                  ...(target.instanceId !== provider.instanceId
-                    ? { sourceInstanceId: provider.instanceId }
-                    : {}),
-                },
-              },
-            });
-            refresh();
-            return result;
-          })
-        }
+        onClick={() => void add()}
       >
         {lock.busy
           ? gt("Adding…")
@@ -105,9 +131,11 @@ export function StoreInstall({
               ? gt("Added")
               : target.driver === "codex"
                 ? gt("Add to Codex")
-                : target.driver === "claudeAgent"
-                  ? gt("Add to Claude Code")
-                  : gt("Add to Scient Agent")}
+                : target.driver === "antigravity"
+                  ? gt("Add to Antigravity")
+                  : target.driver === "claudeAgent"
+                    ? gt("Add to Claude Code")
+                    : gt("Add to Scient Agent")}
       </PrimaryAction>
       {installed ? (
         <MutedLine>
@@ -230,7 +258,9 @@ function StoreResults({
                   ? "Scient Agent"
                   : provider.driver === "claudeAgent"
                     ? "Claude Code"
-                    : "Codex")}
+                    : provider.driver === "antigravity"
+                      ? "Antigravity"
+                      : "Codex")}
             </Var>
             : <Var>{page.error}</Var>{" "}
             <Button size="sm" variant="ghost-muted" onClick={refresh}>
@@ -333,6 +363,9 @@ export function ProviderStoreShelves({ query = "" }: { readonly query?: string }
   const codex = providers.filter(
     (provider) => providerAvailable(provider) && provider.driver === "codex",
   );
+  const antigravity = providers.filter(
+    (provider) => providerAvailable(provider) && provider.driver === "antigravity",
+  );
   return (
     <>
       {primary ? (
@@ -380,6 +413,28 @@ export function ProviderStoreShelves({ query = "" }: { readonly query?: string }
           />
         </ExtensionsSection>
       ))}
+      {antigravity.map((provider) => (
+        <ExtensionsSection
+          key={provider.instanceId}
+          title={
+            <Link
+              to="/settings/extensions/store/$instanceId"
+              params={{ instanceId: provider.instanceId }}
+              className={SECTION_TITLE_LINK_CLASS}
+            >
+              <T>From the Antigravity Marketplace</T>
+              <SectionTitleChevron />
+            </Link>
+          }
+        >
+          <StoreResults
+            key={`${provider.instanceId}:${query}`}
+            provider={provider}
+            query={query}
+            preview
+          />
+        </ExtensionsSection>
+      ))}
     </>
   );
 }
@@ -398,7 +453,9 @@ function Store({ instanceId }: { readonly instanceId: string }) {
   const title =
     provider?.driver === "codex"
       ? gt("From the Codex store")
-      : gt("Plugins for Claude and Scient Agent");
+      : provider?.driver === "antigravity"
+        ? gt("From the Antigravity Marketplace")
+        : gt("Plugins for Claude and Scient Agent");
   useRememberListPage(title);
   return (
     <>
@@ -437,7 +494,7 @@ function Store({ instanceId }: { readonly instanceId: string }) {
         <ActionFeedback feedback={lock.feedback} />
         {provider ? (
           <>
-            {(provider.driver === "codex"
+            {(provider.driver === "codex" || provider.driver === "antigravity"
               ? [provider]
               : providers.filter(
                   (item) =>
@@ -491,7 +548,11 @@ function StoreDetail({
   const entry = result.data;
   const connector = catalog?.sections
     .flatMap((section) => section.entries)
-    .find((item) => item.agentStores?.codex === entry.name);
+    .find((item) =>
+      entry.kind === "antigravity"
+        ? item.agentStores?.antigravity === entry.id
+        : item.agentStores?.codex === entry.name,
+    );
   return (
     <DetailLayout
       back="discover"
@@ -513,6 +574,7 @@ function StoreDetail({
       description={entry.description}
     >
       {entry.disabledReason ? <MutedLine>{entry.disabledReason}</MutedLine> : null}
+      {isThirdPartyPlugin(entry) && !entry.installed ? <ThirdPartyNotice entry={entry} /> : null}
       <PluginContents
         key={JSON.stringify([provider.instanceId, entry.id])}
         provider={provider}
@@ -545,6 +607,14 @@ function StoreDetail({
           [gt("Marketplace"), entry.marketplace],
           entry.version ? [gt("Version"), entry.version] : null,
           entry.publisher ? [gt("Publisher"), entry.publisher] : null,
+          entry.publisherType
+            ? [
+                gt("Catalog", { $context: "which list of plugins this one comes from" }),
+                entry.publisherType === "google"
+                  ? gt("Google’s own plugins")
+                  : gt("Partner plugins from other developers"),
+              ]
+            : null,
           entry.review
             ? [
                 gt("Review", { $context: "noun, who reviewed a plugin" }),
