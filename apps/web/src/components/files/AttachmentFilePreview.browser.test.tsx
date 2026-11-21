@@ -1,5 +1,5 @@
 import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
-import { act, render, stubGlobal, type Screen } from "../../../test/render";
+import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -1554,7 +1554,9 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
       absolutePath="/tmp/report.html"
       relativePath="/tmp/report.html"
       title="Report"
+      workspaceMutationId={null}
       refreshKey={refreshKey}
+      manualReloadKey={0}
     />
   );
   assetUrlState.mockReturnValue({
@@ -1575,7 +1577,7 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
     refresh,
   });
   await screen.rerender(preview(1));
-  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "1");
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), ":1:0");
   expect(screen.container.querySelector("iframe")).toBe(opened);
 
   assetUrlState.mockReturnValue({
@@ -1590,6 +1592,66 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
   );
 });
 // SCIENT-FORK:END
+
+it("keeps an unchanged workspace HTML page loaded across commands and renews its grant", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string, reload = 0) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/report.html"
+      relativePath="report.html"
+      title="Report"
+      workspaceMutationId={mutation}
+      refreshKey={0}
+      manualReloadKey={reload}
+    />
+  );
+  const minted = (url: string, fileRevision: string, expiresAt: number) =>
+    assetUrlState.mockReturnValue({ _tag: "Success", url, expiresAt, fileRevision, refresh });
+  const shownSrc = (screen: Screen) =>
+    screen.container.querySelector("iframe")?.getAttribute("src");
+  refresh.mockReset();
+  using _timers = fakeTimers();
+  vi.setSystemTime(0);
+  const expiresAt = 60 * 60_000;
+  minted("data:text/html,original", "one", expiresAt);
+  await using screen = await render(preview("first"));
+  const opened = screen.container.querySelector("iframe");
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,original/);
+
+  // Agent commands re-mint the URL; the page and everything it loaded are unchanged.
+  minted("data:text/html,renewed", "one", expiresAt + 30 * 60_000);
+  await screen.rerender(preview("second"));
+  await screen.rerender(preview("third"));
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,original/);
+  expect(refresh).not.toHaveBeenCalled();
+
+  // Its grant is about to expire, so the page moves to the URL minted since.
+  await act(() => vi.advanceTimersByTime(59 * 60_000));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,renewed/);
+  expect(refresh).not.toHaveBeenCalled();
+
+  // With no command since, the page asks for a fresh URL itself and moves to it.
+  refresh.mockResolvedValue(null);
+  await act(() => vi.advanceTimersByTime(30 * 60_000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  minted("data:text/html,renewed-again", "one", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("third"));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,renewed-again/);
+
+  minted("data:text/html,edited", "two", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("fourth"));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,edited/);
+
+  // SCIENT-FORK: Reload file reloads an unchanged page.
+  minted("data:text/html,reloaded", "two", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("fourth", 1));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,reloaded/);
+});
 
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
   const file = new Blob(["a long line"], { type: "text/plain" });
