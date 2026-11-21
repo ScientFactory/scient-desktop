@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- A real socket fixture answers slowly on purpose.
+import * as NodeTimers from "node:timers";
+
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
@@ -72,6 +75,25 @@ describe("metadata HTTP completion", () => {
     await expect(
       request(new URL("https://registry.example/oversized"), agent, { maxBytes: 8 }),
     ).rejects.toThrow(/too much data/);
+  });
+
+  it("gives a request one budget across its redirects", async () => {
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      // Each answer in half the budget, the two together past it.
+      NodeTimers.setTimeout(
+        () =>
+          request.url === "/first"
+            ? response.writeHead(302, { Location: "https://registry.example/second" }).end()
+            : response.end("complete"),
+        120,
+      );
+    });
+    const request = makeMetadataRequest(fixture.send);
+
+    await expect(
+      request(new URL("https://registry.example/first"), agent, { deadlineMs: 200 }),
+    ).rejects.toThrow("The metadata request timed out.");
   });
 
   it("follows complete HTTPS redirects and still refuses plain HTTP before opening a socket", async () => {

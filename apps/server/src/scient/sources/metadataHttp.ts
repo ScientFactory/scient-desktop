@@ -3,9 +3,14 @@ import * as NodeHttps from "node:https";
 
 import packageJson from "../../../package.json" with { type: "json" };
 
-import { readBoundedNodeResponse, type NodeHttpRequest } from "./nodeHttpResponse.ts";
+import {
+  readBoundedNodeResponse,
+  withRequestDeadline,
+  type NodeHttpRequest,
+} from "./nodeHttpResponse.ts";
 
 const METADATA_TIMEOUT_MS = 5_000;
+const METADATA_DEADLINE_MS = 30_000;
 const MAX_METADATA_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_REDIRECTS = 4;
 
@@ -69,7 +74,10 @@ export interface MetadataResponse {
 /** Larger downloads, such as the citation style catalogue, raise these. */
 export interface MetadataRequestLimits {
   readonly maxBytes?: number;
+  /** Without a byte arriving. */
   readonly timeoutMs?: number;
+  /** For the whole request, redirects included. */
+  readonly deadlineMs?: number;
 }
 
 export type MetadataRequest = (
@@ -81,7 +89,11 @@ export type MetadataRequest = (
 export const makeMetadataRequest =
   (send: NodeHttpRequest = NodeHttps.request): MetadataRequest =>
   (url, headers, limits = {}) =>
-    requestFollowing(url, headers, 0, limits, send);
+    withRequestDeadline(
+      limits.deadlineMs ?? METADATA_DEADLINE_MS,
+      "The metadata request timed out.",
+      (signal) => requestFollowing(url, headers, 0, limits, send, signal),
+    );
 
 export const requestMetadata: MetadataRequest = makeMetadataRequest();
 
@@ -91,6 +103,7 @@ async function requestFollowing(
   redirects: number,
   limits: MetadataRequestLimits,
   send: NodeHttpRequest,
+  signal: AbortSignal,
 ): Promise<MetadataResponse> {
   if (url.protocol !== "https:") {
     return Promise.reject(new Error("Metadata requests must use HTTPS."));
@@ -100,7 +113,7 @@ async function requestFollowing(
   }
   const { promise, resolve, reject } = Promise.withResolvers<MetadataResponse>();
   const hop = contactedRegistryRequest(url, headers);
-  const request = send(hop.url, { method: "GET", headers: hop.headers }, (response) => {
+  const request = send(hop.url, { method: "GET", headers: hop.headers, signal }, (response) => {
     const receive = async (): Promise<MetadataResponse> => {
       const status = response.statusCode ?? 0;
       const body = await readBoundedNodeResponse(response, {
@@ -116,6 +129,7 @@ async function requestFollowing(
           redirects + 1,
           limits,
           send,
+          signal,
         );
       }
       return { status, body: body.toString("utf8"), url };

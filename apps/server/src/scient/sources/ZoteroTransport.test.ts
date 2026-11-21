@@ -1,10 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real HTTP sockets and disposable synthetic files exercise transport lifetimes.
+// @effect-diagnostics globalTimers:off -- The fixtures answer slowly on purpose.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers";
 
 import { describe, expect, it } from "@effect/vitest";
 
+import type { NodeHttpRequest } from "./nodeHttpResponse.ts";
 import { startHttpTransport, truncateHttpResponse } from "./nodeHttpResponse.testkit.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { makeLocalZoteroRequest } from "./ZoteroLocalAdapter.ts";
@@ -45,7 +50,91 @@ const account = {
   groupAccess: {},
 };
 
+/** A request whose connection never opens, so no socket idle timer ever starts. */
+const neverConnects: NodeHttpRequest = (url, options, onResponse) =>
+  NodeHttp.request(
+    new URL(`${url.pathname}${url.search}`, "http://127.0.0.1"),
+    {
+      ...options,
+      createConnection: () => Object.assign(new NodeNet.Socket(), { connecting: true }),
+    },
+    onResponse,
+  );
+
+/** Answers a byte at a time, each soon enough to keep any idle timer from firing. */
+function trickle(response: NodeHttp.ServerResponse) {
+  response.writeHead(200, { "Zotero-API-Version": "3" });
+  const timer = NodeTimers.setInterval(() => response.write("x"), 20);
+  response.once("close", () => NodeTimers.clearInterval(timer));
+}
+
+const BUDGET = { requestMs: 200, downloadMs: 200 };
+
 describe("Zotero Node HTTP completion", () => {
+  it.each([
+    { kind: "local", server: "never connects" },
+    { kind: "local", server: "trickles" },
+    { kind: "web", server: "never connects" },
+    { kind: "web", server: "trickles" },
+  ] as const)(
+    "ends a $kind request whose server $server at its deadline",
+    async ({ kind, server }) => {
+      await using fixture = await startHttpTransport((request, response) => {
+        request.resume();
+        trickle(response);
+      });
+      const send = server === "trickles" ? fixture.send : neverConnects;
+      const read =
+        kind === "local"
+          ? makeLocalZoteroRequest(send, BUDGET.requestMs)
+          : (path: string) =>
+              makeNodeZoteroWebHttp(send, BUDGET).request({
+                method: "GET",
+                url: apiUrl(path),
+                headers,
+              });
+
+      await expect(read("/api/items")).rejects.toThrow(/^Timed out while contacting zotero/iu);
+    },
+  );
+
+  it("gives a file one budget across its redirects and leaves no partial copy", async () => {
+    await using directory = await temporaryDirectory();
+    let slow = true;
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      if (!slow) {
+        response.end("%PDF-synthetic-complete");
+        return;
+      }
+      // Each answer in half the budget, the two together past it, the second part written.
+      if (request.url === "/storage") {
+        response.writeHead(200).write("%PDF-partial");
+        NodeTimers.setTimeout(() => response.end("-rest"), 120);
+      } else {
+        NodeTimers.setTimeout(
+          () => response.writeHead(302, { Location: "https://storage.example/storage" }).end(),
+          120,
+        );
+      }
+    });
+    const { transport } = makeZoteroWebLibrary({
+      apiKey: headers["Zotero-API-Key"],
+      account,
+      http: makeNodeZoteroWebHttp(fixture.send, BUDGET),
+      temporaryDirectory: directory.path,
+    });
+
+    await expect(transport.attachmentFile(attachment)).rejects.toThrow(
+      "Timed out while downloading a Zotero file.",
+    );
+    expect(await NodeFSP.readdir(directory.path)).toEqual([]);
+    slow = false;
+    const downloaded = await transport.attachmentFile(attachment);
+    expect(await NodeFSP.readFile(downloaded!.path, "utf8")).toBe("%PDF-synthetic-complete");
+    await downloaded!.release();
+  });
+
   it.each(["local", "web"] as const)(
     "rejects a truncated %s response and permits the next request",
     async (kind) => {
