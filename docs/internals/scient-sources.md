@@ -97,7 +97,11 @@ such as PubMed are never treated as the publisher. Without evidence the row keep
 its source-type icon. The icons ship in `apps/web/src/assets/publishers/`
 (64 px PNGs from each publisher's own site; see `NOTICE` there).
 
-Cards also show the journal's current cover. The host derives at most four
+Cards of journal articles and conference papers show the journal's current cover;
+`journalCoverEligible` and the DOI and cover-evidence reading (`journalRecordDoi`,
+`journalCoverDoiParts`) live in `@t3tools/shared/scientJournalIdentity`, so the
+client's cache keys and the host's addresses come from the same reading. A
+preprint card asks nothing. The host derives at most four
 publisher addresses from the record (`journalCoverCandidates`): Springer Nature's
 journal id in the DOI, Atypon journal codes by title (Science, PNAS, Health
 Affairs, ACP, NEJM, AHA, RSNA), and Elsevier and Wiley covers by ISSN, including
@@ -110,7 +114,8 @@ offline and while a stale cover is refreshed. Failures back off exponentially
 from one minute to a day. The old `journal-icons` cache is deleted in the
 background. Signed cover URLs renew without removing a working image; client
 successes are shared within an environment and project only for the same journal
-identity.
+identity, and cards sharing a success renew it with one request: the others wait
+on it.
 
 Discovery has a six-second network budget after registry-lane admission.
 Public-address checks and DNS pinning apply to every request, including
@@ -721,8 +726,14 @@ sources in `<project>/.scient/library/pins.json`:
   `displaced/reviews/<review-id>.json` for a review. One copy per holder,
   source and Undo, so a retry or a later edit of the paper adds none; no cap;
   a file that cannot be read is moved aside under a dated name; a failed keep
-  stops the replacement. Nothing reads them back on its own, and a project
-  package does not carry them. Limits: a pin whose ID is another computer's and
+  stops the replacement. Nothing puts them back on its own.
+  `readScientDisplacedCopiesInProject` reads every holder's file and counts
+  unreadable ones (including those set aside); a Library source's detail
+  carries its copies as `keptCopies` (holder, whether the key or review is still
+  in the project, and each differing field with the record's value now), which
+  source details show. A project package does not carry them: the export
+  result (`keptCopiesLeftOut`, `keptCopiesUnreadable`), the panel's summary and
+  the package README say how many stay in the project. Limits: a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
   again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not

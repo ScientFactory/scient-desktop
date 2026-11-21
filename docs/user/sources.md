@@ -116,7 +116,10 @@ above the list to browse papers from every project. Use
 **Remove from this project** to take it out; the paper stays in your Library
 and in other projects. Importing or adding by identifier while **My Library** is shown
 adds the papers to your Library only; the import's result, and the message
-after adding by identifier, offer **Add to project**.
+after adding by identifier, offer **Add to project**. In **My Library**, select
+papers and choose **Add to project** in the selection bar to add those not yet in
+this project; on a paper that is not in this project, its **⋯** menu lists **Add to
+project** first.
 
 A paper this project cites that is in the Trash says "Not in this Library":
 the project keeps its citation details, so it can still be cited, but it has no
@@ -149,8 +152,8 @@ link. A few journals with their own icon, such as The Lancet, Cell and Nature,
 show it instead. When no publisher is known the row shows an icon for its type
 (article, book, conference paper and so on). Cards also show the journal's
 current cover when its publisher offers one (Elsevier, Wiley, Springer Nature,
-Science, PNAS, NEJM and some others). Covers are saved for offline use and kept
-visible while they are refreshed.
+Science, PNAS, NEJM and some others); preprints have none. Covers are saved for
+offline use and kept visible while they are refreshed.
 In list view, the blue **Unread** dot sits with the actions on the right,
 immediately before **Open PDF** when a PDF is available.
 
@@ -355,8 +358,13 @@ one, also after you remove the copy: the project then cites it from its own
 saved citation details. Those saved details become exactly that paper's
 again. If they said anything else while the two were merged (for example an
 abstract a systematic review imported), the earlier details are kept, once,
-in the project folder under `.scient/library/displaced/`, where you or an
-agent can read them. A project package does not include them. If Scient stopped in the middle of a merge or an Undo,
+in the project folder under `.scient/library/displaced/`. The paper's details
+show them under **Earlier values kept after merge Undo**: for each citation key
+or review that held them, each value before and now, side by side, each with a
+copy button. Values a key or review held that has since been removed are shown
+too, marked as no longer in this project. Nothing is put back on its own: copy
+what you need. A project package does not include them and says how many it
+left in the project. If Scient stopped in the middle of a merge or an Undo,
 it finishes it the next time it opens your Library. After a
 project moves into your Library, its summary line offers **Review** when some
 merges kept different values.
@@ -939,7 +947,9 @@ project package" with the date. In the desktop app, for a project on this
 computer, it asks for the folder (starting beside the project). In the web app,
 or for a project on another computer, it saves the package inside the project:
 git then commits it with the project, PDFs included, and it takes disk space
-there. Scient says what was left out because this Library did not have it.
+there. Scient says what was left out because this Library did not have it, and
+how many earlier values kept after a merge Undo stay in the project instead of
+going into the package (the package's `README.md` says the same).
 
 People and agents can save or import a package at the requested path on the
 computer running the project, including outside the project. No earlier panel
@@ -1380,7 +1390,9 @@ in a collection.
 
 - **Records**: use **Log search** for each database search: the database, the
   search string exactly as run, the date and the number of results the
-  database reported, with the collection or selected sources it brought in.
+  database reported, with the collection or selected sources it brought in
+  (select them in the list or put them in a collection first; the dialog says
+  so when there is nothing to choose).
   Logging the same database, string and date again replaces that search. Add
   records found another way, such as from reference lists, with **Add
   records**. Sources the Library already merged on import count as
