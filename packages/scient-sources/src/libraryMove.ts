@@ -85,6 +85,7 @@ import {
   isNodeError,
   replaceFileAtomically,
   snapshot,
+  stableJson,
 } from "./storeFiles.ts";
 import { ScientSystematicReview } from "./systematicReview.ts";
 
@@ -310,18 +311,6 @@ function batches<A>(ctx: MoveContext, items: ReadonlyArray<A>): A[][] {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
-}
-
-/** Sorted keys at every level, so equal content compares equal whatever order wrote it. */
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .toSorted()
-      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 type StoredRecord = ScientSourceRecord & {

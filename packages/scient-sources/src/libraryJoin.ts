@@ -75,6 +75,7 @@ import {
   isNodeError,
   readBoundedJson,
   snapshot,
+  stableJson,
 } from "./storeFiles.ts";
 
 const JOINS_DIRECTORY = "joins";
@@ -204,18 +205,6 @@ const JoinPart = Schema.Struct({
   skipped: Schema.Array(Schema.Struct({ sourceId: Schema.String, why: Schema.String })),
 });
 type JoinPart = typeof JoinPart.Type;
-
-/** Sorted keys at every level, so equal content compares equal whatever order wrote it. */
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .toSorted()
-      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
 
 const sha256Of = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
 
@@ -1533,6 +1522,22 @@ export async function undoScientLibraryJoin(input: {
   return undone === "busy" ? { outcome: "running" } : undone;
 }
 
+/** Every difference a join recorded, with added sources that kept this Library's highlights. */
+const differencesOf = (
+  header: JoinHeader,
+  arrived: ReadonlyArray<Arrived>,
+): ReadonlyArray<ScientLibraryJoinDifference> => [
+  ...header.different,
+  ...arrived
+    .filter((entry) => entry.highlightsKept)
+    .map((entry) => ({
+      otherSourceId: entry.sourceId,
+      sourceId: entry.sourceId,
+      relation: "same-id" as const,
+      parts: ["highlights" as const],
+    })),
+];
+
 /** One join as "Recent changes" and the differences view show it. */
 export interface ScientLibraryJoinRecord {
   readonly joinId: string;
@@ -1595,17 +1600,7 @@ export async function listScientLibraryJoins(
       other: header.other,
       state: header.state === "running" ? "stopped" : header.state,
       added,
-      different: [
-        ...header.different,
-        ...arrived
-          .filter((entry) => entry.highlightsKept)
-          .map((entry) => ({
-            otherSourceId: entry.sourceId,
-            sourceId: entry.sourceId,
-            relation: "same-id" as const,
-            parts: ["highlights" as const],
-          })),
-      ],
+      different: differencesOf(header, arrived),
       removedHere: header.removedHere.length,
       removedThere: header.removedThere,
       missingPdfs: arrived.reduce((sum, entry) => sum + entry.missingPdfs, 0),
@@ -1747,24 +1742,16 @@ const candidatesOf = (standing: Standing): ReadonlyArray<string> =>
       ].toSorted()
     : [];
 
-/** Every difference a join recorded, with added sources that kept this Library's highlights. */
+/** What a join recorded as differing, read from its parts. */
 async function recordedDifferences(
   libraryRoot: string,
   header: JoinHeader,
 ): Promise<ReadonlyArray<ScientLibraryJoinDifference>> {
   const parts = await readParts(joinDirectory(libraryRoot, header.joinId)).catch(() => []);
-  return [
-    ...header.different,
-    ...parts
-      .flatMap((part) => part.added)
-      .filter((entry) => entry.highlightsKept)
-      .map((entry) => ({
-        otherSourceId: entry.sourceId,
-        sourceId: entry.sourceId,
-        relation: "same-id" as const,
-        parts: ["highlights" as const],
-      })),
-  ];
+  return differencesOf(
+    header,
+    parts.flatMap((part) => part.added),
+  );
 }
 
 /**
