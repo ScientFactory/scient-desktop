@@ -55,8 +55,9 @@ export const listen: Effect.Effect<
     const now = yield* Clock.currentTimeMillis;
     if (checkedRecently(state.checkedAt, now)) return;
     if (isRecent(yield* Ref.get(lastWakeCheckAt), now)) return;
-    yield* Ref.set(lastWakeCheckAt, now);
-    yield* updates.check("wake");
+    // A wake during a download or another action checks nothing and leaves the next wake free.
+    const { checked } = yield* updates.check("wake");
+    if (checked) yield* Ref.set(lastWakeCheckAt, now);
   });
 
   yield* checkAfterWake.pipe(
