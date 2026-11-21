@@ -838,6 +838,10 @@ describe("Discover", () => {
       "Gmail",
       "Google Calendar",
       "Google Drive",
+      "Outlook Email",
+      "Outlook Calendar",
+      "iMessage",
+      "Telegram",
       "Linear",
       "Notion",
       "Local tool",
@@ -1192,7 +1196,7 @@ describe("Discover", () => {
     expect(more(fixture.section("From Codex’s store"))).toHaveLength(1);
   });
 
-  it("keeps picks visible while registry is pending and groups store alternatives", async () => {
+  it("lists picks and store alternatives in a category, without Registry servers", async () => {
     await using fixture = setup();
     const pick = entry("scient.curated/scite", {
       title: "Scite",
@@ -1203,7 +1207,6 @@ describe("Discover", () => {
       entries: [pick],
       fetchedAt: "2026-10-21T00:00:00.000Z",
     };
-    state.discoverOutcomes[JSON.stringify({ scope: "registry", category: "papers" })] = "pending";
     const plugin = (name: string): ProviderStoreEntry => ({
       id: name,
       name,
@@ -1218,10 +1221,11 @@ describe("Discover", () => {
     state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
     state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<CategoryPage category="papers" />);
-    expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
+    // Readwise is Scient's own service in Papers; the store plugins follow it.
+    expect(fixture.rowNames()).toEqual(["Readwise", "Scite", "Zotero"]);
     // The store versions are on the item's own page, not under its row.
     expect(fixture.container.textContent).not.toContain("Also add from");
-    expect(fixture.container.textContent).toContain("Not checked by Scient");
+    expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     // Each store has its own section, which says the agent once; the rows just say Add.
     expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
     expect(fixture.row("Zotero").textContent).not.toContain("Codex only");
@@ -1332,6 +1336,10 @@ describe("Discover", () => {
       "Gmail",
       "Google Calendar",
       "Google Drive",
+      "Outlook Email",
+      "Outlook Calendar",
+      "iMessage",
+      "Telegram",
       "Notion",
     ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
@@ -2715,11 +2723,11 @@ describe("Antigravity Marketplace", () => {
       total: 2,
     };
     await fixture.render(<DiscoverPage />);
-    // Every store shelf's grid; Gmail's own row elsewhere on Discover is its service page.
+    // The Antigravity shelf's grid; Gmail's own row elsewhere on Discover is its service page.
     const shelves = () =>
-      [...fixture.container.querySelectorAll('[aria-label="Plugins"]')].flatMap((grid) =>
-        fixture.rowNames(grid),
-      );
+      [
+        ...fixture.container.querySelectorAll('[aria-label="From the Antigravity Marketplace"]'),
+      ].flatMap((grid) => fixture.rowNames(grid));
     await vi.waitFor(() => expect(shelves()).toContain("Chemistry"));
     expect(shelves()).not.toContain("Gmail");
     await fixture.reset();

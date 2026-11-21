@@ -494,6 +494,7 @@ export function ProviderPluginItem({
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderPluginActions(provider, label, plugin, workspace);
   const keyState = usePluginKeys({
     instanceId: provider.instanceId,
@@ -512,7 +513,7 @@ export function ProviderPluginItem({
     <ExtensionRow
       target={target}
       name={name}
-      audience={providerExtensionAudience(provider, plugin)}
+      audience={providerExtensionAudience(provider, plugin, providers)}
       tagline={plugin.description}
       status={
         !plugin.enabled
@@ -579,6 +580,7 @@ export function ProviderServerItem({
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderServerActions(provider, label, server);
   const statusText = MCP_SERVER_STATUS_TEXT[server.status];
   const target: ExtensionTarget = {
@@ -590,7 +592,7 @@ export function ProviderServerItem({
     <ExtensionRow
       target={target}
       name={providerServerDisplayName(server)}
-      audience={providerExtensionAudience(provider, server)}
+      audience={providerExtensionAudience(provider, server, providers)}
       // An app the agent has through its own account, not a server it runs.
       type={
         server.scope === "chatgpt" || server.scope === "claudeai"

@@ -13,30 +13,48 @@ its agents can do, regardless of who owns it:
 | Scient connectors and Scient plugins                                  | Scient                               | All agents, subject to connector transport support          |
 | Claude Code-format shared plugins                                     | The installing agent's plugin system | Claude Code and Scient Agent                                |
 | Account apps: Codex store apps, ChatGPT apps and claude.ai connectors | The provider account                 | Codex, Scient Agent or Claude, each through its own sign-in |
+| Codex plugins (skills and MCP servers)                                | Codex's plugin system                | Codex, and Scient Agent when its build loads them           |
 
 Discover prefers Scient's connector where the curated catalog's `agentStores`
 mapping identifies the same service in an agent store. Google's account apps
 remain in the account layer; Scient does not add Google's official MCP servers.
 
 **Account services** (`apps/web/src/scient/extensions/accountServices.ts`) are
-the services that exist only as account apps: Gmail, Google Calendar and Google
-Drive, each mapped to its ChatGPT app id and its claude.ai connector name. Each
-shows as one row, in Discover's categories and search and, once any agent has
-it, in Installed. Every other ChatGPT app an agent reports is a service too
+services Scient lists once and connects to every agent from one page, whichever
+way each agent reaches them. Gmail, Google Calendar, Google Drive, Outlook Email,
+Outlook Calendar, Microsoft Teams, SharePoint, Zoom, Figma and Readwise map to a
+ChatGPT app id and a claude.ai connector name; iMessage, Telegram and Boltz have
+no account app and name
+store entries instead (`stores.claude`, a Claude Code `<plugin>@<marketplace>`
+id; `stores.codex`, a Codex app-server plugin id). Each shows as one row, in
+Discover's categories and search and, once any agent has its account app, in
+Installed. Every other ChatGPT app an agent reports is a service too
 (`accountServicesFrom`), installed when an agent holds a row for it or reaches
-it through its account (`installedAccountServices`). Each agent's route comes from its own
-inventory:
+it through its account (`installedAccountServices`). A store plugin an agent
+added stays in Installed as that agent's plugin.
 
-- Scient Agent: its `chatgpt` server rows.
-- Claude: its `claudeai` rows.
-- Codex: its plugins' apps. A Scient Agent signed in to the same ChatGPT email
-  also speaks for Codex, since apps belong to the account.
+`accountServiceRoutes` gives each agent one route: its account app when the
+service has one for that agent, else the service's plugin from that agent's
+store, else none. Each route's state comes from the agent's own inventory:
 
-"Works with" lists the agents that have the service, with the step each other
-agent still needs (connect, or sign in). **Connect** opens the next provider
-page in the system browser: ChatGPT's page for the app first, since one
-ChatGPT connection serves Codex and Scient Agent, then claude.ai's connector
-page.
+- Scient Agent: its `chatgpt` server rows (`chatgpt`), or Claude's plugins it
+  loads (`claude-store`; a version that cannot load them is `update`).
+- Claude: its `claudeai` rows (`claude`), or its installed plugins (`claude-store`).
+- Codex: its plugins' apps (`chatgpt`), or its installed plugins (`codex-store`). A
+  Scient Agent signed in to the same ChatGPT email also speaks for Codex's apps,
+  since apps belong to the account.
+
+Account app routes are `connected` or a step away (`connect`, `sign-in`).
+Store routes are `add`, `added` or `off`, never `connected`: a plugin's own
+sign-in, if any, happens in chat and is not visible here. A route without an
+inventory yet is `checking`. "Works with" lists the agents that have the service
+(connected or added), with the step each other agent still needs.
+`nextAccountServiceStep` picks the next route for the Discover row's **+**:
+ChatGPT's page first, since one ChatGPT connection serves Codex and Scient
+Agent, then a Claude store plugin, which one install gives Claude and Scient
+Agent, then the rest. An `add` installs in place through `useStoreInstall`, the
+store pages' own install, so a Claude plugin for Scient Agent goes into a Claude
+instance.
 
 Links are never guessed. ChatGPT pages are built exactly as Codex builds its
 install links (`chatgpt.com/apps/<name with each other character as ->/<app id>`).
@@ -44,10 +62,11 @@ claude.ai links come only from `claudeConnectors.json`: each connector's "Add to
 Claude" address (`claude.ai/directory/<id>`) from Anthropic's public directory,
 refreshed with `node scripts/generate-claude-connectors.mjs`. A ChatGPT app with
 no claude.ai connector of the same name (or an alias, such as Outlook to
-Microsoft 365) gets no Claude route at all. Returning refreshes the agents' inventories. The provider sections
-no longer repeat these services' rows, and a category's store list hides a
-Codex store entry for one of them. Adding a service is a data change in that
-file.
+Microsoft 365) gets no Claude route at all. Returning, or adding a plugin,
+refreshes the agents' inventories. The provider sections no longer repeat these
+services' rows, and the store shelves and a category's store list hide a store
+entry that is one of them (`isAccountServiceStoreEntry`). Adding a service is a
+data change in that file.
 
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
@@ -87,8 +106,11 @@ access.
   curated matches, then registry matches as they arrive (see
   [Discover](#discover-curated-catalog-and-mcp-registry)). A slow or failing
   registry never holds back the other rows.
-- **Category** (`/settings/extensions/category/<category>`) — every curated
-  entry in one category.
+- **Category** (`/settings/extensions/category/<category>`) — every browsable
+  curated entry in one category, the account services in it, and the agents'
+  store entries for it. Browsing (Discover home and category pages) lists only
+  servers run by the service or by Anthropic for it (`listedWhenBrowsing`);
+  community servers and MCP Registry listings are reached only by searching.
 - **All MCP servers** (`/settings/extensions/all`) — the MCP Registry, paged,
   with its own search; curated servers appear here in their curated shape.
 - **Add your own** — one button in the top bar of Discover and Installed (and a
@@ -886,16 +908,30 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
 
 ### Shared plugins source
 
-Scient Agent always uses Claude Code's plugins; there is no desktop switch. The
-ordinary Scient Agent process factory and plugin commands inject
-`SCIENT_AGENT_ENABLE_SOURCES=claude-plugins` once runtime identity proves
-Scient Agent 0.1.3 or newer. Identity checks precede injection. The agent
-unions this source with its own enabled sources for discovery; its
-`disabledProviders` remains controlling. No settings overlay replaces arrays.
-The desktop inventory checks that switch through `config get … --json` and
-honors Claude's user/project/local plugin enablement layers.
+Scient Agent always uses Claude Code's plugins, and Codex's when its build can;
+there is no desktop switch. The ordinary Scient Agent process factory and
+plugin commands inject `SCIENT_AGENT_ENABLE_SOURCES=claude-plugins,codex-plugins`
+once runtime identity proves Scient Agent 0.1.3 or newer; a build without Codex
+plugin discovery ignores the id it does not know. Identity checks precede
+injection. The agent unions these sources with its own enabled sources for
+discovery; its `disabledProviders` remains controlling. No settings overlay
+replaces arrays. The desktop inventory checks that switch through `config get …
+--json` and honors Claude's user/project/local plugin enablement layers.
 
-The source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the
+The `codex-plugins` source loads the skills and MCP servers of the Codex plugins
+installed and enabled in `~/.codex/config.toml`, except OpenAI's host-coupled
+ones. Each check of an enabled, installed Scient Agent reads `--runtime-info`
+once (`scientAgentCapabilities`): `hostCommands` containing `apps` means it runs
+ChatGPT apps, and `enableSources` containing `codex-plugins` sets the provider's
+`usesCodexPlugins`. While any Scient Agent has it, a Codex plugin's audience is
+the `codex` layer (its Codex instance and those Scient Agents, "Works with Codex
+and Scient Agent"), both in Codex's store and among Codex's installed plugins.
+Plugins from the `openai-bundled` marketplace (by their `<name>@openai-bundled`
+id), where all of OpenAI's host-coupled plugins live, stay Codex only; this
+under-claims bundled plugins that would load. A Codex store entry built on a
+ChatGPT app keeps the app's account audience.
+
+Claude plugins' source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the
 server user's `.claude` directory. It is not a union of every configured Claude
 profile. Existing sessions may need the agent's normal reload/restart procedure
 before newly installed hooks or modules become active.

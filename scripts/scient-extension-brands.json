@@ -452,6 +452,23 @@
     "omitted": "Only an extremely wide wordmark or a 16 px favicon is available; neither is legible in a row tile."
   },
   {
+    "key": "boltz",
+    "names": ["Boltz", "boltz-api-cli"],
+    "website": "https://boltz.bio",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/boltz.png",
+      "brandSource": "Boltz's plugin icon from OpenAI's curated boltz-api-cli plugin (assets/app-icon.png), scaled to 256 px",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "mode": "tile",
+      "rendering": "tile",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 1832
+    }
+  },
+  {
     "key": "box",
     "names": ["box"],
     "website": "https://www.box.com",
@@ -1831,6 +1848,24 @@
     }
   },
   {
+    "key": "imessage",
+    "names": ["iMessage", "Messages"],
+    "website": "https://support.apple.com/messages",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/imessage.png",
+      "appName": "Messages",
+      "brandSource": "Apple's Messages app icon, from OpenAI's bundled Messages plugin (assets/app-icon.png), glass rim cropped (824 to 768 px) and scaled to 256 px",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "tile",
+      "rendering": "tile",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 3332
+    }
+  },
+  {
     "key": "incident-io",
     "names": ["incident-io"],
     "website": "https://incident.io",
@@ -3002,6 +3037,23 @@
       "sourceHeight": 256,
       "sourceFormat": "svg",
       "outputBytes": 2478
+    }
+  },
+  {
+    "key": "readwise",
+    "names": ["Readwise"],
+    "website": "https://readwise.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/readwise.png",
+      "brandSource": "Readwise's app icon from OpenAI's curated Readwise plugin (assets/logo.png), cropped to the tile and scaled to 256 px",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "tile",
+      "rendering": "tile",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 2034
     }
   },
   {

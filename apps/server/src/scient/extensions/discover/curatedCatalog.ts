@@ -22,7 +22,6 @@ export const MOST_USED_SERVER_IDS = [
   "github",
   "slack",
   "notion",
-  "telegram",
   "pubmed",
   "semantic-scholar",
   "exa",
@@ -601,7 +600,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
         },
       ],
     },
-    categories: ["most-used", "communication"],
+    categories: ["communication"],
     websiteUrl: "https://github.com/GhostPawJS/telegram",
     icon: CURATED_ICONS["telegram"],
   },
@@ -1334,6 +1333,24 @@ export const curatedServerForUrl = (
   );
 };
 
+/** Who runs a curated server: the service itself, Anthropic for the service, or a third party. */
+const curatedHosting = (server: CuratedServer): string =>
+  server.hosting ??
+  (server.url === undefined
+    ? "Official"
+    : server.url.includes(".caseyjhand.com/")
+      ? "Community"
+      : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
+        ? "Hosted by Anthropic"
+        : "Official");
+
+/**
+ * Whether the Discover home page and its category pages list a server. A community server, run by
+ * neither the service nor Anthropic, is found only by searching.
+ */
+export const listedWhenBrowsing = (server: CuratedServer): boolean =>
+  curatedHosting(server) !== "Community";
+
 /** The Discover entry for a curated server, before installation state. */
 export const curatedDiscoverEntry = (
   server: CuratedServer,
@@ -1344,15 +1361,7 @@ export const curatedDiscoverEntry = (
   ...(server.agentStores ? { agentStores: server.agentStores } : {}),
   ...(server.accountRequired !== undefined ? { accountRequired: server.accountRequired } : {}),
   ...(server.oauthClientRequired ? { oauthClientRequired: true } : {}),
-  hosting:
-    server.hosting ??
-    (server.url === undefined
-      ? "Official"
-      : server.url.includes(".caseyjhand.com/")
-        ? "Community"
-        : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
-          ? "Hosted by Anthropic"
-          : "Official"),
+  hosting: curatedHosting(server),
   ...(server.paidPlan ? { paidPlan: true } : {}),
   ...(server.beta ? { beta: true } : {}),
   ...(server.accessNote ? { accessNote: server.accessNote } : {}),

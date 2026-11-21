@@ -369,6 +369,8 @@ export const ServerProvider = Schema.Struct({
   // SCIENT-FORK:START — Scient Extensions native inventory.
   accountAppsAvailable: Schema.optional(Schema.Boolean),
   usesClaudePlugins: Schema.optional(Schema.Boolean),
+  /** Scient Agent loads the skills and MCP servers of Codex's installed plugins. */
+  usesCodexPlugins: Schema.optional(Schema.Boolean),
   /** Opaque live-instance generation; replacement resets inventory. Never persisted. */
   nativeInventoryGeneration: Schema.optionalKey(TrimmedNonEmptyString),
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */

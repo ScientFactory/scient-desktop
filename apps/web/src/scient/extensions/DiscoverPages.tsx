@@ -6,7 +6,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
-import { isAccountServiceStoreEntry } from "./accountServices";
+import { isAccountServiceStoreEntry, storeEntryAudience } from "./accountServices";
 import { extensionCategoryDescription, extensionCategoryTitle } from "./extensionCategoryCopy";
 import { Link, Navigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
@@ -566,7 +566,18 @@ function StoreSection({
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const audience = providerStoreAudience(group.providers[0]!, STORE_GROUP_KIND[group.key]);
+  const { providers } = useExtensionsEnvironment();
+  // The store's own reach, unless a row built on a ChatGPT app reaches further.
+  const storeAudience = providerStoreAudience(
+    group.providers[0]!,
+    STORE_GROUP_KIND[group.key],
+    providers,
+  );
+  const reachesFurther =
+    storeAudience.layer === "agent" &&
+    rows.some(
+      ({ provider, entry }) => storeEntryAudience(provider, entry, providers).layer === "account",
+    );
   // Each store's latest page says whether it has more; one button asks every store in the group.
   const next = group.providers.flatMap((provider): Array<readonly [string, string]> => {
     const latest = pages.filter((page) => page.provider === provider).at(-1);
@@ -596,7 +607,11 @@ function StoreSection({
     <ExtensionsSection
       title={group.title}
       action={
-        <span className="text-xs text-muted-foreground">{audienceLabel(audience, resolve)}</span>
+        <span className="text-xs text-muted-foreground">
+          {reachesFurther
+            ? gt("Codex, and Scient Agent through ChatGPT apps")
+            : audienceLabel(storeAudience, resolve)}
+        </span>
       }
     >
       {messages.map((message) => (
@@ -615,7 +630,7 @@ function StoreSection({
                 name={entry.displayName}
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
-                audience={audience}
+                audience={storeEntryAudience(provider, entry, providers)}
                 trailing={
                   <StoreInstall provider={provider} entry={entry} refresh={refresh} compact />
                 }
@@ -761,7 +776,6 @@ function CategoryContents({
     matchesQuery(query, [entry.title, entry.description, entry.name]),
   );
   const ready = picks.data !== null || picks.error !== null;
-  const storeReady = pages.every(({ result }) => !AsyncResult.isInitial(result));
   return (
     <>
       <ExtensionsSection title={gt("Scient’s picks")}>
@@ -820,21 +834,6 @@ function CategoryContents({
               </MutedLine>
             </ExtensionsSection>
           ) : null}
-          <ExtensionsSection title={gt("More from the MCP Registry")}>
-            <MutedLine>
-              <T>Not checked by Scient</T>
-            </MutedLine>
-            <ExtensionGrid label={gt("More from the MCP Registry")}>
-              {ready && storeReady ? (
-                <DiscoverPager
-                  input={{ scope: "registry", category, ...(query ? { query } : {}) }}
-                  seen={new Set(curated.map((entry) => entry.name))}
-                  hide={(entry) => stores.some((store) => storeMatches(store.entry, entry))}
-                  pendingLabel={gt("Searching the MCP Registry…")}
-                />
-              ) : null}
-            </ExtensionGrid>
-          </ExtensionsSection>
         </>
       ) : null}
     </>

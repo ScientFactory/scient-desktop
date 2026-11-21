@@ -2,6 +2,7 @@ import { RegistryContext } from "@effect/atom-react";
 import type { ServerProvider, ServerProviderPlugin } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { PlusIcon } from "lucide-react";
 import { useContext, useRef, useState, type ReactNode } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
@@ -14,15 +15,18 @@ import {
   type AccountServiceRoute,
   accountServiceAudience,
   accountServiceRoutes,
+  isAccountRoute,
   NOT_SIGNED_IN_REASON,
   nextAccountServiceStep,
+  type StorePluginRoute,
 } from "./accountServices";
 import { useProviderPluginActions } from "./extensionActions";
 import { ActionFeedback } from "./ExtensionItems";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import { actOnProviderPlugin, extensionsProviderStoreEntry } from "./extensionsState";
-import { needsAntigravityConnectionSignIn, StoreInstall } from "./ProviderStorePages";
+import { needsAntigravityConnectionSignIn } from "./ProviderStorePages";
 import { openAuthorizationPage } from "./openAuthorizationPage";
+import { StoreInstall, useStoreInstall } from "./ProviderStorePages";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 function CardRow({ children }: { readonly children: ReactNode }) {
@@ -31,8 +35,8 @@ function CardRow({ children }: { readonly children: ReactNode }) {
 
 /**
  * The service's place in every agent, from the agents' own inventories when Extensions has read
- * them, and the one step that connects it next. Returning from the provider's page re-reads the
- * agents that may now have it.
+ * them, and the one step that connects it next. Returning from the provider's page, or adding a
+ * plugin here, re-reads the agents that may now have it.
  */
 export function useAccountService(service: AccountService) {
   const { environmentId, canWrite, providers, providerInventory } = useExtensionsEnvironment();
@@ -48,14 +52,18 @@ export function useAccountService(service: AccountService) {
     messages,
   );
   const step = nextAccountServiceStep(routes);
-  useWindowFocusRefresh(() => {
-    if (!waiting.current) return;
-    waiting.current = false;
+  // A Claude plugin added for one agent reaches the others that load Claude's plugins too.
+  const reread = () => {
     for (const route of routes)
       void act({
         environmentId,
         input: { instanceId: route.instanceId, action: { type: "refresh-inventory" } },
       });
+  };
+  useWindowFocusRefresh(() => {
+    if (!waiting.current) return;
+    waiting.current = false;
+    reread();
   });
   const open = (page: string) => {
     waiting.current = true;
@@ -65,16 +73,73 @@ export function useAccountService(service: AccountService) {
     routes,
     step,
     environmentId,
-    /** The agents as last read, for an inline sign-in. */
+    /** The agents as last read, for an inline sign-in or install. */
     providers: providerInventory.providers.length > 0 ? providerInventory.providers : providers,
     /** A sign-in finishes in the browser; returning re-reads the agents. */
     expectReturn: () => {
       waiting.current = true;
     },
+    reread,
     audience: accountServiceAudience(routes),
-    connect: step && canWrite ? () => open(step.page) : undefined,
+    /** Opens the next provider page; a store plugin step installs through `AddServicePlugin`. */
+    connect: step && isAccountRoute(step) && canWrite ? () => open(step.page) : undefined,
     open,
   };
+}
+
+/** The Discover row's +: adds the service's store plugin in place, as the store's own Add does. */
+export function AddServicePlugin({
+  service,
+  route,
+  provider,
+  refresh,
+}: {
+  readonly service: AccountService;
+  readonly route: StorePluginRoute;
+  readonly provider: ServerProvider;
+  readonly refresh: () => void;
+}) {
+  const gt = useGT();
+  const { lock, install } = useStoreInstall(provider, route.entry, refresh);
+  return (
+    <Button
+      size="icon-sm"
+      variant="ghost-muted"
+      aria-label={gt("Connect {name}", { name: service.name })}
+      disabled={lock.locked}
+      onClick={install}
+    >
+      <PlusIcon aria-hidden />
+    </Button>
+  );
+}
+
+/** One agent's Add for a store plugin, named for the agent that keeps it. */
+function StoreRouteAction({
+  route,
+  provider,
+  refresh,
+}: {
+  readonly route: StorePluginRoute;
+  readonly provider: ServerProvider;
+  readonly refresh: () => void;
+}) {
+  const gt = useGT();
+  const { target, lock, install } = useStoreInstall(provider, route.entry, refresh);
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-1">
+      <Button variant="ghost-primary" size="sm" disabled={lock.locked} onClick={install}>
+        {lock.busy
+          ? gt("Adding…")
+          : target.driver === "codex"
+            ? gt("Add to Codex")
+            : target.driver === "claudeAgent"
+              ? gt("Add to Claude Code")
+              : gt("Add to Scient Agent")}
+      </Button>
+      <ActionFeedback feedback={lock.feedback} />
+    </span>
+  );
 }
 
 const ROUTE_STATE_TEXT = {
@@ -88,14 +153,21 @@ const ROUTE_STATE_TEXT = {
   added: msg("Added"),
 };
 
-/** What a person can do for one agent: connect on the provider's page, or sign the agent in. */
+/**
+ * What a person can do for one agent: connect on the provider's page, sign the agent in, or add
+ * the service's plugin to it.
+ */
 function RouteAction({
   route,
+  provider,
   open,
+  reread,
   onSignIn,
 }: {
-  readonly route: ReturnType<typeof accountServiceRoutes>[number];
+  readonly route: AccountServiceRoute;
+  readonly provider: ServerProvider | undefined;
   readonly open: (page: string) => void;
+  readonly reread: () => void;
   /** Signs the agent in where it is, when it can be; otherwise Settings → Providers. */
   readonly onSignIn?: (() => void) | undefined;
 }) {
@@ -107,6 +179,8 @@ function RouteAction({
         {route.family === "chatgpt" ? gt("Connect in ChatGPT") : gt("Connect on claude.ai")}
       </Button>
     );
+  if (route.state === "add" && provider)
+    return <StoreRouteAction route={route} provider={provider} refresh={reread} />;
   if (route.state === "sign-in" && onSignIn)
     return (
       <Button variant="ghost-primary" size="sm" onClick={onSignIn}>
@@ -123,7 +197,9 @@ function RouteAction({
     );
   return (
     <span className="shrink-0 text-xs text-muted-foreground">
-      {messages(ROUTE_STATE_TEXT[route.state])}
+      {route.state === "off" && !isAccountRoute(route)
+        ? gt("Turned off")
+        : messages(ROUTE_STATE_TEXT[route.state])}
     </span>
   );
 }
@@ -165,7 +241,7 @@ function AntigravityServiceRow({
   route,
   provider,
 }: {
-  readonly route: AccountServiceRoute & { readonly storeEntryId: string };
+  readonly route: StorePluginRoute;
   readonly provider: ServerProvider;
 }) {
   const gt = useGT();
@@ -173,13 +249,13 @@ function AntigravityServiceRow({
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStoreEntry({
     environmentId,
-    input: { instanceId: route.instanceId, entryId: route.storeEntryId },
+    input: { instanceId: route.instanceId, entryId: route.entry.id },
   });
   const entry = useEnvironmentQuery(atom);
   // The store also knows copies installed before agy recorded origins, by their manifest; those
   // keep their own id, so find them by name and act on that copy.
   const plugin =
-    provider.plugins?.find((item) => item.id === route.storeEntryId) ??
+    provider.plugins?.find((item) => item.id === route.entry.id) ??
     (entry.data?.installed
       ? provider.plugins?.find((item) => item.name === entry.data?.name)
       : undefined);
@@ -250,37 +326,37 @@ function AntigravityServiceRow({
 /** Each agent's place for a service, with its action, as on Gmail's page and plugin pages. */
 export function ServiceAgents({ service }: { readonly service: AccountService }) {
   const gt = useGT();
-  const { routes, open, environmentId, providers, expectReturn } = useAccountService(service);
+  const { routes, open, environmentId, providers, expectReturn, reread } =
+    useAccountService(service);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   if (routes.length === 0)
     return (
       <MutedLine>
         <T>
-          None of your agents reaches <Var>{service.name}</Var> through its account.
+          None of your agents can reach <Var>{service.name}</Var>.
         </T>
       </MutedLine>
     );
   // The line under an agent's name, when it says more than the action beside it does.
-  const note = (route: (typeof routes)[number]) =>
-    route.state === "connected"
+  const note = (route: AccountServiceRoute) =>
+    route.state === "connected" || route.state === "added"
       ? route.family === "chatgpt"
         ? gt("Through its ChatGPT account")
-        : gt("Through its Claude account")
-      : route.state === "connect" &&
-          (route.family === "chatgpt" || service.claude?.name === service.name)
+        : route.family === "claude"
+          ? gt("Through its Claude account")
+          : route.family === "claude-store"
+            ? gt("Through a Claude Code plugin")
+            : gt("Through a Codex plugin")
+      : route.state === "add" || (route.state === "connect" && route.family === "chatgpt")
         ? undefined
         : route.reason;
   return (
     <div className="min-w-0 divide-y divide-border overflow-hidden rounded-xl border bg-card">
       {routes.map((route) => {
         const provider = providers.find((entry) => entry.instanceId === route.instanceId);
-        if (route.family === "antigravity")
-          return provider && route.storeEntryId ? (
-            <AntigravityServiceRow
-              key={route.instanceId}
-              route={{ ...route, storeEntryId: route.storeEntryId }}
-              provider={provider}
-            />
+        if (route.family === "antigravity-store")
+          return provider ? (
+            <AntigravityServiceRow key={route.instanceId} route={route} provider={provider} />
           ) : null;
         // Scient Agent signs in to ChatGPT right here; the agent runs the sign-in.
         const inline = route.driver === "scient" && provider?.connection?.accounts;
@@ -304,7 +380,9 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
               </span>
               <RouteAction
                 route={route}
+                provider={provider}
                 open={open}
+                reread={reread}
                 onSignIn={
                   inline
                     ? () => {

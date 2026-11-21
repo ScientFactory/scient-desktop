@@ -74,7 +74,7 @@ export const runScientAgentPluginCommand = Effect.fn("runScientAgentPluginComman
       {
         ...env,
         SCIENT_AGENT_ENABLE_SOURCES: supportsScientClaudePlugins(runtime.version)
-          ? "claude-plugins"
+          ? "claude-plugins,codex-plugins"
           : undefined,
       },
       cwd,

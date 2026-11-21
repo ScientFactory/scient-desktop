@@ -13,6 +13,11 @@ export const ExtensionAudience = Schema.Union([
     layer: Schema.Literal("shared"),
     ownerInstanceId: Schema.optional(ProviderInstanceId),
   }),
+  /** A Codex plugin: its Codex instance, and Scient Agents that load Codex's installed plugins. */
+  Schema.Struct({
+    layer: Schema.Literal("codex"),
+    ownerInstanceId: Schema.optional(ProviderInstanceId),
+  }),
   Schema.Struct({
     layer: Schema.Literal("agent"),
     driver: ProviderDriverKind,

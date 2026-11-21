@@ -65,7 +65,7 @@ import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMc
 import {
   hasChatGptAccount,
   readScientAgentChatGptApps,
-  scientAgentRunsChatGptApps,
+  scientAgentCapabilities,
   SCIENT_AGENT_CHATGPT_APPS_ALL,
   SCIENT_AGENT_CHATGPT_APPS_ENV,
 } from "../../scient/extensions/ScientAgentChatGptApps.ts";
@@ -204,7 +204,7 @@ export const ScientAgentDriver: ScientProviderDriver<
     // client that predates the account method still decodes this provider.
     const stamp = (
       snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts" | "checkFailure">,
-      runsChatGptApps = false,
+      capabilities = { runsApps: false, codexPlugins: false },
     ): ServerProvider => {
       const { accounts, checkFailure, ...draft } = snapshot;
       return {
@@ -214,9 +214,10 @@ export const ScientAgentDriver: ScientProviderDriver<
           models: draft.models.filter((model) => isOfferedScientAgentAccount(model.slug)),
         }),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
+        usesCodexPlugins: capabilities.codexPlugins,
         // The apps of the agent's own ChatGPT sign-in, which only it holds and only a build
         // that runs them can use.
-        accountAppsAvailable: runsChatGptApps && hasChatGptAccount(accounts),
+        accountAppsAvailable: capabilities.runsApps && hasChatGptAccount(accounts),
         connection: {
           methods: [],
           canDisconnect: false,
@@ -310,25 +311,23 @@ export const ScientAgentDriver: ScientProviderDriver<
                         snapshot.accounts,
                       )
                     : Effect.undefined,
-                  hasChatGptAccount(snapshot.accounts)
-                    ? scientAgentRunsChatGptApps(
-                        launchConfig.binaryPath,
-                        processEnv,
-                        serverConfig.stateDir,
-                      ).pipe(
-                        Effect.provideService(OmpExecutableGate, executableGate),
-                        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                        Effect.provideService(FileSystem.FileSystem, fs),
-                        Effect.provideService(Path.Path, path),
-                      )
-                    : Effect.succeed(false),
+                  scientAgentCapabilities(
+                    launchConfig.binaryPath,
+                    processEnv,
+                    serverConfig.stateDir,
+                  ).pipe(
+                    Effect.provideService(OmpExecutableGate, executableGate),
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                  ),
                 ],
                 { concurrency: "unbounded" },
               ).pipe(
-                Effect.map(([skills, usageLimits, runsChatGptApps]) =>
+                Effect.map(([skills, usageLimits, capabilities]) =>
                   stamp(
                     { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
-                    runsChatGptApps,
+                    capabilities,
                   ),
                 ),
               )

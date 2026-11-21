@@ -1549,6 +1549,7 @@ function ProviderPluginDetail({
   readonly workspace: string | undefined;
 }) {
   const gt = useGT();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
   const name = plugin.displayName ?? plugin.name;
   return (
@@ -1614,7 +1615,7 @@ function ProviderPluginDetail({
             gt("Works with"),
             <WorksWithValue
               key="works-with"
-              audience={providerExtensionAudience(group.provider, plugin)}
+              audience={providerExtensionAudience(group.provider, plugin, providers)}
             />,
           ],
           // Claude records a commit hash where others give a version; a hash tells a person nothing.
@@ -1685,6 +1686,7 @@ function ProviderServerDetail({
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const { providers } = useExtensionsEnvironment();
   const actions = useProviderServerActions(group.provider, group.label, server);
   const canSignIn = server.canStartSignIn === true || Boolean(server.connectUrl);
   const statusText = MCP_SERVER_STATUS_TEXT[server.status];
@@ -1733,7 +1735,7 @@ function ProviderServerDetail({
             gt("Works with"),
             <WorksWithValue
               key="works-with"
-              audience={providerExtensionAudience(group.provider, server)}
+              audience={providerExtensionAudience(group.provider, server, providers)}
             />,
           ],
           [gt("Status"), status],

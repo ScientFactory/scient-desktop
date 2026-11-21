@@ -350,12 +350,13 @@ export function collectProviderExtensionGroups(
     const selected = providers.find((candidate) => candidate.instanceId === worksWith);
     const visiblePlugins = selected
       ? plugins.filter(({ plugin }) =>
-          audienceReaches(providerExtensionAudience(provider, plugin), selected),
+          audienceReaches(providerExtensionAudience(provider, plugin, providers), selected),
         )
       : plugins;
     const mcpServers = (provider.mcpServers ?? []).filter(
       (server) =>
-        !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
+        !selected ||
+        audienceReaches(providerExtensionAudience(provider, server, providers), selected),
     );
     if (
       selected &&
@@ -423,9 +424,29 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
   }
 }
 
+/** OpenAI's host-coupled Codex plugins, which only Codex can run, all come from this marketplace. */
+const CODEX_HOST_MARKETPLACE = "openai-bundled";
+
+/**
+ * A Codex plugin that Scient Agents loading Codex's installed plugins (its skills and servers)
+ * reach too, when one does; `undefined` leaves it Codex's own.
+ */
+function codexPluginAudience(
+  provider: Pick<ServerProvider, "instanceId">,
+  /** The plugin's `<name>@<marketplace>` id; absent for the store as a whole. */
+  id: string | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+): ExtensionAudience | undefined {
+  return !id?.endsWith(`@${CODEX_HOST_MARKETPLACE}`) &&
+    providers.some((agent) => agent.driver === "scient" && agent.usesCodexPlugins === true)
+    ? { layer: "codex", ownerInstanceId: provider.instanceId }
+    : undefined;
+}
+
 export function providerExtensionAudience(
   provider: ServerProvider,
   entry: ServerProviderPlugin | ServerProviderMcpServer,
+  providers: ReadonlyArray<ServerProvider>,
 ): ExtensionAudience {
   const shared =
     provider.driver === "claudeAgent"
@@ -438,6 +459,11 @@ export function providerExtensionAudience(
           ? Boolean(entry.marketplace)
           : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
   if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
+  const codex =
+    provider.driver === "codex" && "id" in entry
+      ? codexPluginAudience(provider, entry.id, providers)
+      : undefined;
+  if (codex) return codex;
   return {
     layer: "agent",
     driver: provider.driver,
@@ -462,25 +488,35 @@ export function providerExtensionAudience(
 }
 
 /**
- * Who a store's plugin is for: Claude's stores serve Claude and Scient Agent, Codex's serve Codex,
- * and the Antigravity Marketplace serves Antigravity.
+ * Who a store's plugin is for: Claude's stores serve Claude and Scient Agent; Codex's serve Codex,
+ * and Scient Agent too when it loads Codex's plugins, except OpenAI's host-coupled ones; the
+ * Antigravity Marketplace serves Antigravity.
  */
 export function providerStoreAudience(
   provider: Pick<ServerProvider, "driver" | "instanceId">,
   kind: ProviderStoreEntry["kind"],
+  providers: ReadonlyArray<ServerProvider>,
+  /** One entry's plugin id; absent for the store as a whole. */
+  entryId?: string,
 ): ExtensionAudience {
-  return kind === "shared"
-    ? { layer: "shared", ownerInstanceId: provider.instanceId }
-    : {
-        layer: "agent",
-        driver: provider.driver,
-        instanceId: provider.instanceId,
-        label: kind === "codex" ? "Codex" : "Antigravity",
-        reason:
-          kind === "codex"
-            ? msg("Uses Codex’s own ChatGPT account")
-            : msg("Installed through Antigravity’s own plugin manager"),
-      };
+  if (kind === "shared") return { layer: "shared", ownerInstanceId: provider.instanceId };
+  if (kind === "antigravity")
+    return {
+      layer: "agent",
+      driver: provider.driver,
+      instanceId: provider.instanceId,
+      label: "Antigravity",
+      reason: msg("Installed through Antigravity’s own plugin manager"),
+    };
+  return (
+    codexPluginAudience(provider, entryId, providers) ?? {
+      layer: "agent",
+      driver: provider.driver,
+      instanceId: provider.instanceId,
+      label: "Codex",
+      reason: msg("Uses Codex’s own ChatGPT account"),
+    }
+  );
 }
 
 export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
@@ -494,6 +530,11 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
         (provider.driver === "scient" &&
           supportsScientClaudePlugins(provider.version) &&
           provider.usesClaudePlugins === true)
+      );
+    case "codex":
+      return (
+        provider.instanceId === audience.ownerInstanceId ||
+        (provider.driver === "scient" && provider.usesCodexPlugins === true)
       );
     case "agent":
       return provider.instanceId === audience.instanceId;
@@ -524,6 +565,8 @@ export function audienceNames(audience: ExtensionAudience, resolve: MessageResol
       );
     case "shared":
       return resolve(msg("Claude and Scient Agent"));
+    case "codex":
+      return resolve(msg("Codex and Scient Agent"));
     case "agent":
       return resolve(msg("{agent} only", { agent: audience.label }));
     case "account":
@@ -548,6 +591,8 @@ export function audienceLabel(audience: ExtensionAudience, resolve: MessageResol
       );
     case "shared":
       return resolve(msg("Works with Claude and Scient Agent"));
+    case "codex":
+      return resolve(msg("Works with Codex and Scient Agent"));
     case "agent":
       return audienceNames(audience, resolve);
     case "account":
@@ -601,7 +646,9 @@ export function audienceSupport(
                 ? resolve(audience.reason)
                 : audience.layer === "account"
                   ? resolve(msg("This agent has no account that offers it"))
-                  : resolve(msg("Uses Claude Code's plugin format")),
+                  : audience.layer === "codex"
+                    ? resolve(msg("Uses Codex’s plugin format"))
+                    : resolve(msg("Uses Claude Code's plugin format")),
           }
         : {}),
     };

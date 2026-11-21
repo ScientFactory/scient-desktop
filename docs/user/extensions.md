@@ -10,12 +10,15 @@ which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
-  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Telegram,
-  PubMed, Semantic Scholar, Exa, Playwright, Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
+  (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, iMessage,
+  Telegram, GitHub, Slack, Notion, PubMed, Semantic Scholar, Exa, Playwright,
+  Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
   literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
   each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
-  section title to see the whole category. Search covers the catalog, the
-  registry, and what you have already installed.
+  section title to see the whole category. Sections and categories list
+  official services, run by the service itself or by Anthropic for it. Community
+  servers and MCP Registry servers appear only when you search. Search covers the
+  catalog, the registry, and what you have already installed.
 - **Installed** lists what this environment already has, grouped by who manages
   it.
 
@@ -267,22 +270,41 @@ connection status updates after Codex confirms it. Some apps **connect the
 first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
-**Apps your agents reach through their own accounts** (Gmail, Google Calendar,
-Google Drive and any other app your ChatGPT or Claude account has) each appear
-once: in Discover for the three Google ones, and in Installed as an **App** when
-any agent has them. Scient never holds those sign-ins.
+A Scient Agent build that supports it also uses the skills and MCP servers of
+the Codex plugins installed and turned on in Codex (in `~/.codex/config.toml`).
+Codex store plugins and Codex's own plugins in Installed then say **Works with
+Codex and Scient Agent**. OpenAI's bundled plugins, such as Browser, Computer Use
+and Messages, need the Codex app itself and stay **Codex only**.
 
-An app's page lists **Your agents**, each with its own state and action:
+**Services your agents reach through their own accounts or stores** each appear
+once in Discover, whichever way each agent reaches them: Gmail, Google Calendar,
+Google Drive, Outlook Email, Outlook Calendar, Microsoft Teams, SharePoint, Zoom,
+Figma and Readwise through each agent's ChatGPT or Claude account, and iMessage,
+Telegram and Boltz through a plugin from each agent's store. Any other app your ChatGPT or Claude account
+has is a service too, and appears in Installed as an **App** when any agent has
+it. The store shelves leave out plugins these services list. Scient never holds
+those sign-ins.
+
+A service's page lists **Your agents**, one row per agent, each with its own
+state and action, so one page connects every agent:
 
 - **Connect in ChatGPT** for Codex and Scient Agent. One connection there
   serves both when they use the same ChatGPT account. Scient Agent needs its
   ChatGPT sign-in; the row offers it when it is missing.
 - **Connect on claude.ai** for Claude, when claude.ai has a connector for that
   app. It opens that connector's own page. Where claude.ai names it differently
-  (Outlook is part of Microsoft 365), the row says the name to look for. An app
-  claude.ai does not have shows no Claude row.
+  (Outlook, Teams and SharePoint are part of Microsoft 365), the row says the
+  name to look for. An app claude.ai does not have shows no Claude row.
+- **Add to Claude Code** or **Add to Codex** for a service an agent has no
+  account app for, such as iMessage (Anthropic's iMessage plugin for Claude and
+  Scient Agent, OpenAI's Messages plugin for Codex) and Telegram (Anthropic's
+  Telegram plugin). It installs the plugin from that agent's store right there.
+  One Claude Code plugin serves Claude and Scient Agent. The row then says
+  **Added**, not Connected: any setup the plugin needs, such as a Telegram bot
+  token, happens in chat.
 
-Return to Scient afterwards and the rows update. Under the Installed table,
+The **+** on a service's Discover row takes the next of these steps. Return to
+Scient after a provider page and the rows update. Under the Installed table,
 **Add apps on ChatGPT** and **Add connectors on claude.ai** open each account's
 own page. Scient does not add Google's official MCP servers itself.
 

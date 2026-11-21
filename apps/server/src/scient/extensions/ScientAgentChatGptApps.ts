@@ -4,7 +4,11 @@
  * `scient-agent apps --json`; Scient only reports them, and every Scient Agent conversation gets
  * their tools through `SCIENT_AGENT_CHATGPT_APPS`.
  */
-import type { ProviderConnectionAccount, ServerProviderMcpServer } from "@t3tools/contracts";
+import {
+  supportsScientClaudePlugins,
+  type ProviderConnectionAccount,
+  type ServerProviderMcpServer,
+} from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -13,6 +17,7 @@ import {
   OmpExecutableGate,
 } from "../../provider/omp/OmpExecutableGate.ts";
 import {
+  scientAgentEnableSources,
   scientAgentHostCommands,
   scientAgentTarget,
 } from "../../provider/scient/ScientAgentTarget.ts";
@@ -97,20 +102,32 @@ const runtimeInfo = Effect.fn("scientAgentRuntimeInfo")(function* (
     kind: "one-shot",
   });
   const info = yield* runProviderPluginCommand(resolved, env, cwd, ["--runtime-info"]);
-  const runsApps =
-    scientAgentTarget.identify(info) !== undefined &&
-    scientAgentHostCommands(info).includes("apps");
-  return { resolved, runsApps };
+  const runtime = scientAgentTarget.identify(info);
+  return {
+    resolved,
+    runsApps: runtime !== undefined && scientAgentHostCommands(info).includes("apps"),
+    // Scient enables the source only for a build that loads Claude's plugins too.
+    codexPlugins:
+      runtime !== undefined &&
+      supportsScientClaudePlugins(runtime.version) &&
+      scientAgentEnableSources(info).includes("codex-plugins"),
+  };
 });
 
-/** Whether this executable runs ChatGPT apps; an older one ignores the request for them. */
-export const scientAgentRunsChatGptApps = Effect.fn("scientAgentRunsChatGptApps")(
+const NO_CAPABILITIES = { runsApps: false, codexPlugins: false };
+
+/**
+ * What this executable can do beyond chat, from one runtime-info read: run ChatGPT apps (an
+ * older one ignores the request for them) and load Codex's installed plugins.
+ */
+export const scientAgentCapabilities = Effect.fn("scientAgentCapabilities")(
   function* (executable: string, env: NodeJS.ProcessEnv, cwd: string) {
-    return (yield* runtimeInfo(executable, env, cwd)).runsApps;
+    const { runsApps, codexPlugins } = yield* runtimeInfo(executable, env, cwd);
+    return { runsApps, codexPlugins };
   },
   Effect.scoped,
-  Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.succeed(false) }),
-  Effect.orElseSucceed(() => false),
+  Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.succeed(NO_CAPABILITIES) }),
+  Effect.orElseSucceed(() => NO_CAPABILITIES),
 );
 
 /**
