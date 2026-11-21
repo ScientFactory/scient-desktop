@@ -54,22 +54,52 @@ export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
 /**
- * The reviewed stock light palette for the web and desktop clients. Mobile
- * keeps the shared T3 Code palette until its default appearance is reviewed
- * independently.
+ * The reviewed stock palettes for the web and desktop clients, matching what
+ * index.css paints. Text is a neutral near-black (near-white in dark) with a
+ * neutral grey for secondary text. Mobile keeps the shared T3 Code palette
+ * until its default appearance is reviewed independently.
  */
 const T3_CODE_WEB_LIGHT_THEME_COLORS: ThemeColors = {
   ...T3_CODE_LIGHT_THEME_COLORS,
+  toolbarForeground: "#191919",
+  toolbarControlForeground: "#191919",
+  text: "#191919",
+  textMuted: "#666666",
   focus: "#0160cc",
   accent: "#0160cc",
+  secondaryForeground: "#191919",
+  mutedForeground: "#666666",
+  secondaryLabel: "#666666",
   error: "#e72b2b",
   errorForeground: "#d60e1a",
   errorSurface: "#faebeb",
   update: "#0160cc",
   updateForeground: "#0160cc",
   updateSurface: "#dee9f6",
+  messageSurface: "#efeff0",
+  messageForeground: "#191919",
   messageAction: "#0160cc",
   messageActionHover: "#0154b4",
+  codeForeground: "#191919",
+  sidebarForeground: "#191919",
+  sidebarMutedForeground: "#666666",
+};
+
+const T3_CODE_WEB_DARK_THEME_COLORS: ThemeColors = {
+  ...T3_CODE_DARK_THEME_COLORS,
+  canvas: "#000000",
+  toolbarForeground: "#efefef",
+  toolbarControlForeground: "#efefef",
+  text: "#efefef",
+  textMuted: "#9c9c9c",
+  secondaryForeground: "#efefef",
+  mutedForeground: "#9c9c9c",
+  secondaryLabel: "#9c9c9c",
+  messageSurface: "#1e1e1e",
+  messageForeground: "#efefef",
+  codeForeground: "#efefef",
+  sidebarForeground: "#efefef",
+  sidebarMutedForeground: "#9c9c9c",
 };
 
 export const ThemePreference = Schema.String;
@@ -453,23 +483,9 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors({
-      ...T3_CODE_DARK_THEME_COLORS,
-      canvas: "#000000",
-    }));
+    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_WEB_DARK_THEME_COLORS));
   }
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_WEB_LIGHT_THEME_COLORS));
-}
-
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
-const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
-  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
-};
-
-/** The standard theme as index.css paints it, for solves that measure the page. */
-export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
 }
 
 type ThemeRgbColor = {
@@ -1786,7 +1802,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
-  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
+  applyContextChipVariables(root, getStandardThemeColors(appearance ?? "light"));
 }
 
 export function resolveThemeAppearance(

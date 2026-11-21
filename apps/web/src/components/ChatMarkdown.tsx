@@ -2353,8 +2353,9 @@ function ChatMarkdown({
       ref={bindMarkdownRef}
       className={cn(
         "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
-        !inline &&
-          "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
+        // SCIENT-FORK:START — chat text at full strength (scient/typography; upstream: 90% opacity).
+        !inline && "text-sm leading-relaxed text-foreground",
+        // SCIENT-FORK:END
         className,
       )}
       // SCIENT-FORK:START — the message direction (scient/bidi).
