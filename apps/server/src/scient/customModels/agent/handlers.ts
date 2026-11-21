@@ -20,6 +20,7 @@ import { ServerConfig } from "../../../config.ts";
 import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
@@ -68,7 +69,14 @@ function readiness(
       entry.configurationKey === customModelAttachmentKey(connection, model),
   );
   if (assessment === undefined) return { status: "checking", settled: false };
-  if (assessment.state === "available") return { status: "ready", settled: true };
+  if (assessment.state === "available")
+    return {
+      status:
+        assessment.contextWindow === undefined
+          ? "ready"
+          : `ready (${formatTokens(assessment.contextWindow)} read, ${formatTokens(assessment.maxOutputTokens)} per reply)`,
+      settled: true,
+    };
   return {
     status:
       assessment.reason === "credential"
@@ -128,6 +136,7 @@ export const layer = McpToolAccess.toLayer(
     const secretRequests = yield* SecretRequests;
     const projections = yield* ProjectionStoreV2;
     const random = yield* SecureRandom.SecureRandom;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     const readSettings = serverSettings.getSettings.pipe(
       Effect.map((settings) => settings.customModels),
@@ -137,17 +146,27 @@ export const layer = McpToolAccess.toLayer(
       return listCustomModels(yield* readSettings, yield* providerRegistry.getProviders);
     });
 
-    /** Waits until every connected agent has answered for this model, or the wait runs out. */
+    /**
+     * Waits until every connected agent has answered for the saved configuration, or the wait
+     * runs out. A later change in Settings ends the wait: its answer is not this save's.
+     */
     const settledStatuses = Effect.fn("CustomModelsAgent.settledStatuses")(function* (
       connectionId: string,
       modelId: string,
+      committedKey: string,
     ) {
       const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(READINESS_WAIT);
       while (true) {
         const customModels = yield* readSettings;
         const connection = customModels.connections.find((entry) => entry.id === connectionId);
-        const model = connection?.models.find((entry) => entry.modelId === modelId);
-        if (connection === undefined || model === undefined) return [];
+        const model = connection?.models.find((entry) => entry.id === modelId);
+        if (connection === undefined || model === undefined)
+          return { superseded: "It was removed in Settings since.", statuses: [] };
+        if (customModelAttachmentKey(connection, model) !== committedKey)
+          return {
+            superseded: "It was changed in Settings since; list it for its current status.",
+            statuses: [],
+          };
         const providers = yield* providerRegistry.getProviders;
         const statuses = model.instanceIds.map((agent) => ({
           agent,
@@ -161,7 +180,7 @@ export const layer = McpToolAccess.toLayer(
           statuses.every((entry) => entry.settled) ||
           (yield* Clock.currentTimeMillis) >= deadline
         )
-          return statuses;
+          return { superseded: undefined, statuses };
         yield* Effect.sleep(READINESS_POLL);
       }
     });
@@ -191,8 +210,18 @@ export const layer = McpToolAccess.toLayer(
 
     return {
       scient_custom_models: McpToolAccess.reads(() => currentList),
-      scient_custom_models_manage: McpToolAccess.writesEnvironment((params) =>
+      scient_custom_models_manage: McpToolAccess.writesEnvironment((params, check) =>
         Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          // A change commits under the caller's thread lock, after the access check passes again:
+          // its modes cannot change while Scient asks the endpoint for limits.
+          const guarded = <A, E, R>(change: Effect.Effect<A, E, R>) => {
+            const checked = check.pipe(Effect.andThen(change));
+            return scope.thread === undefined
+              ? checked
+              : executor.withLock(scope.thread.threadId, checked);
+          };
+          const modelId = params.model?.trim();
           const current = yield* readSettings;
           const existing =
             params.connectionId === undefined
@@ -205,39 +234,43 @@ export const layer = McpToolAccess.toLayer(
           if (params.action === "remove") {
             if (existing === undefined) return yield* invalid("remove needs a connectionId.");
             if (params.wholeConnection === true) {
-              yield* serverSettings
-                .removeCustomModel({ revision: current.revision, connectionId: existing.id })
-                .pipe(Effect.mapError((error) => invalid(error.message)));
+              yield* guarded(
+                serverSettings
+                  .removeCustomModel({ revision: current.revision, connectionId: existing.id })
+                  .pipe(Effect.mapError((error) => invalid(error.message))),
+              );
               lines.push(`Removed ${existing.name}, its models and its key.`);
               return { lines };
             }
-            if (params.model === undefined)
+            if (modelId === undefined)
               return yield* invalid("Name the `model` to remove, or pass wholeConnection.");
-            const remaining = existing.models.filter((entry) => entry.modelId !== params.model);
+            const remaining = existing.models.filter((entry) => entry.modelId !== modelId);
             if (remaining.length === existing.models.length)
-              return yield* invalid(`${existing.name} has no model ${params.model}.`);
-            if (remaining.length === 0)
-              return yield* invalid(
-                `${params.model} is the only model on ${existing.name}. Pass wholeConnection to remove the connection and its key.`,
-              );
-            yield* serverSettings
-              .saveCustomModel({
-                revision: current.revision,
-                connection: {
-                  id: existing.id,
-                  name: existing.name,
-                  protocol: existing.protocol,
-                  baseUrl: existing.baseUrl,
-                  models: remaining,
-                },
-              })
-              .pipe(Effect.mapError((error) => invalid(error.message)));
-            lines.push(`Removed ${params.model} from ${existing.name}.`);
+              return yield* invalid(`${existing.name} has no model ${modelId}.`);
+            yield* guarded(
+              serverSettings
+                .saveCustomModel({
+                  revision: current.revision,
+                  connection: {
+                    id: existing.id,
+                    name: existing.name,
+                    protocol: existing.protocol,
+                    baseUrl: existing.baseUrl,
+                    models: remaining,
+                  },
+                })
+                .pipe(Effect.mapError((error) => invalid(error.message))),
+            );
+            lines.push(
+              remaining.length === 0
+                ? `Removed ${modelId} from ${existing.name}. The connection and its key stay for another model.`
+                : `Removed ${modelId} from ${existing.name}.`,
+            );
             return { lines };
           }
 
           if (params.action === "test") {
-            const model = existing?.models.find((entry) => entry.modelId === params.model);
+            const model = existing?.models.find((entry) => entry.modelId === modelId);
             if (existing === undefined || model === undefined)
               return yield* invalid("test needs a connectionId and one of its `model` IDs.");
             const providers = yield* providerRegistry.getProviders;
@@ -267,19 +300,18 @@ export const layer = McpToolAccess.toLayer(
           }
 
           // save
-          if (params.model === undefined) return yield* invalid("save needs the `model` ID.");
+          if (modelId === undefined || modelId.length === 0)
+            return yield* invalid("save needs the `model` ID.");
           if (existing === undefined && params.connection === undefined)
             return yield* invalid("save needs a connectionId, or a new `connection`.");
           if ((params.contextWindow === undefined) !== (params.maxOutputTokens === undefined))
             return yield* invalid("Give contextWindow and maxOutputTokens together, or neither.");
-          const apiKey =
-            params.secretRef === undefined ? undefined : yield* consumeKey(params.secretRef);
           const base = existing ?? {
             id: yield* random.uuidV4(),
             ...params.connection!,
             models: [],
           };
-          const previous = base.models.find((entry) => entry.modelId === params.model);
+          const previous = base.models.find((entry) => entry.modelId === modelId);
           const providers = yield* providerRegistry.getProviders;
           const instanceIds =
             params.agents ??
@@ -296,38 +328,61 @@ export const layer = McpToolAccess.toLayer(
                   configurationMode: "manual",
                   contextWindow: params.contextWindow,
                   maxOutputTokens: params.maxOutputTokens,
-                  images: params.images ?? previous?.images ?? false,
-                  imageInput: (params.images ?? previous?.images ?? false) ? "enabled" : "disabled",
                 }
               : previous === undefined
-                ? { configurationMode: "automatic", images: false, imageInput: "automatic" }
+                ? { configurationMode: "automatic" }
+                : {};
+          // Image input stays as it was unless asked; a new model detects it, as in Settings.
+          const imageSettings: Partial<CustomModel> =
+            params.images !== undefined
+              ? { images: params.images, imageInput: params.images ? "enabled" : "disabled" }
+              : previous === undefined
+                ? { images: false, imageInput: "automatic" }
                 : {};
           const model: CustomModel = {
             reasoning: false,
             images: false,
             ...previous,
             ...limits,
+            ...imageSettings,
             id: previous?.id ?? (yield* random.uuidV4()),
-            modelId: params.model,
-            name: params.name ?? previous?.name ?? params.model,
+            modelId,
+            name: params.name?.trim() || previous?.name || modelId,
             instanceIds,
           };
-          yield* serverSettings
-            .saveCustomModel({
-              revision: current.revision,
-              connection: {
-                id: base.id,
-                name: base.name,
-                protocol: base.protocol,
-                baseUrl: base.baseUrl,
-                models: [...base.models.filter((entry) => entry.modelId !== params.model), model],
-              },
-              ...(apiKey === undefined ? {} : { apiKey }),
-              refreshModelId: model.id,
-            })
-            .pipe(Effect.mapError((error) => invalid(error.message)));
+          const committed = yield* guarded(
+            Effect.gen(function* () {
+              // Read only after the caller is checked again, so a refused change leaves the ref.
+              const apiKey =
+                params.secretRef === undefined ? undefined : yield* consumeKey(params.secretRef);
+              return yield* serverSettings
+                .saveCustomModel({
+                  revision: current.revision,
+                  connection: {
+                    id: base.id,
+                    name: base.name,
+                    protocol: base.protocol,
+                    baseUrl: base.baseUrl,
+                    models: [...base.models.filter((entry) => entry.modelId !== modelId), model],
+                  },
+                  ...(apiKey === undefined ? {} : { apiKey }),
+                  refreshModelId: model.id,
+                })
+                .pipe(Effect.mapError((error) => invalid(error.message)));
+            }),
+          );
           lines.push(`Saved ${model.name} on ${base.name}.`);
-          for (const entry of yield* settledStatuses(base.id, params.model)) {
+          const savedConnection = committed.connections.find((entry) => entry.id === base.id);
+          const savedModel = savedConnection?.models.find((entry) => entry.id === model.id);
+          if (savedConnection === undefined || savedModel === undefined)
+            return { lines, connectionId: base.id };
+          const outcome = yield* settledStatuses(
+            base.id,
+            model.id,
+            customModelAttachmentKey(savedConnection, savedModel),
+          );
+          if (outcome.superseded !== undefined) lines.push(outcome.superseded);
+          for (const entry of outcome.statuses) {
             const provider = providers.find((candidate) => candidate.instanceId === entry.agent);
             lines.push(`${provider ? agentName(provider) : entry.agent}: ${entry.status}.`);
           }

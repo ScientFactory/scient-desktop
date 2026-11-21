@@ -1749,7 +1749,7 @@ const layerThemeToolkit = toolkitRegistration(ThemeToolkit, ThemeHandlers.layer)
 const layerCustomModelsToolkit = toolkitRegistration(
   CustomModelsToolkit,
   CustomModelsHandlers.layer,
-);
+).pipe(Layer.provide(ThreadCommandExecutor.layer));
 
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 

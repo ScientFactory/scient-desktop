@@ -23,6 +23,7 @@ import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
 import { liveThreadShell } from "../../../mcp/McpToolAccess.testkit.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
@@ -74,6 +75,7 @@ it.effect("adds, limits and removes a custom model through the agent tools", () 
 
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
+      ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment:custom-models"),
         requestNamespace: "provider:custom-models",
@@ -222,7 +224,8 @@ it.effect("adds, limits and removes a custom model through the agent tools", () 
       const limited: { lines: string[] } = yield* manage({
         action: "save",
         connectionId,
-        model: "openrouter/free",
+        // Padding around the ID still names the saved model.
+        model: " openrouter/free ",
         contextWindow: 200_000,
         maxOutputTokens: 16_384,
       });
@@ -234,12 +237,20 @@ it.effect("adds, limits and removes a custom model through the agent tools", () 
         configurationMode: "manual",
         contextWindow: 200_000,
         maxOutputTokens: 16_384,
+        // Setting limits leaves image input as it was.
+        imageInput: "automatic",
       });
       expect(limited.lines).toEqual(["Saved OpenRouter Free on OpenRouter.", "Oh My Pi: ready."]);
 
-      expect(
-        yield* manage({ action: "remove", connectionId, model: "openrouter/free" }),
-      ).toMatchObject({ code: "invalid_request" });
+      const removedModel: { lines: string[] } = yield* manage({
+        action: "remove",
+        connectionId,
+        model: "openrouter/free",
+      });
+      expect(removedModel.lines).toEqual([
+        "Removed openrouter/free from OpenRouter. The connection and its key stay for another model.",
+      ]);
+      expect(customModels.connections[0]).toMatchObject({ models: [], apiKeySuffix: "9876" });
       const removed: { lines: string[] } = yield* manage({
         action: "remove",
         connectionId,
