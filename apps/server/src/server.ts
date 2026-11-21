@@ -208,6 +208,9 @@ import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
 // SCIENT-FORK: thread room guest routes.
 import * as ThreadRoomHttp from "./scient/room/http.ts";
+// SCIENT-FORK:START
+import * as SignedUrlRouteMisses from "./scient/http/SignedUrlRouteMisses.ts";
+// SCIENT-FORK:END
 import * as LinkThreadHttp from "./peer/linkThreadHttp.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
@@ -1019,6 +1022,9 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    // SCIENT-FORK:START — signed-URL requests that match no route are traced and logged redacted too.
+    SignedUrlRouteMisses.layer,
+    // SCIENT-FORK:END
     GuestHttp.layer,
     // SCIENT-FORK: thread room guest routes.
     ThreadRoomHttp.layer,
