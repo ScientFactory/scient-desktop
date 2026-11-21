@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This test verifies the Node filesystem adapter.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -204,6 +205,174 @@ describe("copies a project held and a merge Undo replaced", () => {
     }) as typeof actual.readdir);
     expect(await countScientDisplacedCopiesInProject(root)).toEqual({ copies: 0, unreadable: 1 });
   });
+
+  it("refuses a displaced folder swapped at temp-file open, before final rename, or before quarantine rename", async () => {
+    const first = "2026-11-01T00:00:00.000Z";
+    const second = "2026-11-02T00:00:00.000Z";
+    const actual = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+
+    // 1. Swap right when opening the temporary file during writeVerifiedJson.
+    {
+      const root = await fixture();
+      const other = await fixture();
+      const displaced = NodePath.join(root, ".scient", "library", "displaced");
+      const otherFolder = NodePath.join(other, ".scient", "library", "displaced");
+      await keepScientDisplacedCopies(other, { kind: "project" }, [
+        copy("otherKey", first, "Other"),
+      ]);
+      const otherBefore = await actual.readFile(NodePath.join(otherFolder, "project.json"), "utf8");
+
+      let swapped = false;
+      vi.spyOn(NodeFSP, "open").mockImplementation((async (
+        path: Parameters<typeof actual.open>[0],
+        flags?: Parameters<typeof actual.open>[1],
+        mode?: Parameters<typeof actual.open>[2],
+      ) => {
+        if (!swapped && typeof path === "string" && path.includes("project.json.tmp-")) {
+          swapped = true;
+          await actual.rm(displaced, { recursive: true, force: true });
+          await actual.symlink(otherFolder, displaced, "dir");
+        }
+        return actual.open(path, flags, mode);
+      }) as typeof actual.open);
+
+      await expect(
+        keepScientDisplacedCopies(root, { kind: "project" }, [copy("key1", first, "Secret")]),
+      ).rejects.toThrow("not a safe directory");
+      expect(await actual.readdir(otherFolder)).toEqual(["project.json"]);
+      expect(await actual.readFile(NodePath.join(otherFolder, "project.json"), "utf8")).toBe(
+        otherBefore,
+      );
+      vi.restoreAllMocks();
+    }
+
+    // 2. Swap right before final rename (after temp file was written in the original folder).
+    {
+      const root = await fixture();
+      const other = await fixture();
+      const displaced = NodePath.join(root, ".scient", "library", "displaced");
+      const otherFolder = NodePath.join(other, ".scient", "library", "displaced");
+      await keepScientDisplacedCopies(other, { kind: "project" }, [
+        copy("otherKey", first, "Other"),
+      ]);
+      const otherBefore = await actual.readFile(NodePath.join(otherFolder, "project.json"), "utf8");
+
+      let sawTempOpen = false;
+      let swapped = false;
+      vi.spyOn(NodeFSP, "open").mockImplementation((async (
+        path: Parameters<typeof actual.open>[0],
+        flags?: Parameters<typeof actual.open>[1],
+        mode?: Parameters<typeof actual.open>[2],
+      ) => {
+        const handle = await actual.open(path, flags, mode);
+        if (typeof path === "string" && path.includes("project.json.tmp-")) {
+          sawTempOpen = true;
+        }
+        return handle;
+      }) as typeof actual.open);
+      const origRealpath = actual.realpath;
+      vi.spyOn(NodeFSP, "realpath").mockImplementation((async (
+        path: Parameters<typeof actual.realpath>[0],
+      ) => {
+        if (sawTempOpen && !swapped && path === displaced) {
+          // Second verification after temp write (before rename): swap now.
+          const files = await actual.readdir(displaced).catch(() => [] as string[]);
+          const tempName = files.find((name) => name.includes("project.json.tmp-"));
+          if (tempName) {
+            const stat = await actual.stat(NodePath.join(displaced, tempName));
+            if (stat.size > 0) {
+              swapped = true;
+              await actual.rm(displaced, { recursive: true, force: true });
+              await actual.symlink(otherFolder, displaced, "dir");
+            }
+          }
+        }
+        return origRealpath(path);
+      }) as typeof actual.realpath);
+
+      await expect(
+        keepScientDisplacedCopies(root, { kind: "project" }, [copy("key1", second, "Here")]),
+      ).rejects.toThrow("not a safe directory");
+      expect(await actual.readdir(otherFolder)).toEqual(["project.json"]);
+      expect(await actual.readFile(NodePath.join(otherFolder, "project.json"), "utf8")).toBe(
+        otherBefore,
+      );
+      vi.restoreAllMocks();
+    }
+
+    // 3. Swap after reading a corrupt local file and before quarantine rename.
+    {
+      const root = await fixture();
+      const other = await fixture();
+      const displaced = NodePath.join(root, ".scient", "library", "displaced");
+      const otherFolder = NodePath.join(other, ".scient", "library", "displaced");
+      await actual.mkdir(displaced, { recursive: true });
+      await actual.writeFile(NodePath.join(displaced, "project.json"), "{ broken");
+      await keepScientDisplacedCopies(other, { kind: "project" }, [
+        copy("otherKey", first, "Other"),
+      ]);
+      const otherBefore = await actual.readFile(NodePath.join(otherFolder, "project.json"), "utf8");
+
+      let readDone = false;
+      let swapped = false;
+      vi.spyOn(NodeFSP, "open").mockImplementation((async (
+        path: Parameters<typeof actual.open>[0],
+        flags?: Parameters<typeof actual.open>[1],
+        mode?: Parameters<typeof actual.open>[2],
+      ) => {
+        const handle = await actual.open(path, flags, mode);
+        if (path === NodePath.join(displaced, "project.json")) readDone = true;
+        return handle;
+      }) as typeof actual.open);
+      const origLstat = actual.lstat;
+      let lstatCountAfterOpen = 0;
+      vi.spyOn(NodeFSP, "lstat").mockImplementation((async (
+        path: Parameters<typeof actual.lstat>[0],
+        opts?: Parameters<typeof actual.lstat>[1],
+      ) => {
+        if (readDone && !swapped && path === displaced) {
+          lstatCountAfterOpen += 1;
+          // First post-open check belongs to readVerifiedFile; second belongs to quarantine.
+          if (lstatCountAfterOpen >= 2) {
+            swapped = true;
+            await actual.rm(displaced, { recursive: true, force: true });
+            await actual.symlink(otherFolder, displaced, "dir");
+          }
+        }
+        return origLstat(path, opts as never);
+      }) as typeof actual.lstat);
+
+      await expect(
+        keepScientDisplacedCopies(root, { kind: "project" }, [copy("key2", second, "Here")]),
+      ).rejects.toThrow("not a safe directory");
+      expect(await actual.readdir(otherFolder)).toEqual(["project.json"]);
+      expect(await actual.readFile(NodePath.join(otherFolder, "project.json"), "utf8")).toBe(
+        otherBefore,
+      );
+      vi.restoreAllMocks();
+    }
+  });
+
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- collection-time skip for POSIX mkfifo test.
+  it.skipIf(NodeOS.platform() === "win32")(
+    "refuses a named pipe (FIFO) without blocking details, export counts, or keep",
+    async () => {
+      const root = await fixture();
+      const displaced = NodePath.join(root, ".scient", "library", "displaced");
+      await NodeFSP.mkdir(displaced, { recursive: true });
+      const fifo = NodePath.join(displaced, "project.json");
+      NodeChildProcess.execFileSync("mkfifo", [fifo]);
+
+      await expect(readScientDisplacedCopies(root, { kind: "project" })).rejects.toThrow(
+        "not a safe regular file",
+      );
+      expect(await readScientDisplacedCopiesOf(root, "source_a")).toEqual([]);
+      expect(await countScientDisplacedCopiesInProject(root)).toEqual({
+        copies: 0,
+        unreadable: 1,
+      });
+    },
+  );
 
   it("names the fields a replacement changes or drops, not how the copy was captured", () => {
     expect(

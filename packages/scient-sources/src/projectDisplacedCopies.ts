@@ -3,6 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
@@ -15,6 +16,8 @@ const MAX_DISPLACED_BYTES = 64 * 1024 * 1024;
 const SAFE_FILE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 /** How a copy was captured, not what it says: two copies that differ only here are the same. */
 const CAPTURE_FIELDS = new Set(["capturedAt", "capturedRevision"]);
+/** macOS O_NOFOLLOW_ANY: refuses symlink traversal in any path component inside the kernel. */
+const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
 
 /**
  * A copy of a source's details that this project (a citation key, or a review) held and that was
@@ -69,19 +72,35 @@ export function scientValuesChangedBy(
   );
 }
 
-interface DirIdentity {
+interface FileIdentity {
   readonly dev: bigint;
   readonly ino: bigint;
 }
 
-const OPEN_READ_NOFOLLOW = NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0);
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node filesystem adapter has no Effect runtime.
+const PLATFORM = NodeOS.platform();
+
+const NOFOLLOW_FLAGS =
+  PLATFORM === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0);
+
+/** Non-blocking read flags: a FIFO swapped in fails post-open type check instead of stalling. */
+const OPEN_READ_FLAGS =
+  NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0) | NOFOLLOW_FLAGS;
+
+/** Exclusive temp-file write flags: refuses symlinks in the kernel on macOS/Linux. */
+const OPEN_WRITE_EXCLUSIVE_FLAGS =
+  NodeFS.constants.O_CREAT |
+  NodeFS.constants.O_EXCL |
+  NodeFS.constants.O_WRONLY |
+  (NodeFS.constants.O_NONBLOCK ?? 0) |
+  NOFOLLOW_FLAGS;
 
 /** Null when the folder is not there; throws when it, or a folder above it, is a link. */
 async function verifiedDirectory(
   canonicalRoot: string,
   folder: string,
   options?: { readonly create?: boolean },
-): Promise<DirIdentity | null> {
+): Promise<FileIdentity | null> {
   try {
     await assertScientProjectDirectory(canonicalRoot, folder, options);
   } catch (error) {
@@ -102,65 +121,125 @@ async function verifiedDirectory(
 async function sameVerifiedDirectory(
   canonicalRoot: string,
   folder: string,
-  expected: DirIdentity,
+  expected: FileIdentity,
 ): Promise<boolean> {
   const current = await verifiedDirectory(canonicalRoot, folder).catch(() => null);
   return current !== null && current.dev === expected.dev && current.ino === expected.ino;
 }
 
+/** Verifies an already-open file descriptor stays a regular file at `expectedPath` inside `expectedDir`. */
+async function verifyOpenRegularFile(
+  canonicalRoot: string,
+  expectedPath: string,
+  expectedDir: FileIdentity,
+  handle: NodeFSP.FileHandle,
+): Promise<FileIdentity & { readonly size: bigint }> {
+  const opened = await handle.stat({ bigint: true });
+  if (!opened.isFile()) {
+    throw new Error(`${NodePath.basename(expectedPath)} is not a safe regular file.`);
+  }
+  if (PLATFORM === "linux") {
+    const fdPath = await NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null);
+    if (fdPath !== expectedPath) {
+      throw new Error(`${NodePath.basename(expectedPath)} is not a safe regular file.`);
+    }
+  }
+  const dir = NodePath.dirname(expectedPath);
+  if (!(await sameVerifiedDirectory(canonicalRoot, dir, expectedDir))) {
+    throw new Error(`${NodePath.basename(dir)} is not a safe directory.`);
+  }
+  const current = await NodeFSP.lstat(expectedPath, { bigint: true });
+  if (
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    current.dev !== opened.dev ||
+    current.ino !== opened.ino ||
+    (await NodeFSP.realpath(expectedPath)) !== expectedPath
+  ) {
+    throw new Error(`${NodePath.basename(expectedPath)} is not a safe regular file.`);
+  }
+  return { dev: opened.dev, ino: opened.ino, size: opened.size };
+}
+
+/** True only when `filePath` is still the exact regular file `expectedFile` inside `expectedDir`. */
+async function sameVerifiedFile(
+  canonicalRoot: string,
+  filePath: string,
+  expectedDir: FileIdentity,
+  expectedFile: FileIdentity,
+): Promise<boolean> {
+  const dir = NodePath.dirname(filePath);
+  if (!(await sameVerifiedDirectory(canonicalRoot, dir, expectedDir))) return false;
+  const current = await NodeFSP.lstat(filePath, { bigint: true }).catch(() => null);
+  if (
+    !current ||
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    current.dev !== expectedFile.dev ||
+    current.ino !== expectedFile.ino
+  ) {
+    return false;
+  }
+  const real = await NodeFSP.realpath(filePath).catch(() => null);
+  return real === filePath;
+}
+
 /**
- * Opens and reads a displaced-copy file without following symlinks, verifying folder and file
- * identity after opening so a concurrent ancestor swap cannot leak bytes from outside.
+ * Opens and reads a displaced-copy file without following symlinks or blocking on a FIFO,
+ * verifying folder and file identity before and after opening so a concurrent ancestor swap
+ * cannot leak bytes from outside.
  */
 async function readVerifiedFile(
   canonicalRoot: string,
   filePath: string,
-  expectedDir: DirIdentity,
+  expectedDir: FileIdentity,
 ): Promise<
   | { readonly kind: "missing" }
-  | { readonly kind: "ok"; readonly text: string; readonly fileId: DirIdentity }
+  | { readonly kind: "ok"; readonly text: string; readonly fileId: FileIdentity }
 > {
-  let handle: NodeFSP.FileHandle;
+  // Pre-open type check rejects non-regular files (such as FIFOs or symlinks) before open().
+  let pre: NodeFS.BigIntStats;
   try {
-    handle = await NodeFSP.open(filePath, OPEN_READ_NOFOLLOW);
+    pre = await NodeFSP.lstat(filePath, { bigint: true });
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return { kind: "missing" };
     throw error;
   }
+  if (pre.isSymbolicLink() || !pre.isFile()) {
+    throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
+  }
+  let handle: NodeFSP.FileHandle;
   try {
-    const opened = await handle.stat({ bigint: true });
-    if (!opened.isFile()) {
-      throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
+    handle = await NodeFSP.open(filePath, OPEN_READ_FLAGS);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return { kind: "missing" };
+    if (isNodeError(error, "ELOOP")) {
+      throw new Error(`${NodePath.basename(NodePath.dirname(filePath))} is not a safe directory.`, {
+        cause: error,
+      });
     }
-    if (opened.size > BigInt(MAX_DISPLACED_BYTES)) {
+    throw error;
+  }
+  try {
+    const verified = await verifyOpenRegularFile(canonicalRoot, filePath, expectedDir, handle);
+    if (verified.size > BigInt(MAX_DISPLACED_BYTES)) {
       throw new Error(`${NodePath.basename(filePath)} exceeds the safe size limit.`);
     }
-    const dir = NodePath.dirname(filePath);
-    if (!(await sameVerifiedDirectory(canonicalRoot, dir, expectedDir))) {
-      throw new Error(`${NodePath.basename(dir)} is not a safe directory.`);
-    }
-    const current = await NodeFSP.lstat(filePath, { bigint: true });
-    if (
-      current.isSymbolicLink() ||
-      !current.isFile() ||
-      current.dev !== opened.dev ||
-      current.ino !== opened.ino ||
-      (await NodeFSP.realpath(filePath)) !== filePath
-    ) {
-      throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
-    }
     const text = await handle.readFile("utf8");
-    return { kind: "ok", text, fileId: { dev: opened.dev, ino: opened.ino } };
+    return { kind: "ok", text, fileId: { dev: verified.dev, ino: verified.ino } };
   } finally {
     await handle.close();
   }
 }
 
-/** Replaces `filePath` atomically only while its directory stays the verified one. */
+/**
+ * Replaces `filePath` atomically only while its directory stays the verified one.
+ * Verifies the opened temp descriptor before writing and re-verifies before rename or cleanup.
+ */
 async function writeVerifiedJson(
   canonicalRoot: string,
   filePath: string,
-  expectedDir: DirIdentity,
+  expectedDir: FileIdentity,
   value: unknown,
 ): Promise<void> {
   const serialized = `${JSON.stringify(value, null, 2)}
@@ -174,19 +253,37 @@ async function writeVerifiedJson(
   }
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
+  let tempFileId: FileIdentity | null = null;
+  let renamed = false;
   try {
-    handle = await NodeFSP.open(temporaryPath, "wx", 0o600);
+    try {
+      handle = await NodeFSP.open(temporaryPath, OPEN_WRITE_EXCLUSIVE_FLAGS, 0o600);
+    } catch (error) {
+      if (isNodeError(error, "ELOOP")) {
+        throw new Error(`${NodePath.basename(dir)} is not a safe directory.`, { cause: error });
+      }
+      throw error;
+    }
+    const verified = await verifyOpenRegularFile(canonicalRoot, temporaryPath, expectedDir, handle);
+    tempFileId = { dev: verified.dev, ino: verified.ino };
     await handle.writeFile(serialized, "utf8");
     await handle.sync();
     await handle.close();
     handle = null;
-    if (!(await sameVerifiedDirectory(canonicalRoot, dir, expectedDir))) {
+    if (!(await sameVerifiedFile(canonicalRoot, temporaryPath, expectedDir, tempFileId))) {
       throw new Error(`${NodePath.basename(dir)} is not a safe directory.`);
     }
     await NodeFSP.rename(temporaryPath, filePath);
+    renamed = true;
   } finally {
     await handle?.close();
-    await NodeFSP.rm(temporaryPath, { force: true }).catch(() => undefined);
+    if (
+      !renamed &&
+      tempFileId !== null &&
+      (await sameVerifiedFile(canonicalRoot, temporaryPath, expectedDir, tempFileId))
+    ) {
+      await NodeFSP.rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
   }
 }
 
@@ -205,7 +302,6 @@ export async function readScientDisplacedCopies(
 
 type DisplacedHolderKind = "citation-key" | "review";
 
-/** `holder` says whether `heldBy` is a citation key or a review's ID. */
 export type ScientDisplacedCopyInProject = ScientDisplacedCopy & {
   readonly holder: DisplacedHolderKind;
 };
@@ -219,14 +315,14 @@ async function visitDisplacedCopies(
   visit: (copy: ScientDisplacedCopy, holder: DisplacedHolderKind) => void,
 ): Promise<number> {
   const canonicalRoot = await NodeFSP.realpath(root);
-  const directory = NodePath.join(canonicalRoot, ...DISPLACED_DIRECTORY);
+  const base = NodePath.join(canonicalRoot, ...DISPLACED_DIRECTORY);
   const folders = [
-    { path: directory, holder: "citation-key" },
-    { path: NodePath.join(directory, "reviews"), holder: "review" },
+    { path: base, holder: "citation-key" as const },
+    { path: NodePath.join(base, "reviews"), holder: "review" as const },
   ] as const;
   let unreadable = 0;
   for (const folder of folders) {
-    let dirId: DirIdentity | null;
+    let dirId: FileIdentity | null;
     try {
       dirId = await verifiedDirectory(canonicalRoot, folder.path);
     } catch {
@@ -266,19 +362,22 @@ async function visitDisplacedCopies(
   return unreadable;
 }
 
-/** One source's kept copies in the project, whoever held them and whether or not that holder remains. */
+/**
+ * Every kept copy for one source across the project's keys and reviews, newest first.
+ * A damaged file is skipped so the rest still show; the project package counts it.
+ */
 export async function readScientDisplacedCopiesOf(
   root: string,
   sourceId: string,
 ): Promise<ReadonlyArray<ScientDisplacedCopyInProject>> {
-  const copies: Array<ScientDisplacedCopyInProject> = [];
+  const found: ScientDisplacedCopyInProject[] = [];
   await visitDisplacedCopies(root, (copy, holder) => {
-    if (copy.sourceId === sourceId) copies.push({ ...copy, holder });
+    if (copy.sourceId === sourceId) found.push({ ...copy, holder });
   });
-  return copies;
+  return found.toSorted((left, right) => right.undoneAt.localeCompare(left.undoneAt));
 }
 
-/** How many kept copies the project holds, and how many of their files could not be read. */
+/** Counts kept copies and files that could not be read without retaining the copy payloads. */
 export async function countScientDisplacedCopiesInProject(
   root: string,
 ): Promise<{ readonly copies: number; readonly unreadable: number }> {
@@ -290,9 +389,8 @@ export async function countScientDisplacedCopiesInProject(
 }
 
 /**
- * Keeps the copies before they are replaced; a failure here stops the replacement. The caller
- * holds the lock of the file the copies come from. One copy is kept per holder, source and
- * Undo. A file that cannot be read is moved aside under a dated name, never overwritten.
+ * Keeps copies the project held before a refresh replaces them. One entry per holder, source and
+ * Undo, without a cap; a damaged file is moved aside under a dated name before writing a fresh one.
  */
 export async function keepScientDisplacedCopies(
   root: string,
@@ -312,31 +410,26 @@ export async function keepScientDisplacedCopies(
     try {
       kept = [...decodeDisplacedFile(JSON.parse(existing.text)).copies];
     } catch {
-      // Quarantine only a corrupt file inside the still-verified directory.
-      if (!(await sameVerifiedDirectory(canonicalRoot, dir, dirId))) {
+      // Quarantine only the exact corrupt regular file inside the still-verified directory.
+      if (!(await sameVerifiedFile(canonicalRoot, filePath, dirId, existing.fileId))) {
         throw new Error(`${NodePath.basename(dir)} is not a safe directory.`);
       }
-      const current = await NodeFSP.lstat(filePath, { bigint: true });
-      if (
-        current.isSymbolicLink() ||
-        !current.isFile() ||
-        current.dev !== existing.fileId.dev ||
-        current.ino !== existing.fileId.ino
-      ) {
-        throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
-      }
-      await NodeFSP.rename(filePath, `${filePath}.unreadable-${Date.now()}`);
+      await NodeFSP.rename(
+        filePath,
+        `${filePath}.unreadable-${Date.now()}-${NodeCrypto.randomUUID().slice(0, 8)}`,
+      );
       kept = [];
     }
   }
   const key = (copy: Pick<ScientDisplacedCopy, "sourceId" | "heldBy" | "undoneAt">) =>
     JSON.stringify([copy.heldBy, copy.sourceId, copy.undoneAt]);
   const known = new Set(kept.map(key));
-  const at = new Date().toISOString();
   const before = kept.length;
+  const at = new Date().toISOString();
   for (const copy of copies) {
-    if (known.has(key(copy))) continue;
-    known.add(key(copy));
+    const id = key(copy);
+    if (known.has(id)) continue;
+    known.add(id);
     kept.push({ at, ...copy });
   }
   if (kept.length === before) return;
