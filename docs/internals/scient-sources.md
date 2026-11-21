@@ -2631,6 +2631,10 @@ the publisher's with another date:
 - A kind the file has and the source has no notice of is added, in the shape
   the registry gives the same row (`kind`, the notice's DOI, its date, `source:
   "retraction-watch"`), so a later refresh that finds it changes nothing.
+- A kind the file has and the source already shows (from the publisher, say)
+  is not written to the source, but the check records it as its own (an
+  `added` entry, already `dismissed`, since the person sees nothing new), so a
+  registry that later stops reporting it does not take it off.
 - A `retraction-watch` retraction is taken off only when the file lists the
   paper as reinstated and no longer as retracted. A paper missing from the file
   is not evidence: reading it as one could show a retracted paper as sound
@@ -2650,14 +2654,19 @@ conditional. The Trash is not checked.
 **Told once.** `notice-watch.json` in the Library holds the time of the last
 successful check, the file's `ETag` and the papers its read matched
 (`covered`), and one entry per source and kind for
-what the check did there (`added` or `withdrawn`, when, and `dismissed`). The
+what the check did there (`added` or `withdrawn`, when, `dismissed`, and for
+`added` the file's notices of that kind). The
 overview carries the entries not yet dismissed, for sources still held, as
 `noticeChanges`, whatever the scope; the panel shows them as one line with
 **Show** (the list narrowed to those sources) and **Dismiss** (the organize
-action `dismiss-notice-changes`). A registry check of a Library source keeps
-the `retraction-watch` notices whose entry says `added` and whose kind the
-registry did not report (`scientLibraryWatchNotices`): only the file's
-reinstatement takes one off. A notice the check puts back after it was taken
+action `dismiss-notice-changes`). A registry check of a Library source keeps,
+for each kind whose entry says `added` and that the registry did not report,
+the source's `retraction-watch` notices of that kind, or the entry's own
+notices when the source has none (`withScientLibraryWatchNotices`): only the
+file's reinstatement takes one off, and it also ends a kind the check kept
+without writing it. The check writes its sources and the state file in one
+hold of the Library lock, and the registry check reads the entries under the
+lock its write takes, so a refresh between the two never drops a notice. A notice the check puts back after it was taken
 off otherwise corrects the source and is not listed again, since its entry
 already says `added`. Entries of sources no
 longer in the Library are dropped at the next check that reads the file. A

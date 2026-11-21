@@ -7,12 +7,15 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
+import { editorialStatusFromNotices } from "./editorialStatus.ts";
+import * as Lock from "./libraryLock.ts";
 import {
   dismissScientLibraryNoticeChanges,
   listScientLibraryNoticeChanges,
   readScientLibraryNoticeWatch,
   recordScientLibraryNoticeCheck,
   retractionWatchReader,
+  withScientLibraryWatchNotices,
 } from "./libraryNoticeWatch.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import type {
@@ -53,10 +56,16 @@ function fileNotices(wanted: ReadonlyArray<string>, text = slice) {
 }
 
 vi.mock("./store.ts", { spy: true });
+vi.mock("./libraryLock.ts", { spy: true });
+const actual = {
+  ...(await vi.importActual<typeof Store>("./store.ts")),
+  ...(await vi.importActual<typeof Lock>("./libraryLock.ts")),
+};
 
 const fixtures: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -249,6 +258,43 @@ describe("the weekly notice check", () => {
     expect(await readScientLibraryNoticeWatch(library)).not.toHaveProperty("covered");
     expect(await check([RETRACTED_KEY], "2026-11-22T10:00:00.000Z")).toEqual({ changedSources: 1 });
     expect(await readScientLibraryNoticeWatch(library)).toHaveProperty("covered");
+  });
+
+  it("puts a notice on a source together with who keeps it, so a registry check meanwhile keeps it", async () => {
+    const { library, add, check, record } = await setup();
+    const sourceId = await add("Retracted after it was added", [RETRACTED], []);
+    const written = Promise.withResolvers<void>();
+    const refreshing = Promise.withResolvers<void>();
+    let refreshStarted = false;
+    vi.spyOn(Lock, "withScientLibraryLock").mockImplementation((root, run, options) => {
+      if (refreshStarted) refreshing.resolve();
+      return actual.withScientLibraryLock(root, run, options);
+    });
+    // The check waits once its notice is on the source, until the refresh reads or waits.
+    vi.spyOn(Store, "recordScientSourceCheck").mockImplementationOnce(async (input) => {
+      const result = await actual.recordScientSourceCheck(input);
+      written.resolve();
+      await refreshing.promise;
+      return result;
+    });
+
+    const checked = check([RETRACTED_KEY], "2026-11-15T10:00:00.000Z");
+    await written.promise;
+    refreshStarted = true;
+    const seen = await record(sourceId);
+    // A registry that reports no notice for the paper.
+    const refreshed = withScientLibraryWatchNotices(library, seen, async (kept) => {
+      refreshing.resolve();
+      return recordScientSourceCheck({
+        root: library,
+        sourceId,
+        expectedRevision: seen.revision,
+        editorialStatus: editorialStatusFromNotices(kept, "2026-11-16T10:00:00.000Z"),
+      });
+    });
+    await Promise.all([checked, refreshed]);
+
+    expect((await record(sourceId)).editorialStatus?.state).toBe("retracted");
   });
 
   it("does not read a paper it never asked about as withdrawn", async () => {

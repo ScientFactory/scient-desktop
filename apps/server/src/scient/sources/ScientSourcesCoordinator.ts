@@ -37,6 +37,7 @@ import {
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
+  type ScientSourceEditorialNotice,
   type ScientSourceEditorialStatus,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
@@ -58,7 +59,7 @@ import {
   type ScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
-import { scientLibraryWatchNotices } from "@scientfactory/scient-sources/library-notice-watch";
+import { withScientLibraryWatchNotices } from "@scientfactory/scient-sources/library-notice-watch";
 import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   bulkUpdateScientSources,
@@ -606,54 +607,55 @@ export async function checkSourceIdentifier(input: {
     resolution === null ? "none" : mismatch ? "mismatch" : resolution.status;
   const found = resolution?.status === "found" && !mismatch ? resolution : null;
   const reported = found?.metadata.editorialNotices;
-  const watched =
-    found && isScientLibraryLocation(input.root)
-      ? (await scientLibraryWatchNotices(input.root, record)).filter(
-          (notice) => !reported?.some((other) => other.kind === notice.kind),
-        )
-      : [];
-  const notices = reported || watched.length > 0 ? [...(reported ?? []), ...watched] : null;
-  const check: {
-    readonly verification: ScientSourceVerification;
-    readonly editorialStatus: ScientSourceEditorialStatus | null;
-  } =
-    resolution === null
-      ? { verification: { state: "unverified" }, editorialStatus: null }
-      : resolution.status === "found" && !mismatch
-        ? {
-            verification: {
-              state: "verified",
-              identifier: resolution.identifier,
-              checkedAt: resolution.retrievedAt,
-            },
-            editorialStatus: notices
-              ? editorialStatusFromNotices(notices, resolution.retrievedAt)
-              : null,
-          }
-        : resolution.status === "unavailable"
+  const write = async (kept: ReadonlyArray<ScientSourceEditorialNotice>) => {
+    const watched = kept.filter((notice) => !reported?.some((other) => other.kind === notice.kind));
+    const notices = reported || watched.length > 0 ? [...(reported ?? []), ...watched] : null;
+    const check: {
+      readonly verification: ScientSourceVerification;
+      readonly editorialStatus: ScientSourceEditorialStatus | null;
+    } =
+      resolution === null
+        ? { verification: { state: "unverified" }, editorialStatus: null }
+        : resolution.status === "found" && !mismatch
           ? {
-              verification:
-                sameIdentifier && previous
-                  ? previous
-                  : { state: "unchecked", identifier: resolution.identifier },
-              editorialStatus: sameIdentifier ? (record.editorialStatus ?? null) : null,
-            }
-          : {
               verification: {
-                state: "unverified",
+                state: "verified",
                 identifier: resolution.identifier,
-                checkedAt,
-                problem: mismatch ? "mismatch" : "not-found",
+                checkedAt: resolution.retrievedAt,
               },
-              editorialStatus: null,
-            };
-  const result = await recordScientSourceCheck({
-    root: input.root,
-    sourceId: input.sourceId,
-    expectedRevision: record.revision,
-    ...check,
-    actor: input.actor,
-  });
+              editorialStatus: notices
+                ? editorialStatusFromNotices(notices, resolution.retrievedAt)
+                : null,
+            }
+          : resolution.status === "unavailable"
+            ? {
+                verification:
+                  sameIdentifier && previous
+                    ? previous
+                    : { state: "unchecked", identifier: resolution.identifier },
+                editorialStatus: sameIdentifier ? (record.editorialStatus ?? null) : null,
+              }
+            : {
+                verification: {
+                  state: "unverified",
+                  identifier: resolution.identifier,
+                  checkedAt,
+                  problem: mismatch ? "mismatch" : "not-found",
+                },
+                editorialStatus: null,
+              };
+    return recordScientSourceCheck({
+      root: input.root,
+      sourceId: input.sourceId,
+      expectedRevision: record.revision,
+      ...check,
+      actor: input.actor,
+    });
+  };
+  const result =
+    found && isScientLibraryLocation(input.root)
+      ? await withScientLibraryWatchNotices(input.root, record, write)
+      : await write([]);
   return { ...result, registry };
 }
 

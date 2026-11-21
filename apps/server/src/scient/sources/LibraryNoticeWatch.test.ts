@@ -14,6 +14,7 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
 } from "@scientfactory/scient-sources/store";
+import type { ScientSourceEditorialNotice } from "@scientfactory/scient-sources";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { runLibraryNoticeWatch } from "./LibraryNoticeWatch.ts";
@@ -35,7 +36,10 @@ afterEach(async () => {
   );
 });
 
-async function setup(identifier: { readonly scheme: string; readonly value: string }) {
+async function setup(
+  identifier: { readonly scheme: string; readonly value: string },
+  notices?: ReadonlyArray<ScientSourceEditorialNotice>,
+) {
   const base = await NodeFSP.realpath(
     await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-notice-watch-")),
   );
@@ -44,7 +48,10 @@ async function setup(identifier: { readonly scheme: string; readonly value: stri
   await ensureScientLibrary(root);
   const library = scientLibraryLocation(root);
   /** Adds a paper to the Library; the answer reads its editorial state. */
-  const add = async (held: typeof identifier) => {
+  const add = async (
+    held: typeof identifier,
+    editorialNotices?: ReadonlyArray<ScientSourceEditorialNotice>,
+  ) => {
     const imported = await importScientSource({
       root: library,
       operationId: NodeCrypto.randomUUID(),
@@ -73,12 +80,21 @@ async function setup(identifier: { readonly scheme: string; readonly value: stri
         pdfAttachmentCount: 0,
       },
       allowPossibleMetadataMatch: true,
+      ...(editorialNotices
+        ? {
+            editorialStatus: {
+              state: "retracted",
+              notices: editorialNotices,
+              checkedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }
+        : {}),
     });
     const sourceId = imported.record?.sourceId;
     if (!sourceId) throw new Error("Expected an imported record.");
     return async () => (await readScientSourceRecord(library, sourceId))?.editorialStatus?.state;
   };
-  const state = await add(identifier);
+  const state = await add(identifier, notices);
   const asked: Array<Readonly<Record<string, string>>> = [];
   let clock = Date.parse("2026-11-15T10:00:00.000Z");
   return {
@@ -138,42 +154,48 @@ describe("the weekly notice check", () => {
     expect(await run(unlessUnchanged)).toBe("unchanged");
   });
 
-  it("keeps a retraction it found when a registry check of the paper does not report it", async () => {
-    const { library, later, state, run } = await setup({
-      scheme: "doi",
-      value: "10.1002/jcb.21852",
-    });
-    expect(await run(theFile)).toBe("checked");
-    const [record] = await listScientSourceRecords(library);
+  it.each([
+    ["it found", undefined],
+    ["it confirmed", [{ kind: "retraction" as const, date: "2015-02-03", source: "publisher" }]],
+  ])(
+    "keeps a retraction %s when a registry check of the paper does not report it",
+    async (_name, notices) => {
+      const { library, later, state, run } = await setup(
+        { scheme: "doi", value: "10.1002/jcb.21852" },
+        notices,
+      );
+      expect(await run(theFile)).toBe("checked");
+      const [record] = await listScientSourceRecords(library);
 
-    // doi.org's answer for the paper, which carries no update notice.
-    const checked = await checkSourceIdentifier({
-      root: library,
-      sourceId: record!.sourceId,
-      actor: "user",
-      resolveIdentifier: (identifiers) =>
-        resolveSourceIdentifier(identifiers, {
-          request: async (url) => ({
-            status: 200,
-            url,
-            body: JSON.stringify({
-              type: "journal-article",
-              title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
-              DOI: "10.1002/jcb.21852",
+      // doi.org's answer for the paper, which carries no update notice.
+      const checked = await checkSourceIdentifier({
+        root: library,
+        sourceId: record!.sourceId,
+        actor: "user",
+        resolveIdentifier: (identifiers) =>
+          resolveSourceIdentifier(identifiers, {
+            request: async (url) => ({
+              status: 200,
+              url,
+              body: JSON.stringify({
+                type: "journal-article",
+                title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
+                DOI: "10.1002/jcb.21852",
+              }),
             }),
           }),
-        }),
-    });
-    expect(checked).toMatchObject({
-      registry: "found",
-      record: { verification: { state: "verified" } },
-    });
-    expect(await state()).toBe("retracted");
+      });
+      expect(checked).toMatchObject({
+        registry: "found",
+        record: { verification: { state: "verified" } },
+      });
+      expect(await state()).toBe("retracted");
 
-    later(WEEK);
-    expect(await run(() => new Response(null, { status: 304 }))).toBe("unchanged");
-    expect(await state()).toBe("retracted");
-  });
+      later(WEEK);
+      expect(await run(() => new Response(null, { status: 304 }))).toBe("unchanged");
+      expect(await state()).toBe("retracted");
+    },
+  );
 
   it.each([
     ["no connection", () => Promise.reject(new TypeError("fetch failed"))],

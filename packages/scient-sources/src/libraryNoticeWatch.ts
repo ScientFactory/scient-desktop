@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import { editorialNoticeKind, editorialStatusFromNotices } from "./editorialStatus.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
-import type { ScientSourceEditorialNotice, ScientSourceRecord } from "./model.ts";
+import { ScientSourceEditorialNotice, type ScientSourceRecord } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
 import { inspectScientLibrarySources, recordScientSourceCheck } from "./store.ts";
 import { atomicWriteJson, readBoundedJson, snapshot } from "./storeFiles.ts";
@@ -23,15 +23,21 @@ const RETRACTION_WATCH = "retraction-watch";
 const WatchedKind = Schema.Literals(["retraction", "expression-of-concern", "correction"]);
 type WatchedKind = typeof WatchedKind.Type;
 
-/** A notice the weekly check put on a source or took off it, and whether the person dismissed it. */
+/**
+ * A notice the weekly check put on a source or took off it, and whether the person dismissed it.
+ * `added` also when the file confirms a notice the source already had: the check keeps it then.
+ */
 const ScientLibraryNoticeChange = Schema.Struct({
   sourceId: NonEmptyString,
   kind: WatchedKind,
   change: Schema.Literals(["added", "withdrawn"]),
   at: NonEmptyString,
   dismissed: Schema.optionalKey(Schema.Literal(true)),
+  /** The file's notices of this kind, kept by a registry check when the source has none of them. */
+  notices: Schema.optionalKey(Schema.Array(ScientSourceEditorialNotice)),
 });
 type ScientLibraryNoticeChange = typeof ScientLibraryNoticeChange.Type;
+type NoticeChangeMade = Omit<ScientLibraryNoticeChange, "at">;
 
 const NoticeWatchFile = Schema.Struct({
   formatVersion: Schema.Literal(1),
@@ -236,49 +242,60 @@ export async function recordScientLibraryNoticeCheck(input: {
   const { records } = input.found
     ? await inspectScientLibrarySources(input.library)
     : { records: null };
-  const made: Array<Pick<ScientLibraryNoticeChange, "sourceId" | "kind" | "change">> = [];
+  const made: NoticeChangeMade[] = [];
   let changedSources = 0;
   let missed = false;
-  for (const record of records ?? []) {
-    const keys = watchedIdentifiers(record);
-    // A source added or re-identified while the file was read was not asked about: next check.
-    if (keys.length === 0 || keys.some((key) => !input.found?.notices.has(key))) continue;
-    const listed = keys.flatMap((key) => input.found?.notices.get(key) ?? []);
-    const current = record.editorialStatus?.notices ?? [];
-    const listedKinds = new Set(listed.map((notice) => notice.kind));
-    const currentKinds = new Set(current.map((notice) => notice.kind));
-    const added = listed.filter((notice) => !currentKinds.has(notice.kind));
-    const reinstated =
-      keys.some((key) => input.found?.reinstated.has(key)) && !listedKinds.has("retraction");
-    const kept = current.filter(
-      (notice) =>
-        !(reinstated && notice.source === RETRACTION_WATCH && notice.kind === "retraction"),
-    );
-    if (added.length === 0 && kept.length === current.length) continue;
-    const keptKinds = new Set(kept.map((notice) => notice.kind));
-    // A source someone edited meanwhile answers "stale" and is matched by the next check.
-    const written = await recordScientSourceCheck({
-      root: input.library,
-      sourceId: record.sourceId,
-      expectedRevision: record.revision,
-      ...(record.verification ? { verification: record.verification } : {}),
-      editorialStatus: editorialStatusFromNotices([...kept, ...added], input.checkedAt),
-      actor: "user",
-    });
-    if (written.outcome !== "updated") {
-      missed = true;
-      continue;
-    }
-    changedSources += 1;
-    for (const kind of WatchedKind.literals) {
-      if (added.some((notice) => notice.kind === kind)) {
-        made.push({ sourceId: record.sourceId, kind, change: "added" });
-      } else if (currentKinds.has(kind) && !keptKinds.has(kind)) {
-        made.push({ sourceId: record.sourceId, kind, change: "withdrawn" });
-      }
-    }
-  }
+  // One locked change for the notices and who keeps them, which a registry check reads with its write.
   await withScientLibraryLock(input.library.root, async () => {
+    for (const record of records ?? []) {
+      const keys = watchedIdentifiers(record);
+      // A source added or re-identified while the file was read was not asked about: next check.
+      if (keys.length === 0 || keys.some((key) => !input.found?.notices.has(key))) continue;
+      const listed = keys.flatMap((key) => input.found?.notices.get(key) ?? []);
+      const current = record.editorialStatus?.notices ?? [];
+      const listedKinds = new Set(listed.map((notice) => notice.kind));
+      const currentKinds = new Set(current.map((notice) => notice.kind));
+      const added = listed.filter((notice) => !currentKinds.has(notice.kind));
+      const reinstated =
+        keys.some((key) => input.found?.reinstated.has(key)) && !listedKinds.has("retraction");
+      const kept = current.filter(
+        (notice) =>
+          !(reinstated && notice.source === RETRACTION_WATCH && notice.kind === "retraction"),
+      );
+      const keptKinds = new Set(kept.map((notice) => notice.kind));
+      const changes = WatchedKind.literals.flatMap(
+        (kind): ReadonlyArray<Omit<NoticeChangeMade, "sourceId">> => {
+          const notices = listed.filter((notice) => notice.kind === kind);
+          if (added.some((notice) => notice.kind === kind)) {
+            return [{ kind, change: "added", notices }];
+          }
+          if (currentKinds.has(kind) && !keptKinds.has(kind))
+            return [{ kind, change: "withdrawn" }];
+          // Not listed: the source shows the same as before.
+          if (kind === "retraction" && reinstated) {
+            return [{ kind, change: "withdrawn", dismissed: true }];
+          }
+          return notices.length > 0 ? [{ kind, change: "added", dismissed: true, notices }] : [];
+        },
+      );
+      if (added.length > 0 || kept.length < current.length) {
+        // A source someone edited meanwhile answers "stale" and is matched by the next check.
+        const written = await recordScientSourceCheck({
+          root: input.library,
+          sourceId: record.sourceId,
+          expectedRevision: record.revision,
+          ...(record.verification ? { verification: record.verification } : {}),
+          editorialStatus: editorialStatusFromNotices([...kept, ...added], input.checkedAt),
+          actor: "user",
+        });
+        if (written.outcome !== "updated") {
+          missed = true;
+          continue;
+        }
+        changedSources += 1;
+      }
+      made.push(...changes.map((change) => ({ sourceId: record.sourceId, ...change })));
+    }
     const previous = await readScientLibraryNoticeWatch(input.library);
     const live = records ? new Set(records.map((record) => record.sourceId)) : null;
     const changes = new Map(
@@ -287,8 +304,10 @@ export async function recordScientLibraryNoticeCheck(input: {
         .map((change) => [changeKey(change), change]),
     );
     for (const change of made) {
+      const before = changes.get(changeKey(change));
       // Put back after a refresh took it off: the source is corrected, the person is not told twice.
-      if (changes.get(changeKey(change))?.change === change.change) continue;
+      if (before?.change === change.change) continue;
+      if (change.dismissed && change.change === "withdrawn" && !before) continue;
       changes.set(changeKey(change), { ...change, at: input.checkedAt });
     }
     const etag = input.found ? input.etag : previous?.etag;
@@ -310,24 +329,28 @@ export async function recordScientLibraryNoticeCheck(input: {
 }
 
 /**
- * The notices on a source that the weekly check put there and has not taken off. A registry
- * check that does not report one keeps it: only a reinstatement in the file takes one off.
+ * Runs a registry check's write with the notices the weekly check keeps on the source, read under
+ * the lock that check publishes them under. A registry check that does not report one keeps it:
+ * only a reinstatement in the file takes one off.
  */
-export async function scientLibraryWatchNotices(
+export function withScientLibraryWatchNotices<A>(
   library: ScientLibraryLocation,
   record: ScientSourceRecord,
-): Promise<ReadonlyArray<ScientSourceEditorialNotice>> {
-  const notices = (record.editorialStatus?.notices ?? []).filter(
-    (notice) => notice.source === RETRACTION_WATCH,
-  );
-  if (notices.length === 0) return [];
-  const watch = await readScientLibraryNoticeWatch(library);
-  const put = new Set<string>(
-    (watch?.changes ?? []).flatMap((change) =>
-      change.sourceId === record.sourceId && change.change === "added" ? [change.kind] : [],
-    ),
-  );
-  return notices.filter((notice) => put.has(notice.kind));
+  write: (notices: ReadonlyArray<ScientSourceEditorialNotice>) => Promise<A>,
+): Promise<A> {
+  return withScientLibraryLock(library.root, async () => {
+    const watch = await readScientLibraryNoticeWatch(library);
+    const held = (record.editorialStatus?.notices ?? []).filter(
+      (notice) => notice.source === RETRACTION_WATCH,
+    );
+    return write(
+      (watch?.changes ?? []).flatMap((change) => {
+        if (change.sourceId !== record.sourceId || change.change !== "added") return [];
+        const here = held.filter((notice) => notice.kind === change.kind);
+        return here.length > 0 ? here : (change.notices ?? []);
+      }),
+    );
+  });
 }
 
 /** The changes the person has not dismissed, for the line above the Library list. */

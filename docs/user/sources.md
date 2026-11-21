@@ -1085,8 +1085,8 @@ found, for example "The weekly check found: 1 paper was retracted." Choose
 notice is announced once. A paper you add or restore is checked at the next
 weekly check, even when the list has not changed since the last one. If Retraction Watch lists a retracted paper as
 reinstated, its retraction is removed and the line says so. A retraction the
-weekly check found stays when you refresh the paper's metadata, even if the
-publisher's record does not mention it.
+weekly check found, or found already shown on the paper, stays when you refresh
+the paper's metadata, even if the publisher's record no longer mentions it.
 
 The weekly check finds retractions reliably. It finds an expression of
 concern or a correction only when Retraction Watch lists it; the publisher's
