@@ -574,7 +574,8 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("checks shortly after startup and then every four hours", () => {
+  // SCIENT-FORK: Scient polls hourly instead of every four hours.
+  it.effect("checks shortly after startup and then every hour", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -585,10 +586,10 @@ describe("DesktopUpdates", () => {
         yield* TestClock.adjust("15 seconds");
         assert.equal(harness.checkCount(), 1);
 
-        yield* TestClock.adjust("3 hours");
+        yield* TestClock.adjust("45 minutes");
         assert.equal(harness.checkCount(), 1);
 
-        yield* TestClock.adjust("1 hour");
+        yield* TestClock.adjust("15 minutes");
         assert.equal(harness.checkCount(), 2);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

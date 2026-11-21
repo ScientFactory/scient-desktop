@@ -74,7 +74,8 @@ import {
 const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
+// SCIENT-FORK: a check is one small file from the update mirror; hourly finds releases sooner.
+const AUTO_UPDATE_POLL_INTERVAL = "1 hour";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
 // SCIENT-FORK:START — offered updates download in the background; failures of one release retry
 // on this schedule, and the last delay repeats.

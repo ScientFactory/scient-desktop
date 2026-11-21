@@ -476,9 +476,9 @@ describe("DesktopUpdates outcomes", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         yield* TestClock.adjust("15 seconds");
-        yield* TestClock.adjust("4 hours");
+        yield* TestClock.adjust("1 hour");
         assert.equal(harness.checkCount(), 2);
-        yield* TestClock.adjust("4 hours");
+        yield* TestClock.adjust("1 hour");
         assert.equal(harness.checkCount(), 3);
       }),
     ).pipe(Effect.provide(layer));

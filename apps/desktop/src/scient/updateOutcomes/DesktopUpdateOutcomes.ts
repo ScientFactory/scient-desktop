@@ -28,7 +28,7 @@ export const CurrentUpdateTrigger = Context.Reference<UpdateTrigger>(
   { defaultValue: () => "user" },
 );
 
-const BACKGROUND_CHECK_REASONS = new Set(["startup", "poll", "startup-recovery"]);
+const BACKGROUND_CHECK_REASONS = new Set(["startup", "poll", "startup-recovery", "wake"]);
 const SUMMARY_INTERVAL = "24 hours";
 
 function checkTrigger(reason: string): UpdateTrigger {
