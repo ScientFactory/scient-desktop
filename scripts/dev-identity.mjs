@@ -469,15 +469,25 @@ export function makePortableVault() {
   return { key, sentinel: makeSentinel(key) };
 }
 
-/** Gives a home without accounts a file key before its first launch would make a Keychain one. */
+/**
+ * Gives a home a file key before its first launch would make a Keychain one. A file key whose
+ * sentinel is missing is kept and the sentinel rebuilt from it; a vault holding data no usable key
+ * opens is left untouched.
+ */
 export function ensurePortableVault(stateDir) {
-  if (vaultProtection(stateDir) !== "none") return false;
+  if (vaultProtection(stateDir) === "file") return false;
+  let target;
+  try {
+    target = readTargetVault(stateDir);
+  } catch (error) {
+    if (error instanceof TargetVaultError) return false;
+    throw error;
+  }
   const secrets = NodePath.join(stateDir, "secrets");
-  if (exists(NodePath.join(secrets, `${ACCOUNTS_STATE}.bin`))) return false;
-  const vault = makePortableVault();
+  const key = target.key ?? makePortableVault().key;
   const changes = new StagedChanges(stateDir);
-  changes.write(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`), vault.key);
-  changes.write(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`), vault.sentinel);
+  if (target.key === undefined) changes.write(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`), key);
+  changes.write(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`), makeSentinel(key));
   changes.commit();
   return true;
 }
@@ -534,9 +544,9 @@ const EMPTY_ACCOUNTS = {
 
 /**
  * The owner's accounts copied over a target, keeping what belongs to the target itself: its
- * senders, sender keys and per-thread profile choices, each profile's sharing records, each
- * account's copies still waiting to be written to the target's stores, and the whole row of any
- * browser profile only the target has, so its controls are not reset to the defaults.
+ * senders, sender keys and per-thread profile choices, each profile's sharing records, the whole
+ * row of any account with copies still waiting for the target's password stores, and the whole
+ * row of any browser profile only the target has, so its controls are not reset to the defaults.
  */
 export function keepLocalAccounts(next, local) {
   if (local === null || typeof local !== "object") return next;
@@ -560,7 +570,16 @@ export function keepLocalAccounts(next, local) {
       return copy;
     });
   };
-  merged.accounts = keep(merged.accounts, local.accounts, accountIdOf, ["pendingCopies"]);
+  const pending = pendingAccounts(local);
+  if (pending.length > 0) {
+    const list = Array.isArray(merged.accounts) ? merged.accounts : [];
+    const mine = new Map(pending.map((account) => [accountIdOf(account), account]));
+    const listed = new Set(list.map(accountIdOf));
+    merged.accounts = [
+      ...list.map((account) => mine.get(accountIdOf(account)) ?? account),
+      ...pending.filter((account) => !listed.has(accountIdOf(account))),
+    ];
+  }
   merged.profiles = keep(merged.profiles, local.profiles, profileIdOf, LOCAL_PROFILE_KEYS);
   if (Array.isArray(local.profiles)) {
     const present = new Set((merged.profiles ?? []).map(profileIdOf));
@@ -573,6 +592,31 @@ export function keepLocalAccounts(next, local) {
   }
   return merged;
 }
+
+const hasPendingCopies = (account) =>
+  account?.pendingCopies !== null &&
+  typeof account?.pendingCopies === "object" &&
+  Object.values(account.pendingCopies).some((stores) => Array.isArray(stores) && stores.length > 0);
+
+/**
+ * A target's accounts with copies still waiting for its password stores. Such an account may hold
+ * the only copy of a value the owner changed there, so it stays the target's, records and all,
+ * until those copies are written.
+ */
+const pendingAccounts = (local) =>
+  Array.isArray(local?.accounts)
+    ? local.accounts.filter(
+        (account) => accountIdOf(account) !== undefined && hasPendingCopies(account),
+      )
+    : [];
+
+/** The value records a target's pending accounts point at, kept as the target has them. */
+const pendingRecords = (local) =>
+  new Set(
+    collectStrings(pendingAccounts(local))
+      .filter((text) => RECORD_REFERENCE.test(text))
+      .map((reference) => `${reference}.bin`),
+  );
 
 /** A target whose own accounts would be lost by the copy; it keeps the identity it has. */
 class TargetVaultError extends Error {}
@@ -697,6 +741,8 @@ function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
     ),
   );
   for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
+  const kept = pendingRecords(target.accounts);
+  for (const name of kept) removed.delete(name);
   const sealAccounts = (accounts) =>
     vaultEncrypt(
       key,
@@ -705,6 +751,7 @@ function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
     );
   const written = [];
   for (const [name, bytes] of capture.secrets) {
+    if (kept.has(name)) continue;
     let output;
     try {
       output =
@@ -1062,12 +1109,14 @@ const isHomeTarget = (targetStateDir, home) =>
   NodePath.basename(targetStateDir) === STATE_SUBDIR;
 
 /**
- * A checkout whose app data is, holds or lies in the identity home must be the checkout the home
- * was set up with; any other would run a second app on the home's vault and databases. Called
- * before the launcher touches the checkout's runner or app state.
+ * A checkout whose app data, or the state folder inside it, is or lies in the identity home must
+ * be the checkout the home was set up with; any other would run a second app on the home's vault
+ * and databases. Called before the launcher touches the checkout's runner or app state.
  */
 export function assertHomeCheckout({ checkoutRoot, stateRoot, home = resolveDevIdentityHome() }) {
-  if (!within(stateRoot, home.root)) return;
+  if (!within(stateRoot, home.root) && !within(NodePath.join(stateRoot, STATE_SUBDIR), home.root)) {
+    return;
+  }
   const registered = homeCheckout(home);
   if (
     sameFile(stateRoot, home.root) &&
@@ -1077,10 +1126,30 @@ export function assertHomeCheckout({ checkoutRoot, stateRoot, home = resolveDevI
     return;
   }
   throw new Error(
-    `${stateRoot} is the dev identity home's data, which only its own checkout (${
+    `${stateRoot} leads into the dev identity home's data, which only its own checkout (${
       registered ?? "none yet; run pnpm dev:identity setup"
     }) may run. Remove that link from ${checkoutRoot} before starting it.`,
   );
+}
+
+/**
+ * Readies an app about to open `stateRoot`: "not-home" for any app but the home's own; for the
+ * home, "seeding" while a seed or setup holds it, else "ready" once the home's layout is checked
+ * and a seed that stopped while publishing is finished. Every way of starting an app calls it.
+ */
+export function prepareHomeStart({
+  checkoutRoot,
+  stateRoot,
+  home = resolveDevIdentityHome(),
+  installed = resolveInstalledApp(),
+}) {
+  assertHomeCheckout({ checkoutRoot, stateRoot, home });
+  if (!sameFile(stateRoot, home.root)) return "not-home";
+  if (homeIsLocked(home)) return "seeding";
+  assertHomeLayout(home, installed);
+  recoverInterruptedCopy(home.stateDir);
+  clearStaging(home.stateDir);
+  return "ready";
 }
 
 /**
@@ -1115,23 +1184,21 @@ export async function importDevIdentity({
   now = () => new Date(),
 } = {}) {
   if (isHomeTarget(targetStateDir, home)) {
+    let readiness;
     try {
-      assertHomeCheckout({
+      readiness = prepareHomeStart({
         checkoutRoot: NodePath.dirname(NodePath.dirname(targetStateDir)),
         stateRoot: NodePath.dirname(targetStateDir),
         home,
+        installed,
       });
-      if (homeIsLocked(home)) return { status: "home-seeding" };
-      assertHomeLayout(home, installed);
     } catch (error) {
+      if (error?.fatal) throw error;
       throw new DevIdentityFatalError(error instanceof Error ? error.message : String(error), {
         cause: error,
       });
     }
-    // A seed that stopped while publishing is finished before the home opens its vault.
-    recoverInterruptedCopy(home.stateDir);
-    clearStaging(home.stateDir);
-    return { status: "home" };
+    return { status: readiness === "seeding" ? "home-seeding" : "home" };
   }
   if (isProtectedTarget(targetStateDir, home, installed)) return { status: "refused-target" };
   assertPlainTarget(targetStateDir);
@@ -1332,7 +1399,11 @@ export function resolveInstalledApp(homeDir = NodeOS.homedir()) {
   };
 }
 
-/** The home's app writes its own files; seeding waits until it is closed. */
+/**
+ * The home's app writes its own files; seeding and moving the home wait until it is closed. A
+ * runner still starting has no process recorded yet and counts as running; a receipt naming a
+ * runner that died does not.
+ */
 export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
   for (const file of ["electron.pid", "backend.pid"]) {
     const pid = Number.parseInt(
@@ -1341,7 +1412,10 @@ export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = proc
     );
     if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) return true;
   }
-  return exists(NodePath.join(home.root, "local-dev-app-runner", "state.json"));
+  const runnerDir = NodePath.join(home.root, "local-dev-app-runner");
+  if (!exists(runnerDir)) return false;
+  const pid = readJsonObject(NodePath.join(runnerDir, "state.json"))?.pid;
+  return !(Number.isInteger(pid) && pid > 0) || isAlive(pid);
 }
 
 /** The home's state must be a real folder inside the home, apart from the installed app. */

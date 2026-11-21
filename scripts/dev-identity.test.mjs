@@ -17,6 +17,8 @@ import {
   importDevIdentity,
   makeChromiumCookieDecrypter,
   makePortableVault,
+  homeAppIsRunning,
+  prepareHomeStart,
   previewPartitionDirectory,
   reencryptSecret,
   scrubAccountsState,
@@ -685,10 +687,26 @@ describe("what a copy must not carry over", () => {
       accounts: [{ summary: { accountId: "a" }, values: { password: valueName } }],
     });
 
-    // The candidate's own senders, choices, pending copies and own profiles survive the next copy.
+    // The candidate's own senders, choices and own profiles survive the next copy, and so does an
+    // account whose changed password still waits for its password store, with that password.
+    const newValue = "accounts-value-66666666-6666-4666-8666-666666666666";
+    write(
+      NodePath.join(target, "secrets", `${newValue}.bin`),
+      encrypt(targetKey, newValue, Buffer.from("new-pw")),
+    );
+    // The home still has the older value under the same record.
+    write(
+      NodePath.join(home.stateDir, "secrets", `${newValue}.bin`),
+      encrypt(vault.key, newValue, Buffer.from("old-pw")),
+    );
+    const pendingRow = {
+      summary: { accountId: "a" },
+      values: { password: newValue },
+      pendingCopies: { password: ["onepassword"] },
+    };
     const own = {
       format: 1,
-      accounts: [{ summary: { accountId: "a" }, values: {}, pendingCopies: { y: ["chrome"] } }],
+      accounts: [pendingRow],
       profiles: [
         { profileId: "p", access: "ask", sharedWith: ["env-2"] },
         { profileId: "q", access: "ask", scriptSignIn: false },
@@ -708,7 +726,10 @@ describe("what a copy must not carry over", () => {
         Buffer.from(
           JSON.stringify({
             format: 1,
-            accounts: [{ summary: { accountId: "a" }, values: { password: valueName } }],
+            accounts: [
+              { summary: { accountId: "a" }, values: { password: valueName } },
+              { summary: { accountId: "b" }, values: {} },
+            ],
             profiles: [{ profileId: "p", access: "allowed" }],
           }),
         ),
@@ -719,15 +740,15 @@ describe("what a copy must not carry over", () => {
       NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-master-key.bin")),
       targetKey,
     );
+    const readValue = () =>
+      decrypt(
+        targetKey,
+        newValue,
+        NodeFS.readFileSync(NodePath.join(target, "secrets", `${newValue}.bin`)),
+      ).toString();
     assert.deepEqual(readState(), {
       format: 1,
-      accounts: [
-        {
-          summary: { accountId: "a" },
-          values: { password: valueName },
-          pendingCopies: { y: ["chrome"] },
-        },
-      ],
+      accounts: [pendingRow, { summary: { accountId: "b" }, values: {} }],
       profiles: [
         { profileId: "p", access: "allowed", sharedWith: ["env-2"] },
         { profileId: "q", access: "ask", scriptSignIn: false },
@@ -735,6 +756,7 @@ describe("what a copy must not carry over", () => {
       senders: [{ source: "env-2" }],
       profileChoices: { thread: "mine" },
     });
+    assert.equal(readValue(), "new-pw");
 
     // A home with no Accounts document yet still leaves the candidate its own part.
     NodeFS.rmSync(NodePath.join(home.stateDir, "secrets", "accounts-state.bin"));
@@ -742,7 +764,7 @@ describe("what a copy must not carry over", () => {
     assert.deepEqual(readState(), {
       format: 1,
       agentAccess: true,
-      accounts: [],
+      accounts: [pendingRow],
       profiles: [
         { profileId: "p", access: "allowed", sharedWith: ["env-2"] },
         { profileId: "q", access: "ask", scriptSignIn: false },
@@ -751,6 +773,7 @@ describe("what a copy must not carry over", () => {
       senders: [{ source: "env-2" }],
       profileChoices: { thread: "mine" },
     });
+    assert.equal(readValue(), "new-pw");
   });
 
   it("rebases connector folders and never lets a copy own a folder outside its state", async () => {
@@ -1248,6 +1271,101 @@ describe("code review guards", () => {
       isRunning: () => false,
     });
     assert.equal(readJson(NodePath.join(home.root, "dev-identity-home.json")).checkout, other);
+  });
+
+  it("readies the home only for its own checkout, never during a seed", () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const checkout = linkHomeCheckout(root, home);
+    const installed = { stateDir: NodePath.join(root, "installed", "userdata") };
+    const stateRoot = NodePath.join(checkout, ".scient-next");
+    // Another checkout whose state folder alone links to the home's.
+    const other = NodePath.join(root, "other");
+    NodeFS.mkdirSync(NodePath.join(other, ".scient-next"), { recursive: true });
+    NodeFS.symlinkSync(home.stateDir, NodePath.join(other, ".scient-next", "scient-next-dev"));
+    assert.throws(
+      () =>
+        prepareHomeStart({
+          checkoutRoot: other,
+          stateRoot: NodePath.join(other, ".scient-next"),
+          home,
+          installed,
+        }),
+      /only its own checkout/u,
+    );
+    write(NodePath.join(home.root, "dev-identity.lock"), String(process.pid));
+    assert.equal(
+      prepareHomeStart({ checkoutRoot: checkout, stateRoot, home, installed }),
+      "seeding",
+    );
+    NodeFS.rmSync(NodePath.join(home.root, "dev-identity.lock"));
+    const leftover = NodePath.join(home.stateDir, "dev-identity-staging", "x");
+    write(leftover, "plain");
+    assert.equal(prepareHomeStart({ checkoutRoot: checkout, stateRoot, home, installed }), "ready");
+    assert.equal(NodeFS.existsSync(leftover), false);
+    assert.equal(
+      prepareHomeStart({
+        checkoutRoot: root,
+        stateRoot: NodePath.join(root, "candidate"),
+        home,
+        installed,
+      }),
+      "not-home",
+    );
+  });
+
+  it("keeps a home's key whose sentinel is missing when setup runs again", () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const secrets = NodePath.join(home.stateDir, "secrets");
+    const own = makePortableVault();
+    write(NodePath.join(secrets, "accounts-master-key.bin"), own.key);
+    const request = "secret-request-22222222222222222222222222222222";
+    write(
+      NodePath.join(secrets, `${request}.bin`),
+      Buffer.concat([Buffer.from([0xff]), encrypt(own.key, request, Buffer.from("answer"))]),
+    );
+    assert.equal(ensurePortableVault(home.stateDir), true);
+    assert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(secrets, "accounts-master-key.bin")),
+      own.key,
+    );
+    assert.equal(vaultProtection(home.stateDir), "file");
+
+    // Data with no key to open it is left as it is.
+    const keyless = homeAt(NodePath.join(root, "keyless"));
+    write(NodePath.join(keyless.stateDir, "secrets", `${request}.bin`), "sealed");
+    assert.equal(ensurePortableVault(keyless.stateDir), false);
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(keyless.stateDir, "secrets")), [
+      `${request}.bin`,
+    ]);
+  });
+
+  it("counts a home runner as running only while its process lives", () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    assert.equal(
+      homeAppIsRunning(home, () => false),
+      false,
+    );
+    NodeFS.mkdirSync(NodePath.join(home.root, "local-dev-app-runner"), { recursive: true });
+    // Still starting: no process recorded yet.
+    assert.equal(
+      homeAppIsRunning(home, () => false),
+      true,
+    );
+    write(
+      NodePath.join(home.root, "local-dev-app-runner", "state.json"),
+      JSON.stringify({ pid: 4242 }),
+    );
+    assert.equal(
+      homeAppIsRunning(home, () => false),
+      false,
+    );
+    assert.equal(
+      homeAppIsRunning(home, (pid) => pid === 4242),
+      true,
+    );
   });
 
   it("never writes into a data folder linked to the home or the installed app", async () => {

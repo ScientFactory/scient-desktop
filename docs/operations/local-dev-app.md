@@ -291,9 +291,10 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   `~/.scient-next/dev-identity`, so removing or recreating that checkout keeps
   the home. To update it, check out a newer `origin/main` there and restart it.
   Only that registered checkout may run on the home: any other checkout whose
-  app data leads into the home is refused by `pnpm dev:app:*` before it touches
-  anything, and by `pnpm dev:desktop`. `setup` will not move the home to another
-  checkout while the home app runs.
+  app data, or the state folder inside it, leads into the home is refused by
+  `pnpm dev:app:*` before it touches anything, and by `pnpm dev:desktop`, which
+  also waits out a seed and finishes one that stopped. `setup` will not move the
+  home to another checkout while the home app runs.
 - `seed` fills a stopped home from the installed app, which it only reads.
   macOS asks once for each of two Keychain items: the installed app's accounts
   key and its website-cookie key. Allow both. Without the first, the seed copies
@@ -313,9 +314,11 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   Scient-managed Codex sign-in (it refreshes in place; Cursor's fixed key is
   copied), signing keys, cloud links, databases, threads, projects and the
   environment id. A dev app keeps its own accounts key, saved secret-request
-  answers, Accounts senders, per-thread profile choices, profile sharing,
-  pending copies to its password stores and the browser profiles only it has;
-  the home's records are re-encrypted under its key. A dev app whose accounts
+  answers, Accounts senders, per-thread profile choices, profile sharing and the
+  browser profiles only it has. An account whose changed password still waits
+  to be copied to a password store stays the dev app's, password included,
+  until that copy is written. The home's records are re-encrypted under the dev
+  app's key. A dev app whose accounts
   data has no file key to open it (a Keychain key, or a missing key) is left as
   it is; move its `.scient-next` aside to start it with the identity. Connector folders
   inside the home are copied with the connector; a folder elsewhere is used in
