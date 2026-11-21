@@ -168,7 +168,7 @@ function RailItem({
 
 /**
  * Destinations along the sidebar's edge, in place of the footer's buttons. Inside the sidebar it
- * sits below the header over a 3rem inset the thread list and footer leave for it; collapsed, it
+ * sits below the header over an inset the thread list and footer leave for it; collapsed, it
  * stands alone at the window's edge, full height, under the sidebar toggle.
  */
 export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
@@ -187,7 +187,7 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
       aria-label={gt("Sidebar destinations")}
       // A short window scrolls the rail rather than cutting off its last buttons.
       className={cn(
-        "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 flex w-12 flex-col items-center justify-between gap-2 overflow-y-auto border-e border-sidebar-border py-2 [scrollbar-width:none]",
+        "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 flex w-[var(--sidebar-nav-rail-width)] flex-col items-center justify-between gap-2 overflow-y-auto border-e border-sidebar-border py-2 [scrollbar-width:none]",
         !collapsed && "z-[2]",
       )}
       data-sidebar-nav-rail={collapsed ? undefined : ""}
@@ -287,7 +287,7 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
     <div
       // The rail's border and fill start below the titlebar, so the window controls sit on the
       // main area's titlebar.
-      className="relative h-dvh w-12 shrink-0 bg-background text-sidebar-foreground"
+      className="relative h-dvh w-[var(--sidebar-nav-rail-width)] shrink-0 bg-background text-sidebar-foreground"
       data-sidebar-nav-rail-collapsed=""
     >
       {isElectron ? (

@@ -27,7 +27,9 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+// SCIENT-FORK:START — the toggle centres over the collapsed icon rail.
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
+// SCIENT-FORK:END
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -271,7 +273,11 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar } = useSidebar();
+  // SCIENT-FORK:START — the toggle centres over the collapsed icon rail (sidebarNavRail.css).
+  const { toggleSidebar, open, isMobile } = useSidebar();
+  const overCollapsedRail =
+    useClientSettings((settings) => settings.sidebarNavRailEnabled) && !open && !isMobile;
+  // SCIENT-FORK:END
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -343,6 +349,9 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         mobileSidebarSheetMounted && "hidden",
       )}
       data-sidebar-control=""
+      // SCIENT-FORK:START
+      data-over-rail={overCollapsedRail || undefined}
+      // SCIENT-FORK:END
     >
       {showSidebar ? (
         <Tooltip>
