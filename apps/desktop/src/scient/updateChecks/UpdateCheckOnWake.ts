@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import * as ElectronPowerMonitor from "../../electron/ElectronPowerMonitor.ts";
@@ -14,11 +15,14 @@ const WAKE_CHECK_DELAY = Duration.seconds(30);
 // Waking twice in a short while checks once.
 const WAKE_CHECK_MIN_SPACING = Duration.minutes(15);
 
+function isRecent(lastMillis: number, nowMillis: number): boolean {
+  const elapsed = nowMillis - lastMillis;
+  return elapsed >= 0 && elapsed < Duration.toMillis(WAKE_CHECK_MIN_SPACING);
+}
+
 export function checkedRecently(checkedAt: string | null, nowMillis: number): boolean {
   const last = checkedAt === null ? Number.NaN : Date.parse(checkedAt);
-  if (Number.isNaN(last)) return false;
-  const elapsed = nowMillis - last;
-  return elapsed >= 0 && elapsed < Duration.toMillis(WAKE_CHECK_MIN_SPACING);
+  return !Number.isNaN(last) && isRecent(last, nowMillis);
 }
 
 /**
@@ -34,6 +38,9 @@ export const listen: Effect.Effect<
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   const wakes = yield* Queue.sliding<void>(1);
+  // A check that finds the release already offered leaves checkedAt as it was, so the last wake
+  // check counts too.
+  const lastWakeCheckAt = yield* Ref.make(Number.NEGATIVE_INFINITY);
 
   yield* powerMonitor.onSimpleEvent("resume", () => {
     Queue.offerUnsafe(wakes, undefined);
@@ -45,7 +52,10 @@ export const listen: Effect.Effect<
     // A wake during the delay is covered by this check.
     yield* Queue.clear(wakes);
     const state = yield* updates.getState;
-    if (checkedRecently(state.checkedAt, yield* Clock.currentTimeMillis)) return;
+    const now = yield* Clock.currentTimeMillis;
+    if (checkedRecently(state.checkedAt, now)) return;
+    if (isRecent(yield* Ref.get(lastWakeCheckAt), now)) return;
+    yield* Ref.set(lastWakeCheckAt, now);
     yield* updates.check("wake");
   });
 

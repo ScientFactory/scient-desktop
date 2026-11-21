@@ -70,6 +70,13 @@ describe("listen", () => {
       yield* wake;
       yield* TestClock.adjust("30 seconds");
       assert.deepStrictEqual(yield* Ref.get(checks), ["wake", "wake"]);
+
+      // A check that finds the offered release again keeps checkedAt; the last wake check still counts.
+      yield* Ref.set(checkedAt, null);
+      yield* TestClock.adjust("5 minutes");
+      yield* wake;
+      yield* TestClock.adjust("30 seconds");
+      assert.deepStrictEqual(yield* Ref.get(checks), ["wake", "wake"]);
     }),
   );
 });
