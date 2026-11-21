@@ -12,11 +12,12 @@ import * as NodeURL from "node:url";
 
 export const DEV_IDENTITY_ENV = "SCIENT_DEV_IDENTITY";
 /** Bumped whenever the lock, journal or vault handling changes; home and seed must agree. */
-export const DEV_IDENTITY_PROTOCOL = 1;
+export const DEV_IDENTITY_PROTOCOL = 2;
 export const DEV_IDENTITY_MARKER = "dev-identity.json";
 const JOURNAL = "dev-identity-journal.json";
 const HOME_RECORD = "dev-identity-home.json";
-const HOME_LOCK = "dev-identity.lock";
+/** The seed lock: an exclusive SQLite transaction the OS drops with its process, however it ends. */
+const HOME_LOCK = "dev-identity-lock.sqlite";
 const HOME_CHECKOUT_NAME = "scient-desktop-identity";
 const STATE_SUBDIR = "scient-next-dev";
 const PREVIEW_PARTITION_DIR_PREFIX = "scient-next-preview-";
@@ -1058,56 +1059,51 @@ const processIsAlive = (pid) => {
   }
 };
 
-const lockOwner = (path) => {
-  const pid = Number.parseInt(readText(path) ?? "", 10);
-  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+const openHomeLock = (home, timeout) => {
+  NodeFS.mkdirSync(home.root, { recursive: true, mode: 0o700 });
+  return new NodeSqlite.DatabaseSync(NodePath.join(home.root, HOME_LOCK), { timeout });
 };
 
+const isBusy = (error) => /database is locked|SQLITE_BUSY/u.test(String(error?.message ?? error));
+
 /** Whether a seed or setup holds the home now; the home app must not start under it. */
-export function homeIsLocked(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
-  const pid = lockOwner(NodePath.join(home.root, HOME_LOCK));
-  return pid !== undefined && isAlive(pid);
+export function homeIsLocked(home = resolveDevIdentityHome()) {
+  if (!exists(NodePath.join(home.root, HOME_LOCK))) return false;
+  const database = openHomeLock(home, 0);
+  try {
+    // A shared read: refused while a seed holds the lock, never in the way of another check.
+    database.exec("BEGIN");
+    database.prepare("SELECT count(*) FROM sqlite_master").get();
+    database.exec("ROLLBACK");
+    return false;
+  } catch (error) {
+    if (isBusy(error)) return true;
+    throw error;
+  } finally {
+    database.close();
+  }
 }
 
 /**
- * Holds the home for one seed or setup. A dead owner's lock is set aside by renaming it, and only
- * if it still names that owner, so two processes cannot both take a stale lock.
+ * Holds the home for one seed or setup. The lock lives as long as this process holds it open, so
+ * a seed that dies frees it at once and no stale lock is ever cleared by hand.
  */
-export function acquireHomeLock(home, isAlive = processIsAlive) {
-  NodeFS.mkdirSync(home.root, { recursive: true, mode: 0o700 });
-  const path = NodePath.join(home.root, HOME_LOCK);
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      NodeFS.writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o600 });
-      return () => {
-        if (lockOwner(path) === process.pid) NodeFS.rmSync(path, { force: true });
-      };
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      const owner = lockOwner(path);
-      if (owner !== undefined && isAlive(owner)) {
-        throw new Error("Another seed or setup is using the dev identity home.", { cause: error });
-      }
-      const aside = `${path}.stale-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
-      try {
-        NodeFS.renameSync(path, aside);
-      } catch (renameError) {
-        if (renameError?.code !== "ENOENT") throw renameError;
-        continue;
-      }
-      // Another process may have replaced the stale lock just before the rename: put it back.
-      const taken = lockOwner(aside);
-      if (taken !== owner) {
-        try {
-          NodeFS.linkSync(aside, path);
-        } catch {
-          // The rightful owner's lock is gone; its holder finishes without it.
-        }
-      }
-      NodeFS.rmSync(aside, { force: true });
+export function acquireHomeLock(home) {
+  // Waits out a brief check by another process, never a seed.
+  const database = openHomeLock(home, 2_000);
+  try {
+    database.exec("BEGIN EXCLUSIVE");
+  } catch (error) {
+    database.close();
+    if (isBusy(error)) {
+      throw new Error("Another seed or setup is using the dev identity home.", { cause: error });
     }
+    throw error;
   }
-  throw new Error("Could not lock the dev identity home.");
+  return () => {
+    database.exec("ROLLBACK");
+    database.close();
+  };
 }
 
 /** No folder the copy writes into may be a link that leads outside the target. */
@@ -1182,20 +1178,11 @@ const RUNNERS_DIR = "dev-identity-runners";
 /** The launcher's own grace for a runner folder whose receipt is not written yet. */
 const RUNNER_START_GRACE_MS = 5_000;
 
-/** The process group a runner and the children it starts share, when `ps` can tell. */
-const processGroupOf = (pid) => {
-  const result = NodeChildProcess.spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], {
-    encoding: "utf8",
-  });
-  const group = Number.parseInt(result.stdout?.trim() ?? "", 10);
-  return Number.isInteger(group) && group > 1 ? group : undefined;
-};
-
 /**
  * Claims the home for one app runner until `release`. The runner records itself before it checks
  * the seed lock, and a seed takes that lock before it checks for runners, so one of the two always
- * sees the other. The record names the runner's process group too, so the home stays claimed
- * while children it started outlive it.
+ * sees the other. A process the runner started that outlives it still holds the home's databases
+ * open, which a seed also checks.
  */
 export function claimHomeStart({
   checkoutRoot,
@@ -1203,12 +1190,11 @@ export function claimHomeStart({
   home = resolveDevIdentityHome(),
   installed = resolveInstalledApp(),
   pid = process.pid,
-  processGroup = processGroupOf,
 }) {
   assertHomeCheckout({ checkoutRoot, stateRoot, home });
   if (!sameFile(stateRoot, home.root)) return { status: "not-home", release: () => {} };
   const receipt = NodePath.join(home.root, RUNNERS_DIR, `${String(pid)}.json`);
-  writeFileAtomic(receipt, jsonBytes({ pid, processGroup: processGroup(pid) ?? null }));
+  writeFileAtomic(receipt, jsonBytes({ pid }));
   const release = () => NodeFS.rmSync(receipt, { force: true });
   let readiness;
   try {
@@ -1223,6 +1209,27 @@ export function claimHomeStart({
   }
   return { status: "ready", release };
 }
+
+/**
+ * Processes other than this one with a file open directly in the home's state or browser data:
+ * an app's databases, however it was started and whatever started it.
+ */
+const processesUsingHome = (home) => {
+  const dirs = [home.stateDir, NodePath.join(home.stateDir, "electron-userdata")].filter(exists);
+  if (dirs.length === 0) return [];
+  const result = NodeChildProcess.spawnSync("lsof", ["-t", ...dirs.flatMap((dir) => ["+d", dir])], {
+    encoding: "utf8",
+  });
+  // lsof exits 1 when nothing is open; anything else without output means it could not look.
+  if (result.error || (result.status !== 0 && result.status !== 1)) {
+    throw new Error("Could not check which processes use the dev identity home (lsof).", {
+      cause: result.error,
+    });
+  }
+  return [...new Set(result.stdout.split(/\s+/u).map(Number))].filter(
+    (pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid,
+  );
+};
 
 /**
  * What the home looked like with no seed or setup in it: undefined while one holds the home or
@@ -1472,14 +1479,15 @@ export function resolveInstalledApp(homeDir = NodeOS.homedir()) {
 }
 
 /**
- * The home's app writes its own files; seeding and moving the home wait until it is closed. A
- * runner that claimed the home counts while it or a process of its group lives; a launcher runner
- * counts while its process lives, or briefly while it has not recorded one yet.
+ * The home's app writes its own files; seeding and moving the home wait until it is closed. It
+ * counts as running while any process has the home's databases open, while a runner that claimed
+ * the home lives, and while a launcher runner lives or briefly before it records its process.
  */
 export function homeAppIsRunning(
   home = resolveDevIdentityHome(),
   isAlive = processIsAlive,
   now = Date.now,
+  usingHome = processesUsingHome,
 ) {
   for (const file of ["electron.pid", "backend.pid"]) {
     const pid = Number.parseInt(
@@ -1494,9 +1502,8 @@ export function homeAppIsRunning(
     const receipt = readJsonObject(NodePath.join(runners, name));
     if (receipt === undefined) return true;
     if (Number.isInteger(receipt.pid) && receipt.pid > 0 && isAlive(receipt.pid)) return true;
-    const group = receipt.processGroup;
-    if (Number.isInteger(group) && group > 1 && isAlive(-group)) return true;
   }
+  if (usingHome(home).length > 0) return true;
   const runnerDir = NodePath.join(home.root, "local-dev-app-runner");
   if (!exists(runnerDir)) return false;
   const pid = readJsonObject(NodePath.join(runnerDir, "state.json"))?.pid;
@@ -1538,9 +1545,8 @@ export async function seedDevIdentityHome({
   readKeychain,
   force = false,
   isRunning = homeAppIsRunning,
-  isAlive = processIsAlive,
 } = {}) {
-  const release = acquireHomeLock(home, isAlive);
+  const release = acquireHomeLock(home);
   try {
     if (isRunning(home)) {
       throw new Error("Quit Scient (Dev) · identity first (pnpm dev:app:stop in its checkout).");
@@ -1689,7 +1695,6 @@ export function setupHomeCheckout({
       return undefined;
     }
   },
-  isAlive = processIsAlive,
   isRunning = homeAppIsRunning,
 }) {
   if (NodePath.basename(checkout) !== HOME_CHECKOUT_NAME) {
@@ -1706,7 +1711,7 @@ export function setupHomeCheckout({
       throw new Error(`${link} points somewhere other than ${home.root}.`);
     }
   }
-  const release = acquireHomeLock(home, isAlive);
+  const release = acquireHomeLock(home);
   try {
     assertHomeLayout(home, installed);
     // Moving the home to another checkout while its app runs would let a second app open it.

@@ -1,17 +1,21 @@
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeURL from "node:url";
 
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
+  acquireHomeLock,
   assertHomeCheckout,
   claimHomeStart,
   cookieDatabasePath,
   captureIdentity,
   DEV_IDENTITY_ENV,
+  homeIsLocked,
   DEV_IDENTITY_MARKER,
   describeImport,
   ensurePortableVault,
@@ -60,7 +64,8 @@ const decrypt = (key, name, blob) => {
   return Buffer.concat([decipher.update(blob.subarray(29)), decipher.final()]);
 };
 
-const PROTOCOL_LINE = "export const DEV_IDENTITY_PROTOCOL = 1;\n";
+const PROTOCOL_LINE = "export const DEV_IDENTITY_PROTOCOL = 2;\n";
+const noOpenFiles = () => [];
 const homeAt = (root) => ({ root, stateDir: NodePath.join(root, "scient-next-dev") });
 
 /** The home's registered checkout, its app data a link to the home, as `setup` leaves it. */
@@ -1117,7 +1122,7 @@ describe("code review guards", () => {
     }).catch((cause) => cause);
     assert.match(String(error), /nothing was copied/u);
     assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort(), before);
-    assert.equal(NodeFS.existsSync(NodePath.join(home.root, "dev-identity.lock")), false);
+    assert.equal(homeIsLocked(home), false);
   });
 
   it("holds a lock through the seed that keeps the home app from starting", async () => {
@@ -1240,9 +1245,13 @@ describe("code review guards", () => {
     const target = NodePath.join(root, "candidate", "scient-next-dev");
     write(NodePath.join(target, "settings.json"), "{}");
     const pending = importDevIdentity({ targetStateDir: target, home });
-    // A seed (this live process) holds the home, its marker not yet replaced.
-    write(NodePath.join(home.root, "dev-identity.lock"), String(process.pid));
-    assert.deepEqual(await pending, { status: "home-busy" });
+    // A seed holds the home, its marker not yet replaced.
+    const release = acquireHomeLock(home);
+    try {
+      assert.deepEqual(await pending, { status: "home-busy" });
+    } finally {
+      release();
+    }
     assert.equal(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8"), "{}");
   });
 
@@ -1294,12 +1303,15 @@ describe("code review guards", () => {
         }),
       /only its own checkout/u,
     );
-    write(NodePath.join(home.root, "dev-identity.lock"), String(process.pid));
-    assert.equal(
-      prepareHomeStart({ checkoutRoot: checkout, stateRoot, home, installed }),
-      "seeding",
-    );
-    NodeFS.rmSync(NodePath.join(home.root, "dev-identity.lock"));
+    const release = acquireHomeLock(home);
+    try {
+      assert.equal(
+        prepareHomeStart({ checkoutRoot: checkout, stateRoot, home, installed }),
+        "seeding",
+      );
+    } finally {
+      release();
+    }
     const leftover = NodePath.join(home.stateDir, "dev-identity-staging", "x");
     write(leftover, "plain");
     assert.equal(prepareHomeStart({ checkoutRoot: checkout, stateRoot, home, installed }), "ready");
@@ -1409,46 +1421,108 @@ describe("code review guards", () => {
       vaultKeychainAccount: "a",
       cookieKeychains: [],
     };
-    const claim = claimHomeStart({
-      checkoutRoot: checkout,
-      stateRoot,
-      home,
-      installed,
-      processGroup: () => undefined,
-    });
+    const claim = claimHomeStart({ checkoutRoot: checkout, stateRoot, home, installed });
     assert.equal(claim.status, "ready");
     const seed = () =>
-      seedDevIdentityHome({ home, installed, readKeychain: async () => null, force: true });
+      seedDevIdentityHome({
+        home,
+        installed,
+        readKeychain: async () => null,
+        force: true,
+        isRunning: (target) => homeAppIsRunning(target, undefined, undefined, noOpenFiles),
+      });
     assert.match(String(await seed().catch((error) => error)), /Quit Scient \(Dev\)/u);
     claim.release();
     // Released: the seed gets as far as the Keychain.
     assert.match(String(await seed().catch((error) => error)), /Keychain did not give/u);
 
-    // A runner whose process died while a child of its group lives still holds the home.
-    write(
-      NodePath.join(home.root, "dev-identity-runners", "9.json"),
-      JSON.stringify({ pid: 9, processGroup: 77 }),
-    );
+    // A process still holding the home's databases open keeps it running, whoever started it.
     assert.equal(
-      homeAppIsRunning(home, (pid) => pid === -77),
+      homeAppIsRunning(
+        home,
+        () => false,
+        Date.now,
+        () => [4242],
+      ),
       true,
     );
+    assert.equal(
+      homeAppIsRunning(home, () => false, Date.now, noOpenFiles),
+      false,
+    );
+
+    const release = acquireHomeLock(home);
+    try {
+      const blocked = claimHomeStart({ checkoutRoot: checkout, stateRoot, home, installed });
+      assert.equal(blocked.status, "seeding");
+      assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.root, "dev-identity-runners")), []);
+    } finally {
+      release();
+    }
+  });
+
+  it("frees the seed lock the moment its process dies, and never hands it to two", async () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const release = acquireHomeLock(home);
+    assert.throws(() => acquireHomeLock(home), /Another seed or setup/u);
+    release();
+    const module = NodeURL.pathToFileURL(NodePath.join(import.meta.dirname, "dev-identity.mjs"));
+    const holder = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `const m = await import(${JSON.stringify(module.href)});
+         m.acquireHomeLock(${JSON.stringify(home)}); console.log("held");
+         setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    try {
+      await new Promise((resolve, reject) => {
+        holder.stdout.once("data", resolve);
+        holder.once("exit", () => reject(new Error("the lock holder exited before holding")));
+      });
+      assert.equal(homeIsLocked(home), true);
+    } catch (error) {
+      holder.kill("SIGKILL");
+      throw error;
+    }
+    holder.kill("SIGKILL");
+    await new Promise((resolve) => holder.once("exit", resolve));
+    assert.equal(homeIsLocked(home), false);
+    acquireHomeLock(home)();
+  });
+
+  it("sees another process that holds a file open in the home", async () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const database = NodePath.join(home.stateDir, "statev2.sqlite");
+    write(database, "");
+    const holder = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        "-e",
+        `require("node:fs").openSync(${JSON.stringify(database)}, "r"); console.log("open");
+         setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    try {
+      await new Promise((resolve) => holder.stdout.once("data", resolve));
+      assert.equal(
+        homeAppIsRunning(home, () => false),
+        true,
+      );
+    } finally {
+      holder.kill("SIGKILL");
+    }
+    await new Promise((resolve) => holder.once("exit", resolve));
     assert.equal(
       homeAppIsRunning(home, () => false),
       false,
     );
-    NodeFS.rmSync(NodePath.join(home.root, "dev-identity-runners"), { recursive: true });
-
-    write(NodePath.join(home.root, "dev-identity.lock"), String(process.pid));
-    const blocked = claimHomeStart({
-      checkoutRoot: checkout,
-      stateRoot,
-      home,
-      installed,
-      processGroup: () => undefined,
-    });
-    assert.equal(blocked.status, "seeding");
-    assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.root, "dev-identity-runners")), []);
   });
 
   it("never gives a home a new key over records an existing key sealed", () => {
