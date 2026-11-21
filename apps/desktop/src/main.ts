@@ -30,6 +30,9 @@ import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:START — feedback reports to the Scient team.
 import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — an update check after the computer wakes.
+import * as UpdateCheckOnWake from "./scient/updateChecks/UpdateCheckOnWake.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the update facts journal the updater writes and the telemetry pipe delivers.
 import * as DesktopUpdateFacts from "./scient/updateOutcomes/DesktopUpdateFacts.ts";
 import * as DesktopUpdateFactsHttpDelivery from "./scient/updateOutcomes/DesktopUpdateFactsHttpDelivery.ts";
@@ -255,6 +258,8 @@ const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — feedback reports to the Scient team.
   DesktopFeedback.layer,
   // SCIENT-FORK:END
+  // SCIENT-FORK: an update check after the computer wakes.
+  UpdateCheckOnWake.layer,
   // SCIENT-FORK: update facts over HTTP for a primary without the telemetry pipes (WSL-only).
   DesktopUpdateFactsHttpDelivery.layer.pipe(Layer.provide(DesktopUpdateFacts.layer)),
   DesktopLifecycle.layer,
