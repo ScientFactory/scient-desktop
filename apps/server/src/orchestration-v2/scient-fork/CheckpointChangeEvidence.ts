@@ -14,7 +14,10 @@ export function withChangesKnown(
     : checkpoint;
 }
 
-/** For a thread folder whose tracked repositories could not be listed, so went unchecked. */
+/**
+ * For a thread folder whose run reached tracked repositories, or whose repositories could not be
+ * listed: they are compared apart, and not always, so the folder's own list may not be all.
+ */
 export function withoutChangesKnown(
   checkpoint: OrchestrationV2Checkpoint,
 ): OrchestrationV2Checkpoint {

@@ -134,7 +134,7 @@ export const layer: Layer.Layer<
       // SCIENT-FORK:START edit-from-here-evidence — null when they could not be listed.
       const readableRepositoryScopes =
         sideChat || context.thread === undefined
-          ? []
+          ? null
           : yield* checkpoints.repositoryScopesIfReadable({ rootScope: scope, ...context.thread });
       const repositoryScopes = readableRepositoryScopes ?? [];
       // SCIENT-FORK:END edit-from-here-evidence
@@ -163,8 +163,9 @@ export const layer: Layer.Layer<
           forceMissing: sideChat,
           ...excluded(scope),
         });
-        // SCIENT-FORK:START edit-from-here-evidence
-        if (readableRepositoryScopes === null) {
+        // SCIENT-FORK:START edit-from-here-evidence — the folder's own list is the run's whole
+        // change only when the thread reached no tracked repository, as they are compared apart.
+        if (readableRepositoryScopes?.length !== 0) {
           return {
             threadStartCheckpoint,
             baselineCheckpoint,

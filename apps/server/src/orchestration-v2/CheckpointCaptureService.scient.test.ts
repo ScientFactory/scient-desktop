@@ -41,10 +41,13 @@ const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" } as c
 
 it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2 change evidence", (it) => {
   it.effect.each([
-    { repositories: "listed", changesKnown: true },
+    { repositories: "none", changesKnown: true },
     { repositories: "unreadable", changesKnown: undefined },
+    // regression: a repository missed by the turn's baselines that ends on a clean, different
+    // HEAD is never compared, so it records nothing; the thread's folder must not vouch for it.
+    { repositories: "one-unrecorded", changesKnown: undefined },
   ] as const)(
-    "a run's changes stay unknown when its repositories could not be listed ($repositories)",
+    "a run's own folder is known to list every change only when it reached no repository ($repositories)",
     ({ repositories, changesKnown }) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -219,8 +222,31 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2 change evidence",
                 Layer.mergeAll(
                   IdAllocator.layer,
                   Layer.mock(CheckpointService.CheckpointServiceV2)({
-                    repositoryScopesIfReadable: () =>
-                      Effect.succeed(repositories === "listed" ? [] : null),
+                    repositoryScopesIfReadable: ({ rootScope }) =>
+                      Effect.succeed(
+                        repositories === "none"
+                          ? []
+                          : repositories === "unreadable"
+                            ? null
+                            : [
+                                {
+                                  ...rootScope,
+                                  id: CheckpointScopeId.make(
+                                    `scope:changes-known:${repositories}:lab-tools`,
+                                  ),
+                                  parentScopeId: rootScope.id,
+                                  kind: "manual",
+                                  ordinalWithinParent: 1,
+                                  advancesAppRunCount: false,
+                                  cwd: "/lab-tools",
+                                  label: "lab-tools",
+                                  repositoryPath: "/lab-tools",
+                                },
+                              ],
+                      ),
+                    nestedScopePaths: () => Effect.succeed(new Map()),
+                    // What a clean HEAD with no baseline gives: nothing to show.
+                    captureRepository: () => Effect.succeedNone,
                     capture: () => Effect.succeed({ ...checkpoint(1), changesKnown: true }),
                   }),
                   Layer.mock(EventSink.EventSinkV2)({

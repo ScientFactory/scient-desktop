@@ -45,6 +45,9 @@ interface TimelineRewindInput {
   readonly composerRef: ComposerHandleRef;
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
+  // SCIENT-FORK:START — Edit from here asks in a project with tracked folders.
+  readonly projectTracksFolders: boolean;
+  // SCIENT-FORK:END
 }
 
 /**
@@ -85,6 +88,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     editFromHereSkipsDialog({
       projection: serverProjection,
       worktreePath: activeThread?.worktreePath ?? null,
+      projectTracksFolders: input.projectTracksFolders,
       turnCount,
     }),
   );

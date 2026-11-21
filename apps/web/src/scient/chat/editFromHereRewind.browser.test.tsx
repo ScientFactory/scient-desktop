@@ -87,6 +87,7 @@ const unchangedAfterRun1 = threadAfterRun2([checkpoint(2, [])]);
 function Harness(props: {
   readonly projection: ThreadStructure;
   readonly worktreePath: string | null;
+  readonly projectTracksFolders?: boolean;
   readonly composer: Pick<
     ChatComposerHandle,
     "resetCursorState" | "focusAtEnd" | "hasPendingAttachments"
@@ -117,6 +118,7 @@ function Harness(props: {
     composerRef,
     composerDraftTarget: threadRef,
     setThreadError: vi.fn(),
+    projectTracksFolders: props.projectTracksFolders ?? false,
   });
   return (
     <>
@@ -187,9 +189,15 @@ const harness = (
   projection: ThreadStructure,
   worktreePath: string | null,
   composer: ReturnType<typeof setup>["composer"],
+  projectTracksFolders = false,
 ) => (
   <AppAtomRegistryProvider>
-    <Harness projection={projection} worktreePath={worktreePath} composer={composer} />
+    <Harness
+      projection={projection}
+      worktreePath={worktreePath}
+      projectTracksFolders={projectTracksFolders}
+      composer={composer}
+    />
   </AppAtomRegistryProvider>
 );
 const renderHarness = (...args: Parameters<typeof harness>) =>
@@ -224,6 +232,39 @@ describe("Edit from here", () => {
     await expect.element(dialog()).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Revert files too" })).toBeEnabled();
     expect(mocks.prepareRevertedMessageAttachments).not.toHaveBeenCalled();
+    expect(mocks.revertThreadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  // regression: a tracked repository missed by a turn's baselines can change and end clean without
+  // being compared; the thread's own folder evidence must not let the rewind skip the dialog.
+  it("asks in a project with tracked repositories, even when its folder changed no files", async () => {
+    using fixture = setup();
+    await using _screen = await renderHarness(
+      unchangedAfterRun1,
+      PROJECT_FOLDER,
+      fixture.composer,
+      true,
+    );
+    await editFromHere();
+    await expect.element(dialog()).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Rewind chat" })).toBeEnabled();
+    expect(mocks.prepareRevertedMessageAttachments).not.toHaveBeenCalled();
+    expect(mocks.revertThreadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("asks when the thread has reached a repository, even with no change recorded there", async () => {
+    using fixture = setup();
+    const withRepository = {
+      ...unchangedAfterRun1,
+      checkpointScopes: [
+        { id: "scope-root" },
+        { id: "scope-lab-tools", repositoryPath: "/project/lab-tools" },
+      ],
+    } as unknown as ThreadStructure;
+    await using _screen = await renderHarness(withRepository, PROJECT_FOLDER, fixture.composer);
+    await editFromHere();
+    await expect.element(dialog()).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Rewind chat" })).toBeEnabled();
     expect(mocks.revertThreadCheckpoint).not.toHaveBeenCalled();
   });
 

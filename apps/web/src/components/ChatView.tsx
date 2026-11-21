@@ -3768,6 +3768,9 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
     composerDraftTarget,
     setThreadError,
+    // SCIENT-FORK:START
+    projectTracksFolders: (activeProject?.trackedFolders?.length ?? 0) > 0,
+    // SCIENT-FORK:END
   });
   const onCompactContext = () => {
     if (compactDisabled) return;

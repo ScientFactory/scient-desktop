@@ -1,10 +1,8 @@
 import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
+  isRepositoryCheckpointScope,
   repositoryCheckpointScopeIds,
-  rewindFileRestore,
 } from "@t3tools/client-runtime/state/thread-repositories";
-
-import { findRevertCheckpoint } from "../../session-logic";
 
 type RewindProjection = Pick<
   OrchestrationV2ThreadProjection,
@@ -48,28 +46,21 @@ export function laterTurnsChangedNoFiles(
 }
 
 /**
- * Whether Edit from here can rewind without its dialog: the dialog would offer no file choice
- * ("Revert files too" or "Revert repositories too"), and no later turn changed files, so it would
- * only ask to rewind the chat. A thread whose files can be restored always asks: the user may want
- * to undo their own edits.
+ * Whether Edit from here can rewind without its dialog: the thread works in the project folder
+ * alone, where the dialog can only rewind the chat, and no later turn changed files there. Tracked
+ * folders and repositories always ask: they are not always compared. The server keeps evidence off
+ * runs that reached any, including submodules, which only it sees.
  */
 export function editFromHereSkipsDialog(input: {
   readonly projection: RewindProjection | null;
   readonly worktreePath: string | null;
+  readonly projectTracksFolders: boolean;
   readonly turnCount: number;
 }): boolean {
-  const { projection, worktreePath, turnCount } = input;
-  // As RevertConfirmHost decides it. The task folder it may look up is assumed to be the one that
-  // offers the most, so an unknown answer keeps the dialog.
-  const fileRestore =
-    projection === null || worktreePath === null
-      ? null
-      : rewindFileRestore({
-          projection,
-          checkpoint: findRevertCheckpoint(projection, turnCount),
-          taskFolder: { projectIsWorktree: false },
-        });
-  return fileRestore === null && laterTurnsChangedNoFiles(projection, turnCount);
+  const { projection, worktreePath, projectTracksFolders, turnCount } = input;
+  if (projection === null || worktreePath !== null || projectTracksFolders) return false;
+  if (projection.checkpointScopes.some(isRepositoryCheckpointScope)) return false;
+  return laterTurnsChangedNoFiles(projection, turnCount);
 }
 
 /**

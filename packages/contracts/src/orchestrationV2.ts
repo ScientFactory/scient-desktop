@@ -1770,8 +1770,8 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   // SCIENT-FORK:START edit-from-here-evidence
   /**
    * Set only when `files` is known to list every change its run made: the comparison with the
-   * previous snapshot ran and, for a thread's own folder, every tracked repository was checked (one
-   * that changed has its own checkpoint). Absent means unknown, as on records written before it.
+   * previous snapshot ran and, for a thread's own folder, the thread reached no tracked repository.
+   * Absent means unknown, as on records written before it.
    */
   changesKnown: Schema.optionalKey(Schema.Literal(true)),
   // SCIENT-FORK:END edit-from-here-evidence

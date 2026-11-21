@@ -152,54 +152,68 @@ describe("laterTurnsChangedNoFiles", () => {
 });
 
 describe("editFromHereSkipsDialog", () => {
-  const unchanged = projection(
+  const singleFolder = (runs: ReadonlyArray<Run>, checkpoints: ReadonlyArray<Checkpoint>) =>
+    ({
+      ...projection(runs, checkpoints),
+      checkpointScopes: [{ id: ROOT_SCOPE }],
+    }) as unknown as Projection;
+  const unchanged = singleFolder(
     [run(1), run(2)],
     [checkpoint(1, { files: ["a.md"] }), checkpoint(2)],
   );
+  const skips = (
+    thread: Projection,
+    options: { readonly worktreePath?: string; readonly projectTracksFolders?: boolean } = {},
+  ) =>
+    editFromHereSkipsDialog({
+      projection: thread,
+      worktreePath: options.worktreePath ?? null,
+      projectTracksFolders: options.projectTracksFolders ?? false,
+      turnCount: 1,
+    });
 
-  it("skips the dialog in a project folder when no later turn changed files", () => {
-    expect(
-      editFromHereSkipsDialog({ projection: unchanged, worktreePath: null, turnCount: 1 }),
-    ).toBe(true);
-  });
-
-  it("asks in a worktree, where the dialog can revert files, even with no later change", () => {
-    expect(
-      editFromHereSkipsDialog({ projection: unchanged, worktreePath: "/worktree", turnCount: 1 }),
-    ).toBe(false);
-  });
-
-  it("skips the dialog in a worktree whose rewind target has no snapshot to restore", () => {
-    const thread = projection(
-      [run(1), run(2)],
-      [checkpoint(1, { status: "error" }), checkpoint(2)],
-    );
-    expect(
-      editFromHereSkipsDialog({ projection: thread, worktreePath: "/worktree", turnCount: 1 }),
-    ).toBe(true);
-  });
-
-  it("asks in a task folder whose repositories the dialog may offer to revert", () => {
-    const repositoryBaseline = {
-      ...checkpoint(1, { scopeId: REPOSITORY_SCOPE }),
-      runId: null,
-    } as unknown as Checkpoint;
-    const thread = projection(
-      [run(1), run(2)],
-      [checkpoint(1, { status: "missing" }), repositoryBaseline, checkpoint(2)],
-    );
-    expect(
-      editFromHereSkipsDialog({ projection: thread, worktreePath: "/task-folder", turnCount: 1 }),
-    ).toBe(false);
+  it("skips the dialog in a single-folder project thread when no later turn changed files", () => {
+    expect(skips(unchanged)).toBe(true);
   });
 
   it("asks in a project folder when a later turn changed files", () => {
-    const thread = projection(
+    expect(
+      skips(singleFolder([run(1), run(2)], [checkpoint(1), checkpoint(2, { files: ["b.md"] })])),
+    ).toBe(false);
+  });
+
+  // regression: a repository missed by a turn's baselines can change and end clean without being
+  // compared, so the thread's folder evidence says nothing about it.
+  it("asks in a project with tracked folders, even when the server vouched for its folder", () => {
+    expect(skips(unchanged, { projectTracksFolders: true })).toBe(false);
+  });
+
+  it("asks when the thread has a repository scope, even with no repository change recorded", () => {
+    const thread = projection([run(1), run(2)], [checkpoint(1), checkpoint(2)]);
+    expect(laterTurnsChangedNoFiles(thread, 1)).toBe(true);
+    expect(skips(thread)).toBe(false);
+  });
+
+  it("asks in a worktree, where the dialog can revert files, even with no later change", () => {
+    expect(skips(unchanged, { worktreePath: "/worktree" })).toBe(false);
+  });
+
+  it("asks in a worktree whose rewind target has no snapshot to restore", () => {
+    const thread = singleFolder(
       [run(1), run(2)],
-      [checkpoint(1), checkpoint(2, { files: ["b.md"] })],
+      [checkpoint(1, { status: "error" }), checkpoint(2)],
     );
-    expect(editFromHereSkipsDialog({ projection: thread, worktreePath: null, turnCount: 1 })).toBe(
-      false,
-    );
+    expect(skips(thread, { worktreePath: "/worktree" })).toBe(false);
+  });
+
+  it("asks when the thread is not loaded", () => {
+    expect(
+      editFromHereSkipsDialog({
+        projection: null,
+        worktreePath: null,
+        projectTracksFolders: false,
+        turnCount: 1,
+      }),
+    ).toBe(false);
   });
 });
