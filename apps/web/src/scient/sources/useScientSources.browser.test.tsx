@@ -524,6 +524,43 @@ describe("useScientSources mounted behavior", () => {
     });
   });
 
+  it("keeps the current project's held list when a late reply of the project left arrives", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const oldReload = Promise.withResolvers<ScientSourcesOverviewResult>();
+    mocks.readScientSources
+      .mockResolvedValueOnce({ ...overviewWith(["project-a"]), revision: "rev-a" })
+      .mockImplementationOnce(() => oldReload.promise)
+      .mockResolvedValueOnce({ ...overviewWith(["project-b"]), revision: "rev-b" })
+      .mockResolvedValueOnce({ ...overviewWith([]), revision: "rev-b", unchanged: true });
+
+    await withMountedHook(_fixture, async (probe, controls) => {
+      let pending: Promise<unknown> | undefined;
+      await act(async () => {
+        pending = probe.current.reloadOverview();
+        await Promise.resolve();
+      });
+      await controls.rerender("/project-b");
+      await act(async () => {
+        oldReload.resolve({ ...overviewWith(["stale-project-a"]), revision: "rev-a2" });
+        await pending;
+      });
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project-b",
+        undefined,
+        "rev-b",
+      );
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual([
+        "project-b",
+      ]);
+    });
+  });
+
   it("reads the list without marking work busy, and a read cannot end an import's busy", async () => {
     await using _fixture = _createFixture();
     await _setupFixture0(_fixture);

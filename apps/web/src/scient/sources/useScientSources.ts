@@ -167,14 +167,16 @@ export function useScientSources(input: {
                 ...(held.noticeChanges ? { noticeChanges: held.noticeChanges } : {}),
               }
             : fresh;
-        if (next.revision) {
-          // One context at a time: a list of the context left behind is never kept.
-          for (const key of heldOverviews.current.keys()) {
-            if (!key.startsWith(`${contextKey}\0`)) heldOverviews.current.delete(key);
-          }
-          heldOverviews.current.set(heldKey, next);
-        }
+        // A late reply for a context or request already left changes neither the screen nor
+        // the lists held.
         if (isCurrentContext() && overviewRequestRef.current === request) {
+          if (next.revision) {
+            // One context at a time: a list of the context left behind is never kept.
+            for (const key of heldOverviews.current.keys()) {
+              if (!key.startsWith(`${contextKey}\0`)) heldOverviews.current.delete(key);
+            }
+            heldOverviews.current.set(heldKey, next);
+          }
           dispatch({ type: "overviewArrived", request, overview: next });
         }
         return next;
