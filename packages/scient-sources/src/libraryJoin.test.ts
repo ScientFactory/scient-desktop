@@ -192,6 +192,11 @@ describe("adding what another Library holds", () => {
       note: null,
       attachmentKeys: ["PDFA2345", "LEFT2345"],
     });
+    // Damaged before the backup listed it: that Library reads no base for n2 either.
+    await NodeFSP.writeFile(
+      NodePath.join(theirs.scenario.libraryRoot, "zotero", `${n2}.json`),
+      "{",
+    );
     const backup = await backUp(theirs.scenario);
 
     const ours = await built([
@@ -223,6 +228,7 @@ describe("adding what another Library holds", () => {
         `files/sha256/${pdf.slice(0, 2)}/${pdf}.pdf`,
       ]),
     );
+    expect(brought).not.toContain(`zotero/${n2}.json`);
     // The source is as the other Library has it: the record file itself, byte for byte.
     for (const path of [`records/${n1}.json`, `history/${n1}/1.json`, `zotero/${n1}.json`]) {
       expect(await NodeFSP.readFile(NodePath.join(ours.scenario.libraryRoot, path))).toEqual(

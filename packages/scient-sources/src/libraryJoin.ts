@@ -302,6 +302,15 @@ async function checkedBytes(
 
 const decodeZoteroSync = Schema.decodeUnknownSync(ScientSourceZoteroSync);
 
+/** One that does not decode was no base in the other Library either, so it stays behind. */
+function isZoteroBaseOf(bytes: Buffer, sourceId: string): boolean {
+  try {
+    return decodeZoteroSync(JSON.parse(bytes.toString("utf8"))).sourceId === sourceId;
+  } catch {
+    return false;
+  }
+}
+
 /** The big folders that hold one file or more per source; what else a backup lists is small. */
 const PER_SOURCE = /^(records|history|files|annotations|trash|deleted|zotero)\//u;
 
@@ -924,8 +933,7 @@ async function addSource(input: {
   // The Zotero base names the files this source already took or left; without it a refresh
   // would bring back a PDF removed here.
   const zotero = await theirBytes(NodePath.join(otherRoot, "zotero", `${id}.json`));
-  const zoteroBase =
-    zotero && decodeZoteroSync(JSON.parse(zotero.toString("utf8"))).sourceId === id ? zotero : null;
+  const zoteroBase = zotero && isZoteroBaseOf(zotero, id) ? zotero : null;
   const theirHighlights = new Map<string, Buffer | null>();
   for (const attachment of record.attachments) {
     theirHighlights.set(

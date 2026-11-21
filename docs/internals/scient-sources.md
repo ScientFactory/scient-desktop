@@ -3061,8 +3061,10 @@ here, its highlights file and then the PDF (checked by hash, flushed); a PDF
 already here keeps this Library's highlights, and the source is recorded as
 differing if the other's differ; its earlier versions, and the PDFs only they
 name while the other Library still has them; its Zotero base (only one that
-names the source), which keeps a Zotero PDF removed there from coming back on
-Refresh; the "keep apart" decisions; last the record. Files are created from the other Library's own bytes by renaming a
+decodes and names the source), which keeps a Zotero PDF removed there from
+coming back on Refresh (one that does not decode was no base there either: the
+source comes without it and refreshes as one never synced, as it would have
+there); the "keep apart" decisions; last the record. Files are created from the other Library's own bytes by renaming a
 flushed temporary file into place, only where no file has the name; the lock,
 which every writer of those files holds, makes that exclusive. The "keep
 apart" decisions are the other Library's as its own rule reads them ("not
