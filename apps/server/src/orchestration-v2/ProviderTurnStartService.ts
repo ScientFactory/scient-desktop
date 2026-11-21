@@ -2482,7 +2482,7 @@ export const layer: Layer.Layer<
               runId: run.id,
               cause: "The current native offer was declined after input preparation.",
             });
-          yield* catalogDropped ? preparedSkills.publishWithoutCatalog : preparedSkills.publish;
+          yield* preparedSkills.publish;
           const start = compact ? session.compactThread! : session.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =
@@ -2504,23 +2504,23 @@ export const layer: Layer.Layer<
               ? RESUME_PROMPT
               : preparedUserText;
           const text = goalCommand ? preparedUserText : withInlineContext(context, requestText);
-          const operation =
-            turnInput.resume && !prompted && session.resumeTurn !== undefined
-              ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
-              : start({
-                  ...(prompted ? contextInput : startInput),
-                  message: {
-                    ...turnInput.message,
-                    ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
-                    text,
-                    ...(missedAttachments.length === 0
-                      ? {}
-                      : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
-                  },
-                  ...(text === preparedUserText
+          const promptless = turnInput.resume && !prompted && session.resumeTurn !== undefined;
+          const operation = promptless
+            ? session.resumeTurn!({ ...resumeInput, messageId: resumeMessage.messageId })
+            : start({
+                ...(prompted ? contextInput : startInput),
+                message: {
+                  ...turnInput.message,
+                  ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
+                  text,
+                  ...(missedAttachments.length === 0
                     ? {}
-                    : { inlineContextLength: text.length - preparedUserText.length }),
-                });
+                    : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
+                },
+                ...(text === preparedUserText
+                  ? {}
+                  : { inlineContextLength: text.length - preparedUserText.length }),
+              });
           yield* operation.pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
@@ -2535,6 +2535,9 @@ export const layer: Layer.Layer<
                 : Effect.void,
             ),
           );
+          // SCIENT-FORK: the accepted prompt carried the skill list, unless it went without it.
+          if (!catalogDropped && !promptless && !goalCommand)
+            yield* preparedSkills.recordCatalogDelivered;
           // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
           yield* Effect.forEach(
@@ -2576,7 +2579,7 @@ export const layer: Layer.Layer<
       );
       // Native-initiated work has already begun under its captured policy;
       // preserve its adoption path rather than issuing another ordinary prompt.
-      if (providerWork !== undefined) yield* preparedSkills.publishWithoutCatalog;
+      if (providerWork !== undefined) yield* preparedSkills.publish;
       // SCIENT-FORK:START — every ordinary prompt delivers through skill preparation.
       const deliverySession =
         providerWork !== undefined ? session : makeDeliverySession(session, startWithHandoffs);

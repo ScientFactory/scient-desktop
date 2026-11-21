@@ -15,15 +15,28 @@ import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
 
 /**
- * The automatic skill index each thread's current provider session last received, by catalog
+ * The automatic skill index each thread's current provider session last accepted, by catalog
  * digest. A new provider session (restart, resume in a new process, provider switch) or a changed
- * catalog sends the index again; otherwise the turn points back to it. Server memory only: after
- * a server restart every session gets the index once more.
+ * catalog sends the index again; otherwise the turn points back to it. Server memory only, and
+ * bounded: after a server restart or eviction a session simply gets the index once more.
  */
 const deliveredSkillIndex = new Map<
   ThreadId,
   { readonly providerSessionId: string; readonly digest: string }
 >();
+const DELIVERED_SKILL_INDEX_LIMIT = 2_000;
+
+const rememberSkillIndex = (
+  threadId: ThreadId,
+  delivery: { readonly providerSessionId: string; readonly digest: string },
+) => {
+  deliveredSkillIndex.delete(threadId);
+  deliveredSkillIndex.set(threadId, delivery);
+  if (deliveredSkillIndex.size > DELIVERED_SKILL_INDEX_LIMIT) {
+    const oldest = deliveredSkillIndex.keys().next().value;
+    if (oldest !== undefined) deliveredSkillIndex.delete(oldest);
+  }
+};
 
 /**
  * Explicit names on the persisted user message are the sole skill-selection authority; serialized
@@ -110,19 +123,16 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
     // Preparation is inert: shared context validation owns when this scope
     // becomes visible to the provider's already-issued bearer credential.
     publish: deliverable
-      ? McpSessionRegistry.replaceActiveMcpSkillScope(input.threadId, skillTurn.skillScope).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              if (sendsIndex && providerSessionId !== undefined && digest !== undefined)
-                deliveredSkillIndex.set(input.threadId, { providerSessionId, digest });
-            }),
-          ),
-        )
-      : Effect.void,
-    /** Publishes the scope when the turn went out without its catalog text (size fallback). */
-    publishWithoutCatalog: deliverable
       ? McpSessionRegistry.replaceActiveMcpSkillScope(input.threadId, skillTurn.skillScope)
       : Effect.void,
+    /**
+     * Run after the provider accepted a turn that carried this text with its catalog note
+     * (not the size fallback, a compaction or a promptless resume).
+     */
+    recordCatalogDelivered: Effect.sync(() => {
+      if (sendsIndex && providerSessionId !== undefined && digest !== undefined)
+        rememberSkillIndex(input.threadId, { providerSessionId, digest });
+    }),
   };
 });
 

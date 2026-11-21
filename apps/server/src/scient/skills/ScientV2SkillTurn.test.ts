@@ -441,7 +441,11 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
       );
       assert.equal(prepared.baseText, baseText);
       assert.equal(prepared.text, `${baseText}\n\n${prepared.runtimeInstruction}`);
-      assert.include(prepared.runtimeInstruction!, "Scient skill scope for this turn");
+      assert.include(
+        prepared.runtimeInstruction!,
+        "Scient skills for this turn (complete; 1 skill;",
+      );
+      assert.include(prepared.runtimeInstruction!, `- ${release.name}:`);
       assert.include(prepared.runtimeInstruction!, "Scient selected skills for this turn");
       assert.include(prepared.runtimeInstruction!, "scient_skill_load");
       assert.notInclude(prepared.runtimeInstruction!, "authored marker");
@@ -449,7 +453,10 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
         prepared.textWithoutCatalogMarker,
         `${baseText}\n\n${prepared.runtimeInstructionWithoutCatalogMarker}`,
       );
-      assert.notInclude(prepared.runtimeInstructionWithoutCatalogMarker!, "Scient skill scope");
+      assert.notInclude(
+        prepared.runtimeInstructionWithoutCatalogMarker!,
+        "Scient skills for this turn",
+      );
       assert.include(prepared.runtimeInstructionWithoutCatalogMarker!, "Scient selected skills");
       assert.deepEqual(yield* registry.resolve(token), before);
       yield* prepared.publish;
@@ -524,21 +531,24 @@ it.effect("lists automatic skills once per provider session and catalog, then po
     const first = yield* prepare("Check my results.", [stats]);
     assert.include(first.text, "- stats-check: Check the statistics in a results section.");
     assert.notInclude(first.textWithoutCatalogMarker!, "stats-check");
-    // A turn that went out without its catalog text does not count as delivered.
-    yield* first.publishWithoutCatalog;
+    // Publishing the scope is not delivery: a declined or failed turn never records the list.
+    yield* first.publish;
     const retried = yield* prepare("Check my results.", [stats]);
     assert.include(retried.text, "- stats-check:");
     yield* retried.publish;
+    yield* retried.recordCatalogDelivered;
 
     const followUp = yield* prepare("And the discussion?", [stats]);
     assert.notInclude(followUp.text, "- stats-check:");
     assert.include(followUp.text, "unchanged since the list an earlier turn gave (1 skill;");
     assert.include(followUp.text, "`scient_skills_list`");
-    yield* followUp.publish;
+    yield* followUp.recordCatalogDelivered;
+    const stillUnchanged = yield* prepare("And the abstract?", [stats]);
+    assert.include(stillUnchanged.text, "unchanged since the list an earlier turn gave");
 
     const changed = yield* prepare("Now the numbers.", [stats, numbers]);
     assert.include(changed.text, "- numbers-check: Recompute reported numbers from outputs.");
-    yield* changed.publish;
+    yield* changed.recordCatalogDelivered;
 
     // A new provider session cannot see what the old one was told.
     yield* issue();

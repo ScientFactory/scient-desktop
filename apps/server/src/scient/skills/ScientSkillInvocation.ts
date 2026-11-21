@@ -135,9 +135,10 @@ export function prepareScientSkillTurn(
   const listTool = projection.skillListToolName ?? "scient_skills_list";
   const loadTool = projection.skillLoadToolName;
   // Routing needs what a skill is for, so the automatic skills' names and descriptions are
-  // listed once per provider session and catalog version; selected skills keep their own note.
+  // listed once per provider session and catalog version. A selection never changes the list;
+  // selected skills also get their own loading note.
   const automaticEntries = skills
-    .filter((skill) => skill.invocationPolicy === "automatic" && !selected.has(skill.releaseKey))
+    .filter((skill) => skill.invocationPolicy === "automatic")
     .map((skill) => `- ${skill.name}: ${oneLine(skill.description)}`);
   const indexEntries = automaticEntries.join("\n");
   const indexFits = Buffer.byteLength(indexEntries) <= SCIENT_SKILL_INDEX_MAX_BYTES;

@@ -138,8 +138,16 @@ describe("turn-local Scient skill routing", () => {
     expect(selected.runtimeInstruction).toContain(`- ${automatic.name}:`);
     expect(selected.runtimeInstruction).not.toContain(`- ${explicit.name}:`);
     expect(selected.runtimeInstruction).toContain(`\`${explicit.name}\` (selected by the user)`);
-    // A one-turn selection does not change what the index says.
+    // A one-turn selection, of an explicit or an automatic skill, does not change the index.
     expect(selected.catalogIndexDigest).toBe(full.catalogIndexDigest);
+    const automaticSelected = prepareScientSkillTurn("Do it.", skills, releases, indexed, [
+      automatic.name,
+    ]);
+    expect(automaticSelected.catalogIndexDigest).toBe(full.catalogIndexDigest);
+    expect(automaticSelected.runtimeInstruction).toContain(`- ${automatic.name}:`);
+    expect(automaticSelected.runtimeInstruction).toContain(
+      `\`${automatic.name}\` (selected by the user)`,
+    );
 
     const unchanged = prepareScientSkillTurn("Next.", skills, releases, {
       ...mcpProjection,

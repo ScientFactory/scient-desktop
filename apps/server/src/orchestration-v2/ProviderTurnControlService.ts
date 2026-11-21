@@ -525,7 +525,7 @@ export const layer: Layer.Layer<
             )
               return;
           }
-          yield* catalogDropped ? prepared.publishWithoutCatalog : prepared.publish;
+          yield* prepared.publish;
           yield* current.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -581,6 +581,8 @@ export const layer: Layer.Layer<
                 }),
               ),
             );
+          // SCIENT-FORK: the accepted steer carried the skill list, unless it went without it.
+          if (!catalogDropped) yield* prepared.recordCatalogDelivered;
         },
         (effect, input) =>
           effect.pipe(
