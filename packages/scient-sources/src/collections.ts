@@ -329,13 +329,12 @@ async function mutate<A>(
     context: { readonly now: string; readonly presentSourceIds: ReadonlySet<string> },
   ) => { readonly document: ScientSourceCollectionsDocument | null; readonly result: A },
   beforeWrite?: (result: A) => Promise<void>,
+  addedSourceIds: ReadonlyArray<string> = [],
 ): Promise<A> {
   const paths = await sourceStorePaths(root);
   return withStoreLock(paths, "collections-write", async () => {
     const document = await readDocument(paths);
-    const presentSourceIds = new Set(
-      (await listScientSourceRecords(paths.location)).map((record) => record.sourceId),
-    );
+    const presentSourceIds = await presentAmong(paths.location, addedSourceIds);
     const { document: next, result } = change(document, {
       now: new Date().toISOString(),
       presentSourceIds,
@@ -360,6 +359,33 @@ async function mutate<A>(
     }
     return result;
   });
+}
+
+/** Past this many, one pass over the Library's record index is cheaper than reading each. */
+const POINT_CHECK_LIMIT = 200;
+
+/**
+ * Which of the sources a change adds are in the Library. Only those are checked, inside the
+ * write lock: a change that adds nothing no longer lists the whole Library while others wait.
+ */
+async function presentAmong(
+  location: ScientSourceStoreLocation,
+  sourceIds: ReadonlyArray<string>,
+): Promise<ReadonlySet<string>> {
+  const named = [...new Set(sourceIds)];
+  if (named.length === 0) return new Set();
+  if (named.length > POINT_CHECK_LIMIT) {
+    return new Set((await listScientSourceRecords(location)).map((record) => record.sourceId));
+  }
+  const found = await Promise.all(
+    named.map((sourceId) =>
+      readScientSourceRecord(location, sourceId).then(
+        (record) => (record?.sourceId === sourceId ? sourceId : null),
+        () => null,
+      ),
+    ),
+  );
+  return new Set(found.filter((sourceId) => sourceId !== null));
 }
 
 /**
@@ -525,6 +551,7 @@ export function createScientSourceCollection(input: {
       };
     },
     input.beforeWrite,
+    input.sourceIds,
   );
 }
 
@@ -874,6 +901,7 @@ export function changeScientSourceCollectionMembers(input: {
       };
     },
     input.beforeWrite,
+    input.add,
   );
 }
 

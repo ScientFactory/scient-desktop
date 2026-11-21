@@ -189,6 +189,15 @@ describe("Scient source collections", () => {
     );
     if (created.outcome !== "created") throw new Error();
     expect(stored.collections[0].sourceIds).toEqual([first, second]);
+    // A source in the Trash cannot be added again.
+    expect(
+      await createScientSourceCollection({
+        root,
+        name: "Later",
+        sourceIds: [second],
+        actor: "user",
+      }),
+    ).toMatchObject({ outcome: "created", unknownSourceIds: [second] });
   });
 
   it("renames, deletes and restores a collection, refusing names already used", async () => {
