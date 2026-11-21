@@ -26,13 +26,16 @@ Interface size (1rem, `--scient-font-size-chat-body`), the document editor at
 0.905rem. Existing specialized footnote sizes remain distinct: 0.78rem in chat,
 0.85rem in the document editor.
 
-Chat text renders at full foreground strength; the Appearance contrast setting
-still raises it through the contrast tokens. Bold in chat uses weight 650; fonts
-without a variable weight axis round it to their nearest face. Assistant replies
-use a 1.55 line-height ratio instead of Tailwind's relaxed 1.625, and their inline
-code uses 1.2 so code chips and colour swatches do not lengthen a line. Headings
-keep 1.3, and paragraph and list spacing is unchanged. User messages, plans, and
-other rendered Markdown keep the relaxed leading.
+Chat text, including expanded details, renders at full foreground strength; the
+Appearance contrast setting still raises it through the contrast tokens. Bold in
+chat uses weight 650; fonts without a variable weight axis round it to their
+nearest face. Agent replies (answers, `send_to_user` messages, and shared
+snapshot answers, marked `scient-reply-prose`) use a 1.55 line-height ratio
+instead of Tailwind's relaxed 1.625, and their inline code uses 1.2 so code chips
+and colour swatches do not lengthen a line. These rules carry `.chat-markdown`
+weight, so theme CSS can override them. Headings keep 1.3, and paragraph and
+list spacing is unchanged. User messages, plans, and other rendered Markdown keep
+the relaxed leading.
 
 The conversation timeline, panel launcher and tab names, and selected file-viewer
 chrome opt into `scient-reading-ui`: 0.9rem body and 0.775rem secondary text,

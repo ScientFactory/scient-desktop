@@ -1166,8 +1166,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --toolbar-control-foreground: var(--foreground);
   --toolbar-control-hover: var(--accent);
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
-  /* Text is a neutral near-black, with a neutral grey for secondary text. Placeholders and
-     muted icons keep the quieter zinc grey. */
+  /* SCIENT-FORK:START — neutral stock text (scient/typography): near-black text and a neutral
+     grey for secondary text; placeholders and muted icons keep the quieter zinc grey. */
   --foreground: #191919;
   --card: var(--color-white);
   --card-foreground: var(--foreground);
@@ -1185,6 +1185,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* One step past the accent, so a user turn stands off the near-white canvas. */
   --message-surface: #efeff0;
   --message-foreground: var(--foreground);
+  /* SCIENT-FORK:END */
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);
   --message-action-hover: oklch(0.464689 0.166392 257.308);
@@ -1250,6 +1251,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
        states provide separation without milky gray fills. */
     --background: #000;
     --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
+    /* SCIENT-FORK:START — neutral stock text (scient/typography). */
     --foreground: #efefef;
     --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
     --card-foreground: var(--foreground);
@@ -1263,6 +1265,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --muted-foreground: #9c9c9c;
     --placeholder: var(--color-neutral-400);
     --icon-muted: var(--color-neutral-400);
+    /* SCIENT-FORK:END */
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     /* A user turn sits above the composer tone, level with the selected sidebar row. */
@@ -1295,6 +1298,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    surfaces. */
 [data-app-sidebar] {
   --background: var(--color-zinc-25);
+  /* SCIENT-FORK:START — neutral stock text (scient/typography). */
   --foreground: #191919;
   --card: var(--color-white);
   --card-foreground: var(--foreground);
@@ -1307,6 +1311,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar: var(--color-zinc-50);
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
+  /* SCIENT-FORK:END */
   --sidebar-control-surface: var(--color-zinc-100);
   --sidebar-row-hover: var(--color-zinc-25);
   --sidebar-row-active: var(--color-white);
@@ -1316,6 +1321,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --background: #000;
+    /* SCIENT-FORK:START — neutral stock text (scient/typography). */
     --foreground: #efefef;
     --card: #000;
     --card-foreground: var(--foreground);
@@ -1323,6 +1329,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --accent-foreground: #f7f9ff;
     --muted: #0a0a0a;
     --muted-foreground: #9c9c9c;
+    /* SCIENT-FORK:END */
     --border: rgb(255 255 255 / 8%);
     --input: rgb(255 255 255 / 18%);
     --sidebar: var(--card);
@@ -1956,19 +1963,22 @@ code {
 }
 
 /* Chat reads at the Interface size (scient-font-size-chat-body); the rich editor keeps the
-   markdown body size. Headings and code keep their own sizes. */
+   markdown body size. H1–H3 and code keep their own sizes; H4–H6 follow the body. Nested
+   `text-sm` keeps its 1.25rem line. */
 .chat-markdown {
   --scient-font-size-markdown-body: var(--scient-font-size-chat-body);
+  --text-sm--line-height: 1.25;
 }
 
-/* Assistant replies read tighter than Tailwind's relaxed leading (1.625). A ratio keeps the
-   spacing proportional to the Interface size; headings keep their own 1.3. */
-[data-message-role="assistant"] .chat-markdown {
+/* Agent replies read tighter than Tailwind's relaxed leading (1.625). A ratio keeps the
+   spacing proportional to the Interface size; headings keep their own 1.3. `:where()` keeps
+   these at `.chat-markdown` weight so theme CSS can still override them. */
+:where(.scient-reply-prose).chat-markdown {
   line-height: 1.55;
 }
 
 /* Inline code and its colour swatches would otherwise push a line taller than its neighbours. */
-[data-message-role="assistant"] .chat-markdown :not(pre) > code {
+:where(.scient-reply-prose).chat-markdown :not(pre) > code {
   line-height: 1.2;
 }
 /* SCIENT-FORK:END */
@@ -2285,9 +2295,11 @@ code {
   color: var(--contrast-message-foreground);
 }
 
+/* SCIENT-FORK:START — chat bold 650 (scient/typography; upstream: 700). */
 .chat-markdown :is(strong, b) {
   font-weight: 650;
 }
+/* SCIENT-FORK:END */
 
 .chat-markdown pre {
   max-width: 100%;

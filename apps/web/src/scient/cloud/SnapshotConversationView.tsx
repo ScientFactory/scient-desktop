@@ -231,6 +231,7 @@ function AssistantMessage({
       <div className="px-1 py-0.5">
         <ChatMarkdown
           text={text}
+          className="scient-reply-prose"
           cwd={undefined}
           messageId={message.id}
           lineBreaks={shouldPreserveAssistantLineBreaks(text)}

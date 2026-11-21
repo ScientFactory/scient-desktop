@@ -54,10 +54,10 @@ export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
 /**
- * The reviewed stock palettes for the web and desktop clients, matching what
- * index.css paints. Text is a neutral near-black (near-white in dark) with a
- * neutral grey for secondary text. Mobile keeps the shared T3 Code palette
- * until its default appearance is reviewed independently.
+ * The reviewed stock palettes for the web and desktop clients. Canvas, surfaces, the user
+ * bubble, text and secondary text match what index.css paints: a neutral near-black (near-white
+ * in dark) with a neutral grey. Other roles keep the shared palette. Mobile keeps the shared
+ * T3 Code palette until its default appearance is reviewed independently.
  */
 const T3_CODE_WEB_LIGHT_THEME_COLORS: ThemeColors = {
   ...T3_CODE_LIGHT_THEME_COLORS,
