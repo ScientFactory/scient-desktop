@@ -86,7 +86,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Gmail",
     tagline: msg("Search, read and draft email"),
     description: msg(
-      "Each agent reaches Gmail through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+      "Each agent reaches Gmail through its own sign-in. Scient never holds your Google sign-in.",
     ),
     categories: ["most-used", "communication"],
     websiteUrl: "https://mail.google.com",
@@ -99,7 +99,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Google Calendar",
     tagline: msg("Check availability and manage events"),
     description: msg(
-      "Each agent reaches Google Calendar through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+      "Each agent reaches Google Calendar through its own sign-in. Scient never holds your Google sign-in.",
     ),
     categories: ["most-used", "communication"],
     websiteUrl: "https://calendar.google.com",
@@ -112,7 +112,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Google Drive",
     tagline: msg("Find and read Docs, Sheets and files"),
     description: msg(
-      "Each agent reaches Google Drive through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+      "Each agent reaches Google Drive through its own sign-in. Scient never holds your Google sign-in.",
     ),
     categories: ["most-used", "files"],
     websiteUrl: "https://drive.google.com",
@@ -193,10 +193,9 @@ export function accountServiceForApp(app: {
     name: app.name,
     tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "",
     description: claude
-      ? msg(
-          "Each agent reaches {name} through its own ChatGPT or Claude account. Scient never holds that sign-in.",
-          { name: app.name },
-        )
+      ? msg("Each agent reaches {name} through its own sign-in. Scient never holds that sign-in.", {
+          name: app.name,
+        })
       : msg(
           "Codex and Scient Agent reach {name} through your ChatGPT account. Scient never holds that sign-in.",
           { name: app.name },
