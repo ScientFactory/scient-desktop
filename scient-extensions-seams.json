@@ -45,7 +45,8 @@
     "apps/web/src/scient/compute/ScientificComputingSettings.tsx",
     "apps/web/src/scient/compute/ComputeLanguagePanel.tsx",
     "apps/server/src/telemetry/ExtensionAnalytics.ts",
-    "apps/server/src/telemetry/ExtensionAnalytics.test.ts"
+    "apps/server/src/telemetry/ExtensionAnalytics.test.ts",
+    "scripts/dev-identity.mjs"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",

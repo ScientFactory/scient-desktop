@@ -99,7 +99,9 @@ and reload; repairing a development profile does not prove those product paths.
 - Reading, copying, importing or modifying live Scient/T3 data requires explicit
   authorization for that data and operation. Use synthetic state; never test against
   a live profile. Keep credentials out of logs, fixtures, captures, commits and replies;
-  do not copy provider credentials between profiles.
+  do not copy provider credentials between profiles. The owner-approved exception is
+  `pnpm dev:identity` (identity home to candidates; `seed` only when the owner asks), see
+  docs/operations/local-dev-app.md.
 - Inspect resolved runtime paths. Installed, stable and feature profiles differ;
   do not assume all state lives under `userdata/`. Preserve compatibility-sensitive
   package names, environment variables, storage/migration paths and identities,

@@ -123,6 +123,23 @@ export class DevRunnerConfigurationError extends Schema.TaggedError<DevRunnerCon
   }
 }
 
+// SCIENT-FORK:START — only the dev identity home's registered checkout may open the home.
+export class DevRunnerIdentityHomeError extends Schema.TaggedError<DevRunnerIdentityHomeError>()(
+  "DevRunnerIdentityHomeError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+/**
+ * Loaded by a runtime path: it is plain JS beside this file, and this TS project does not type
+ * JS modules (no `allowJs`), so a static import would not compile.
+ */
+const IDENTITY_MODULE = "./dev-identity.mjs";
+// SCIENT-FORK:END
+
 export class DevRunnerInvalidPortOffsetError extends Schema.TaggedError<DevRunnerInvalidPortOffsetError>()(
   "DevRunnerInvalidPortOffsetError",
   {
@@ -822,6 +839,37 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
       ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
       : "";
   const baseDir = env.SCIENT_NEXT_HOME ?? (yield* DEFAULT_T3_HOME);
+  // SCIENT-FORK:START — every entry point readies the identity home the same way: only its own
+  // checkout may open it, never during a seed, a seed that stopped is finished first, and the
+  // home stays claimed against seeding until this runner and its children are gone.
+  const checkoutRoot = worktreePath ?? (yield* HostProcess.WorkingDirectory);
+  const homeClaim = yield* Effect.tryPromise({
+    try: async () => {
+      const identity = (await import(IDENTITY_MODULE)) as {
+        assertHomeCheckout: (input: { checkoutRoot: string; stateRoot: string }) => void;
+        claimHomeStart: (input: { checkoutRoot: string; stateRoot: string }) => {
+          status: string;
+          release: () => void;
+          holdGroup: (group: number) => void;
+        };
+      };
+      // A dry run only resolves: it checks ownership but changes nothing in the home.
+      if (input.dryRun) {
+        identity.assertHomeCheckout({ checkoutRoot, stateRoot: baseDir });
+        return undefined;
+      }
+      const claim = identity.claimHomeStart({ checkoutRoot, stateRoot: baseDir });
+      if (claim.status === "seeding") {
+        throw new Error(
+          "pnpm dev:identity seed is filling the dev identity home; start it again when the seed finishes.",
+        );
+      }
+      process.once("exit", claim.release);
+      return claim;
+    },
+    catch: (cause) => new DevRunnerIdentityHomeError({ cause }),
+  });
+  // SCIENT-FORK:END
 
   yield* Effect.logInfo(
     `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
@@ -960,6 +1008,9 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         }),
     ),
   );
+  // SCIENT-FORK:START — the home stays claimed while the detached group lives, runner or not.
+  if ((yield* HostProcess.Platform) !== "win32") homeClaim?.holdGroup(child.pid);
+  // SCIENT-FORK:END
 
   const memoryLimitBytes =
     input.memoryLimitGb === undefined
