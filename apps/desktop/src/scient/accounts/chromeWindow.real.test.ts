@@ -194,6 +194,7 @@ async function probeStall(input: {
     notes.push("the page was asked for while processes were listed");
     return;
   }
+  if (stop.aborted) return;
   // The page can be asked for again before PowerShell has even returned.
   const beforeReload = pages();
   const reload = await powershell(RELOAD_SCRIPT, stop, { SCIENT_PROFILE: folder });
@@ -219,15 +220,21 @@ async function probeStall(input: {
       : "opening the page again brought nothing",
   );
   // It hands the address over and exits; one that stays would hold the profile folder.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = () => {};
   const handedOver = await Promise.race([
     exited,
     new Promise<false>((resolve) => {
+      stopped = () => resolve(false);
       if (stop.aborted) resolve(false);
-      else stop.addEventListener("abort", () => resolve(false), { once: true });
+      else stop.addEventListener("abort", stopped, { once: true });
     }),
     // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a launcher that never exits has no event; this bounds the wait for it
-    new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
-  ]);
+    new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), 5_000))),
+  ]).finally(() => {
+    clearTimeout(timer);
+    stop.removeEventListener("abort", stopped);
+  });
   if (!handedOver && again.exitCode === null && again.signalCode === null) {
     notes.push("the second launch kept running, so it was stopped");
     again.kill("SIGKILL");
