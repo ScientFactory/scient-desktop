@@ -1,6 +1,7 @@
 import {
   type CustomModel,
   customModelAttachmentKey,
+  customModelImageInput,
   type CustomModelConnection,
   type CustomModelsSettings,
   type ModelConnectionReadiness,
@@ -86,6 +87,10 @@ function readiness(
   };
 }
 
+/** A model's saved configuration, including which agents use it. */
+const savedConfiguration = (connection: CustomModelConnection, model: CustomModel) =>
+  JSON.stringify([customModelAttachmentKey(connection, model), [...model.instanceIds].sort()]);
+
 function listCustomModels(
   customModels: CustomModelsSettings,
   providers: ReadonlyArray<ServerProvider>,
@@ -162,7 +167,7 @@ export const layer = McpToolAccess.toLayer(
         const model = connection?.models.find((entry) => entry.id === modelId);
         if (connection === undefined || model === undefined)
           return { superseded: "It was removed in Settings since.", statuses: [] };
-        if (customModelAttachmentKey(connection, model) !== committedKey)
+        if (savedConfiguration(connection, model) !== committedKey)
           return {
             superseded: "It was changed in Settings since; list it for its current status.",
             statuses: [],
@@ -338,7 +343,8 @@ export const layer = McpToolAccess.toLayer(
               ? { images: params.images, imageInput: params.images ? "enabled" : "disabled" }
               : previous === undefined
                 ? { images: false, imageInput: "automatic" }
-                : {};
+                : // Written out, since its fallback depends on the mode these limits may change.
+                  { imageInput: customModelImageInput(previous) };
           const model: CustomModel = {
             reasoning: false,
             images: false,
@@ -379,7 +385,7 @@ export const layer = McpToolAccess.toLayer(
           const outcome = yield* settledStatuses(
             base.id,
             model.id,
-            customModelAttachmentKey(savedConnection, savedModel),
+            savedConfiguration(savedConnection, savedModel),
           );
           if (outcome.superseded !== undefined) lines.push(outcome.superseded);
           for (const entry of outcome.statuses) {
