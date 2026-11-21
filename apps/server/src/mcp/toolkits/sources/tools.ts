@@ -476,7 +476,7 @@ const ScientSourceLibraryMetadataUpdateTool = Tool.make("scient_sources_update",
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Move one Source and its PDFs to the trash after the user explicitly asks (scient_sources_restore undoes it). Pass its current revision; if stale, re-read and redo. permanent deletes a trashed source with its revisions and unused PDFs, irreversibly: only when the user asks for that (revision from scient_sources_list inTrash); stillCitedBy names projects that keep citing it from their own copy.",
+    "Move one Source and its PDFs to the trash after the user explicitly asks (scient_sources_restore undoes it). Pass its current revision; if stale, re-read and redo. permanent deletes a trashed source with its revisions and unused PDFs, irreversibly: only when the user asks for that (revision from scient_sources_list inTrash); stillCitedBy names projects that keep citing it from their own copy. To take back sources added from another Library, use scient_sources_organize undo-join.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -502,7 +502,7 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
 
 const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
   description:
-    "Put a removed Source back from the trash, with its PDFs, as a new revision credited to you. exists: the ID is already in the Library; duplicate: another source has its identifier (matchingSourceIds).",
+    "Put a removed Source back from the trash, with its PDFs, as a new revision credited to you. exists: the ID is already in the Library; duplicate: another source has its identifier (matchingSourceIds). Not for whole-Library backup/restore/cancel-restore/put-back (use scient_sources_organize; inspect with scient_sources_list libraryCopies or recentChanges).",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: Schema.Struct({
     outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
@@ -522,7 +522,7 @@ const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
 
 const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
   description:
-    "Make a kept earlier revision of a Source (toRevision) current again, as a new revision credited to you; expectedRevision is its current revision (if stale, re-read). Metadata, note, tags, identifiers and attachments return; missingAttachmentCount counts PDFs deleted with the trash.",
+    "Make a kept earlier revision of a Source (toRevision) current again, as a new revision credited to you; expectedRevision is its current revision (if stale, re-read). Metadata, note, tags, identifiers and attachments return; missingAttachmentCount counts PDFs deleted with the trash. Not for undoing a Library restore or join (use scient_sources_organize cancel-restore, put-back-library, or undo-join; inspect with scient_sources_list libraryCopies or recentChanges).",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
