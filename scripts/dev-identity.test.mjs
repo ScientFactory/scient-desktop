@@ -7,6 +7,7 @@ import * as NodeSqlite from "node:sqlite";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
+  assertHomeCheckout,
   cookieDatabasePath,
   captureIdentity,
   DEV_IDENTITY_ENV,
@@ -58,6 +59,16 @@ const decrypt = (key, name, blob) => {
 
 const PROTOCOL_LINE = "export const DEV_IDENTITY_PROTOCOL = 1;\n";
 const homeAt = (root) => ({ root, stateDir: NodePath.join(root, "scient-next-dev") });
+
+/** The home's registered checkout, its app data a link to the home, as `setup` leaves it. */
+function linkHomeCheckout(root, home) {
+  const checkout = NodePath.join(root, "scient-desktop-identity");
+  write(NodePath.join(checkout, "scripts", "dev-identity.mjs"), PROTOCOL_LINE);
+  NodeFS.mkdirSync(home.root, { recursive: true });
+  NodeFS.symlinkSync(home.root, NodePath.join(checkout, ".scient-next"));
+  write(NodePath.join(home.root, "dev-identity-home.json"), JSON.stringify({ checkout }));
+  return checkout;
+}
 
 /** A home whose vault is file-protected, as `seed` leaves it. */
 function makeFileVaultHome(root) {
@@ -198,8 +209,19 @@ describe("importDevIdentity", () => {
       "candidate-own",
     );
     assert.equal(vaultProtection(target), "file");
+    // The candidate's Keychain vault held nothing of its own, so it gets a new file key.
     const copiedKey = NodeFS.readFileSync(NodePath.join(secrets, "accounts-master-key.bin"));
-    assert.deepEqual(copiedKey, vault.key);
+    assert.equal(copiedKey.length, 32);
+    assert.notDeepEqual(copiedKey, vault.key);
+    const model = "custom-model-11111111-1111-4111-8111-111111111111";
+    assert.equal(
+      decrypt(
+        copiedKey,
+        model,
+        NodeFS.readFileSync(NodePath.join(secrets, `${model}.bin`)).subarray(1),
+      ).toString(),
+      "sk-test",
+    );
     assert.equal(
       decrypt(
         copiedKey,
@@ -261,14 +283,58 @@ describe("importDevIdentity", () => {
   it("never imports into the home itself, even through the checkout's symlink", async () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));
-    const checkout = NodePath.join(root, "scient-desktop-identity");
-    NodeFS.mkdirSync(checkout);
-    NodeFS.symlinkSync(home.root, NodePath.join(checkout, ".scient-next"));
+    const checkout = linkHomeCheckout(root, home);
     const result = await importDevIdentity({
       targetStateDir: NodePath.join(checkout, ".scient-next", "scient-next-dev"),
       home,
     });
     assert.equal(result.status, "home");
+  });
+
+  it("refuses a second checkout whose app data is the home", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    linkHomeCheckout(root, home);
+    const other = NodePath.join(root, "other", "scient-desktop-identity");
+    NodeFS.mkdirSync(other, { recursive: true });
+    NodeFS.symlinkSync(home.root, NodePath.join(other, ".scient-next"));
+    assert.throws(
+      () =>
+        assertHomeCheckout({
+          checkoutRoot: other,
+          stateRoot: NodePath.join(other, ".scient-next"),
+          home,
+        }),
+      /only its own checkout/u,
+    );
+    const error = await importDevIdentity({
+      targetStateDir: NodePath.join(other, ".scient-next", "scient-next-dev"),
+      home,
+    }).catch((cause) => cause);
+    assert.equal(error?.fatal, true);
+    // An ordinary checkout is left alone.
+    assertHomeCheckout({
+      checkoutRoot: root,
+      stateRoot: NodePath.join(root, "candidate"),
+      home,
+    });
+  });
+
+  it("sees the protected folders through a differently cased path", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const installedState = NodePath.join(root, "installed", "userdata");
+    NodeFS.mkdirSync(installedState, { recursive: true });
+    const alias = NodePath.join(root, "INSTALLED", "userdata");
+    // Only meaningful where the file system ignores case, as macOS does by default.
+    if (!NodeFS.existsSync(alias)) return;
+    const result = await importDevIdentity({
+      targetStateDir: NodePath.join(alias, "scient-next-dev"),
+      home,
+      installed: { stateDir: installedState },
+    });
+    assert.equal(result.status, "refused-target");
+    assert.deepEqual(NodeFS.readdirSync(installedState), []);
   });
 
   it("places website sign-ins in the profiles a new dev app will open, once", async () => {
@@ -596,16 +662,61 @@ describe("what a copy must not carry over", () => {
     );
     const target = NodePath.join(root, "candidate", "scient-next-dev");
     await importDevIdentity({ targetStateDir: target, home });
-    const state = JSON.parse(
-      decrypt(
-        vault.key,
-        "accounts-state",
-        NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-state.bin")),
-      ).toString(),
+    const targetKey = NodeFS.readFileSync(
+      NodePath.join(target, "secrets", "accounts-master-key.bin"),
     );
-    assert.deepEqual(state, {
+    const readState = () =>
+      JSON.parse(
+        decrypt(
+          targetKey,
+          "accounts-state",
+          NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-state.bin")),
+        ).toString(),
+      );
+    assert.deepEqual(readState(), {
       format: 1,
       accounts: [{ summary: { id: "a" }, values: { password: valueName } }],
+    });
+
+    // The candidate's own senders, choices and pending copies survive the next copy.
+    const own = {
+      format: 1,
+      accounts: [{ summary: { id: "a" }, values: {}, pendingCopies: { y: ["chrome"] } }],
+      profiles: [{ profileId: "p", access: "ask", sharedWith: ["env-2"] }],
+      senders: [{ source: "env-2" }],
+      profileChoices: { thread: "mine" },
+    };
+    write(
+      NodePath.join(target, "secrets", "accounts-state.bin"),
+      encrypt(targetKey, "accounts-state", Buffer.from(JSON.stringify(own))),
+    );
+    write(
+      NodePath.join(home.stateDir, "secrets", "accounts-state.bin"),
+      encrypt(
+        vault.key,
+        "accounts-state",
+        Buffer.from(
+          JSON.stringify({
+            format: 1,
+            accounts: [{ summary: { id: "a" }, values: { password: valueName } }],
+            profiles: [{ profileId: "p", access: "allowed" }],
+          }),
+        ),
+      ),
+    );
+    await importDevIdentity({ targetStateDir: target, home });
+    assert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(target, "secrets", "accounts-master-key.bin")),
+      targetKey,
+    );
+    assert.deepEqual(readState(), {
+      format: 1,
+      accounts: [
+        { summary: { id: "a" }, values: { password: valueName }, pendingCopies: { y: ["chrome"] } },
+      ],
+      profiles: [{ profileId: "p", access: "allowed", sharedWith: ["env-2"] }],
+      senders: [{ source: "env-2" }],
+      profileChoices: { thread: "mine" },
     });
   });
 
@@ -646,25 +757,59 @@ describe("what a copy must not carry over", () => {
     );
   });
 
-  it("removes records sealed under the candidate's old key and copies Cursor's sign-in", async () => {
+  it("keeps the candidate's own key and sealed records, and copies Cursor's sign-in", async () => {
     const root = scratch();
     const { home } = makeFileVaultHome(NodePath.join(root, "home"));
     const cursorSlot = `provider-auth-${NodeCrypto.createHash("sha256").update("6:cursorcursor").digest("hex")}.bin`;
     write(NodePath.join(home.stateDir, "secrets", cursorSlot), "cursor-key");
     const target = NodePath.join(root, "candidate", "scient-next-dev");
     const secrets = NodePath.join(target, "secrets");
-    write(NodePath.join(secrets, "accounts-master-key.bin"), NodeCrypto.randomBytes(32));
-    write(
-      NodePath.join(secrets, "secret-request-00000000000000000000000000000000.bin"),
-      Buffer.from([0xff, 1, 2]),
-    );
+    const own = makePortableVault();
+    write(NodePath.join(secrets, "accounts-master-key.bin"), own.key);
+    write(NodePath.join(secrets, "accounts-vault.bin"), own.sentinel);
+    const request = "secret-request-00000000000000000000000000000000";
+    const sealed = Buffer.concat([
+      Buffer.from([0xff]),
+      encrypt(own.key, request, Buffer.from("answer")),
+    ]);
+    write(NodePath.join(secrets, `${request}.bin`), sealed);
     write(NodePath.join(secrets, "secret-request-salt.bin"), "plain-salt");
-    await importDevIdentity({ targetStateDir: target, home });
+    const result = await importDevIdentity({ targetStateDir: target, home });
+    assert.equal(result.status, "imported");
     const names = NodeFS.readdirSync(secrets);
     assert.include(names, cursorSlot);
     assert.include(names, "secret-request-salt.bin");
-    assert.notInclude(names, "secret-request-00000000000000000000000000000000.bin");
     assert.notInclude(names, "provider-auth-abc.bin");
+    assert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(secrets, "accounts-master-key.bin")),
+      own.key,
+    );
+    assert.deepEqual(NodeFS.readFileSync(NodePath.join(secrets, `${request}.bin`)), sealed);
+    // The home's records now open under the candidate's key.
+    assert.equal(
+      decrypt(
+        own.key,
+        "accounts-state",
+        NodeFS.readFileSync(NodePath.join(secrets, "accounts-state.bin")),
+      ).toString(),
+      "{}",
+    );
+  });
+
+  it("leaves a candidate alone whose Keychain vault holds its own accounts", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    const secrets = NodePath.join(target, "secrets");
+    write(NodePath.join(secrets, "accounts-vault.bin"), Buffer.from([1, 9, 9]));
+    write(NodePath.join(secrets, "accounts-state.bin"), "keychain-sealed");
+    write(NodePath.join(target, "settings.json"), "{}");
+    const before = NodeFS.readdirSync(secrets).sort();
+    const result = await importDevIdentity({ targetStateDir: target, home });
+    assert.equal(result.status, "target-vault-not-portable");
+    assert.match(describeImport(result), /keeps its own accounts/u);
+    assert.deepEqual(NodeFS.readdirSync(secrets).sort(), before);
+    assert.equal(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8"), "{}");
   });
 
   it("refuses a home whose settings point at a record that has not landed", async () => {
@@ -887,12 +1032,13 @@ describe("code review guards", () => {
     }).catch((cause) => cause);
     assert.match(String(error), /nothing was copied/u);
     assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.stateDir, "secrets")).sort(), before);
-    assert.equal(NodeFS.existsSync(NodePath.join(home.root, "dev-identity-seed.lock")), false);
+    assert.equal(NodeFS.existsSync(NodePath.join(home.root, "dev-identity.lock")), false);
   });
 
   it("holds a lock through the seed that keeps the home app from starting", async () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
+    const checkout = linkHomeCheckout(root, home);
     const stateDir = NodePath.join(root, "installed", "userdata");
     write(NodePath.join(stateDir, "secrets", "accounts-vault.bin"), Buffer.from([1, 0]));
     let seenDuringSeed;
@@ -901,7 +1047,7 @@ describe("code review guards", () => {
       installed: { stateDir, userData: root, vaultKeychainAccount: "a", cookieKeychains: [] },
       readKeychain: async () => {
         seenDuringSeed = await importDevIdentity({
-          targetStateDir: home.stateDir,
+          targetStateDir: NodePath.join(checkout, ".scient-next", "scient-next-dev"),
           home,
         });
         return null;
@@ -909,6 +1055,87 @@ describe("code review guards", () => {
       isRunning: () => false,
     }).catch(() => {});
     assert.deepEqual(seenDuringSeed, { status: "home-seeding" });
+  });
+
+  it("does not copy from a home whose seed stopped partway", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    // A forced reseed died after setting the home's connectors aside.
+    NodeFS.renameSync(
+      NodePath.join(home.stateDir, "connectors"),
+      NodePath.join(home.stateDir, "connectors.dev-identity-old"),
+    );
+    write(
+      NodePath.join(home.stateDir, "dev-identity-journal.json"),
+      JSON.stringify({ writes: [], removals: [] }),
+    );
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "connectors", "mine", "connector.json"), "{}");
+    write(NodePath.join(target, "settings.json"), "{}");
+    const result = await importDevIdentity({ targetStateDir: target, home });
+    assert.equal(result.status, "home-interrupted");
+    assert.ok(NodeFS.existsSync(NodePath.join(target, "connectors", "mine", "connector.json")));
+  });
+
+  it("decrypts website sign-ins only inside the app's own data and clears what a stopped copy left", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    write(NodePath.join(home.stateDir, "environment-id"), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n");
+    makeCookieDatabase(
+      NodePath.join(
+        home.stateDir,
+        "electron-userdata",
+        "Partitions",
+        previewPartitionDirectory("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "Cookies",
+      ),
+      [{ host: ".example.org", name: "session", value: "plain" }],
+    );
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    const leftover = NodePath.join(target, "dev-identity-staging", "cookies-old", "Cookies");
+    write(leftover, "plain jar from a copy that stopped");
+    // Cleared on the next start, even one that copies nothing.
+    await importDevIdentity({
+      targetStateDir: target,
+      home,
+      environment: { [DEV_IDENTITY_ENV]: "off" },
+    });
+    assert.equal(NodeFS.existsSync(leftover), false);
+    // With no usable system temp folder, a copy that staged there could not finish.
+    const tmp = process.env.TMPDIR;
+    process.env.TMPDIR = NodePath.join(root, "no-such-temp");
+    let result;
+    try {
+      result = await importDevIdentity({ targetStateDir: target, home });
+    } finally {
+      process.env.TMPDIR = tmp;
+    }
+    assert.equal(result.websiteProfiles, 1);
+    assert.equal(NodeFS.existsSync(NodePath.join(target, "dev-identity-staging")), false);
+  });
+
+  it("voids a copy when a seed publishes into the home while it is read", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    write(NodePath.join(home.stateDir, "environment-id"), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n");
+    makeCookieDatabase(
+      NodePath.join(
+        home.stateDir,
+        "electron-userdata",
+        "Partitions",
+        previewPartitionDirectory("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "Cookies",
+      ),
+      [{ host: ".example.org", name: "session", value: "plain" }],
+    );
+    const target = NodePath.join(root, "candidate", "scient-next-dev");
+    write(NodePath.join(target, "settings.json"), "{}");
+    // The copy reads up to the cookie jar before it first waits; the seed lands then.
+    const pending = importDevIdentity({ targetStateDir: target, home });
+    write(NodePath.join(home.stateDir, "dev-identity.json"), JSON.stringify({ seededAt: "now" }));
+    assert.deepEqual(await pending, { status: "home-busy" });
+    assert.equal(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8"), "{}");
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(target, "secrets")), []);
   });
 
   it("never writes into a data folder linked to the home or the installed app", async () => {

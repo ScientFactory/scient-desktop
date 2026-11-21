@@ -290,13 +290,16 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   `Scient (Dev) · identity`. Its `.scient-next` is a link to
   `~/.scient-next/dev-identity`, so removing or recreating that checkout keeps
   the home. To update it, check out a newer `origin/main` there and restart it.
+  Only that registered checkout may run on the home: any other checkout whose
+  app data leads into the home is refused before its launcher touches anything.
 - `seed` fills a stopped home from the installed app, which it only reads.
   macOS asks once for each of two Keychain items: the installed app's accounts
   key and its website-cookie key. Allow both. Without the first, the seed copies
   nothing and the home stays as it was; without the second, it skips website
-  sign-ins and says so. The home app does not start while a seed runs. The home's accounts are re-encrypted under a key kept in its own
-  `secrets/` folder, the only kind another dev app can open without the
-  Keychain. `seed --force` repeats it and replaces the home's accounts.
+  sign-ins and says so. The home app does not start while a seed runs. The
+  home's accounts are kept under a key in its own `secrets/` folder, the only
+  kind another dev app can open without the Keychain. `seed --force` repeats it
+  and replaces the home's accounts, keeping the home's own key.
 - Add or change accounts in the identity app. A candidate replaces its copy of
   Accounts, custom models, provider settings and connectors with the home's on
   every start. On its first start it also takes the home's other settings,
@@ -306,17 +309,26 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   storage asks again in a new dev app.
 - Not copied: Scient account sign-in (dev builds carry no Clerk key), the
   Scient-managed Codex sign-in (it refreshes in place; Cursor's fixed key is
-  copied), Accounts senders and per-thread profile choices, signing keys, cloud
-  links, databases, threads, projects and the environment id. Connector folders
+  copied), signing keys, cloud links, databases, threads, projects and the
+  environment id. A dev app keeps its own accounts key, saved secret-request
+  answers, Accounts senders, per-thread profile choices and profile sharing; the
+  home's records are re-encrypted under its key. A dev app whose accounts key is
+  in the Keychain and that already has accounts of its own is left as it is;
+  move its `.scient-next` aside to start it with the identity. Connector folders
   inside the home are copied with the connector; a folder elsewhere is used in
   place and never deleted by a dev app.
+- Website sign-ins are read and decrypted only in a private
+  `dev-identity-staging` folder inside the receiving app's own data, removed
+  when the copy ends and on the next start if a copy stopped.
 - The home may keep running: its files are read as one snapshot, read again if
-  it saves partway through. A candidate changes nothing until every replacement
-  file is ready; if the home never settles, the candidate starts with the
-  identity it already had and says so. The copy records its steps before it
-  publishes them, so a copy cut off partway is finished on the next start; if it
-  cannot be finished, or a candidate's data folder links into the home or the
-  installed app, the candidate does not start.
+  it saves partway through. A seed that starts, finishes or stops in the home
+  while a candidate reads it voids that copy, and a seed that stopped partway
+  blocks copies until the home app or a new seed finishes it. A candidate
+  changes nothing until every replacement file is ready; if the home never
+  settles, the candidate starts with the identity it already had and says so.
+  The copy records its steps before it publishes them, so a copy cut off partway
+  is finished on the next start; if it cannot be finished, or a candidate's data
+  folder links into the home or the installed app, the candidate does not start.
 - A connector whose sign-in renews itself can be renewed by any app holding the
   copy. If a candidate renews it, the home may need to sign in to that connector
   again; candidates started afterwards copy the new sign-in.

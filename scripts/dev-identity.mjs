@@ -31,6 +31,8 @@ const CAPTURE_ATTEMPTS = 5;
 const COOKIE_COPY_ATTEMPTS = 3;
 const STAGED_SUFFIX = ".dev-identity-staged";
 const OLD_SUFFIX = ".dev-identity-old";
+/** Private scratch inside a state directory; cookie jars are decrypted here, never in /tmp. */
+const STAGING_DIR = "dev-identity-staging";
 
 /**
  * Secret records that are the owner's identity, never the install's. Each family is replaced as a
@@ -74,7 +76,13 @@ const LOCAL_PROFILE_KEYS = ["send", "sharedWith", "received"];
 /** Folders and files copied once, when a dev app starts for the first time. */
 const PROFILE_PATHS = ["keybindings.json", "themes", "skills", "personal-skills.json"];
 /** Folders under a state directory the copy writes into; none may be a link elsewhere. */
-const WRITTEN_DIRS = ["secrets", "connectors", "electron-userdata", "electron-userdata/Partitions"];
+const WRITTEN_DIRS = [
+  "secrets",
+  "connectors",
+  "electron-userdata",
+  "electron-userdata/Partitions",
+  STAGING_DIR,
+];
 
 /** A failure after the target started changing; the dev app must not start on it. */
 export class DevIdentityFatalError extends Error {
@@ -122,7 +130,36 @@ const realpathOrSelf = (path) => {
   }
 };
 
-const inside = (path, root) => path === root || path.startsWith(`${root}${NodePath.sep}`);
+/** The file's identity on disk; the same folder reached through a link or a case alias matches. */
+const fileIdentity = (path) => {
+  try {
+    const stat = NodeFS.statSync(path);
+    return `${String(stat.dev)}:${String(stat.ino)}`;
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return undefined;
+    throw error;
+  }
+};
+
+const sameFile = (a, b) => {
+  const identity = fileIdentity(a);
+  return identity !== undefined && identity === fileIdentity(b);
+};
+
+/**
+ * Whether `path`, existing or not, is `root` or lies inside it, judged by the folders on disk it
+ * really sits in, so a link or a differently cased spelling of the same folder cannot slip past.
+ */
+function within(path, root) {
+  const rootIdentity = fileIdentity(root);
+  if (rootIdentity === undefined) return false;
+  for (let current = realpathOrSelf(path); ;) {
+    if (fileIdentity(current) === rootIdentity) return true;
+    const parent = NodePath.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
 
 /** A missing file reads as absent; any other failure stops the copy instead of dropping data. */
 const readBytes = (path) => {
@@ -173,9 +210,8 @@ function publish({ staged, path, tree }) {
 
 /** Every path a copy touches must stay inside the state directory it was made for. */
 function assertContained(root, paths) {
-  const real = realpathOrSelf(root);
   for (const path of paths) {
-    if (typeof path !== "string" || !inside(realpathOrSelf(NodePath.dirname(path)), real)) {
+    if (typeof path !== "string" || !within(NodePath.dirname(path), root)) {
       throw new Error(`${String(path)} leads outside ${root}; nothing was changed there.`);
     }
   }
@@ -484,6 +520,81 @@ export function scrubAccountsState(state) {
   return next;
 }
 
+const accountIdOf = (account) => account?.summary?.id;
+
+/**
+ * The owner's accounts copied over a target, keeping what belongs to the target itself: its
+ * senders, sender keys and per-thread profile choices, each profile's sharing records and each
+ * account's copies still waiting to be written to the target's stores.
+ */
+export function keepLocalAccounts(next, local) {
+  if (local === null || typeof local !== "object") return next;
+  const merged = { ...next };
+  for (const key of LOCAL_ACCOUNTS_KEYS) {
+    if (Object.hasOwn(local, key)) merged[key] = local[key];
+  }
+  const keep = (items, localItems, idOf, keys) => {
+    if (!Array.isArray(items) || !Array.isArray(localItems)) return items;
+    const own = new Map(localItems.map((item) => [idOf(item), item]));
+    return items.map((item) => {
+      const mine = own.get(idOf(item));
+      if (mine === null || typeof mine !== "object" || idOf(item) === undefined) return item;
+      const copy = { ...item };
+      for (const key of keys) if (Object.hasOwn(mine, key)) copy[key] = mine[key];
+      return copy;
+    });
+  };
+  merged.accounts = keep(merged.accounts, local.accounts, accountIdOf, ["pendingCopies"]);
+  merged.profiles = keep(
+    merged.profiles,
+    local.profiles,
+    (profile) => profile?.profileId,
+    LOCAL_PROFILE_KEYS,
+  );
+  return merged;
+}
+
+/** A target whose own accounts would be lost by the copy; it keeps the identity it has. */
+class TargetVaultError extends Error {}
+
+/**
+ * The target's own vault: its key and Accounts document when the key is a file that opens it.
+ * A Keychain or unreadable vault is replaced only when it holds nothing of the target's own.
+ */
+function readTargetVault(stateDir) {
+  const secrets = NodePath.join(stateDir, "secrets");
+  const protection = vaultProtection(stateDir);
+  if (protection === "none") return {};
+  if (protection === "file") {
+    try {
+      const key = readBytes(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`));
+      const sentinel = readBytes(NodePath.join(secrets, `${VAULT_SENTINEL}.bin`));
+      if (key?.length !== 32 || sentinel === undefined) throw new Error("no usable key");
+      vaultDecrypt(key, VAULT_SENTINEL, sentinel.subarray(1));
+      const blob = readBytes(NodePath.join(secrets, `${ACCOUNTS_STATE}.bin`));
+      const accounts =
+        blob === undefined
+          ? undefined
+          : JSON.parse(vaultDecrypt(key, ACCOUNTS_STATE, blob).toString("utf8"));
+      return { key, accounts };
+    } catch (error) {
+      throw new TargetVaultError(`its accounts key does not open its own accounts`, {
+        cause: error,
+      });
+    }
+  }
+  const names = NodeFS.readdirSync(secrets);
+  if (
+    names.includes(`${ACCOUNTS_STATE}.bin`) ||
+    names.some((name) => SEALED_INSTALL_RECORD.test(name))
+  ) {
+    throw new TargetVaultError(
+      "its accounts key is in the Keychain, and replacing it would lose this app's own accounts data",
+    );
+  }
+  return {};
+}
+
 /**
  * Reads one app's identity as a single consistent snapshot. Accounts and connectors write a value
  * before publishing its reference, so the snapshot is retaken until the anchors stayed the same
@@ -548,41 +659,37 @@ export function captureIdentity(
 }
 
 /**
- * Stages a captured identity's secrets for a target, re-encrypting each record when `targetKey` is
- * a new key; a record that cannot be re-encrypted stops the copy. The Accounts document is
- * rewritten without the source install's local state.
+ * Stages a captured identity's secrets for a target under the target's own vault key, or a new
+ * file key when it has none; a record that cannot be re-encrypted stops the copy. The target's
+ * other records sealed under its key stay, and so does its own part of the Accounts document.
  */
-function stageSecrets({ changes, capture, targetStateDir, targetKey }) {
+function stageSecrets({ changes, capture, sourceKey, targetStateDir, target }) {
   const targetSecrets = NodePath.join(targetStateDir, "secrets");
   NodeFS.mkdirSync(targetSecrets, { recursive: true, mode: 0o700 });
-  const previousKey = readBytes(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`));
-  const sourceKey = capture.secrets.get(`${VAULT_KEY_FILE}.bin`) ?? targetKey;
-  const key = targetKey ?? sourceKey;
+  const key = target.key ?? makePortableVault().key;
   const removed = new Set(
     identitySecretNames(
       targetSecrets,
       readJsonObject(NodePath.join(targetStateDir, "settings.json")),
     ),
   );
-  // Records the old key sealed can no longer be opened once the key changes.
-  if (previousKey === undefined || key === undefined || !previousKey.equals(key)) {
-    for (const name of NodeFS.readdirSync(targetSecrets)) {
-      if (SEALED_INSTALL_RECORD.test(name)) removed.add(name);
-    }
-  }
+  for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
   const written = [];
   for (const [name, bytes] of capture.secrets) {
-    let output = bytes;
+    let output;
     try {
-      if (name === `${ACCOUNTS_STATE}.bin` && capture.accounts !== undefined) {
-        output = vaultEncrypt(
-          key,
-          ACCOUNTS_STATE,
-          Buffer.from(JSON.stringify(scrubAccountsState(capture.accounts))),
-        );
-      } else if (targetKey !== undefined) {
-        output = reencryptSecret(name, bytes, sourceKey, targetKey);
-      }
+      output =
+        name === `${ACCOUNTS_STATE}.bin` && capture.accounts !== undefined
+          ? vaultEncrypt(
+              key,
+              ACCOUNTS_STATE,
+              Buffer.from(
+                JSON.stringify(
+                  keepLocalAccounts(scrubAccountsState(capture.accounts), target.accounts),
+                ),
+              ),
+            )
+          : reencryptSecret(name, bytes, sourceKey ?? key, key);
     } catch (error) {
       throw new Error(`${name.replace(/\.bin$/u, "")} could not be decrypted.`, { cause: error });
     }
@@ -591,15 +698,12 @@ function stageSecrets({ changes, capture, targetStateDir, targetKey }) {
     changes.write(NodePath.join(targetSecrets, name), output);
     written.push(name);
   }
-  if (targetKey !== undefined) {
-    for (const name of [`${VAULT_KEY_FILE}.bin`, `${VAULT_SENTINEL}.bin`]) removed.delete(name);
-    changes.write(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`), targetKey);
-    changes.write(NodePath.join(targetSecrets, `${VAULT_SENTINEL}.bin`), makeSentinel(targetKey));
+  if (target.key === undefined) {
+    changes.write(NodePath.join(targetSecrets, `${VAULT_KEY_FILE}.bin`), key);
+    changes.write(NodePath.join(targetSecrets, `${VAULT_SENTINEL}.bin`), makeSentinel(key));
   }
   for (const name of removed) changes.remove(NodePath.join(targetSecrets, name));
-  return written.filter(
-    (name) => !name.startsWith(VAULT_SENTINEL) && !name.startsWith(VAULT_KEY_FILE),
-  );
+  return written;
 }
 
 function stageSettings({ changes, capture, targetStateDir, sourceDirs, targetDir, fullProfile }) {
@@ -731,12 +835,15 @@ export function cookieDatabasePath(partitionDir) {
 }
 
 /**
- * A standalone, checked copy of a cookie jar. The jar and its journal are copied privately first,
- * so SQLite never creates files beside the source; a copy taken mid-write is taken again.
+ * A standalone, checked copy of a cookie jar, made in the destination's private staging folder:
+ * the jar may hold plain values, so it never sits outside the dev state folders. The jar and its
+ * journal are copied first, so SQLite never creates files beside the source; a copy taken
+ * mid-write is taken again.
  */
-async function snapshotCookieDatabase(sourcePath) {
+async function snapshotCookieDatabase(sourcePath, stagingRoot) {
+  NodeFS.mkdirSync(stagingRoot, { recursive: true, mode: 0o700 });
   for (let attempt = 0; attempt < COOKIE_COPY_ATTEMPTS; attempt += 1) {
-    const stagingDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dev-identity-cookies-"));
+    const stagingDir = NodeFS.mkdtempSync(NodePath.join(stagingRoot, "cookies-"));
     try {
       const copy = NodePath.join(stagingDir, "Cookies.source");
       for (const suffix of ["", "-journal", "-wal"]) {
@@ -772,6 +879,7 @@ async function snapshotCookieDatabase(sourcePath) {
  * target already signed into keeps its own. Returns the profiles staged and those skipped.
  */
 async function stageWebsiteSignIns({ changes, source, target, profileIds, decrypt }) {
+  const targetStateDir = NodePath.dirname(target.userData);
   const sourcePartitions = NodePath.join(source.userData, "Partitions");
   let entries;
   try {
@@ -798,16 +906,10 @@ async function stageWebsiteSignIns({ changes, source, target, profileIds, decryp
     const to = cookieDatabasePath(targetDir);
     if (exists(to)) continue;
     const jarParent = NodePath.dirname(to);
-    if (
-      isLink(jarParent) ||
-      !inside(
-        realpathOrSelf(jarParent),
-        realpathOrSelf(NodePath.join(target.userData, "Partitions")),
-      )
-    ) {
+    if (isLink(jarParent) || !within(jarParent, targetStateDir)) {
       throw new Error(`${jarParent} leads outside this app's data; nothing was copied into it.`);
     }
-    const snapshot = await snapshotCookieDatabase(from);
+    const snapshot = await snapshotCookieDatabase(from, NodePath.join(targetStateDir, STAGING_DIR));
     if (snapshot === undefined) {
       skipped.push(targetName);
       continue;
@@ -906,31 +1008,70 @@ export function acquireHomeLock(home, isAlive = processIsAlive) {
 
 /** No folder the copy writes into may be a link that leads outside the target. */
 function assertPlainTarget(stateDir) {
-  const real = realpathOrSelf(stateDir);
   for (const relative of WRITTEN_DIRS) {
     const path = NodePath.join(stateDir, relative);
-    if (isLink(path) || (exists(path) && !inside(realpathOrSelf(path), real))) {
+    if (isLink(path) || (exists(path) && !within(path, stateDir))) {
       throw new DevIdentityFatalError(`${path} leads outside ${stateDir}; nothing was copied.`);
     }
   }
 }
 
-/** Whether a target path is, or lies inside, the home or the installed app's state. */
+/** Whether a target path is, or lies inside, or holds, the home or the installed app's state. */
 function isProtectedTarget(targetStateDir, home, installed) {
-  const target = realpathOrSelf(targetStateDir);
-  const parent = realpathOrSelf(NodePath.dirname(targetStateDir));
-  const roots = [realpathOrSelf(home.root), realpathOrSelf(installed.stateDir)];
-  return roots.some((root) => inside(target, root) || inside(parent, root) || inside(root, target));
+  return [home.root, installed.stateDir].some(
+    (root) =>
+      within(targetStateDir, root) ||
+      within(NodePath.dirname(targetStateDir), root) ||
+      within(root, targetStateDir),
+  );
 }
 
 const isHomeTarget = (targetStateDir, home) =>
-  realpathOrSelf(NodePath.dirname(targetStateDir)) === realpathOrSelf(home.root) &&
+  sameFile(NodePath.dirname(targetStateDir), home.root) &&
   NodePath.basename(targetStateDir) === STATE_SUBDIR;
 
 /**
+ * A checkout whose app data is, holds or lies in the identity home must be the checkout the home
+ * was set up with; any other would run a second app on the home's vault and databases. Called
+ * before the launcher touches the checkout's runner or app state.
+ */
+export function assertHomeCheckout({ checkoutRoot, stateRoot, home = resolveDevIdentityHome() }) {
+  if (!within(stateRoot, home.root) && !within(home.root, stateRoot)) return;
+  const registered = homeCheckout(home);
+  if (
+    sameFile(stateRoot, home.root) &&
+    registered !== undefined &&
+    sameFile(checkoutRoot, registered)
+  ) {
+    return;
+  }
+  throw new Error(
+    `${stateRoot} is the dev identity home's data, which only its own checkout (${
+      registered ?? "none yet; run pnpm dev:identity setup"
+    }) may run. Remove that link from ${checkoutRoot} before starting it.`,
+  );
+}
+
+/** Changes whenever a seed or setup publishes into the home, holds it, or stopped partway. */
+const homeGeneration = (home) =>
+  [
+    homeIsLocked(home) ? "locked" : "",
+    exists(NodePath.join(home.stateDir, JOURNAL)) ? "journal" : "",
+    readBytes(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER))?.toString("base64") ?? "",
+    readBytes(NodePath.join(home.stateDir, "secrets", `${VAULT_SENTINEL}.bin`))?.toString(
+      "base64",
+    ) ?? "",
+  ].join("|");
+
+/** Removes the private staging folder an earlier copy left behind if it stopped. */
+const clearStaging = (stateDir) =>
+  NodeFS.rmSync(NodePath.join(stateDir, STAGING_DIR), { recursive: true, force: true });
+
+/**
  * Copies the home's identity into a dev app that is about to start. Runs while no app of that
- * checkout is running; the home may be running, so its files are read as one snapshot. Nothing
- * in the target changes until every replacement is staged, and an interrupted copy is finished.
+ * checkout is running; the home may be running, so its files are read as one snapshot, and a
+ * seed that published, held or stopped in the home during the read voids the copy. Nothing in
+ * the target changes until every replacement is staged, and an interrupted copy is finished.
  */
 export async function importDevIdentity({
   targetStateDir,
@@ -940,8 +1081,13 @@ export async function importDevIdentity({
   now = () => new Date(),
 } = {}) {
   if (isHomeTarget(targetStateDir, home)) {
-    if (homeIsLocked(home)) return { status: "home-seeding" };
     try {
+      assertHomeCheckout({
+        checkoutRoot: NodePath.dirname(NodePath.dirname(targetStateDir)),
+        stateRoot: NodePath.dirname(targetStateDir),
+        home,
+      });
+      if (homeIsLocked(home)) return { status: "home-seeding" };
       assertHomeLayout(home, installed);
     } catch (error) {
       throw new DevIdentityFatalError(error instanceof Error ? error.message : String(error), {
@@ -955,15 +1101,27 @@ export async function importDevIdentity({
   if (isProtectedTarget(targetStateDir, home, installed)) return { status: "refused-target" };
   assertPlainTarget(targetStateDir);
   recoverInterruptedCopy(targetStateDir);
+  clearStaging(targetStateDir);
   if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
   if (!exists(home.stateDir)) return { status: "no-home" };
   const protection = vaultProtection(home.stateDir);
   if (protection !== "file" && protection !== "none") {
     return { status: "home-vault-not-portable", protection };
   }
+  if (exists(NodePath.join(home.stateDir, JOURNAL))) return { status: "home-interrupted" };
   if (homeIsLocked(home)) return { status: "home-busy" };
+  const generation = homeGeneration(home);
   const capture = captureIdentity(home.stateDir);
   if (capture === undefined) return { status: "home-busy" };
+  let target = {};
+  if (protection === "file") {
+    try {
+      target = readTargetVault(targetStateDir);
+    } catch (error) {
+      if (!(error instanceof TargetVaultError)) throw error;
+      return { status: "target-vault-not-portable", reason: error.message };
+    }
+  }
   const firstStart =
     !exists(NodePath.join(targetStateDir, "settings.json")) &&
     !exists(NodePath.join(targetStateDir, "client-settings.json"));
@@ -974,7 +1132,15 @@ export async function importDevIdentity({
   let secrets = [];
   let websites = { copied: [], skipped: [] };
   try {
-    if (protection === "file") secrets = stageSecrets({ changes, capture, targetStateDir });
+    if (protection === "file") {
+      secrets = stageSecrets({
+        changes,
+        capture,
+        sourceKey: capture.secrets.get(`${VAULT_KEY_FILE}.bin`),
+        targetStateDir,
+        target,
+      });
+    }
     stageSettings({ changes, capture, targetStateDir, ...paths, fullProfile: firstStart });
     stageConnectors({ changes, capture, targetStateDir, ...paths });
     const clientSettings = stageClientSettings({
@@ -1012,6 +1178,13 @@ export async function importDevIdentity({
       status: "copy-failed",
       reason: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    clearStaging(targetStateDir);
+  }
+  // A seed that began, finished or stopped in the home during the read voids what was read.
+  if (homeGeneration(home) !== generation) {
+    changes.abort();
+    return { status: "home-busy" };
   }
   const summary = {
     status: "imported",
@@ -1043,6 +1216,10 @@ export function describeImport(result) {
       return "No dev identity home yet (pnpm dev:identity setup); this dev app starts with its own accounts.";
     case "home-vault-not-portable":
       return "The dev identity home keeps its accounts key in the Keychain, which other dev apps cannot open; run pnpm dev:identity seed to move it to a shared key. Starting with this app's own accounts.";
+    case "home-interrupted":
+      return "A seed of the dev identity home stopped partway; start the identity home app or run the seed again to finish it. This dev app starts with the identity it already had.";
+    case "target-vault-not-portable":
+      return `This dev app keeps its own accounts (${result.reason}). Move its .scient-next aside to start it with your dev identity.`;
     case "home-busy":
       return "The dev identity home was changing while it was being copied; this dev app starts with the identity it already had. Restart it to try again.";
     case "copy-failed":
@@ -1133,12 +1310,10 @@ export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = proc
 
 /** The home's state must be a real folder inside the home, apart from the installed app. */
 function assertHomeLayout(home, installed) {
-  const homeRoot = realpathOrSelf(home.root);
-  const installedRoot = realpathOrSelf(installed.stateDir);
-  if (inside(homeRoot, installedRoot) || inside(installedRoot, homeRoot)) {
+  if (within(home.root, installed.stateDir) || within(installed.stateDir, home.root)) {
     throw new Error("The installed app's data and the identity home overlap; nothing was copied.");
   }
-  if (isLink(home.stateDir) || !inside(realpathOrSelf(home.stateDir), homeRoot)) {
+  if (isLink(home.stateDir) || !within(home.stateDir, home.root)) {
     throw new Error(`${home.stateDir} leads outside ${home.root}; nothing was copied.`);
   }
   if (exists(home.stateDir)) assertPlainTarget(home.stateDir);
@@ -1180,6 +1355,7 @@ export async function seedDevIdentityHome({
     assertHomeLayout(home, installed);
     assertHomeCheckoutMatches(home);
     recoverInterruptedCopy(home.stateDir);
+    clearStaging(home.stateDir);
     const marker = readJsonObject(NodePath.join(home.stateDir, DEV_IDENTITY_MARKER));
     if (marker?.seededFrom !== undefined && !force) {
       throw new Error(
@@ -1215,15 +1391,21 @@ export async function seedDevIdentityHome({
 
     const report = { secrets: 0, websiteProfiles: 0, skipped: [] };
     const paths = { sourceDirs: [installed.stateDir], targetDir: homeServerStateDir(home) };
-    const secrets = new Map(capture.secrets);
-    if (sourceKey !== undefined) secrets.set(`${VAULT_KEY_FILE}.bin`, sourceKey);
+    let target;
+    try {
+      target = readTargetVault(home.stateDir);
+    } catch (error) {
+      if (!(error instanceof TargetVaultError)) throw error;
+      throw new Error(`The identity home was left as it was: ${error.message}.`, { cause: error });
+    }
     const changes = new StagedChanges(home.stateDir);
     try {
       report.secrets = stageSecrets({
         changes,
-        capture: { ...capture, secrets },
+        capture,
+        sourceKey,
         targetStateDir: home.stateDir,
-        targetKey: makePortableVault().key,
+        target,
       }).length;
       stageSettings({
         changes,
@@ -1278,6 +1460,8 @@ export async function seedDevIdentityHome({
     } catch (error) {
       changes.abort();
       throw error;
+    } finally {
+      clearStaging(home.stateDir);
     }
     changes.commit();
     return report;
@@ -1321,7 +1505,7 @@ export function setupHomeCheckout({
         `${link} already holds an app's data; move it aside before using this checkout.`,
       );
     }
-    if (realpathOrSelf(link) !== realpathOrSelf(home.root)) {
+    if (!sameFile(link, home.root)) {
       throw new Error(`${link} points somewhere other than ${home.root}.`);
     }
   }

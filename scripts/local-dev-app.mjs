@@ -856,6 +856,24 @@ export function shareDevelopmentVoiceRuntime({
 }
 
 /**
+ * Refuses a checkout whose app data is the dev identity home's unless it is the home's registered
+ * checkout, before the launcher reads or clears any runner or app state there. Loaded on demand
+ * like the copy: the stable controller's launcher copy has no identity module.
+ */
+export async function guardIdentityHome(
+  paths,
+  { loadIdentity = () => import("./dev-identity.mjs") } = {},
+) {
+  let identity;
+  try {
+    identity = await loadIdentity();
+  } catch {
+    return;
+  }
+  identity.assertHomeCheckout({ checkoutRoot: paths.root, stateRoot: paths.stateRoot });
+}
+
+/**
  * Copies the owner's dev identity (accounts, models, sign-ins) into this checkout's app. Loaded on
  * demand: the stable controller ships this launcher without the identity module. A copy that
  * failed before changing anything only logs; one that left the app's data unsafe stops the start.
@@ -1313,6 +1331,7 @@ async function main() {
       process.env[SCIENT_NEXT_HOME_ENV] = resolveStableDevHome();
     }
   }
+  await guardIdentityHome(resolveLocalDevAppPaths());
   if (command === "run") return runApp();
   if (command === "start")
     return startAppInBackground({
