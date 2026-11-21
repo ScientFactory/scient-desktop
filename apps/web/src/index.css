@@ -1978,7 +1978,7 @@ code {
 }
 
 /* Inline code and its colour swatches would otherwise push a line taller than its neighbours. */
-:where(.scient-reply-prose).chat-markdown :not(pre) > code {
+:where(.scient-reply-prose).chat-markdown :where(:not(pre) > code) {
   line-height: 1.2;
 }
 /* SCIENT-FORK:END */

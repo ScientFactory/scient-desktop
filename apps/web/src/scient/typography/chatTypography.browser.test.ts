@@ -44,12 +44,17 @@ describe("chat typography", () => {
     expect(px(host.querySelector("[data-nested]")!, "lineHeight")).toBeCloseTo(rootSize * 1.25, 1);
   });
 
-  it("lets theme CSS override the reply leading", () => {
-    using _themeCss = mount(".chat-markdown { line-height: 2; }", document.head);
+  it("lets theme CSS override the reply and inline-code leading", () => {
+    using _themeCss = mount(
+      ".chat-markdown { line-height: 2; } .chat-markdown code { line-height: 3; }",
+      document.head,
+    );
     using host = mount(
-      `<div class="chat-markdown scient-reply-prose text-sm leading-relaxed"><p>x</p></div>`,
+      `<div class="chat-markdown scient-reply-prose text-sm leading-relaxed"><p>x <code>y</code></p></div>`,
     );
     const reply = host.firstElementChild!;
+    const code = reply.querySelector("code")!;
     expect(px(reply, "lineHeight")).toBeCloseTo(px(reply, "fontSize") * 2, 1);
+    expect(px(code, "lineHeight")).toBeCloseTo(px(code, "fontSize") * 3, 1);
   });
 });

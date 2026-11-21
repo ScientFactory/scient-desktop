@@ -55,7 +55,7 @@ const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
 /**
  * The reviewed stock palettes for the web and desktop clients. Canvas, surfaces, the user
- * bubble, text and secondary text match what index.css paints: a neutral near-black (near-white
+ * bubble, text, secondary text and terminal text match what index.css paints: a neutral near-black (near-white
  * in dark) with a neutral grey. Other roles keep the shared palette. Mobile keeps the shared
  * T3 Code palette until its default appearance is reviewed independently.
  */
@@ -83,6 +83,7 @@ const T3_CODE_WEB_LIGHT_THEME_COLORS: ThemeColors = {
   codeForeground: "#191919",
   sidebarForeground: "#191919",
   sidebarMutedForeground: "#666666",
+  terminalForeground: "#191919",
 };
 
 const T3_CODE_WEB_DARK_THEME_COLORS: ThemeColors = {
@@ -100,6 +101,7 @@ const T3_CODE_WEB_DARK_THEME_COLORS: ThemeColors = {
   codeForeground: "#efefef",
   sidebarForeground: "#efefef",
   sidebarMutedForeground: "#9c9c9c",
+  terminalForeground: "#efefef",
 };
 
 export const ThemePreference = Schema.String;

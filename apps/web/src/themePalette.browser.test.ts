@@ -22,7 +22,7 @@ function paintedChannels(variable: string, canvas: readonly number[] = [0, 0, 0]
 }
 
 describe("standard theme colors", () => {
-  it("match what index.css paints", () => {
+  it("match what index.css paints for canvas, surfaces, bubble, and text roles", () => {
     const root = document.documentElement;
     try {
       for (const appearance of ["light", "dark"] as const) {
@@ -37,6 +37,7 @@ describe("standard theme colors", () => {
           ["--foreground", "text"],
           ["--muted-foreground", "mutedForeground"],
           ["--secondary-label", "secondaryLabel"],
+          ["--terminal-foreground", "terminalForeground"],
         ] as const) {
           const expected = toRgb(colors[role])!;
           const painted = paintedChannels(variable, canvas);
