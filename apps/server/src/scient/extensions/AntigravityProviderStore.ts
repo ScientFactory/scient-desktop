@@ -383,6 +383,19 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
             ? { message: cause.message }
             : { message: "Scient could not prepare this plugin to add." },
         ),
+        // agy has no no-replace install and overwrites a same-name folder, so the download
+        // window must not hide a plugin the Antigravity app installed meanwhile.
+        Effect.tap(() =>
+          list().pipe(
+            Effect.flatMap((current) =>
+              current.plugins.some((plugin) => plugin.name === item.plugin.name)
+                ? fail(
+                    `Antigravity got a plugin named ${item.plugin.name} while Scient was preparing this one, so Scient did not replace it.`,
+                  )
+                : Effect.void,
+            ),
+          ),
+        ),
         Effect.flatMap((directory) => options.run(["plugin", "install", directory])),
       ),
     ).pipe(

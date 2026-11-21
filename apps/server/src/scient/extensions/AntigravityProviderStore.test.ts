@@ -41,7 +41,10 @@ interface Fixture {
   readonly routes: Map<string, Route>;
   readonly fetched: string[];
   readonly calls: string[][];
-  readonly installed: Map<string, { enabled: boolean; version?: string; path: string }>;
+  readonly installed: Map<
+    string,
+    { enabled: boolean; version?: string; path: string; source?: string | null }
+  >;
   readonly stagedScriptModes: number[];
   listOutput?: string;
   unavailable?: string;
@@ -133,7 +136,7 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
               name,
               enabled: plugin.enabled,
               ...(plugin.version ? { version: plugin.version } : {}),
-              source: "antigravity",
+              ...(plugin.source === null ? {} : { source: plugin.source ?? "antigravity" }),
               path: plugin.path,
             })),
           );
@@ -144,6 +147,10 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
           if (yield* fs.exists(script))
             fixture.stagedScriptModes.push(Number((yield* fs.stat(script)).mode));
           const parsed = yield* decodeManifest(manifest);
+          // Like agy: the staged folder is copied, replacing any same-name folder.
+          yield* fs.remove(pluginPath(parsed.name), { recursive: true, force: true });
+          yield* fs.makeDirectory(path.dirname(pluginPath(parsed.name)), { recursive: true });
+          yield* fs.copy(target!, pluginPath(parsed.name));
           fixture.installed.set(parsed.name, {
             enabled: true,
             version: parsed.version,
@@ -151,7 +158,10 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
           });
           return "";
         }
-        if (command === "uninstall") fixture.installed.delete(target!);
+        if (command === "uninstall") {
+          fixture.installed.delete(target!);
+          yield* fs.remove(pluginPath(target!), { recursive: true, force: true });
+        }
         if (command === "enable" || command === "disable") {
           const plugin = fixture.installed.get(target!);
           if (plugin) plugin.enabled = command === "enable";
@@ -364,6 +374,32 @@ describe("AntigravityProviderStore", () => {
           sourceLabel: "Antigravity's plugins",
         });
         expect(native!.marketplace).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("does not replace a same-name plugin installed while the archive downloaded", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, fixture, stateDir, pluginPath, fs, path } = yield* setup((fixture, zips) =>
+          fixture.routes.set(GMAIL_ZIP, () => {
+            fixture.installed.set("gmail", {
+              enabled: true,
+              version: "1.0.0",
+              path: "/app/plugins/gmail",
+            });
+            return new Response(zips.gmail);
+          }),
+        );
+        const installedMeanwhile = fixture.installed;
+        const error = yield* store.install("gmail@antigravity-plugins-official").pipe(Effect.flip);
+        expect(error.message).toMatch(/while Scient was preparing/);
+        expect(fixture.calls.some((call) => call[1] === "install")).toBe(false);
+        expect(installedMeanwhile.get("gmail")?.version).toBe("1.0.0");
+        expect(yield* fs.exists(pluginPath("gmail"))).toBe(false);
+        expect(
+          yield* fs.readDirectory(path.join(stateDir, "antigravity-plugins", "staging")),
+        ).toEqual([]);
       }),
     ),
   );
