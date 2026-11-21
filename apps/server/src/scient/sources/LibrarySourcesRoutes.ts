@@ -919,12 +919,16 @@ export async function keptCopiesOf(
   });
   if (copies.length === 0) return {};
   const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
-  // A pin served from its snapshot is in no group: its key or own ID names it.
+  const aliases = store.exists ? await readScientLibraryAliases(store.library) : null;
+  // A pin served from its snapshot is in no group: include every pin whose own or aliased ID is this source.
   const keys = new Set([
     ...(group ? [group.pin.citationKey, ...group.alsoCitedAs] : []),
     ...(options?.citationKey ? [options.citationKey] : []),
     ...(await readScientProjectPins(store.root)).flatMap((pin) =>
-      pin.sourceId === sourceId ? [pin.citationKey] : [],
+      pin.sourceId === sourceId ||
+      (aliases ? resolveScientLibraryAlias(aliases, pin.sourceId) === sourceId : false)
+        ? [pin.citationKey]
+        : [],
     ),
   ]);
   const reviews = await readScientLibraryReviewTitles(

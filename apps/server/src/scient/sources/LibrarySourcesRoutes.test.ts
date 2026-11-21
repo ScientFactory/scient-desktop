@@ -1052,6 +1052,10 @@ describe("Library routes on the library backend", () => {
             title: "Sepsis bundle",
             containerTitle: "Journal A",
           });
+          const d = await libraryRecord(fixture, "chain-d", {
+            title: "Sepsis bundle sibling",
+            containerTitle: "Journal D",
+          });
           const b = await libraryRecord(fixture, "chain-b", {
             title: "Sepsis bundle",
             containerTitle: "Journal B",
@@ -1061,7 +1065,8 @@ describe("Library routes on the library backend", () => {
             containerTitle: "Journal C",
           });
           const pinA = await pin(fixture, a.sourceId);
-          // Merge A -> B, then B -> C, and refresh so pin A's snapshot carries C's details.
+          const pinD = await pin(fixture, d.sourceId);
+          // Merge A -> B and sibling D -> B, then B -> C, and refresh so both snapshots carry C's details.
           const firstMerge = await mergeScientLibrarySources({
             library: fixture.library,
             sourceIds: [a.sourceId, b.sourceId],
@@ -1069,6 +1074,13 @@ describe("Library routes on the library backend", () => {
             actor: "user",
           });
           if (firstMerge.outcome !== "merged") throw new Error("Expected A -> B merge.");
+          const siblingMerge = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [d.sourceId, b.sourceId],
+            survivorId: b.sourceId,
+            actor: "user",
+          });
+          if (siblingMerge.outcome !== "merged") throw new Error("Expected D -> B merge.");
           const secondMerge = await mergeScientLibrarySources({
             library: fixture.library,
             sourceIds: [b.sourceId, c.sourceId],
@@ -1080,7 +1092,7 @@ describe("Library routes on the library backend", () => {
             projectRoot: fixture.root,
             library: fixture.library,
           });
-          // Undo B -> C and refresh: displaced values are saved under B, not A.
+          // Undo B -> C and refresh: displaced values for both pins are saved under B, not A or D.
           const undone = await undoScientLibraryMerge({
             library: fixture.library,
             mergeId: secondMerge.merge.mergeId,
@@ -1096,7 +1108,11 @@ describe("Library routes on the library backend", () => {
             sourceId: undone.loser.sourceId,
             expectedRevision: undone.loser.revision,
           });
-          return { pinSourceId: a.sourceId, citationKey: pinA.citationKey };
+          return {
+            pinSourceId: a.sourceId,
+            citationKey: pinA.citationKey,
+            siblingCitationKey: pinD.citationKey,
+          };
         });
 
         const store = yield* storeFor(fixture, "read");
@@ -1107,17 +1123,26 @@ describe("Library routes on the library backend", () => {
         );
         expect(detail).toMatchObject({
           fromSnapshot: true,
-          keptCopies: [
-            {
+          keptCopies: expect.arrayContaining([
+            expect.objectContaining({
               holder: "citation-key",
               heldBy: chained.citationKey,
               holderPresent: true,
               fields: expect.arrayContaining([
                 { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
               ]),
-            },
-          ],
+            }),
+            expect.objectContaining({
+              holder: "citation-key",
+              heldBy: chained.siblingCitationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            }),
+          ]),
         });
+        expect((detail as { keptCopies?: unknown[] }).keptCopies).toHaveLength(2);
       }),
   );
 

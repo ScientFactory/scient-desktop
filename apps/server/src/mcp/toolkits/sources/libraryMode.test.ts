@@ -513,7 +513,18 @@ describe("Sources tools on the library backend", () => {
           }),
           fixture,
         )).sourceId!;
-        // B and C live only in the Library: only A is pinned in this project.
+        const d = (yield* run(
+          addScientSourceForInvocation({
+            type: "article",
+            title: "Chain D",
+            creators: [ada],
+            issuedYear: 2026,
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-d" }],
+            containerTitle: "Journal D",
+          }),
+          fixture,
+        )).sourceId!;
+        // B and C live only in the Library: only A and sibling D are pinned in this project.
         const b = (yield* Effect.promise(() =>
           libraryRecord(fixture, "chain-b", {
             title: "Chain B",
@@ -528,9 +539,9 @@ describe("Sources tools on the library backend", () => {
             containerTitle: "Journal C",
           }),
         )).sourceId;
-        const pinA = (yield* Effect.promise(() => readScientProjectPins(fixture.root))).find(
-          (entry) => entry.sourceId === a,
-        )!;
+        const pins = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+        const pinA = pins.find((entry) => entry.sourceId === a)!;
+        const pinD = pins.find((entry) => entry.sourceId === d)!;
         const firstMerge = yield* Effect.promise(() =>
           mergeScientLibrarySources({
             library: fixture.library,
@@ -540,6 +551,15 @@ describe("Sources tools on the library backend", () => {
           }),
         );
         if (firstMerge.outcome !== "merged") throw new Error("Expected A -> B merge.");
+        const siblingMerge = yield* Effect.promise(() =>
+          mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [d, b],
+            survivorId: b,
+            actor: "user",
+          }),
+        );
+        if (siblingMerge.outcome !== "merged") throw new Error("Expected D -> B merge.");
         const secondMerge = yield* Effect.promise(() =>
           mergeScientLibrarySources({
             library: fixture.library,
@@ -585,17 +605,26 @@ describe("Sources tools on the library backend", () => {
         );
         expect(detail).toMatchObject({
           fromSnapshot: true,
-          keptCopies: [
-            {
+          keptCopies: expect.arrayContaining([
+            expect.objectContaining({
               holder: "citation-key",
               heldBy: pinA.citationKey,
               holderPresent: true,
               fields: expect.arrayContaining([
                 { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
               ]),
-            },
-          ],
+            }),
+            expect.objectContaining({
+              holder: "citation-key",
+              heldBy: pinD.citationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            }),
+          ]),
         });
+        expect((detail as { keptCopies?: unknown[] }).keptCopies).toHaveLength(2);
       }),
   );
 
