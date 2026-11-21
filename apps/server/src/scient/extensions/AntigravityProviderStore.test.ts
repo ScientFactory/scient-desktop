@@ -11,7 +11,7 @@ import type * as Scope from "effect/Scope";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
-import { ANTIGRAVITY_MARKETPLACES } from "./AntigravityPluginCatalog.ts";
+import { ANTIGRAVITY_MARKETPLACES, antigravityCategories } from "./AntigravityPluginCatalog.ts";
 import {
   ANTIGRAVITY_NOT_CLI,
   antigravityPluginCommandEnvironment,
@@ -429,6 +429,28 @@ describe("AntigravityProviderStore", () => {
     ),
   );
 });
+
+it("files catalog plugins under reviewed Discover categories, then the catalog's own labels", () => {
+  expect(antigravityCategories("scientific-literature", [], [])).toEqual(["papers"]);
+  expect(antigravityCategories("gmail", ["Productivity"], [])).toEqual(["communication"]);
+  expect(antigravityCategories("new-tool", ["Developer Tools", "Cloud"], [])).toEqual(["code"]);
+  expect(antigravityCategories("new-db", [], ["graph", "database"])).toEqual(["data"]);
+  expect(antigravityCategories("new-thing", [], ["misc"])).toEqual([]);
+});
+
+it.effect("filters a category page by those categories", () =>
+  provide(
+    Effect.gen(function* () {
+      const { store } = yield* setup();
+      const names = (category: string) =>
+        store.search({ category }).pipe(Effect.map((page) => page.entries.map((e) => e.name)));
+      expect(yield* names("communication")).toEqual(["gmail"]);
+      expect(yield* names("chemistry")).toEqual(["chemistry"]);
+      expect(yield* names("figures")).toEqual(["canva"]);
+      expect(yield* names("most-used")).toEqual([]);
+    }),
+  ),
+);
 
 it("passes agy only what it needs to find the user's home", () => {
   expect(

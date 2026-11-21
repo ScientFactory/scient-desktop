@@ -11,7 +11,6 @@ import type {
   ProviderStoreSearchInput,
   ServerProviderPlugin,
 } from "@t3tools/contracts";
-import { storeCategories } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -319,9 +318,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     const matching = current.entries.filter(
       ({ plugin }) =>
         (!input.category ||
-          (plugin.categories.length ? plugin.categories : [undefined]).some((category) =>
-            storeCategories(plugin.name, category).some((item) => item === input.category),
-          )) &&
+          plugin.scientCategories.some((category) => category === input.category)) &&
         terms.every((term) =>
           [
             plugin.name,

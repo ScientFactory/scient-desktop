@@ -3,7 +3,11 @@
  * gstatic addresses, no sign-in. Each catalog is fetched, bounded and decoded on its own, so one
  * outage leaves the other listed.
  */
-import type { ExtensionIconDataUri } from "@t3tools/contracts";
+import {
+  storeCategories,
+  type ExtensionCategory,
+  type ExtensionIconDataUri,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -71,6 +75,8 @@ export interface AntigravityCatalogPlugin {
   readonly publisher?: string | undefined;
   readonly website?: string | undefined;
   readonly categories: ReadonlyArray<string>;
+  /** Scient's Discover categories, from the reviewed map or the catalog's own labels. */
+  readonly scientCategories: ReadonlyArray<ExtensionCategory>;
   readonly logoUrl?: string | undefined;
   readonly keywords: ReadonlyArray<string>;
   readonly includes: ReadonlyArray<string>;
@@ -147,6 +153,129 @@ function componentNames(value: unknown): ReadonlyArray<string> {
   return [...new Set(names.map((name) => name.trim()).filter(Boolean))].slice(0, 200);
 }
 
+/** Reviewed Discover categories per catalog plugin (2026-11-21 catalogs); others fall back. */
+const ANTIGRAVITY_CATEGORIES: Readonly<Record<string, ReadonlyArray<ExtensionCategory>>> = {
+  // Google: Workspace, science, developer.
+  gmail: ["communication"],
+  gcalendar: ["communication", "projects"],
+  gdocs: ["files"],
+  gdrive: ["files"],
+  gsheets: ["files", "data"],
+  gslides: ["files", "figures"],
+  "scientific-literature": ["papers"],
+  "science-overview": ["papers", "biology", "chemistry"],
+  chemistry: ["chemistry"],
+  genomics: ["biology"],
+  "structural-biology": ["biology", "chemistry"],
+  robotics: ["physics-math", "code"],
+  "data-agent-kit-plugin": ["data", "code"],
+  looker: ["data"],
+  google_maps_platform: ["earth", "code"],
+  egm: ["files"],
+  "android-cli-plugin": ["code"],
+  "chrome-devtools-plugin": ["code"],
+  firebase: ["code"],
+  flutter: ["code"],
+  "gemini-api": ["code"],
+  "google-antigravity-sdk": ["code"],
+  "google-cloud-developer": ["code"],
+  "google-developer-knowledge": ["code"],
+  "google-health-developer": ["code"],
+  "google-home-developer": ["code"],
+  "modern-web-guidance-plugin": ["code"],
+  // Partners.
+  canva: ["figures"],
+  figma: ["figures"],
+  mobbin: ["figures"],
+  invideo: ["figures"],
+  notion: ["files", "projects"],
+  dropbox: ["files"],
+  docusign: ["files"],
+  pandadoc: ["files"],
+  linear: ["projects", "code"],
+  monday: ["projects"],
+  clickup: ["projects"],
+  trello: ["projects"],
+  "atlassian-twg-cli": ["projects", "files"],
+  "zoho-projects": ["projects"],
+  "zoho-bigin": ["projects"],
+  zapier: ["projects"],
+  "n8n-skills": ["projects", "code"],
+  granola: ["communication"],
+  "wispr-flow": ["communication"],
+  intercom: ["communication"],
+  "zoho-desk-antigravity": ["communication"],
+  keenable: ["papers"],
+  "keenable-select": ["papers", "data"],
+  parallel: ["papers"],
+  tavily: ["papers"],
+  midpage: ["papers", "social-science"],
+  "levels-fyi": ["social-science"],
+  semrush: ["data"],
+  databricks: ["data", "code"],
+  "mongodb-atlas": ["data", "code"],
+  neo4j: ["data", "code"],
+  supabase: ["data", "code"],
+  "arize-skills": ["data", "code"],
+  "grafana-cloud-mcp": ["data", "code"],
+  "zohobooks-antigravity": ["data"],
+  // Developer, security and operations tooling.
+  stripe: ["code"],
+  auth0: ["code"],
+  base44: ["code"],
+  betterstack: ["code"],
+  browse: ["code"],
+  clerk: ["code"],
+  cloudflare: ["code"],
+  coderabbit: ["code"],
+  context7: ["code"],
+  crowdstrike: ["code"],
+  datadog: ["code"],
+  dynatrace: ["code"],
+  "endor-labs-agent-kit": ["code"],
+  "harness-antigravity": ["code"],
+  "incident-io": ["code"],
+  "leapwork-play": ["code"],
+  netlify: ["code"],
+  "ping-identity-pingone": ["code"],
+  postman: ["code"],
+  qodo: ["code"],
+  railway: ["code"],
+  "scandit-sdk": ["code"],
+  "sentinelone-purple-mcp": ["code"],
+  sentry: ["code"],
+  soc: ["code"],
+  sonarqube: ["code"],
+  spacefast: ["code"],
+  superpowers: ["code"],
+  "testmu-ai": ["code"],
+  unity: ["code"],
+  "vercel-plugin": ["code"],
+  virustotal: ["code"],
+  wix: ["code"],
+  wordpress: ["code"],
+  "zoho-crm-plugin": ["code"],
+};
+/**
+ * Discover categories for a catalog plugin: the reviewed list, else the catalog's own categories,
+ * else its keywords. Most used stays Scient's picks.
+ */
+export function antigravityCategories(
+  name: string,
+  categories: ReadonlyArray<string>,
+  keywords: ReadonlyArray<string>,
+): ReadonlyArray<ExtensionCategory> {
+  const reviewed = ANTIGRAVITY_CATEGORIES[name];
+  if (reviewed) return reviewed;
+  for (const labels of [categories, keywords]) {
+    const found = [
+      ...new Set(labels.flatMap((label) => storeCategories("", label.replace(/-/g, " ")))),
+    ].filter((category) => category !== "most-used");
+    if (found.length) return found;
+  }
+  return [];
+}
+
 function catalogPlugin(
   marketplace: AntigravityMarketplace,
   raw: unknown,
@@ -170,6 +299,8 @@ function catalogPlugin(
       ? nonBlank(plugin.author.name)
       : nonBlank(plugin.author);
   const publisher = author ?? (marketplace.publisherType === "google" ? "Google" : undefined);
+  const categories = strings(plugin.category).slice(0, 10);
+  const keywords = (Array.isArray(plugin.keywords) ? strings(plugin.keywords) : []).slice(0, 50);
   return {
     name: plugin.name,
     marketplace: marketplace.name,
@@ -179,9 +310,10 @@ function catalogPlugin(
     version: nonBlank(plugin.version),
     publisher,
     website: httpsUrl(plugin.homepage),
-    categories: strings(plugin.category).slice(0, 10),
+    categories,
+    scientCategories: antigravityCategories(plugin.name, categories, keywords),
     logoUrl: httpsUrl(plugin.logo),
-    keywords: (Array.isArray(plugin.keywords) ? strings(plugin.keywords) : []).slice(0, 50),
+    keywords,
     includes: [...(skills.length ? ["Skills"] : []), ...(mcpServers.length ? ["MCP servers"] : [])],
     skills,
     mcpServers,
