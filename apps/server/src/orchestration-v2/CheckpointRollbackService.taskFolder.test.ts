@@ -826,4 +826,46 @@ it.live(
       }),
     ),
 );
+
+it.live(
+  "rebuilds the provider's folder for a conversation-only rewind past a sibling it cannot restore",
+  () =>
+    withThread({ projectIsRepository: true }, (thread) =>
+      Effect.gen(function* () {
+        const { path, folders, write, read, fileSystem } = thread;
+        const rollbacks = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        yield* thread.turn(1, Effect.void);
+        yield* thread.turn(2, Effect.void);
+        // The provider's folder is gone, and another checkout now sits where web's was.
+        yield* fileSystem.remove(folders.shop, { recursive: true });
+        yield* fileSystem.remove(folders.web, { recursive: true });
+        yield* write(path.join(folders.web, "other.txt"), "other\n");
+        yield* thread.run(folders.web, "init", "-b", "main");
+        const { checkpointScopes } = yield* thread.records;
+        const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
+        const checkpointId = yield* ids.allocate
+          .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
+          .pipe(Effect.orDie);
+
+        yield* rollbacks.execute({
+          threadId,
+          providerThreadId,
+          checkpointId,
+          scopeId: rootScope.id,
+          restoreFiles: false,
+        });
+
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "rolled_back"]);
+        assert.deepEqual(
+          yield* Effect.all([
+            read(path.join(folders.shop, "AGENTS.md")),
+            read(path.join(folders.web, "other.txt")),
+            read(path.join(folders.web, "README.md")),
+          ]),
+          ["rules\n", "other\n", null],
+        );
+      }),
+    ),
+);
 // SCIENT-FORK:END task-folder-rewind

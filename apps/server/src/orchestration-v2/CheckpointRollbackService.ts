@@ -43,6 +43,9 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+// SCIENT-FORK:START task-folder-rewind
+import { prepareTaskFolderForRewind } from "../scient/workspace/TaskFolderRewind.ts";
+// SCIENT-FORK:END task-folder-rewind
 
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
@@ -256,39 +259,37 @@ export const layer: Layer.Layer<
           checkpointId: input.checkpointId,
         });
 
-      // SCIENT-FORK:START task-folder-rewind — a shared task folder is refused before any of its
-      // checkouts is rebuilt; a conversation-only rewind rebuilds them only when the folder the
-      // provider works in is gone.
-      if (taskFolder !== null && restoreFiles && !(yield* isolated))
-        return yield* sharedWorkspace();
-      const keepTaskFolder =
-        taskFolder !== null &&
-        !restoreFiles &&
-        worktreePath !== null &&
-        (yield* fileSystem.exists(worktreePath));
-      // SCIENT-FORK:END task-folder-rewind
-      if (
-        taskFolder !== null &&
-        branch != null &&
-        // SCIENT-FORK:START task-folder-rewind
-        !keepTaskFolder
-        // SCIENT-FORK:END task-folder-rewind
-      ) {
+      if (taskFolder !== null && branch != null) {
         // Cleanup can remove any of the folder's checkouts; the linked project folder has none.
-        yield* taskFolders.restore({
-          taskFolder,
-          branch,
-          recreate: (checkout) =>
-            gitWorkflow.pruneWorktrees({ cwd: checkout.repositoryPath }).pipe(
-              Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: checkout.repositoryPath,
-                  refName: branch,
-                  path: checkout.worktreePath,
-                }),
+        yield* taskFolders
+          .restore({
+            taskFolder,
+            branch,
+            recreate: (checkout) =>
+              gitWorkflow.pruneWorktrees({ cwd: checkout.repositoryPath }).pipe(
+                Effect.andThen(
+                  gitWorkflow.createWorktree({
+                    cwd: checkout.repositoryPath,
+                    refName: branch,
+                    path: checkout.worktreePath,
+                  }),
+                ),
               ),
-            ),
-        });
+          })
+          .pipe(
+            // SCIENT-FORK:START task-folder-rewind — a shared folder is refused before any checkout
+            // is rebuilt; a conversation-only rewind needs only the folder its provider works in.
+            (restore) =>
+              prepareTaskFolderForRewind({
+                restore,
+                restoreFiles,
+                workingDirectory: worktreePath,
+                isolated,
+                shared: sharedWorkspace,
+                fileSystem,
+              }),
+            // SCIENT-FORK:END task-folder-rewind
+          );
       } else if (worktreePath != null && branch != null) {
         // Recreated only where the server would have made it, as turn start does.
         // A failed removal can leave the folder without its checkout; only a file restore replaces it.
