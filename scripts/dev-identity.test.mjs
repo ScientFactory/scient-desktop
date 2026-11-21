@@ -1520,6 +1520,73 @@ describe("code review guards", () => {
     assert.equal(NodeFS.readFileSync(NodePath.join(secrets, "accounts-state.bin"), "utf8"), "new");
   });
 
+  it("never runs two starts' copy or recovery in one app at once", async () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const checkout = NodePath.join(root, "candidate");
+    const stateDir = NodePath.join(checkout, ".scient-next", "scient-next-dev");
+    NodeFS.mkdirSync(stateDir, { recursive: true });
+    const installed = { stateDir: NodePath.join(root, "installed", "userdata") };
+    // Another start holds the app's copy lock for a moment and notes when it lets go.
+    const holdCopyLock = async (released) => {
+      const holder = NodeChildProcess.spawn(
+        process.execPath,
+        [
+          "-e",
+          `const { DatabaseSync } = require("node:sqlite");
+           const d = new DatabaseSync(${JSON.stringify(NodePath.join(stateDir, "dev-identity-copy-lock.sqlite"))});
+           d.exec("BEGIN EXCLUSIVE"); console.log("held");
+           setTimeout(() => {
+             require("node:fs").writeFileSync(${JSON.stringify(released)}, "");
+             d.exec("ROLLBACK"); d.close();
+           }, 700);`,
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      try {
+        await new Promise((resolve, reject) => {
+          holder.stdout.once("data", resolve);
+          holder.once("exit", () => reject(new Error("the lock holder exited before holding")));
+        });
+      } catch (error) {
+        holder.kill("SIGKILL");
+        throw error;
+      }
+      return holder;
+    };
+    for (const [name, start] of [
+      [
+        "direct",
+        async () =>
+          claimHomeStart({
+            checkoutRoot: checkout,
+            stateRoot: NodePath.join(checkout, ".scient-next"),
+            home,
+            installed,
+          }),
+      ],
+      [
+        "managed",
+        () =>
+          importDevIdentity({
+            targetStateDir: stateDir,
+            home,
+            installed,
+            environment: { [DEV_IDENTITY_ENV]: "off" },
+          }),
+      ],
+    ]) {
+      const released = NodePath.join(root, `released-${name}`);
+      const holder = await holdCopyLock(released);
+      try {
+        await start();
+        assert.equal(NodeFS.existsSync(released), true, name);
+      } finally {
+        holder.kill("SIGKILL");
+      }
+    }
+  });
+
   it("frees the seed lock the moment its process dies, and never hands it to two", async () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));
@@ -1635,13 +1702,14 @@ describe("code review guards", () => {
     const target = NodePath.join(root, "candidate", "scient-next-dev");
     write(NodePath.join(target, "secrets", "custom-model-old.bin"), "old");
     write(NodePath.join(target, "settings.json"), "{}");
-    // The connectors folder cannot be staged, after the secrets were staged.
-    NodeFS.chmodSync(target, 0o500);
+    // The home's connectors cannot be read, after the secrets were staged.
+    const connectors = NodePath.join(home.stateDir, "connectors");
+    NodeFS.chmodSync(connectors, 0o000);
     let result;
     try {
       result = await importDevIdentity({ targetStateDir: target, home });
     } finally {
-      NodeFS.chmodSync(target, 0o700);
+      NodeFS.chmodSync(connectors, 0o700);
     }
     assert.equal(result.status, "copy-failed");
     assert.equal(

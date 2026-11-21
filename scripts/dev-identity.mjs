@@ -1194,8 +1194,14 @@ export function claimHomeStart({
   if (!sameFile(stateRoot, home.root)) {
     const stateDir = NodePath.join(stateRoot, STATE_SUBDIR);
     if (!isProtectedTarget(stateDir, home, installed)) {
-      recoverInterruptedCopy(stateDir);
-      clearStaging(stateDir);
+      assertPlainTarget(stateDir);
+      const releaseState = lockStateDir(stateDir);
+      try {
+        recoverInterruptedCopy(stateDir);
+        clearStaging(stateDir);
+      } finally {
+        releaseState();
+      }
     }
     return { status: "not-home", release: () => {}, holdGroup: () => {} };
   }
@@ -1294,6 +1300,46 @@ export async function importDevIdentity({
   }
   if (isProtectedTarget(targetStateDir, home, installed)) return { status: "refused-target" };
   assertPlainTarget(targetStateDir);
+  // One copy or recovery at a time per app: a direct start may race a managed one.
+  const releaseState = lockStateDir(targetStateDir);
+  try {
+    return await copyIdentity({ targetStateDir, home, environment, now });
+  } finally {
+    releaseState();
+  }
+}
+
+const STATE_LOCK = "dev-identity-copy-lock.sqlite";
+
+/**
+ * Holds one app's copy lock, the same kind of process-held SQLite lock as the seed's: a copy, a
+ * recovery and a staging cleanup in that app never interleave, whichever command runs them.
+ */
+function lockStateDir(stateDir) {
+  NodeFS.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  // Waits for another start of the same app to finish its copy.
+  const database = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, STATE_LOCK), {
+    timeout: 60_000,
+  });
+  try {
+    database.exec("BEGIN EXCLUSIVE");
+  } catch (error) {
+    database.close();
+    throw new DevIdentityFatalError(
+      isBusy(error)
+        ? "Another start of this dev app is still copying its identity; start it again when it finishes."
+        : `Could not lock ${stateDir} for the identity copy.`,
+      { cause: error },
+    );
+  }
+  return () => {
+    database.exec("ROLLBACK");
+    database.close();
+  };
+}
+
+/** The copy itself, run under the app's copy lock. */
+async function copyIdentity({ targetStateDir, home, environment, now }) {
   recoverInterruptedCopy(targetStateDir);
   clearStaging(targetStateDir);
   if (environment[DEV_IDENTITY_ENV] === "off") return { status: "disabled" };
