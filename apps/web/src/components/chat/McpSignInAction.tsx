@@ -61,6 +61,8 @@ export function McpSignInAction({
   const [callbackUrl, setCallbackUrl] = useState("");
   // Counts attempts, so a result that lands after a close or a restart changes nothing.
   const attempt = useRef(0);
+  // SCIENT-FORK: the attempt already waiting for the agent's report; see awaitBrowser.
+  const awaiting = useRef(-1);
   if (!allowed) return null;
 
   const input = { threadId, providerThreadId, server };
@@ -101,6 +103,17 @@ export function McpSignInAction({
       done();
     }
   };
+  // SCIENT-FORK:START — a browser on the agent's computer reaches its callback page itself, so
+  // the sign-in finishes when the agent reports it; pasting stays for other setups.
+  const awaitBrowser = async () => {
+    const current = attempt.current;
+    if (awaiting.current === current) return;
+    awaiting.current = current;
+    const result = await complete({ environmentId, input });
+    if (current !== attempt.current || result._tag === "Failure") return;
+    done();
+  };
+  // SCIENT-FORK:END
   const url = signIn !== null && signIn.phase !== "starting" ? signIn.url : null;
 
   return (
@@ -156,7 +169,11 @@ export function McpSignInAction({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void ensureLocalApi().shell.openExternal(url)}
+                    onClick={() => {
+                      void ensureLocalApi().shell.openExternal(url);
+                      // SCIENT-FORK: see awaitBrowser.
+                      void awaitBrowser();
+                    }}
                   >
                     <ExternalLinkIcon aria-hidden />
                     <T>Open sign-in page</T>

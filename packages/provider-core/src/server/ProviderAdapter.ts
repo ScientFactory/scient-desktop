@@ -741,7 +741,9 @@ export interface ProviderAdapterV2McpSignIn {
   readonly complete: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;
-    readonly callbackUrl: string;
+    // SCIENT-FORK:START — undefined waits, bounded, for the agent's own report that it finished.
+    readonly callbackUrl: string | undefined;
+    // SCIENT-FORK:END
   }) => Effect.Effect<void, ProviderMcpSignInError | ProviderAdapterV2Error>;
 }
 

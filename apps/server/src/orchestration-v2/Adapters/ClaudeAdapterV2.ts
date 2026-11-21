@@ -15915,6 +15915,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               // A browser on this machine may already have finished it on Claude's own page.
               if (statuses.find((status) => status.name === server)?.status === "connected") return;
+              // SCIENT-FORK:START — Claude reports no finished sign-in, so it needs the address.
+              if (callbackUrl === undefined) {
+                return yield* fail(
+                  "Paste the address your browser went to after you approved to finish the sign-in.",
+                );
+              }
+              // SCIENT-FORK:END
               const pasted = yield* Effect.try({
                 try: () => pastedUrl(callbackUrl).toString(),
                 catch: () =>

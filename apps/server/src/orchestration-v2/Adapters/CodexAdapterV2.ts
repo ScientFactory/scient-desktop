@@ -1031,6 +1031,8 @@ interface CodexMcpSignIn {
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// SCIENT-FORK: how long a sign-in without a pasted address waits for Codex to report it.
+const CODEX_MCP_SIGN_IN_BROWSER_WAIT = "5 minutes";
 
 const getNativeThreadId = Effect.fn("CodexAdapterV2.getNativeThreadId")(function* (
   providerThread: OrchestrationV2ProviderThread,
@@ -9282,7 +9284,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (signIn === undefined) return yield* fail(`Start the sign-in to ${server} again.`);
               // A browser on this machine may already have opened Codex's callback page.
               let delivered = true;
-              if (!(yield* Deferred.isDone(signIn.succeeded))) {
+              // SCIENT-FORK:START — no address waits for a browser here to reach Codex's own page.
+              const waitsForBrowser = callbackUrl === undefined;
+              if (!waitsForBrowser && !(yield* Deferred.isDone(signIn.succeeded))) {
+                // SCIENT-FORK:END
                 const callback = yield* Effect.try({
                   try: () => oauthCallbackUrl(callbackUrl, signIn.redirectUri, signIn.state),
                   catch: () =>
@@ -9308,15 +9313,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               const succeeded = yield* Deferred.await(signIn.succeeded).pipe(
                 Effect.timeoutOrElse({
-                  duration: delivered ? "30 seconds" : "2 seconds",
+                  // SCIENT-FORK:START — see waitsForBrowser.
+                  duration: waitsForBrowser
+                    ? CODEX_MCP_SIGN_IN_BROWSER_WAIT
+                    : delivered
+                      ? "30 seconds"
+                      : "2 seconds",
                   orElse: () =>
                     Effect.fail(
                       fail(
-                        delivered
-                          ? `Codex didn't finish the sign-in to ${server}. Start again.`
-                          : `Codex didn't take the sign-in to ${server}. Start again.`,
+                        waitsForBrowser
+                          ? `Codex didn't hear back from the sign-in to ${server}. Paste the address your browser went to, or start again.`
+                          : delivered
+                            ? `Codex didn't finish the sign-in to ${server}. Start again.`
+                            : `Codex didn't take the sign-in to ${server}. Start again.`,
                       ),
                     ),
+                  // SCIENT-FORK:END
                 }),
               );
               // A newer start may have replaced this sign-in while it finished.
