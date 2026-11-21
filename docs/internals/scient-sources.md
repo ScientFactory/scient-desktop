@@ -3419,7 +3419,8 @@ same two functions.
   number); a work without one by its DOI, else by all its details, never by
   title and year alone (Mendeley Desktop's `ITEM-n` is the citation's
   numbering and is left out). A work is linked to the one Library record its
-  Zotero item and its DOI or PMID point to: the item by library and key
+  Zotero item (by every address the citation lists for it, so a synced address
+  after a local one counts) and its DOI or PMID point to: the item by library and key
   together (a zotero.org user library is the bare user ID in both, a group
   `groups/<id>`; Zotero on this computer reports a synced user's ID too and
   `0` before sync, while an unsynced document names its library

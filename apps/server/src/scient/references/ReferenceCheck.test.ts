@@ -858,9 +858,13 @@ describe("checkReferences on a Word document", () => {
     });
     await held("Twin study, first copy", { externalReferences: [zotero("40613", "TWICE001")] });
     await held("Twin study, second copy", { externalReferences: [zotero("40613", "TWICE001")] });
-    const cite = (address: string, itemData: Readonly<Record<string, unknown>>) =>
+    await held("Atlas of the brain", { externalReferences: [zotero("40613", "ATLAS001")] });
+    const cite = (
+      address: string | ReadonlyArray<string>,
+      itemData: Readonly<Record<string, unknown>>,
+    ) =>
       field(
-        ` ADDIN ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 1, uris: [address], itemData }] })} `,
+        ` ADDIN ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 1, uris: [address].flat(), itemData }] })} `,
         run("(cited)"),
       ) + fieldMark("end");
     await fixture.write(
@@ -884,6 +888,14 @@ describe("checkReferences on a Word document", () => {
             cite(
               "http://zotero.org/users/40613/items/TWICE001",
               article("4", "Lee", "Twin study", "2018"),
+            ) +
+            // This computer's own address for the item first, its synced one second.
+            cite(
+              [
+                "http://zotero.org/users/local/k2Hc8PxA/items/ATLAS001",
+                "http://zotero.org/users/40613/items/ATLAS001",
+              ],
+              article("5", "Kim", "Atlas of the brain", "2015"),
             ),
         )}</w:body></w:document>`,
       }),
@@ -901,6 +913,7 @@ describe("checkReferences on a Word document", () => {
       ["Handbook of sleep", inLibrary("Handbook of sleep")],
       ["A study that was never published", null],
       ["Twin study", null],
+      ["Atlas of the brain", inLibrary("Atlas of the brain")],
     ]);
     expect(report.notes).toEqual([
       "Citations inserted with a reference manager were read. Citations typed by hand were not.",

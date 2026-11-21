@@ -599,7 +599,8 @@ function zoteroItemIdentity(address: string): string | null {
 const schemeOf = (identifierKey: string) => identifierKey.slice(0, identifierKey.indexOf(":"));
 
 /**
- * Finds the one Library source a cited work is, by its Zotero item and by DOI or PMID. A work
+ * Finds the one Library source a cited work is, by the Zotero items its addresses name and by DOI
+ * or PMID. A work
  * that several sources answer to, or whose DOI or PMID a matched source contradicts, is ambiguous
  * and linked to none.
  */
@@ -622,15 +623,17 @@ function librarySourceFinder(records: ReadonlyArray<ScientSourceRecord>) {
     for (const key of keys) index(byIdentifier, key, record.sourceId);
   }
   return (
-    workId: string,
+    addresses: ReadonlyArray<string>,
     identifiers: ReadonlyArray<ScientSourceIdentifier>,
   ): { readonly sourceId: string | null; readonly ambiguous: boolean } => {
     const claimed = identifiers.flatMap(
       ({ scheme, value }) => workLevelIdentifierKey(scheme, value) ?? [],
     );
-    const item = zoteroItemIdentity(workId);
     const candidates = new Set([
-      ...((item && byItem.get(item)) ?? []),
+      ...addresses.flatMap((address) => {
+        const item = zoteroItemIdentity(address);
+        return [...((item && byItem.get(item)) ?? [])];
+      }),
       ...claimed.flatMap((key) => [...(byIdentifier.get(key) ?? [])]),
     ]);
     const contradicted = [...candidates].some((sourceId) => {
@@ -703,7 +706,7 @@ async function collectWordDocument(
       continue;
     }
     const claimed = cslClaimed(item.value);
-    const link = sourceOf(work.id, claimed.identifiers);
+    const link = sourceOf(work.addresses, claimed.identifiers);
     const subject: Subject = {
       scopeKey: `${file.relativePath}#${work.id}`,
       key: null,
