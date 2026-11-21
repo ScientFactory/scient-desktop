@@ -21,11 +21,15 @@ const env = HostProcess.Environment.defaultValue();
 const browsers = installedChromiumBrowsers({ platform, env, home: NodeOS.homedir() });
 const oneOfEach = [...new Map(browsers.map((found) => [found.name, found])).values()];
 
-/** One case's own page, profile and sign-in; cleanup runs even when the case times out. */
+/**
+ * One case's own page, profile and sign-in; cleanup runs even when the case times out. With
+ * `stallFails`, a page that was probed as stalled keeps the case waiting until its timeout.
+ */
 async function openSignInTestWindow(
   browser: ChromiumBrowser,
   signal: AbortSignal,
   onTestFinished: (cleanup: () => Promise<void>) => void,
+  stallFails = false,
 ) {
   const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "chrome-sign-in-"));
   const signed = Promise.withResolvers<void>();
@@ -59,10 +63,16 @@ async function openSignInTestWindow(
       }${stall.length > 0 ? `\nStall: ${stall.join("; ")}` : ""}\n${describeBrowserWindows()}\n`,
     );
   signal.addEventListener("abort", aborted, { once: true });
+  // The probe and any browser it starts end before the profile folder is removed.
+  const stopProbe = new AbortController();
+  let probing: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
   const close = () => {
     closing ??= (async () => {
       signal.removeEventListener("abort", aborted);
+      stopProbe.abort();
+      await firstLoad;
+      await probing;
       // Cancel is accepted until the result stands, so a timed-out case ends its own sign-in.
       endSignInWindow(false, platform);
       await read;
@@ -74,15 +84,19 @@ async function openSignInTestWindow(
     })();
     return closing;
   };
-  onTestFinished(close);
-  let probing: Promise<void> | undefined;
   // A window that never asks for its page: see what the dialog's advice, a reload, does.
-  const firstLoad = pageWithin(pageAsked, STALL_AFTER_MS, () => requested.includes("/")).then(
-    (asked) => {
-      if (!asked && platform === "win32")
-        probing = probeStall({ browser, folder, url, pageAsked, requested, notes: stall, signal });
-    },
-  );
+  const firstLoad = pageWithin(
+    pageAsked,
+    STALL_AFTER_MS,
+    () => requested.includes("/"),
+    stopProbe.signal,
+  ).then((asked) => {
+    if (!asked && !stopProbe.signal.aborted && platform === "win32") {
+      const stop = stopProbe.signal;
+      probing = probeStall({ browser, folder, url, pageAsked, requested, notes: stall, stop });
+    }
+  });
+  onTestFinished(close);
   try {
     await Promise.race([
       signed.promise,
@@ -94,7 +108,7 @@ async function openSignInTestWindow(
     if (probing) {
       await probing;
       // The first launch failed even if a reload saved it: the case times out under its row.
-      await new Promise<never>(() => undefined);
+      if (stallFails) await new Promise<never>(() => undefined);
     }
     pageReady = true;
     return { folder, read, [Symbol.asyncDispose]: close };
@@ -107,22 +121,28 @@ async function openSignInTestWindow(
 /** A first page request that takes this long is a stall; fresh CI machines take up to ~25 s. */
 const STALL_AFTER_MS = 45_000;
 
-/** True once `asked()` holds, checked now and at each page request; false if `ms` pass first. */
-const pageWithin = (pageAsked: EventTarget, ms: number, asked: () => boolean) =>
+/**
+ * True once `asked()` holds, checked now and at each page request; false if `ms` pass first or
+ * `stop` is aborted.
+ */
+const pageWithin = (pageAsked: EventTarget, ms: number, asked: () => boolean, stop: AbortSignal) =>
   new Promise<boolean>((resolve) => {
     if (asked()) return resolve(true);
-    const check = () => {
-      if (!asked()) return;
+    if (stop.aborted) return resolve(false);
+    const settle = (answer: boolean) => {
       clearTimeout(timer);
       pageAsked.removeEventListener("page", check);
-      resolve(true);
+      stop.removeEventListener("abort", stopped);
+      resolve(answer);
     };
+    const check = () => {
+      if (asked()) settle(true);
+    };
+    const stopped = () => settle(false);
     // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- how long a real browser takes to ask for a page is the thing measured; no event marks "never"
-    const timer = setTimeout(() => {
-      pageAsked.removeEventListener("page", check);
-      resolve(false);
-    }, ms);
+    const timer = setTimeout(() => settle(false), ms);
     pageAsked.addEventListener("page", check);
+    stop.addEventListener("abort", stopped, { once: true });
   });
 
 /** Brings the window of the browser on `profile` to the front and presses F5 there. */
@@ -138,12 +158,12 @@ const RELOAD_SCRIPT = [
 ].join("\n");
 
 /** PowerShell's output, without blocking the test page's server while it runs. */
-const powershell = (script: string, extra: Record<string, string> = {}) =>
+const powershell = (script: string, stop: AbortSignal, extra: Record<string, string> = {}) =>
   new Promise<string>((resolve) => {
     NodeChildProcess.execFile(
       "powershell",
       ["-NoProfile", "-Command", script],
-      { encoding: "utf8", timeout: 15_000, env: { ...env, ...extra } },
+      { encoding: "utf8", timeout: 15_000, signal: stop, env: { ...env, ...extra } },
       (error, stdout) => resolve(error ? `failed: ${error.message}` : stdout.trim()),
     );
   });
@@ -159,13 +179,15 @@ async function probeStall(input: {
   readonly pageAsked: EventTarget;
   readonly requested: ReadonlyArray<string>;
   readonly notes: string[];
-  readonly signal: AbortSignal;
+  /** Aborted when the case cleans up: the probe then ends, and any browser it started. */
+  readonly stop: AbortSignal;
 }) {
-  const { browser, folder, url, pageAsked, requested, notes } = input;
+  const { browser, folder, url, pageAsked, requested, notes, stop } = input;
   const pages = () => requested.filter((path) => path === "/").length;
   notes.push(`no request for the page after ${STALL_AFTER_MS / 1000} s`);
   const processes = await powershell(
     "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'chrome|msedge|update' } | ForEach-Object { \"$($_.ProcessId)<-$($_.ParentProcessId) $($_.Name) $($_.CommandLine)\" }",
+    stop,
   );
   process.stderr.write(`Browser processes at the stall:\n${processes}\n`);
   if (pages() > 0) {
@@ -174,35 +196,42 @@ async function probeStall(input: {
   }
   // The page can be asked for again before PowerShell has even returned.
   const beforeReload = pages();
-  const reload = await powershell(RELOAD_SCRIPT, { SCIENT_PROFILE: folder });
+  const reload = await powershell(RELOAD_SCRIPT, stop, { SCIENT_PROFILE: folder });
   if (reload !== "sent") notes.push(`reload not tried: ${reload}`);
-  else if (await pageWithin(pageAsked, 20_000, () => pages() > beforeReload)) {
+  else if (await pageWithin(pageAsked, 20_000, () => pages() > beforeReload, stop)) {
     notes.push("a reload in the window brought the page");
     return;
   } else notes.push("a reload in the window brought nothing");
-  if (input.signal.aborted) return;
+  if (stop.aborted) return;
   // A second launch on the profile hands the address to the browser already running on it.
   const beforeAgain = pages();
   const again = NodeChildProcess.spawn(browser.executable, [`--user-data-dir=${folder}`, url], {
     stdio: "ignore",
   });
   again.on("error", () => undefined);
-  input.signal.addEventListener("abort", () => again.kill(), { once: true });
-  const exited = new Promise<boolean>((resolve) => again.once("exit", () => resolve(true)));
+  const exited = new Promise<boolean>((resolve) => {
+    again.once("exit", () => resolve(true));
+    again.once("error", () => resolve(true));
+  });
   notes.push(
-    (await pageWithin(pageAsked, 20_000, () => pages() > beforeAgain))
+    (await pageWithin(pageAsked, 20_000, () => pages() > beforeAgain, stop))
       ? "opening the page again brought it"
       : "opening the page again brought nothing",
   );
   // It hands the address over and exits; one that stays would hold the profile folder.
   const handedOver = await Promise.race([
     exited,
+    new Promise<false>((resolve) => {
+      if (stop.aborted) resolve(false);
+      else stop.addEventListener("abort", () => resolve(false), { once: true });
+    }),
     // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a launcher that never exits has no event; this bounds the wait for it
     new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
   ]);
   if (!handedOver && again.exitCode === null && again.signalCode === null) {
     notes.push("the second launch kept running, so it was stopped");
-    again.kill();
+    again.kill("SIGKILL");
+    await exited;
   }
 }
 
@@ -261,7 +290,7 @@ describe.runIf(env.SCIENT_CHROME_WINDOW_TEST === "1" && canQuitWindow(platform))
     it.for(oneOfEach)(
       "brings $name's sign-in back, read by $name itself",
       async (browser, { signal, onTestFinished }) => {
-        await using window = await openSignInTestWindow(browser, signal, onTestFinished);
+        await using window = await openSignInTestWindow(browser, signal, onTestFinished, true);
         const { folder, read } = window;
         expect(await endSignInWindow(true, platform)).toBe(true);
         const outcome = await read;
