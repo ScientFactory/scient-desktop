@@ -2009,7 +2009,9 @@ export function ScientSourcesPanel(props: {
       <div className={`${SOURCES_COLUMN} flex shrink-0 flex-col`}>
         {scopes ? (
           <div className="@container mx-3 mt-2 flex flex-wrap items-center gap-2">
+            {/* In a narrow panel a long translation shortens the labels instead of overflowing. */}
             <ToggleGroup
+              className="max-w-full *:min-w-0 *:shrink"
               aria-label={gt("Source scope")}
               value={[scopes.listed]}
               onValueChange={(values) => {
@@ -2017,8 +2019,12 @@ export function ScientSourcesPanel(props: {
                 if (scope === "project" || scope === "library") selectScope(scope);
               }}
             >
-              <Toggle value="project">{m(LIBRARY_LABELS.scopes.project)}</Toggle>
-              <Toggle value="library">{m(LIBRARY_LABELS.scopes.library)}</Toggle>
+              <Toggle value="project">
+                <span className="truncate">{m(LIBRARY_LABELS.scopes.project)}</span>
+              </Toggle>
+              <Toggle value="library">
+                <span className="truncate">{m(LIBRARY_LABELS.scopes.library)}</span>
+              </Toggle>
             </ToggleGroup>
             {packageSources ? (
               <>
@@ -2083,9 +2089,12 @@ export function ScientSourcesPanel(props: {
               : {})}
           />
         ) : sources.overview.records.length > 0 ? (
-          <div className="mx-3 mt-2 mb-1 flex min-h-8 items-center gap-1 rounded-md text-sm text-muted-foreground">
+          <div className="@container mx-3 mt-2 mb-1 flex min-h-8 items-center gap-1 rounded-md text-sm text-muted-foreground">
             <div className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground">
-              <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+              <Search
+                className="size-4 shrink-0 text-muted-foreground/80 @max-[20rem]:hidden"
+                aria-hidden="true"
+              />
               <Input
                 nativeInput
                 unstyled
@@ -2139,7 +2148,7 @@ export function ScientSourcesPanel(props: {
                 aria-label={gt("Sort sources")}
               >
                 <ArrowDownUp className="size-3.5" aria-hidden="true" />
-                <SelectValue className="max-w-20" />
+                <SelectValue className="max-w-20 @max-[20rem]:hidden" />
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SCIENT_SOURCE_SORT_OPTIONS.map((option) => (
