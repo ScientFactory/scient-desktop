@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, one {Försökte förbereda dokument {count} gång} other {Försökte förbereda dokument {count} gånger}}",
   "0390ea5370ded535": "{count, plural, one {Använde Overleaf {count} gång} other {Använde Overleaf {count} gånger}}",
   "7d731a70186a49b8": "{count, plural, one {Försökte använda Overleaf {count} gång} other {Försökte använda Overleaf {count} gånger}}",
+  "d89410af8ed20232": "{count, plural, one {Använde anpassade modeller {count} gång} other {Använde anpassade modeller {count} gånger}}",
+  "b45c46842b99935e": "{count, plural, one {Försökte använda anpassade modeller {count} gång} other {Försökte använda anpassade modeller {count} gånger}}",
   "8f868975fffc4620": "{count, plural, one {Använde Beräkning {count} gång} other {Använde Beräkning {count} gånger}}",
   "1f97511c97da1198": "{count, plural, one {Försökte använda Beräkning {count} gång} other {Försökte använda Beräkning {count} gånger}}",
   "420bea546d5f8802": "Tråden kopierades",

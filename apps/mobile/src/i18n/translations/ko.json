@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, other {문서 {count}회 준비 시도함}}",
   "0390ea5370ded535": "{count, plural, other {Overleaf {count}회 사용함}}",
   "7d731a70186a49b8": "{count, plural, other {Overleaf {count}회 사용 시도함}}",
+  "d89410af8ed20232": "{count, plural, other {사용자 지정 모델 {count}회 사용함}}",
+  "b45c46842b99935e": "{count, plural, other {사용자 지정 모델 {count}회 사용 시도함}}",
   "8f868975fffc4620": "{count, plural, other {컴퓨팅 {count}회 사용함}}",
   "1f97511c97da1198": "{count, plural, other {컴퓨팅 {count}회 사용 시도함}}",
   "420bea546d5f8802": "스레드 복사됨",

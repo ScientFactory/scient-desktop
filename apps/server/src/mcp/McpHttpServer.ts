@@ -100,6 +100,10 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
+// SCIENT-FORK:START — agents manage Settings → Custom models.
+import { CustomModelsToolkit } from "../scient/customModels/agent/tools.ts";
+import * as CustomModelsHandlers from "../scient/customModels/agent/handlers.ts";
+// SCIENT-FORK:END
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -1741,6 +1745,12 @@ const layerThemeToolkit = toolkitRegistration(ThemeToolkit, ThemeHandlers.layer)
   Layer.provide(ThreadCommandExecutor.layer),
 );
 
+// SCIENT-FORK: agents manage Settings → Custom models.
+const layerCustomModelsToolkit = toolkitRegistration(
+  CustomModelsToolkit,
+  CustomModelsHandlers.layer,
+).pipe(Layer.provide(ThreadCommandExecutor.layer));
+
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
@@ -1781,6 +1791,8 @@ const orchestrationTools = [
   ...Object.values(ProjectToolkit.tools),
   ...Object.values(EnvironmentToolkit.tools),
   ...Object.values(ThemeToolkit.tools),
+  // SCIENT-FORK: agents manage Settings → Custom models.
+  ...Object.values(CustomModelsToolkit.tools),
 ];
 const previewTools = [
   ...Object.values(PreviewToolkit.tools),
@@ -1891,6 +1903,8 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerEnvironmentToolkit,
   layerThemeToolkit,
+  // SCIENT-FORK: agents manage Settings → Custom models.
+  layerCustomModelsToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,

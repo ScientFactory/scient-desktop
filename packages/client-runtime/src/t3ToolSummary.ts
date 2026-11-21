@@ -1894,6 +1894,20 @@ function scientToolSummaryLabel(
               { count },
             ),
           );
+    case "scient-custom-models":
+      return done
+        ? resolve(
+            msg(
+              "{count, plural, one {Used custom models {count} time} other {Used custom models {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to use custom models {count} time} other {Tried to use custom models {count} times}}",
+              { count },
+            ),
+          );
     case "scient-compute":
       return done
         ? resolve(

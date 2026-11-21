@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, one {A tenté de préparer des documents {count} fois} other {A tenté de préparer des documents {count} fois}}",
   "0390ea5370ded535": "{count, plural, one {A utilisé Overleaf {count} fois} other {A utilisé Overleaf {count} fois}}",
   "7d731a70186a49b8": "{count, plural, one {A tenté d’utiliser Overleaf {count} fois} other {A tenté d’utiliser Overleaf {count} fois}}",
+  "d89410af8ed20232": "{count, plural, one {A utilisé les modèles personnalisés {count} fois} other {A utilisé les modèles personnalisés {count} fois}}",
+  "b45c46842b99935e": "{count, plural, one {A tenté d’utiliser les modèles personnalisés {count} fois} other {A tenté d’utiliser les modèles personnalisés {count} fois}}",
   "8f868975fffc4620": "{count, plural, one {A utilisé Compute {count} fois} other {A utilisé Compute {count} fois}}",
   "1f97511c97da1198": "{count, plural, one {A tenté d’utiliser Compute {count} fois} other {A tenté d’utiliser Compute {count} fois}}",
   "420bea546d5f8802": "Fil copié",

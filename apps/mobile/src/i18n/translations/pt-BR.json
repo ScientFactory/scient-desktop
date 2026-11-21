@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, one {Tentou preparar documentos {count} vez} other {Tentou preparar documentos {count} vezes}}",
   "0390ea5370ded535": "{count, plural, one {Usou o Overleaf {count} vez} other {Usou o Overleaf {count} vezes}}",
   "7d731a70186a49b8": "{count, plural, one {Tentou usar o Overleaf {count} vez} other {Tentou usar o Overleaf {count} vezes}}",
+  "d89410af8ed20232": "{count, plural, one {Usou modelos personalizados {count} vez} other {Usou modelos personalizados {count} vezes}}",
+  "b45c46842b99935e": "{count, plural, one {Tentou usar modelos personalizados {count} vez} other {Tentou usar modelos personalizados {count} vezes}}",
   "8f868975fffc4620": "{count, plural, one {Usou a Computação {count} vez} other {Usou a Computação {count} vezes}}",
   "1f97511c97da1198": "{count, plural, one {Tentou usar a Computação {count} vez} other {Tentou usar a Computação {count} vezes}}",
   "420bea546d5f8802": "Thread copiada",

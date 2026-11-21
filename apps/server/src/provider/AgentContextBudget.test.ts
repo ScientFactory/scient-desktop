@@ -51,6 +51,7 @@ import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
 import { EnvironmentThemeService } from "../environmentTheme.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
+import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 // SCIENT-FORK:START Scient's budget file holds these measurements beside its own.
 import scientBudget from "./agentContextBudget.scient.json" with { type: "json" };
 const { claudeSystemAppendBytes, codexAdditionalContextBytes, mcpToolListJsonBytes } = scientBudget;
@@ -97,6 +98,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ProjectSetupScriptRunner)({}),
   Layer.mock(ProviderAdapterRegistryV2)({}),
   Layer.mock(ProviderRegistry)({}),
+  Layer.mock(ProviderInstanceRegistry)({}),
   Layer.mock(PullRequestReviewGuideService)({}),
   Layer.mock(PullRequestService)({}),
   Layer.mock(GitManager)({}),
