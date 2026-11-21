@@ -1098,6 +1098,64 @@ describe("Send to Zotero", () => {
     expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Read **twice**");
   });
 
+  it("reports a link-only note on an existing item after switching from another saved Zotero base", async () => {
+    const mine = {
+      system: "zotero",
+      libraryId: String(USER),
+      itemKey: "DEST2345",
+      itemVersion: 10,
+      rawItemType: "journalArticle",
+    };
+    const { root, sourceId } = await sourceInScient({ externalReferences: [mine] });
+    const record = (await readScientSourceRecord(root, sourceId))!;
+    // Earlier base belonged to a different Zotero item in another library.
+    await writeScientSourceZoteroSync(root, {
+      formatVersion: 1,
+      sourceId,
+      libraryId: "groups/88",
+      itemKey: "PREV2345",
+      itemVersion: 4,
+      syncedAt: "2026-11-20T00:00:00.000Z",
+      metadata: editableMetadataFromRecord(record),
+      note: record.note ?? null,
+      notes: [],
+      attachmentKeys: [],
+    });
+    const org = zoteroOrg();
+    org.items.set(
+      "DEST2345",
+      zoteroItem("DEST2345", { version: 10, title: "Titled in Zotero" }, USER),
+    );
+    // Anchor without visible text: legacy plain-text conversion is null, Markdown keeps the URL.
+    org.items.set(
+      "LINK2345",
+      zoteroItem(
+        "LINK2345",
+        {
+          version: 10,
+          itemType: "note",
+          parentItem: "DEST2345",
+          note: '<p><a href="https://example.com"></a></p>',
+        },
+        USER,
+      ),
+    );
+
+    const sent = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    const refreshed = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+
+    expect(sent.items[0]?.outcome).toBe("updated");
+    expect(refreshed.items[0]?.conflicts).toEqual([
+      expect.objectContaining({ field: "note", zotero: "<https://example.com>" }),
+    ]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Read **twice**");
+  });
+
   it("links the item it made when the source is edited during the Send, and makes no second one", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg();

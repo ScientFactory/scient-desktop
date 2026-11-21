@@ -733,7 +733,7 @@ async function syncAfterSend(input: {
       ? { notes: previous }
       : input.sentVersion === undefined
         ? {}
-        : { notes: { note: null } }),
+        : { notes: { note: null, notes: [] } }),
   });
 }
 
