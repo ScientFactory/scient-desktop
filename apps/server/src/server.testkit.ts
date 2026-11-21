@@ -858,6 +858,7 @@ export const buildAppUnderTest = (options?: {
       NativeAppIconResolver.layer,
       // Single-folder threads: no task folder and no other tracked folders.
       Layer.mock(TaskFolders.TaskFolders)({
+        plan: () => Effect.succeed(null),
         find: () => Effect.succeed(null),
         createForProjectFolder: () => Effect.succeed(null),
         removeIfTaskFolder: () => Effect.succeed(false),
