@@ -408,10 +408,10 @@ event.
 The built-in shipping policy is:
 
 - `workspace-readiness-review`: active, with automatic selection;
-- `improve-workspace-readiness`: active, with explicit `$name` selection;
+- `improve-workspace-readiness`: active, with automatic selection, triggered only
+  when the user asks for changes (so "yes, apply those findings" works after a review);
 - `scient-skill-authoring`: active, with automatic selection;
 - `pdf-authoring`: active, with automatic selection;
-- `html-pdf-authoring`: active, with automatic selection;
 - `latex-authoring`: active, with automatic selection;
 - `overleaf-sync`: active, with automatic selection;
 - `references`: active, with automatic selection. It drives reference reviews
@@ -421,6 +421,18 @@ The built-in shipping policy is:
   `templates/` are served by `scient_skill_read_resource`, and `scient_connector_copy` writes
   the same embedded template; see
   [agent-made connectors](scient-extensions.md#agent-made-connectors).
+- `statistics-review`, `check-reported-numbers`, `reviewer-response`,
+  `ml-evaluation-audit`, `reporting-guideline-check` and `diagnose-analysis`
+  (category Analysis): active, with automatic selection;
+- `grill-me` and `to-questionnaire` (category Planning and learning): active,
+  with automatic selection; `teach`: active, with explicit `$name` selection.
+
+`pdf-authoring` covers HTML-to-PDF through its `references/html-print.md`; the
+former `html-pdf-authoring` skill is retired. `grill-me`, `to-questionnaire`,
+`diagnose-analysis`, `teach` and the writing guidance in
+`scient-skill-authoring/references/writing-for-agents.md` are adapted from
+[mattpocock/skills](https://github.com/mattpocock/skills) (MIT); each keeps the
+upstream licence as `LICENSE-upstream.txt`.
 
 Changing these catalog defaults affects only skills without an explicit user
 preference. Enabling or disabling a skill always creates a durable preference,
