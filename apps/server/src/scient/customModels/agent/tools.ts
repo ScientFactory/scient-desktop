@@ -61,7 +61,7 @@ const CustomModelsList = Schema.Struct({
 const CustomModelsReadTool = Tool.make("scient_custom_models", {
   ...shared,
   description:
-    "List Settings → Custom models: each connection (endpoint, whether a key is saved), its models, their limits, and their status in each agent (Pi, Droid, Oh My Pi, Scient Agent) that can use them. Never returns keys.",
+    "List Settings → Custom models: each connection (endpoint, whether a key is saved), its models, their limits, and their status in each agent that can use them. Never returns keys.",
   parameters: Tool.EmptyParams,
   success: CustomModelsList,
 })
