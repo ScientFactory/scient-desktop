@@ -10597,6 +10597,8 @@
   "6ebd73c7bfb58bb7": "App",
   "6939d310de8dfe5b": "Organisation",
   "c424bee294b9f778": "Miljön hanteras av {organization}. Vissa inställningar och funktioner följer dess policy.",
+  "1aeeabca019f7b70": "Release history",
+  "fd75e107e74066dd": "Read what is new in each Scient version.",
   "6a48fd0a37e725a1": "Juridiskt",
   "7435beda88d745df": "Meddelanden för beroenden, resurser och valfria verktyg som Scient använder.",
   "7c0512387c3a42ea": "Stable",
@@ -10625,6 +10627,7 @@
   "126a28a1ad4b2d57": "Anslut en miljö för att välja dess modell för textgenerering.",
   "5fe5a45199fa9c07": "Inga leverantörer för textgenerering tillgängliga.",
   "99ceba64591c9257": "Visa diagnostik",
+  "f3bad30c92d2531e": "Versionshistorik",
   "6d59e1e516e53d17": "Visa licenser",
   "941d08db15f62d17": "Arkiverat",
   "e122b2428c0d03a5": "Öppna alla miljöer",
@@ -18701,7 +18704,7 @@
   "82c9dcb2d3988897": "Nytt i Scient",
   "1a08027478190568": "Läs vad som är nytt i Scient version {version}",
   "638a8d35237365e7": "Stäng den här versionsinformationen",
-  "2e15761642f5bac1": "Tillbaka till den här versionen",
+  "3c504934db8a6932": "Read release notes for Scient {version}, current version",
   "cffb0f547a0ad0df": "Läs versionsinformation för Scient {version}",
   "69613360fde7644e": [
     "Nytt i Scient · v",
@@ -18712,7 +18715,6 @@
     }
   ],
   "d6beec9ee54bbeb1": "Se vad som är nytt",
-  "f3bad30c92d2531e": "Versionshistorik",
   "e668dfdaefe05856": "Nytt i Scient",
   "7e6f969c89a1de21": [
     "Version ",
