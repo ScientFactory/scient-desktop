@@ -155,8 +155,10 @@ export class TaskFolders extends Context.Service<
       ) => Effect.Effect<{ readonly keep: string | null; readonly force: boolean }>;
       // SCIENT-FORK:START guarded-task-folder-cleanup
       /**
-       * Removes one inspected checkout in place of `git worktree remove`; a reason keeps it. With
-       * it, a project teardown command keeps the whole folder: the command is not guarded.
+       * Removes one inspected checkout in place of `git worktree remove`; a reason keeps it. Like
+       * that command, it removes through `checkout.repositoryPath`, never through whichever
+       * repository now owns the folder. With it, a project teardown command keeps the whole
+       * folder: the command is not guarded.
        */
       readonly removeCheckout?: (checkout: TaskFolderCheckout) => Effect.Effect<string | null>;
       // SCIENT-FORK:END guarded-task-folder-cleanup

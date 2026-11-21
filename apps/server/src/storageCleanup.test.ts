@@ -1455,6 +1455,43 @@ it.live("leaves a task folder whose project has a teardown command to the user",
     }),
   ),
 );
+
+it.live("keeps another repository's worktree found at a task checkout's path", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, root, command } = yield* taskFolderCleanupFixture;
+      const web = `${root}/dist/web`;
+      // The task's checkout went, and an unrelated repository checked its own `task` branch out
+      // in the same place: clean, on the thread's branch name, but not the recorded repository's.
+      yield* command(`${repo}/dist/web`, ["worktree", "remove", web]);
+      const unrelated = `${repo}/dist/unrelated`;
+      yield* fs.makeDirectory(unrelated, { recursive: true });
+      yield* command(unrelated, ["init", "-b", "main"]);
+      yield* command(unrelated, ["config", "user.email", "cleanup@example.test"]);
+      yield* command(unrelated, ["config", "user.name", "Cleanup test"]);
+      yield* fs.writeFileString(`${unrelated}/tracked.txt`, "unrelated\n");
+      yield* command(unrelated, ["add", "."]);
+      yield* command(unrelated, ["commit", "-m", "initial"]);
+      yield* command(unrelated, ["worktree", "add", "-b", "task", web]);
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        { path: root, outcome: "kept", reason: "Holds a repository that was kept" },
+        { path: `${root}/dist/api`, outcome: "removed", reason: expect.any(String) },
+        {
+          path: web,
+          outcome: "kept",
+          reason: `It is not a Git worktree of ${repo}/dist/web`,
+        },
+      ]);
+      expect(yield* fs.readFileString(`${web}/tracked.txt`)).toBe("unrelated\n");
+      expect((yield* command(unrelated, ["worktree", "list", "--porcelain"])).stdout).toContain(
+        `worktree ${web}\n`,
+      );
+    }),
+  ),
+);
 // SCIENT-FORK:END preserve-racing-worktree-files
 
 // SCIENT-FORK: Scient keeps a submodule worktree Git cannot isolate instead of removing it.
