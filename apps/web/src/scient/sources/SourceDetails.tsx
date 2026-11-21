@@ -1022,7 +1022,7 @@ export function SourceDetails(props: {
             if (open) props.onSourceActionsOpen?.();
           }}
         >
-          <ScientTooltip content="More source actions">
+          <ScientTooltip content={gt("More source actions")}>
             <MenuTrigger
               render={
                 <Button size="icon-xs" variant="ghost" aria-label={gt("More source actions")}>

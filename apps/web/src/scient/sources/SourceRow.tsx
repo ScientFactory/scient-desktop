@@ -166,7 +166,7 @@ export function SourcePdfAction(props: {
   if (materialSelection._tag === "Selected") {
     const pdf = materialSelection.material;
     return (
-      <ScientTooltip content="Open PDF">
+      <ScientTooltip content={gt("Open PDF")}>
         <Button
           variant="ghost"
           size={props.size}
@@ -186,7 +186,7 @@ export function SourcePdfAction(props: {
   }
   if (materialSelection._tag !== "SeveralMaterials") return null;
   return (
-    <ScientTooltip content="Choose a PDF in source details">
+    <ScientTooltip content={gt("Choose a PDF in source details")}>
       <Button
         variant="ghost"
         size={props.size}
@@ -207,7 +207,7 @@ export function SourceMenuButton(props: {
 }) {
   const gt = useGT();
   return (
-    <ScientTooltip content="More source actions">
+    <ScientTooltip content={gt("More source actions")}>
       <Button
         variant="ghost"
         size="icon-xs"

@@ -297,7 +297,9 @@ export function SourcesBulkBar(props: {
           }
         />
         <span className="ms-2 me-auto whitespace-nowrap text-muted-foreground tabular-nums">
-          {count > 0 || !progress ? `${count.toLocaleString()} selected` : null}
+          {count > 0 || !progress
+            ? gt("{count} selected", { count: count.toLocaleString() })
+            : null}
         </span>
         <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:order-1 @max-[30rem]/bulk:basis-full">
           {count >= 2 ? <CompareSourcesButton records={selected} /> : null}

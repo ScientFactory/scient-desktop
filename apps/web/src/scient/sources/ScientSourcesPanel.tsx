@@ -1774,7 +1774,7 @@ export function ScientSourcesPanel(props: {
     },
   };
   const nextView: SourceView = sourceView === "list" ? "cards" : "list";
-  const viewLabel = nextView === "cards" ? "Show as cards" : "Show as a list";
+  const viewLabel = nextView === "cards" ? gt("Show as cards") : gt("Show as a list");
 
   return (
     <div
