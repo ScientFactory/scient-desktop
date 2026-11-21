@@ -840,24 +840,30 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
       : "";
   const baseDir = env.SCIENT_NEXT_HOME ?? (yield* DEFAULT_T3_HOME);
   // SCIENT-FORK:START — every entry point readies the identity home the same way: only its own
-  // checkout may open it, never during a seed, and a seed that stopped is finished first.
+  // checkout may open it, never during a seed, a seed that stopped is finished first, and the
+  // home stays claimed against seeding until this runner and its children are gone.
   const checkoutRoot = worktreePath ?? (yield* HostProcess.WorkingDirectory);
   yield* Effect.tryPromise({
     try: async () => {
       const identity = (await import(IDENTITY_MODULE)) as {
         assertHomeCheckout: (input: { checkoutRoot: string; stateRoot: string }) => void;
-        prepareHomeStart: (input: { checkoutRoot: string; stateRoot: string }) => string;
+        claimHomeStart: (input: { checkoutRoot: string; stateRoot: string }) => {
+          status: string;
+          release: () => void;
+        };
       };
       // A dry run only resolves: it checks ownership but changes nothing in the home.
       if (input.dryRun) {
         identity.assertHomeCheckout({ checkoutRoot, stateRoot: baseDir });
         return;
       }
-      if (identity.prepareHomeStart({ checkoutRoot, stateRoot: baseDir }) === "seeding") {
+      const claim = identity.claimHomeStart({ checkoutRoot, stateRoot: baseDir });
+      if (claim.status === "seeding") {
         throw new Error(
           "pnpm dev:identity seed is filling the dev identity home; start it again when the seed finishes.",
         );
       }
+      process.once("exit", claim.release);
     },
     catch: (cause) => new DevRunnerIdentityHomeError({ cause }),
   });

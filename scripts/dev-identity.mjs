@@ -44,8 +44,11 @@ const IDENTITY_SECRET =
 /** Records the vault encrypts directly; a connector record may still be legacy JSON. */
 const VAULT_RECORD =
   /^(?:accounts-(?:state|activity)|accounts-value-[0-9a-f-]{36}|connector-[0-9a-f-]{36})$/u;
-/** Install records the Accounts store seals with the vault key; they die with that key. */
-const SEALED_INSTALL_RECORD = /^secret-request-[0-9a-f]{32}\.bin$/u;
+/**
+ * Records AccountsSecretStore seals with the vault key behind a 0xff byte: custom-model keys and
+ * secret-request answers (not their plain salt). Other install records may start with 0xff too.
+ */
+const SEALED_RECORD = /^(?:custom-model-.+|secret-request-[0-9a-f]{32})$/u;
 /** A reference from settings, connectors or Accounts to a record that must travel with it. */
 const RECORD_REFERENCE = /^(?:accounts-value|connector|custom-model)-[0-9a-f-]{36}$/u;
 
@@ -470,12 +473,13 @@ export function makePortableVault() {
 }
 
 /**
- * Gives a home a file key before its first launch would make a Keychain one. A file key whose
- * sentinel is missing is kept and the sentinel rebuilt from it; a vault holding data no usable key
- * opens is left untouched.
+ * Gives a home a file key before its first launch would make a Keychain one. A Keychain vault is
+ * left as it is (the seed moves it); a file key whose sentinel is missing is kept and the
+ * sentinel rebuilt from it; a vault holding any record no usable key opens is left untouched.
  */
 export function ensurePortableVault(stateDir) {
-  if (vaultProtection(stateDir) === "file") return false;
+  const protection = vaultProtection(stateDir);
+  if (protection === "file" || protection === "keychain") return false;
   let target;
   try {
     target = readTargetVault(stateDir);
@@ -621,17 +625,39 @@ const pendingRecords = (local) =>
 /** A target whose own accounts would be lost by the copy; it keeps the identity it has. */
 class TargetVaultError extends Error {}
 
+/** Every record sealed under a vault key, other than the key and its sentinel. */
+function vaultSealedNames(secretsDir) {
+  let names;
+  try {
+    names = NodeFS.readdirSync(secretsDir);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+  return names.filter((name) => {
+    const record = name.replace(/\.bin$/u, "");
+    if (record === name || record === VAULT_SENTINEL || record === VAULT_KEY_FILE) return false;
+    const path = NodePath.join(secretsDir, name);
+    if (!NodeFS.lstatSync(path).isFile()) return false;
+    const first = readBytes(path)?.[0];
+    // A connector record from before the vault is plain JSON and needs no key.
+    if (VAULT_RECORD.test(record)) return !(record.startsWith("connector-") && first !== 1);
+    return first === SEALED && SEALED_RECORD.test(record);
+  });
+}
+
+/** Records a copy replaces from the home; the Accounts document keeps the target's own part. */
+const replacedByCopy = (name) => name !== `${ACCOUNTS_STATE}.bin` && IDENTITY_SECRET.test(name);
+
 /**
  * The target's own vault: its key and Accounts document when a file key opens them. A file key
  * whose sentinel is missing is kept too: the app rebuilds the sentinel from it. A Keychain,
- * unreadable or keyless vault is replaced only when it holds nothing of the target's own.
+ * unreadable or keyless vault is replaced only when no sealed record but those `replaced`
+ * names would be lost with it.
  */
-function readTargetVault(stateDir) {
+function readTargetVault(stateDir, { replaced = () => false } = {}) {
   const secrets = NodePath.join(stateDir, "secrets");
-  const names = exists(secrets) ? NodeFS.readdirSync(secrets) : [];
-  const ownData =
-    names.includes(`${ACCOUNTS_STATE}.bin`) ||
-    names.some((name) => SEALED_INSTALL_RECORD.test(name));
+  const ownData = vaultSealedNames(secrets).some((name) => !replaced(name));
   const protection = vaultProtection(stateDir);
   const key = readBytes(NodePath.join(secrets, `${VAULT_KEY_FILE}.bin`));
   if (protection === "file" || (protection === "none" && key !== undefined)) {
@@ -1152,6 +1178,52 @@ export function prepareHomeStart({
   return "ready";
 }
 
+const RUNNERS_DIR = "dev-identity-runners";
+/** The launcher's own grace for a runner folder whose receipt is not written yet. */
+const RUNNER_START_GRACE_MS = 5_000;
+
+/** The process group a runner and the children it starts share, when `ps` can tell. */
+const processGroupOf = (pid) => {
+  const result = NodeChildProcess.spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
+  const group = Number.parseInt(result.stdout?.trim() ?? "", 10);
+  return Number.isInteger(group) && group > 1 ? group : undefined;
+};
+
+/**
+ * Claims the home for one app runner until `release`. The runner records itself before it checks
+ * the seed lock, and a seed takes that lock before it checks for runners, so one of the two always
+ * sees the other. The record names the runner's process group too, so the home stays claimed
+ * while children it started outlive it.
+ */
+export function claimHomeStart({
+  checkoutRoot,
+  stateRoot,
+  home = resolveDevIdentityHome(),
+  installed = resolveInstalledApp(),
+  pid = process.pid,
+  processGroup = processGroupOf,
+}) {
+  assertHomeCheckout({ checkoutRoot, stateRoot, home });
+  if (!sameFile(stateRoot, home.root)) return { status: "not-home", release: () => {} };
+  const receipt = NodePath.join(home.root, RUNNERS_DIR, `${String(pid)}.json`);
+  writeFileAtomic(receipt, jsonBytes({ pid, processGroup: processGroup(pid) ?? null }));
+  const release = () => NodeFS.rmSync(receipt, { force: true });
+  let readiness;
+  try {
+    readiness = prepareHomeStart({ checkoutRoot, stateRoot, home, installed });
+  } catch (error) {
+    release();
+    throw error;
+  }
+  if (readiness === "seeding") {
+    release();
+    return { status: "seeding", release: () => {} };
+  }
+  return { status: "ready", release };
+}
+
 /**
  * What the home looked like with no seed or setup in it: undefined while one holds the home or
  * left a journal. Two equal readings around a copy mean nothing was published in between.
@@ -1218,7 +1290,7 @@ export async function importDevIdentity({
   let target = {};
   if (protection === "file") {
     try {
-      target = readTargetVault(targetStateDir);
+      target = readTargetVault(targetStateDir, { replaced: replacedByCopy });
     } catch (error) {
       if (!(error instanceof TargetVaultError)) throw error;
       return { status: "target-vault-not-portable", reason: error.message };
@@ -1401,10 +1473,14 @@ export function resolveInstalledApp(homeDir = NodeOS.homedir()) {
 
 /**
  * The home's app writes its own files; seeding and moving the home wait until it is closed. A
- * runner still starting has no process recorded yet and counts as running; a receipt naming a
- * runner that died does not.
+ * runner that claimed the home counts while it or a process of its group lives; a launcher runner
+ * counts while its process lives, or briefly while it has not recorded one yet.
  */
-export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = processIsAlive) {
+export function homeAppIsRunning(
+  home = resolveDevIdentityHome(),
+  isAlive = processIsAlive,
+  now = Date.now,
+) {
   for (const file of ["electron.pid", "backend.pid"]) {
     const pid = Number.parseInt(
       readText(NodePath.join(home.root, "local-dev-app-runtime", file)) ?? "",
@@ -1412,10 +1488,20 @@ export function homeAppIsRunning(home = resolveDevIdentityHome(), isAlive = proc
     );
     if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) return true;
   }
+  const runners = NodePath.join(home.root, RUNNERS_DIR);
+  for (const name of exists(runners) ? NodeFS.readdirSync(runners) : []) {
+    if (!name.endsWith(".json")) continue;
+    const receipt = readJsonObject(NodePath.join(runners, name));
+    if (receipt === undefined) return true;
+    if (Number.isInteger(receipt.pid) && receipt.pid > 0 && isAlive(receipt.pid)) return true;
+    const group = receipt.processGroup;
+    if (Number.isInteger(group) && group > 1 && isAlive(-group)) return true;
+  }
   const runnerDir = NodePath.join(home.root, "local-dev-app-runner");
   if (!exists(runnerDir)) return false;
   const pid = readJsonObject(NodePath.join(runnerDir, "state.json"))?.pid;
-  return !(Number.isInteger(pid) && pid > 0) || isAlive(pid);
+  if (Number.isInteger(pid) && pid > 0) return isAlive(pid);
+  return now() - NodeFS.statSync(runnerDir).mtimeMs < RUNNER_START_GRACE_MS;
 }
 
 /** The home's state must be a real folder inside the home, apart from the installed app. */
@@ -1503,7 +1589,7 @@ export async function seedDevIdentityHome({
     const paths = { sourceDirs: [installed.stateDir], targetDir: homeServerStateDir(home) };
     let target;
     try {
-      target = readTargetVault(home.stateDir);
+      target = readTargetVault(home.stateDir, { replaced: replacedByCopy });
     } catch (error) {
       if (!(error instanceof TargetVaultError)) throw error;
       throw new Error(`The identity home was left as it was: ${error.message}.`, { cause: error });

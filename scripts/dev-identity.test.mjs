@@ -8,6 +8,7 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
   assertHomeCheckout,
+  claimHomeStart,
   cookieDatabasePath,
   captureIdentity,
   DEV_IDENTITY_ENV,
@@ -1334,7 +1335,10 @@ describe("code review guards", () => {
 
     // Data with no key to open it is left as it is.
     const keyless = homeAt(NodePath.join(root, "keyless"));
-    write(NodePath.join(keyless.stateDir, "secrets", `${request}.bin`), "sealed");
+    write(
+      NodePath.join(keyless.stateDir, "secrets", `${request}.bin`),
+      Buffer.from([0xff, 1, 2, 3]),
+    );
     assert.equal(ensurePortableVault(keyless.stateDir), false);
     assert.deepEqual(NodeFS.readdirSync(NodePath.join(keyless.stateDir, "secrets")), [
       `${request}.bin`,
@@ -1366,6 +1370,102 @@ describe("code review guards", () => {
       homeAppIsRunning(home, (pid) => pid === 4242),
       true,
     );
+  });
+
+  it("forgets a launcher runner that died before recording its process", () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const runnerDir = NodePath.join(home.root, "local-dev-app-runner");
+    NodeFS.mkdirSync(runnerDir, { recursive: true });
+    const made = NodeFS.statSync(runnerDir).mtimeMs;
+    assert.equal(
+      homeAppIsRunning(
+        home,
+        () => false,
+        () => made + 1_000,
+      ),
+      true,
+    );
+    assert.equal(
+      homeAppIsRunning(
+        home,
+        () => false,
+        () => made + 60_000,
+      ),
+      false,
+    );
+  });
+
+  it("keeps a seed out while a runner holds the home, and the runner out while a seed does", async () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const checkout = linkHomeCheckout(root, home);
+    const stateRoot = NodePath.join(checkout, ".scient-next");
+    const installedState = NodePath.join(root, "installed", "userdata");
+    write(NodePath.join(installedState, "secrets", "accounts-vault.bin"), Buffer.from([1, 0]));
+    const installed = {
+      stateDir: installedState,
+      userData: root,
+      vaultKeychainAccount: "a",
+      cookieKeychains: [],
+    };
+    const claim = claimHomeStart({
+      checkoutRoot: checkout,
+      stateRoot,
+      home,
+      installed,
+      processGroup: () => undefined,
+    });
+    assert.equal(claim.status, "ready");
+    const seed = () =>
+      seedDevIdentityHome({ home, installed, readKeychain: async () => null, force: true });
+    assert.match(String(await seed().catch((error) => error)), /Quit Scient \(Dev\)/u);
+    claim.release();
+    // Released: the seed gets as far as the Keychain.
+    assert.match(String(await seed().catch((error) => error)), /Keychain did not give/u);
+
+    // A runner whose process died while a child of its group lives still holds the home.
+    write(
+      NodePath.join(home.root, "dev-identity-runners", "9.json"),
+      JSON.stringify({ pid: 9, processGroup: 77 }),
+    );
+    assert.equal(
+      homeAppIsRunning(home, (pid) => pid === -77),
+      true,
+    );
+    assert.equal(
+      homeAppIsRunning(home, () => false),
+      false,
+    );
+    NodeFS.rmSync(NodePath.join(home.root, "dev-identity-runners"), { recursive: true });
+
+    write(NodePath.join(home.root, "dev-identity.lock"), String(process.pid));
+    const blocked = claimHomeStart({
+      checkoutRoot: checkout,
+      stateRoot,
+      home,
+      installed,
+      processGroup: () => undefined,
+    });
+    assert.equal(blocked.status, "seeding");
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(home.root, "dev-identity-runners")), []);
+  });
+
+  it("never gives a home a new key over records an existing key sealed", () => {
+    const root = scratch();
+    const keychain = homeAt(NodePath.join(root, "keychain"));
+    write(
+      NodePath.join(keychain.stateDir, "secrets", "accounts-vault.bin"),
+      Buffer.from([1, 9, 9]),
+    );
+    assert.equal(ensurePortableVault(keychain.stateDir), false);
+    assert.equal(vaultProtection(keychain.stateDir), "keychain");
+
+    const keyless = homeAt(NodePath.join(root, "keyless"));
+    const model = "custom-model-77777777-7777-4777-8777-777777777777.bin";
+    write(NodePath.join(keyless.stateDir, "secrets", model), Buffer.from([0xff, 1, 2, 3]));
+    assert.equal(ensurePortableVault(keyless.stateDir), false);
+    assert.deepEqual(NodeFS.readdirSync(NodePath.join(keyless.stateDir, "secrets")), [model]);
   });
 
   it("never writes into a data folder linked to the home or the installed app", async () => {
@@ -1517,7 +1617,7 @@ describe("code review guards", () => {
     const signing = Buffer.concat([Buffer.from([0xff]), NodeCrypto.randomBytes(31)]);
     write(NodePath.join(target, "secrets", "server-signing-key.bin"), signing);
     write(NodePath.join(target, "secrets", "secret-request-salt.bin"), Buffer.from([0xff, 7]));
-    await importDevIdentity({ targetStateDir: target, home });
+    assert.equal((await importDevIdentity({ targetStateDir: target, home })).status, "imported");
     assert.deepEqual(
       NodeFS.readFileSync(NodePath.join(target, "secrets", "server-signing-key.bin")),
       signing,

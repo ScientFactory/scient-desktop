@@ -292,9 +292,12 @@ cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
   the home. To update it, check out a newer `origin/main` there and restart it.
   Only that registered checkout may run on the home: any other checkout whose
   app data, or the state folder inside it, leads into the home is refused by
-  `pnpm dev:app:*` before it touches anything, and by `pnpm dev:desktop`, which
-  also waits out a seed and finishes one that stopped. `setup` will not move the
-  home to another checkout while the home app runs.
+  `pnpm dev:app:*` before it touches anything, and by `pnpm dev:desktop` and
+  `pnpm dev:server`, which also wait out a seed and finish one that stopped.
+  While any of them runs the home (or a process it started still lives), a seed
+  refuses to start. `setup` will not move the home to another checkout while the
+  home app runs, and never gives the home a new key over records its old key
+  sealed.
 - `seed` fills a stopped home from the installed app, which it only reads.
   macOS asks once for each of two Keychain items: the installed app's accounts
   key and its website-cookie key. Allow both. Without the first, the seed copies
