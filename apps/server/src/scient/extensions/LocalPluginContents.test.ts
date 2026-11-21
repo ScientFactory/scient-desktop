@@ -200,3 +200,15 @@ it("keeps requirements unknown when a manifest is invalid, escapes containment, 
   await NodeFSP.rm(manifest);
   expect((await readLocalPluginContents(root)).requiredKeys).toEqual([]);
 });
+
+it("lists the MCP servers an Antigravity plugin declares in mcp_config.json", async () => {
+  await using cleanup = new AsyncDisposableStack();
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-agy-plugin-"));
+  cleanup.defer(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  await NodeFSP.writeFile(NodePath.join(root, "plugin.json"), '{"name":"canva"}');
+  await NodeFSP.writeFile(
+    NodePath.join(root, "mcp_config.json"),
+    '{"mcpServers":{"canva":{"serverUrl":"https://mcp.canva.com/mcp"}}}',
+  );
+  expect((await readLocalPluginContents(root)).mcpServers).toEqual([{ name: "canva" }]);
+});
