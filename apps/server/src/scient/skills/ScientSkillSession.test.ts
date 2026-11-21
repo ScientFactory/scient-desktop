@@ -260,6 +260,8 @@ describe("Scient skill session planning", () => {
         ["check-reported-numbers", "automatic"],
         ["compare-sources", "automatic"],
         ["connector-authoring", "automatic"],
+        ["diagnose-analysis", "automatic"],
+        ["grill-me", "automatic"],
         ["improve-workspace-readiness", "automatic"],
         ["latex-authoring", "automatic"],
         ["ml-evaluation-audit", "automatic"],
@@ -271,6 +273,8 @@ describe("Scient skill session planning", () => {
         ["scient-skill-authoring", "automatic"],
         ["statistics-review", "automatic"],
         ["systematic-review", "automatic"],
+        ["teach", "explicit"],
+        ["to-questionnaire", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -297,6 +301,8 @@ describe("Scient skill session planning", () => {
         "check-reported-numbers",
         "compare-sources",
         "connector-authoring",
+        "diagnose-analysis",
+        "grill-me",
         "improve-workspace-readiness",
         "latex-authoring",
         "ml-evaluation-audit",
@@ -308,6 +314,8 @@ describe("Scient skill session planning", () => {
         "scient-skill-authoring",
         "statistics-review",
         "systematic-review",
+        "teach",
+        "to-questionnaire",
       ]);
     }),
   );

@@ -29,6 +29,10 @@ describe("Scient built-in skill releases", () => {
       "scient.reviewer-response": true,
       "scient.ml-evaluation-audit": true,
       "scient.reporting-guideline-check": true,
+      "scient.diagnose-analysis": true,
+      "scient.grill-me": true,
+      "scient.to-questionnaire": true,
+      "scient.teach": true,
     });
   });
 

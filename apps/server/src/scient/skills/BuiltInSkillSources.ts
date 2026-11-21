@@ -549,6 +549,160 @@ Before reporting, check that every official item has a row and that your summary
 For a manuscript audit, save \`<draft-stem>.reporting-guideline-check.md\` next to it without overwriting an existing file: the choice and its reasons, the confirmed source, the most important gaps first, then the full item table. Reply with a short summary and a link.
 `;
 
+const diagnoseAnalysis = `---
+name: diagnose-analysis
+description: >-
+  Diagnose analysis code or a pipeline that gives a wrong, changed or inconsistent result,
+  fails, or got slow: a number or figure that moved, results that differ between runs or
+  machines, a script or notebook that errors. Use when the user says something is off,
+  broken or "why did this change?". Use statistics-review to judge whether the method itself
+  is sound.
+---
+
+# Diagnose analysis
+
+A discipline for hard problems in analysis code. Keep raw data as it is throughout; work on copies and in Scient Compute.
+
+## 1. Build a check that goes red
+
+**This is the skill.** If you have a **tight** pass/fail check that goes **red** on _this_ problem, you will find the cause; everything after it consumes that check. Without one, reading code is guessing. Spend most of your effort here, and be creative:
+
+- a short script that recomputes the suspicious number and compares it with the value the user trusts (an earlier output, a published table, a hand calculation);
+- the pipeline run on a small fixture or subset, diffed against a known-good output;
+- the same input through the old and new code (git history, an earlier notebook output) or two environments, with the outputs diffed;
+- for "sometimes different": many runs with and without a fixed seed, to measure how often it happens.
+
+Make it fast and deterministic (small inputs, fixed seeds, pinned versions). Done when one command or Compute run you have already executed detects the user's exact symptom (the same wrong number, the same error) against a stated expectation, as fast as the symptom allows. For an intermittent problem, the finish line is a recorded reproduction rate under fixed conditions; for a slowdown, measured timings against a baseline. If you truly can't build one, say so, list what you tried, and ask for what would make it possible (the trusted earlier output, the data version, the environment). Form no theory before this check exists.
+
+## 2. Reproduce and minimise
+
+Run the check and confirm it shows the problem the user described, not a different one nearby. Then shrink it: remove inputs, steps and options one at a time, rerunning after each, until every remaining piece is needed for the check to go red.
+
+## 3. Hypothesise
+
+Write 3 to 5 ranked hypotheses before testing any. Each must be falsifiable: "if X is the cause, changing Y makes the problem disappear". In analysis code the usual suspects are joins and merges that drop or duplicate rows, filters and missing-value handling, grouping and sort order, type and unit conversions, defaults that changed between package versions, randomness, and the input data itself changing. Show the ranked list to the user, since they may know what changed; carry on with your ranking if they aren't there. Done when the list is written down, before the first probe.
+
+## 4. Test one change at a time
+
+Each probe tests one prediction. Prefer inspecting intermediate results (row counts, keys, summaries at each step) over adding prints everywhere. Tag any temporary print or file with a marker such as \`[DEBUG-a4f2]\` so you can remove them all at the end. Done when one hypothesis's prediction held and the check goes green when you change what it names, with the others ruled out or ranked below it.
+
+## 5. Fix and lock it
+
+If the user asked only why, report the cause, the reproducing check and the exact fix you propose, showing on a copy that it restores the expected result. When they ask for the repair, fix the cause, not the symptom, and keep the check as a lasting one where the problem actually occurs (a test, or an assertion in the pipeline such as an expected row count or unique key): watch it fail before the fix and pass after. If the fix changes results the user has reported, give the old and new values side by side; whether to update a paper or figure is their decision.
+
+## 6. Clean up and report
+
+Remove every tagged debug change, and after a repair confirm the original problem no longer reproduces. Reply with the cause (the hypothesis that held, with the evidence), the fix (applied or proposed), the check, the results that change, and links to any changed files.
+`;
+
+const grillMe = `---
+name: grill-me
+description: >-
+  Grill me on a plan before I commit to it: a research question, study design, analysis
+  plan, preregistration, grant aim, experiment or any decision. Use when the user asks to
+  be grilled, stress-tested or challenged, or wants to think a plan through before running
+  or writing anything. To prepare questions for someone else to answer, use to-questionnaire.
+---
+
+# Grill me
+
+Interview the user relentlessly until you both share one understanding of the plan, with nothing left silently assumed. Map the plan as a **design tree**: every decision branches into the decisions that hang off it. For research, the tree usually runs through the question and estimand, the population and unit of analysis, the design and comparison, outcomes and how they are measured, sample size, the analysis model, missing data, multiplicity, bias and confounding, and ethics and data access; follow the branches this plan actually has.
+
+Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask now without guessing at answers you haven't heard. Ask the whole frontier in one round, number each question, and give your recommended answer with its reason. Then wait for the user's answers.
+
+Format a round like this:
+
+\`\`\`
+❓ **Q1 - <question title>**: <the question, with the options where there are some>
+
+➡️ <your recommended answer, and why>
+
+---
+
+❓ **Q2 - <question title>**: ...
+\`\`\`
+
+Word each question so that "yes" accepts your recommendation.
+
+Each round of answers reshapes the tree: settled decisions unblock the questions that depended on them. Recompute the frontier and ask the next round. A question that depends on another one still open belongs to a later round.
+
+Finding **facts** is your job; the **decisions** are the user's. Before asking, look up what the project already says (its files, data dictionary, protocol, the Library, earlier analyses) and what the field says (guidelines, typical effect sizes, standard methods), and bring those facts into your recommendation with their source. Ask the user only for what they must decide or only they know.
+
+The session is done when the frontier is empty: every branch visited. Then summarise the agreed plan, decision by decision, and ask the user to confirm it. Write it up (as a plan, a preregistration draft or methods text) or start the work only after they confirm, and only if they ask.
+`;
+
+const toQuestionnaire = `---
+name: to-questionnaire
+description: >-
+  Turn a question I can't answer alone into a questionnaire for someone else to fill in,
+  such as a statistician, supervisor, collaborator, ethics committee, data owner or core
+  facility. Use when the user asks for a questionnaire or a structured set of questions to
+  send to someone or take into a meeting. Use grill-me when the user wants to be questioned
+  themselves.
+---
+
+# To questionnaire
+
+Turn what the user can't settle alone into a **questionnaire**: a Markdown document they send to one person to fill in, or go through together in a meeting. The recipient holds knowledge the user lacks; the questionnaire draws it out.
+
+**Grill the send, not the subject.** Ask the user only about the send, which they can always answer: who it goes to, and what they need back. First read what the project already says (notes, protocol, analysis plan, data dictionary, earlier correspondence), so you ask only what the files don't answer and the questions carry the right context.
+
+1. **Who is it going to?** Their role, expertise and relationship to the user. This sets the tone and how much context the document must carry. Done when you know who the recipient is and what they know that the user doesn't.
+2. **What do you need back?** The specific decisions or facts the user needs from this person. Done when you have a concrete list of what the user must be able to do or decide afterwards.
+3. **Write it.** Questions aimed at the gap between steps 1 and 2, in the structure below, saved as \`questionnaire-<topic>.md\` in the project. Done when the file exists and every item from step 2 has a question.
+
+Ask steps 1 and 2 together in one message when the files don't already answer them.
+
+## Structure
+
+- **Title**, then **Purpose** (why it exists and the decision riding on it), **From / To**, and **How your answers will be used**.
+- **Context:** one paragraph for someone who wasn't in the user's head, with the facts they need to answer well (design, sample, the data as it stands), taken from the project, not invented.
+- **How to answer:** deadline and rough effort; "I don't know" and partial answers are welcome.
+- **Questions** under \`##\` headings by theme once there are more than a handful, most important first, since the recipient may answer only once. Each question asks one thing, with space for the answer directly beneath (\`>\`), and a one-line _why this matters_ only where the question could be misread or invite a throwaway answer.
+- **Anything else?** A closing question for what we didn't think to ask.
+
+Reply with a link to the file and the questions you weren't sure belong in it.
+`;
+
+const teach = `---
+name: teach
+description: >-
+  Teach me a method, tool or topic over several sessions, in a learning folder in this
+  project. Use when the user wants to learn to do something themselves, not to have it done.
+---
+
+# Teach
+
+The user wants to learn something over several sessions: a statistical method, a tool, a field. Teach it in a **learning folder** in the project (\`learning/<topic>/\`, unless the user names another place), whose files carry the state from one session to the next. Read them at the start of every session.
+
+## The learning folder
+
+- \`MISSION.md\`: why the user wants this, what they will use it for, and what "able to do it" looks like for them. All teaching is grounded in it.
+- \`RESOURCES.md\`: the trustworthy sources you found (textbooks, papers, official documentation, courses), each with a link and one line on what it is good for.
+- \`lessons/0001-<name>.html\`: the lessons, numbered.
+- \`reference/<name>.html\`: compressed cheat sheets the user will come back to: syntax, decision guides, formulas, a glossary of terms. Once a glossary exists, every lesson uses its terms.
+- \`learning-records/0001-<name>.md\`: what the user has shown they can do, misconceptions you found, and anything that should change later sessions.
+- \`NOTES.md\`: how the user likes to be taught.
+
+## First session: the mission
+
+If \`MISSION.md\` is empty or missing, start by asking why they want to learn this and what they will apply it to. Look at the project first: their data, analysis and draft usually show what the method is for, so ask only what the files don't answer. Write the mission, and update it (with a learning record) when their goal changes. The mission is done when it names the goal, the use, and a concrete "able to do it"; then teach the first lesson in the same session.
+
+## Sources
+
+Ground every lesson in sources you found in this task, not in memory: the project's Library first, then the official documentation, standard textbooks and methods papers. Cite them in the lessons with links, and give each lesson one primary source to read next, the best you found.
+
+## Lessons
+
+A lesson teaches one tightly scoped thing in the user's **zone of proximal development**: the next step their learning records show they are ready for, tied to the mission. Keep it short enough to finish in one sitting, ending with a tangible win. Wherever possible use the user's own data or a small realistic example from their field.
+
+Teach the knowledge needed for the skill, then practise it with a **feedback loop**: a quiz or a small task with immediate feedback, such as code they run in Scient Compute with the expected output to compare. Build lasting memory, not just in-the-moment fluency: ask the user to recall rather than reread, return to earlier material in later lessons, and mix related problems. In quizzes, make every option similar in length and vary where the right answer sits.
+
+Make each lesson a clean, readable HTML page that prints well, linking to related lessons and reference sheets, with a shared stylesheet in the folder so the course looks consistent. End each lesson by inviting questions. A lesson is done when it covers one topic, uses the user's data or field, has a feedback loop with the expected answers, cites its sources and names the primary source to read next.
+
+A session is done when the learning record is written and the reference sheets are updated. Reply with a link to the new lesson and what comes next.
+`;
+
 /**
  * Bundle-safe mirrors of the reviewed built-in release files.
  * BuiltInSkillReleases.test.ts prevents these bytes from drifting from the
@@ -2443,6 +2597,186 @@ A record with \`libraryMatch\` disagrees with a Library copy. Link it (\`scient_
   "displayOrder": 150,
   "supportedScopes": ["user"],
   "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "diagnose-analysis",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "diagnosing-bugs" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": diagnoseAnalysis,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.diagnose-analysis",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 160,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "grill-me",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "grilling" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": grillMe,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.grill-me",
+  "version": "0.1.0",
+  "category": "Planning and learning",
+  "categoryDescription": "Think a plan through, get expert input and learn new methods.",
+  "displayOrder": 170,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "to-questionnaire",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "to-questionnaire" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": toQuestionnaire,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.to-questionnaire",
+  "version": "0.1.0",
+  "category": "Planning and learning",
+  "categoryDescription": "Think a plan through, get expert input and learn new methods.",
+  "displayOrder": 180,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "teach",
+    defaultActive: true,
+    files: Object.freeze({
+      "LICENSE-upstream.txt": `This skill is adapted from "teach" in Matt Pocock's skills (https://github.com/mattpocock/skills, commit abeeaf9), used under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`,
+      "SKILL.md": teach,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.teach",
+  "version": "0.1.0",
+  "category": "Planning and learning",
+  "categoryDescription": "Think a plan through, get expert input and learn new methods.",
+  "displayOrder": 190,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "explicit",
   "origin": {
     "kind": "scient"
   }
