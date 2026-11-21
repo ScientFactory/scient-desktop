@@ -190,13 +190,20 @@ export function combineScientReviews(input: {
     duplicatePairs(incoming),
   ];
   const [existingDistinct, incomingDistinct] = [distinctPairs(existing), distinctPairs(incoming)];
-  const undecided = new Set(
-    [...existingDuplicates, ...incomingDuplicates].filter(
+  const existingReversed = new Set(
+    existing.duplicates.map((entry) => `${entry.duplicateOf}\0${entry.sourceId}`),
+  );
+  const undecided = new Set([
+    ...[...existingDuplicates, ...incomingDuplicates].filter(
       (key) =>
         (existingDuplicates.has(key) && incomingDistinct.has(key)) ||
         (incomingDuplicates.has(key) && existingDistinct.has(key)),
     ),
-  );
+    // Each version kept the other record of the pair: united, neither would be screened.
+    ...incoming.duplicates
+      .filter((entry) => existingReversed.has(`${entry.sourceId}\0${entry.duplicateOf}`))
+      .map((entry) => pairKey(entry.sourceId, entry.duplicateOf)),
+  ]);
   const duplicates = unionBy(
     [...existing.duplicates, ...incoming.duplicates],
     (entry) => `${entry.sourceId}\0${entry.duplicateOf}`,

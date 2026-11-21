@@ -1322,7 +1322,8 @@ snapshot together or neither.
 Combine unites searches (a search in both keeps its details and the union of
 its IDs; differing details are reported), other IDs, duplicates, distinct
 pairs, screening and retrieval. A pair marked duplicate in one version and
-distinct in the other is dropped from both lists and reported as undecided. A
+distinct in the other, or duplicate in opposite directions, is dropped from
+both lists and reported as undecided. A
 source whose latest decision differs between the two gets a `cleared` entry
 with the note "Decided differently in two copies". The snapshot covering the
 whole membership is published and read back before the review. A combine that
