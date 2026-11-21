@@ -312,7 +312,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     ),
                   )
                 : Layer.mock(CheckpointService.CheckpointServiceV2)({
-                    repositoryScopes: () => Effect.succeed([]),
+                    repositoryScopesIfReadable: () => Effect.succeed([]),
                     materializeBaselineCheckpoint: () =>
                       Effect.die(
                         "baseline materialization must be skipped when ordinal 0 is ready",
@@ -469,7 +469,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.mergeAll(
             IdAllocator.layer,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
-              repositoryScopes: () => Effect.succeed([]),
+              repositoryScopesIfReadable: () => Effect.succeed([]),
               materializeBaselineCheckpoint: () => Effect.die("a discarded run has no baseline"),
               capture: () => Effect.die("a discarded run must not be captured"),
             }),
@@ -893,7 +893,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.mergeAll(
             IdAllocator.layer,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
-              repositoryScopes: () => Effect.succeed([]),
+              repositoryScopesIfReadable: () => Effect.succeed([]),
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
               capture: () => Effect.succeed(captured),
