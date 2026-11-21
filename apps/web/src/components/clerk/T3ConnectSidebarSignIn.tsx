@@ -113,8 +113,8 @@ function ConfiguredT3ConnectRailAccount() {
     </SidebarMenuItem>
   );
 }
-// SCIENT-FORK:END
 
+// SCIENT-FORK:END
 function ConfiguredT3ConnectSidebarSignIn() {
   const { isLoaded, isSignedIn } = useAuth();
   const loadFailed = useClerkLoadFailed();

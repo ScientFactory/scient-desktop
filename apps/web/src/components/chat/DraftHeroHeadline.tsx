@@ -134,7 +134,9 @@ export function DraftHeroHeadline({
   const hasResolvedProject =
     activeProjectRef?.projectId != null &&
     (activeProjectGroup !== null || activeProjectTitle !== null);
+  // SCIENT-FORK:START — shouldShowProjectMenu moved below, where it also counts No project.
   const canChooseProject = projectPickerEntries.length > 0;
+  // SCIENT-FORK:END
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
@@ -241,16 +243,15 @@ export function DraftHeroHeadline({
         setPickerQuery("");
       }}
       value={selectedPickerItem}
+      // SCIENT-FORK:START — Add project and No project run only from a click or Enter on their
+      // row, never from a letter typed on the closed chip.
       onValueChange={(item, details) => {
         if (!item) return;
         setPickerOpen(false);
-        if (item.value === ADD_PROJECT_VALUE) {
-          openAddProject();
-          return;
-        }
-        // SCIENT-FORK:START — a click or Enter on the row, never a typed letter on the closed chip.
-        if (item.value === NO_PROJECT_VALUE) {
-          if (details.reason === "item-press") void startScratch();
+        if (item.value === ADD_PROJECT_VALUE || item.value === NO_PROJECT_VALUE) {
+          if (details.reason !== "item-press") return;
+          if (item.value === ADD_PROJECT_VALUE) openAddProject();
+          else void startScratch();
           return;
         }
         // SCIENT-FORK:END

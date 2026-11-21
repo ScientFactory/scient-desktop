@@ -323,6 +323,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     handleFeedbackClick,
     handleUsageClick,
   } = useSidebarUtilityActions();
+  // Usage's handler moved into useSidebarUtilityActions with the others.
   // SCIENT-FORK:END
 
   const handleBackClick = () => {
