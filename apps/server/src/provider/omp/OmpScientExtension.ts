@@ -36,8 +36,20 @@ const OMP_SCIENT_TOOL_CALL_TIMEOUT_MS = 65 * 60 * 1_000;
  * before_agent_start replaces the string-array prompt. Connector aliases preserve call names;
  * one failed connector must not remove others' tools.
  */
-const ompScientExtensionBody = (target: OmpTarget): string => `
+const ompScientExtensionBody = (target: OmpTarget, workspacePath: string | undefined): string => `
 import { createHash as scientCreateHash } from "node:crypto";
+
+const SCIENT_WORKSPACE_PATH = ${JSON.stringify(workspacePath ?? null)};
+
+// Scient rewrites this file when the thread's folders change; read it at each agent start.
+const scientWorkspace = () => {
+  if (SCIENT_WORKSPACE_PATH === null) return "";
+  try {
+    return scientReadFileSync(SCIENT_WORKSPACE_PATH, "utf8");
+  } catch {
+    return "";
+  }
+};
 
 const scientRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
@@ -304,9 +316,10 @@ export default async function scientOmpExtension(pi) {
       return { isError: true };
     return undefined;
   });
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: awareness ? [...event.systemPrompt, awareness] : undefined,
-  }));
+  pi.on("before_agent_start", (event) => {
+    const prompt = [awareness, scientWorkspace()].filter(Boolean).join("\\n\\n");
+    return { systemPrompt: prompt ? [...event.systemPrompt, prompt] : undefined };
+  });
   const status =
     "Scient connected: " + tools.length + " tools. Full access; no native sandbox." +
     connectors
@@ -328,6 +341,13 @@ export default async function scientOmpExtension(pi) {
 }
 `;
 
-/** Module source of Scient's OMP extension, reading `bootstrapPath`. */
-export const ompScientExtensionSource = (target: OmpTarget, bootstrapPath: string): string =>
-  `${ompExtensionBootstrapPrelude(target, bootstrapPath)}${ompScientExtensionBody(target)}`;
+/**
+ * Module source of Scient's OMP extension, reading `bootstrapPath` once and, at each agent
+ * start, the thread's folder list from `workspacePath`.
+ */
+export const ompScientExtensionSource = (
+  target: OmpTarget,
+  bootstrapPath: string,
+  workspacePath?: string,
+): string =>
+  `${ompExtensionBootstrapPrelude(target, bootstrapPath)}${ompScientExtensionBody(target, workspacePath)}`;

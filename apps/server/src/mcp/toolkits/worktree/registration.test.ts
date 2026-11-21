@@ -66,6 +66,7 @@ import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -128,6 +129,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(LatexBuildService.LatexBuildService)({}),
   Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),

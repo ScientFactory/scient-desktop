@@ -347,7 +347,7 @@ import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 // SCIENT-FORK: prepared requests use the composer's normal Send path.
 import { sendPreparedComposerMessage } from "~/scient/chat/sendPreparedComposerMessage";
-import { usePromptSuggestion } from "./usePromptSuggestion";
+import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -3060,6 +3060,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingIsResponding ||
       (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
       projectSelectionRequired ||
+      speechInput.freezesEditor ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
       return false;
@@ -3597,6 +3598,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // SCIENT-FORK: this handle checks the live target, draft and send availability.
       sendMessageIfIdle: sendMessageIfIdleStable,
       pasteTextAtEnd: (text: string, options) => {
+        if (speechInput.freezesEditor) return false;
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
         const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
         const promptLength = promptRef.current.length;
@@ -3835,6 +3837,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isLiteralPendingAnswer,
       pendingUserInputs.length,
       projectSelectionRequired,
+      speechInput.freezesEditor,
       applyPromptReplacementStable,
       isComposerModelPickerOpen,
       openModelPickerStable,
@@ -4248,11 +4251,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     placeholderSuffix={
                       // SCIENT-FORK: a Goal or Plan chip's placeholder takes no suggestion.
                       offeredPromptSuggestion !== null && composerMode === null ? (
-                        <span className="ms-2 inline-flex align-[1px]">
+                        // The placeholder ignores pointer events so clicks reach the editor; only this hint opts back in.
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-label={gt("Use suggested prompt")}
+                          className="pointer-events-auto ms-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
+                          onPointerDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            const accepted = promptSuggestionToAccept(
+                              offeredPromptSuggestion,
+                              promptRef.current,
+                            );
+                            if (accepted !== null) applyPromptReplacementStable(0, 0, accepted);
+                          }}
+                        >
                           <Kbd variant="outline" dir="ltr">
                             ⇥ Tab
                           </Kbd>
-                        </span>
+                        </button>
                       ) : undefined
                     }
                     disabled={

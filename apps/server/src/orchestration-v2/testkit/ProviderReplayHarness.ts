@@ -74,6 +74,8 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
+import * as TaskFolderStore from "../../workspace/TaskFolderStore.ts";
 // SCIENT-FORK:START — replay workspaces resolve like production, never to the checkout.
 import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
 // SCIENT-FORK:END
@@ -555,7 +557,16 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerCheckpointStore,
+        IdAllocator.layer,
+        WorkspaceFolders.layer.pipe(
+          Layer.provide(layerStores),
+          Layer.provide(TaskFolderStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
   );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
@@ -722,6 +733,7 @@ export function layerWithRegistry<Error>(
         layerProviderSwitchServiceProvided,
         layerRunExecutionServiceProvided,
         layerServerSettings,
+        TaskFolderStore.layer.pipe(Layer.provide(layerDatabase)),
         ThreadForkService.layer,
         conversationForkProvided,
       ),

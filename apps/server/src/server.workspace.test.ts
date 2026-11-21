@@ -2430,6 +2430,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                     Effect.die("Rejected capture must not publish cleanup"),
                   listAuthoredPaths: () =>
                     Effect.die("Rejected capture must not list authored paths"),
+                  // No clean HEAD, so the baseline takes the full capture that fails.
+                  resolveCleanHead: () => Effect.succeed(null),
+                  captureHeadCheckpoint: () =>
+                    Effect.die("Rejected capture must not record a HEAD checkpoint"),
                 },
               },
             },

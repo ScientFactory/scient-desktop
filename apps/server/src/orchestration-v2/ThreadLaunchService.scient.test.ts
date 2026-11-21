@@ -48,6 +48,7 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { WORKTREE_SETUP_HOLD_ERROR } from "../scient/orchestration/WorktreeSetupHoldReport.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 
 const projectId = ProjectId.make("project:unborn-repo");
 const modelSelection = {
@@ -151,6 +152,7 @@ function makeHarness(
       isScratchProject: () => Effect.succeed(false),
       folderForThread: () => Effect.succeedNone,
     }),
+    layerNoTaskFolders,
   );
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(

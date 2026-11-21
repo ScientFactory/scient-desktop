@@ -56,7 +56,6 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   browserApiCorsAllowedHeaders,
   browserApiCorsAllowedMethods,
@@ -448,33 +447,18 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
   ),
 );
 
-const requestPath = (request: HttpServerRequest.HttpServerRequest) => {
-  const queryIndex = request.url.indexOf("?");
-  return queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-};
-
-// Signed URLs carry bearer tokens in the path, which URL param redaction cannot reach.
-const isSignedUrlRequest = (request: HttpServerRequest.HttpServerRequest) => {
-  const path = requestPath(request);
-  return (
-    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
-  );
-};
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
 
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
-const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)(
-  (request) => requestPath(request) === OTLP_TRACES_PROXY_PATH || isSignedUrlRequest(request),
-);
+const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
+  const queryIndex = request.url.indexOf("?");
+  return UNTRACED_REQUEST_PATHS.has(
+    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
+  );
+});
 
-export const layerUnloggedSignedRequests = HttpRouter.middleware(
-  (httpEffect) =>
-    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-      isSignedUrlRequest(request) ? HttpMiddleware.withLoggerDisabled(httpEffect) : httpEffect,
-    ),
-  { global: true },
-);
+// Signed URLs carry their bearer token in the path; spans and request logs record it as REDACTED.
+const SIGNED_URL_ROUTE_OPTIONS = { redactedParams: ["*"] };
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
 
@@ -553,7 +537,12 @@ export const assetRouteHandler = Effect.gen(function* () {
   );
 });
 
-export const layerAssetRoute = HttpRouter.add("*", `${ASSET_ROUTE_PREFIX}/*`, assetRouteHandler);
+export const layerAssetRoute = HttpRouter.add(
+  "*",
+  `${ASSET_ROUTE_PREFIX}/*`,
+  assetRouteHandler,
+  SIGNED_URL_ROUTE_OPTIONS,
+);
 
 export const layerAttachmentUploadRoute = HttpRouter.add(
   "POST",
@@ -592,6 +581,7 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
       ? HttpServerResponse.empty({ status: 204 })
       : HttpServerResponse.text(stored.detail, { status: stored.status });
   }),
+  SIGNED_URL_ROUTE_OPTIONS,
 );
 
 const decodeBuildManifest = Schema.decodeUnknownEffect(

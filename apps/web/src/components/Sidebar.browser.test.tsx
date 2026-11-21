@@ -1,5 +1,6 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -17,6 +18,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -28,6 +30,11 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
+// SCIENT-FORK:START
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { useUiStateStore } from "../uiStateStore";
+// SCIENT-FORK:END
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
@@ -52,6 +59,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+shift+[", command: "thread.previous" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -83,8 +91,13 @@ describe("sidebar header new thread", () => {
     { mode: "normal", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: true, picker: false },
-    // SCIENT-FORK: the picker opens with one project too, so Add project stays one step away.
+    // SCIENT-FORK:START — the picker opens with one project too, and in a sidebar
+    // filtered to one project, so Add project stays one step away.
     { mode: "boring", count: 1, shift: false, picker: true },
+    // A normal sidebar filtered to one project.
+    { mode: "filtered", count: 2, shift: false, picker: true },
+    { mode: "filtered", count: 2, shift: true, picker: false },
+    // SCIENT-FORK:END
   ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
     using stack = new DisposableStack();
     const previousSettings = getClientSettings();
@@ -110,6 +123,19 @@ describe("sidebar header new thread", () => {
       routeThreadRef: null,
     });
     vi.mocked(openCommandPalette).mockClear();
+    // SCIENT-FORK:START — filter the sidebar to the project the current context is not in.
+    if (scenario.mode === "filtered") {
+      const previousScopeKeys = useUiStateStore.getState().sidebarProjectScopeKeys;
+      stack.defer(() => useUiStateStore.setState({ sidebarProjectScopeKeys: previousScopeKeys }));
+      const idleGroup = buildSidebarProjectSnapshots({
+        projects,
+        settings: selectProjectGroupingSettings(DEFAULT_CLIENT_SETTINGS),
+        primaryEnvironmentId: null,
+        resolveEnvironmentLabel: () => null,
+      }).find((group) => group.memberProjectRefs.some((ref) => ref.projectId === "idle"));
+      useUiStateStore.setState({ sidebarProjectScopeKeys: [idleGroup!.projectKey] });
+    }
+    // SCIENT-FORK:END
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
@@ -127,6 +153,68 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+// regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
+describe("sidebar numbered jumps", () => {
+  it("numbers the unsent draft at the top before the threads below it", async () => {
+    const initial = useComposerDraftStore.getState();
+    using stack = new DisposableStack();
+    stack.defer(() => useComposerDraftStore.setState(initial, true));
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const web = project("web");
+    vi.mocked(useProjects).mockReturnValue([web]);
+    const thread = threadShell(web.id, 0);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    const draftId = DraftId.make("unsent-draft");
+    initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
+      threadId: ThreadId.make("unsent-draft-thread"),
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    initial.setPrompt(draftId, "Unsent prompt");
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const draftRow = screen.getByTestId("sidebar-draft-row");
+    await expect.element(draftRow).toBeInTheDocument();
+    await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+    await userEvent.keyboard("{Control>}");
+    await expect.element(screen.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(draftRow.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(screen.getByText("Ctrl+2")).toBeVisible();
+    await userEvent.keyboard("{/Control}");
+
+    // Previous thread from the open thread steps up to the draft above it.
+    await userEvent.keyboard("{Control>}{Shift>}{BracketLeft}{/Shift}{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}2{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).not.toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}1{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
   });
 });
 

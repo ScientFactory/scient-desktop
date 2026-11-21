@@ -53,6 +53,7 @@ require a cosmetic folder migration.
 - [Export a conversation](./user/export-conversations.md)
 - [Project settings](./user/project-settings.md)
 - [Voice dictation](./user/voice-dictation.md)
+- [Projects with several repositories](./user/multi-repo-projects.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Text generation models](./user/text-generation.md)
 - [Environment themes](./user/environment-theme.md)

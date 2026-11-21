@@ -54,6 +54,7 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 import {
   defaultProjectIcon,
   hasDefaultProjectIcon,
@@ -697,6 +698,7 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
+        <ProjectRepositoriesSettings members={group.memberProjects} />
         {/* SCIENT-FORK:START — this project's Overleaf links */}
         <OverleafProjectSettingsSection
           environmentId={filePickerProject.environmentId}

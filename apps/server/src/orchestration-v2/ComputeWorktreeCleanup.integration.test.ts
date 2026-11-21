@@ -26,6 +26,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import * as Settings from "../serverSettings.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 
@@ -285,6 +286,8 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
             // The branch follow-up is a no-op without a current branch.
             Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
             Layer.mock(ThreadManagementService)({}),
+            // No task folders: the worktree is a single checkout.
+            Layer.mock(TaskFolders.TaskFolders)({ find: () => Effect.succeed(null) }),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),

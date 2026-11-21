@@ -724,6 +724,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`c1464d6774cf4c690aba3fb20b8094a35396d130` is recorded in
+[the 2026-11-21 c5514042ad receipt](docs/internals/t3-upstream-sync-20261121-c5514042ad.md).
+Literal merge `7682072b3125ea5850eb816349a405d801e8c0a8` has owned base
+`2686e308b4dfd27b06bab7ea3ee7388f5e370939` and the frozen official target as parents, retaining
+the 119 official commits after `c5514042ad`. The range lets a project cover several repositories,
+links a machine through another environment, adds a TanStack Source forge behind a flag, Copy as
+HTML for chat tables and Duplicate and Reload for browser tabs, and moves to Effect 4.1.5. Task
+folders go through Scient's guarded cleanup and rewind; New thread keeps Scient's project picker.
+The alignment is Scient PR #1051. Release remains separate.
+
+The previous committed alignment through
 `c5514042adfb2cb2323c75b449ffd5e950c6a40b` is recorded in
 [the 2026-11-21 f2d4df0367 receipt](docs/internals/t3-upstream-sync-20261121-f2d4df0367.md).
 Literal merge `649f43e495936493337c6091b430a807ba01e7e1` has owned base
@@ -734,7 +745,7 @@ process and typed turn results, plus many fixes. Scient keeps its WSL home, its 
 offers and its watcher-driven HTML previews, and keeps T3's Apple Speech dictation dormant with
 the rest of T3 voice. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `f2d4df0367451f1771e94619021dfbb9982b463f` is recorded in
 [the 2026-11-20 f6d941fa4f receipt](docs/internals/t3-upstream-sync-20261120-f6d941fa4f.md).
 Literal merge `7baaaf047c8c698fa9ea8c383184b73c1a5922a5` has owned base
