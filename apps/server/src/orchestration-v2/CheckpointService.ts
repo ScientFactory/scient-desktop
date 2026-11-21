@@ -37,6 +37,9 @@ import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 // SCIENT-FORK:START overleaf-checkout-barrier
 import { CheckoutBarrier } from "../scient/workspace/CheckoutBarrier.ts";
 // SCIENT-FORK:END overleaf-checkout-barrier
+// SCIENT-FORK:START edit-from-here-evidence
+import { withChangesKnown } from "./scient-fork/CheckpointChangeEvidence.ts";
+// SCIENT-FORK:END edit-from-here-evidence
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_WORKSPACE_SCOPE_NAME_PREFIX = "root-workspace-v1-";
@@ -824,6 +827,9 @@ export const layer: Layer.Layer<
               capturedAt: input.capturedAt,
             }),
             summaryFailed: files === null,
+            // SCIENT-FORK:START edit-from-here-evidence
+            compared: previousExists && files !== null,
+            // SCIENT-FORK:END edit-from-here-evidence
           };
         }),
       ).pipe(
@@ -837,7 +843,14 @@ export const layer: Layer.Layer<
       );
 
     const capture = (input: Parameters<typeof captureSummarized>[0]) =>
-      captureSummarized(input).pipe(Effect.map((captured) => captured.checkpoint));
+      captureSummarized(input).pipe(
+        Effect.map(
+          (captured) =>
+            // SCIENT-FORK:START edit-from-here-evidence
+            withChangesKnown(captured.checkpoint, captured.compared === true),
+          // SCIENT-FORK:END edit-from-here-evidence
+        ),
+      );
 
     const resolveNestedScopePaths: CheckpointServiceV2Shape["nestedScopePaths"] = (scopes) =>
       nestedScopePaths(scopes).pipe(

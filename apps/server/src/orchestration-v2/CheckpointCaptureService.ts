@@ -25,6 +25,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 // SCIENT-FORK:START checkpoint-capture-final-attempt
 import { settleUncapturedRunOnFinalAttempt } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
 // SCIENT-FORK:END checkpoint-capture-final-attempt
+// SCIENT-FORK:START edit-from-here-evidence
+import { withoutChangesKnown } from "./scient-fork/CheckpointChangeEvidence.ts";
+// SCIENT-FORK:END edit-from-here-evidence
 
 // Git processes are already capped server-wide; this keeps one thread from taking every slot.
 const REPOSITORY_CAPTURE_CONCURRENCY = 6;
@@ -128,10 +131,13 @@ export const layer: Layer.Layer<
         });
       // The tracked Git folders the thread reaches now. One added since the turn began has no
       // baseline, so its first checkpoint lists no files; one removed is simply not captured.
-      const repositoryScopes =
+      // SCIENT-FORK:START edit-from-here-evidence — null when they could not be listed.
+      const readableRepositoryScopes =
         sideChat || context.thread === undefined
           ? []
-          : yield* checkpoints.repositoryScopes({ rootScope: scope, ...context.thread });
+          : yield* checkpoints.repositoryScopesIfReadable({ rootScope: scope, ...context.thread });
+      const repositoryScopes = readableRepositoryScopes ?? [];
+      // SCIENT-FORK:END edit-from-here-evidence
       const nested =
         repositoryScopes.length === 0
           ? undefined
@@ -157,6 +163,15 @@ export const layer: Layer.Layer<
           forceMissing: sideChat,
           ...excluded(scope),
         });
+        // SCIENT-FORK:START edit-from-here-evidence
+        if (readableRepositoryScopes === null) {
+          return {
+            threadStartCheckpoint,
+            baselineCheckpoint,
+            checkpoint: withoutChangesKnown(checkpoint),
+          };
+        }
+        // SCIENT-FORK:END edit-from-here-evidence
         return { threadStartCheckpoint, baselineCheckpoint, checkpoint };
       });
       const recordedScopes = new Map(

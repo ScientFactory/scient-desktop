@@ -1,7 +1,18 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { CheckpointRef, CheckpointScopeId, VcsProcessTimeoutError } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  CheckpointScopeId,
+  NodeId,
+  type OrchestrationV2CheckpointScope,
+  ProviderThreadId,
+  RunId,
+  ThreadId,
+  VcsProcessExitError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -114,5 +125,87 @@ it.effect(
         ["first before"],
       );
     }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect(
+  "a run snapshot whose diff failed or had no earlier snapshot leaves its changes unknown",
+  () => {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:changes-known"),
+      threadId: ThreadId.make("thread:changes-known"),
+      runId: RunId.make("run:changes-known:1"),
+      nodeId: NodeId.make("node:changes-known:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:changes-known"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/changes-known",
+      createdAt: DateTime.makeUnsafe("2026-11-21T00:00:00.000Z"),
+    };
+    const captureWith = (store: {
+      readonly previousExists: boolean;
+      readonly diff: "fails" | "empty";
+    }) =>
+      Effect.gen(function* () {
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        return yield* checkpoints.capture({
+          scope,
+          runId: scope.runId!,
+          nodeId: scope.nodeId!,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          capturedAt: scope.createdAt,
+        });
+      }).pipe(
+        Effect.provide(
+          CheckpointService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                IdAllocator.layer,
+                NodeServices.layer,
+                Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                  forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+                  submodules: () => Effect.succeed([]),
+                }),
+                Layer.mock(CheckpointStore.CheckpointStore)({
+                  isGitRepository: () => Effect.succeed(true),
+                  captureCheckpoint: () => Effect.void,
+                  hasCheckpointRef: () => Effect.succeed(store.previousExists),
+                  diffCheckpoints: ({ cwd }) =>
+                    store.diff === "empty"
+                      ? Effect.succeed("")
+                      : Effect.fail(
+                          new VcsProcessExitError({
+                            operation: "test.diff",
+                            command: "git",
+                            cwd,
+                            exitCode: 128,
+                            detail: "fatal: unable to read tree",
+                          }),
+                        ),
+                  listAuthoredPaths: () => Effect.succeed(null),
+                }),
+              ),
+            ),
+            Layer.provideMerge(NodeCrypto.layer),
+          ),
+        ),
+      );
+    return Effect.gen(function* () {
+      const compared = yield* captureWith({ previousExists: true, diff: "empty" });
+      const diffFailed = yield* captureWith({ previousExists: true, diff: "fails" });
+      const nothingToCompare = yield* captureWith({ previousExists: false, diff: "empty" });
+
+      // All three look the same by their file lists; only the first was compared.
+      for (const checkpoint of [compared, diffFailed, nothingToCompare]) {
+        assert.strictEqual(checkpoint.status, "ready");
+        assert.deepEqual(checkpoint.files, []);
+      }
+      assert.strictEqual(compared.changesKnown, true);
+      assert.strictEqual(diffFailed.changesKnown, undefined);
+      assert.strictEqual(nothingToCompare.changesKnown, undefined);
+    });
   },
 );
