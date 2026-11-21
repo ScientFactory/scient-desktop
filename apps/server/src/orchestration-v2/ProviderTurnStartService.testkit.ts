@@ -21,8 +21,16 @@ import * as Layer from "effect/Layer";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
+
+// No project in these tests tracks a repository, so no thread works in a task folder.
+export const layerNoTaskFolders = Layer.mock(TaskFolders.TaskFolders)({
+  plan: () => Effect.succeed(null),
+  find: () => Effect.succeed(null),
+});
 
 export const layer = Layer.mergeAll(
+  layerNoTaskFolders,
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
   Layer.mock(GitWorkflow.GitWorkflowService)({
     pruneWorktrees: () => Effect.void,

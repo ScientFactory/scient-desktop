@@ -343,6 +343,9 @@ export function makeCursorAgentOptions(input: {
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
+      ...(input.runtimePolicy.workspace === undefined
+        ? {}
+        : { dirs: [...input.runtimePolicy.workspace.extraRoots] }),
       autoReview: policy.autoReview,
       settingSources:
         input.runtimePolicy.runtimeMode === "full-access" &&
@@ -2974,6 +2977,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           )({
             harness: "Cursor",
             model: turnInput.modelSelection.model,
+            runtimePolicy: turnInput.runtimePolicy,
           });
           // SCIENT-FORK:END
           // Resend only on a new/compacted/rewound conversation or when the model changes.

@@ -38,6 +38,7 @@ function setup() {
       .spyOn(logic, "waitForRevertedMessage")
       .mockImplementation(async (_thread, _count, _id, revert) => {
         await revert();
+        return [];
       }),
   );
   const command = vi.fn(async () => AsyncResult.success(undefined));
@@ -103,6 +104,7 @@ describe("rewind side-effect fences", () => {
     fixture.wait.mockImplementation(async (_thread, _count, _id, revert) => {
       await revert();
       useComposerDraftStore.getState().setPrompt(fixture.input.draftTarget, "Newer draft");
+      return [];
     });
     expect(await rewindToMessage(fixture.input)).toMatchObject({
       error: expect.stringContaining("The thread was rewound"),

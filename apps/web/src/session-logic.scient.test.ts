@@ -548,10 +548,19 @@ describe("rewind targets without a file snapshot", () => {
         ordinalWithinScope: 0,
         appRunOrdinal: null,
       }) as OrchestrationV2Checkpoint;
+    const projection = (checkpoints: OrchestrationV2Checkpoint[]) => ({
+      checkpoints,
+      checkpointScopes: [],
+    });
     expect(
-      findRevertCheckpoint([checkpoint("captured", "ready"), checkpoint("failed", "error")], 0)?.id,
+      findRevertCheckpoint(
+        projection([checkpoint("captured", "ready"), checkpoint("failed", "error")]),
+        0,
+      )?.id,
     ).toBe("captured");
-    expect(findRevertCheckpoint([checkpoint("failed", "error")], 0)?.id).toBe("failed");
-    expect(findRevertCheckpoint([checkpoint("rolled-back", "stale")], 0)).toBeUndefined();
+    expect(findRevertCheckpoint(projection([checkpoint("failed", "error")]), 0)?.id).toBe("failed");
+    expect(
+      findRevertCheckpoint(projection([checkpoint("rolled-back", "stale")]), 0),
+    ).toBeUndefined();
   });
 });

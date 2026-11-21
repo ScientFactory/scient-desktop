@@ -107,6 +107,7 @@ const make = Effect.gen(function* () {
   /** Where a key-only reference is read: the named project's tracker, or the caller's thread's. */
   const requireProjectScope = Effect.fn("IssuesToolkit.requireProjectScope")(function* (
     requested: ProjectId | undefined,
+    key?: string,
   ) {
     // A named project skips the caller's thread, so the capability is checked here too.
     yield* McpInvocationContext.requireMcpCapability("issues");
@@ -117,7 +118,7 @@ const make = Effect.gen(function* () {
       return yield* new IssueProjectNotFoundError({ projectId });
     }
     return yield* issues
-      .projectScope(projectId)
+      .projectScope(projectId, key)
       .pipe(Effect.mapError(() => new IssueProjectNotFoundError({ projectId })));
   });
 
@@ -149,7 +150,7 @@ const make = Effect.gen(function* () {
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();
-    const scope = yield* requireProjectScope(input.projectId);
+    const scope = yield* requireProjectScope(input.projectId, input.key);
     return {
       ...scope,
       key: input.key,

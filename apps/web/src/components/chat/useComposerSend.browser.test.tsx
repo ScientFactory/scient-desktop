@@ -271,6 +271,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       isGitRepo: false,
       phase: "ready",
       sendEnvMode: "local",
+      worktreeRepositories: undefined,
       startFromOrigin: false,
       localCheckoutBranchMismatch: null,
       logicalProjectEnvironments: [],

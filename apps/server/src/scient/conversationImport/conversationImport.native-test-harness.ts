@@ -23,6 +23,7 @@ import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as RuntimePolicy from "../../orchestration-v2/RuntimePolicy.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as Receipts from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as Executor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -179,6 +180,12 @@ export function nativeImportRuntimeTestLayer(
   const database = options.databaseLayer ?? SqlitePersistence.layerMemory;
   // Local threads must resolve to the disposable project, never the server checkout.
   const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+    // SCIENT-FORK: these threads track no other folders.
+    Layer.provide(
+      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+      }),
+    ),
     Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
     Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
     Layer.provide(Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.undefined })),

@@ -127,8 +127,8 @@ cannot enforce, so upgrade Scient before you deploy a policy that uses them.
 ## Settings
 
 Each key under `settings` is a setting's path in the server's `settings.json`, such as
-`storageCleanup.logsAfterDays`. To find a path, change the setting in Scient and look in
-`settings.json` under `~/.scient-next/userdata`.
+`storageCleanup.logsAfterDays`. Run `scient policy settings` to list every path a policy can manage,
+with its default.
 
 - `"locked": false` sets a default. It applies wherever the user has not chosen a value of their
   own, and users can change it.

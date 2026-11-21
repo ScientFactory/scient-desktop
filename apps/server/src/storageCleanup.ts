@@ -62,6 +62,7 @@ import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirect
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { annexedAdminDir, isLinkedWorktree, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 // SCIENT-FORK:START worktree-lifetime-retention
 import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspaceLifetime.ts";
@@ -347,6 +348,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const taskFolders = yield* TaskFolders.TaskFolders;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -442,6 +444,22 @@ const make = Effect.gen(function* () {
           (markers.has("head") && markers.has("objects") && markers.has("refs"))
         );
       };
+      // A gitfile whose target is missing holds no repository data. An unreadable one counts.
+      // Parsed and joined as Git does: only trailing CR/LF is stripped, and `..` is left to the
+      // kernel so a symlinked parent resolves the same way.
+      const isDanglingGitfile = Effect.fn("storageCleanup.isDanglingGitfile")(
+        function* (directory: string, name: string) {
+          const gitPath = path.join(directory, name);
+          if ((yield* fs.lstat(gitPath)).type !== "File") return false;
+          const contents = (yield* fs.readFileString(gitPath)).replace(/[\r\n]+$/u, "");
+          if (!contents.startsWith("gitdir: ") || contents.length === 8) return false;
+          const gitDir = contents.slice(8);
+          // Statting a network path makes Windows sign in to its host with the user's credentials.
+          if (isNetworkPath(gitDir)) return false;
+          return !(yield* fs.exists(path.isAbsolute(gitDir) ? gitDir : `${directory}/${gitDir}`));
+        },
+        Effect.orElseSucceed(() => false),
+      );
       const pending = [root];
       let entries = 1;
       let bytes = 0;
@@ -485,8 +503,15 @@ const make = Effect.gen(function* () {
         );
         for (const result of inspected) {
           if (result === null) return incomplete;
-          if (inspectRepositories && isNestedRepository(result.target, result.names))
-            return { bytes: null, reason: "contains a nested Git repository" };
+          if (inspectRepositories && isNestedRepository(result.target, result.names)) {
+            const names = yield* Effect.filter(result.names, (name) =>
+              name.toLowerCase() === ".git"
+                ? Effect.map(isDanglingGitfile(result.target, name), (dangling) => !dangling)
+                : Effect.succeed(true),
+            );
+            if (isNestedRepository(result.target, names))
+              return { bytes: null, reason: "contains a nested Git repository" };
+          }
           bytes += result.bytes;
           entries += result.names.length;
           if (entries > 2_000_000) return incomplete;
@@ -948,10 +973,20 @@ const make = Effect.gen(function* () {
       appendTruncationMarker: true,
     });
     if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
-    const file = ignored.stdout
+    const files = ignored.stdout
       .split("\0")
-      .find((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry));
-    return file === undefined ? null : `has ignored files (${file})`;
+      .filter((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry));
+    for (const file of files) {
+      // An empty folder holds no data, such as a task folder's emptied repository parents.
+      const empty =
+        file.endsWith("/") &&
+        (yield* fs.readDirectory(path.join(cwd, file)).pipe(
+          Effect.map((names) => names.length === 0),
+          Effect.orElseSucceed(() => false),
+        ));
+      if (!empty) return `has ignored files (${file})`;
+    }
+    return null;
     // SCIENT-FORK:END preserve-user-ignored-files
   });
 
@@ -1269,6 +1304,38 @@ const make = Effect.gen(function* () {
       if (!linked) return "not a linked worktree";
       return null;
     });
+    // The checks a single worktree passes before removal, for one checkout of a task folder.
+    const inspectCheckout = Effect.fn("StorageCleanup.inspectCheckout")(
+      function* (
+        checkoutPath: string,
+        branch: string | null,
+        rules: WorktreeCleanupRules,
+        settingsChanged: Effect.Effect<boolean, ServerSettingsError>,
+      ) {
+        const reason =
+          (yield* worktreePathReason(checkoutPath)) ??
+          ((yield* branchChanged(checkoutPath, branch)) ? "repository or branch changed" : null) ??
+          (yield* localChangesReason(checkoutPath));
+        if (reason !== null) return { keep: reason, force: false, bytes: null };
+        const { bytes, reason: measureReason } = yield* measureWorktree(checkoutPath, true);
+        if (measureReason !== null) return { keep: measureReason, force: false, bytes };
+        // Measuring takes time, and what follows deletes ignored files under these rules.
+        if (yield* settingsChanged)
+          return { keep: "settings changed since check", force: false, bytes };
+        // Before anything is deleted: a submodule may be the reason this checkout stays whole.
+        // SCIENT-FORK:START preserve-user-local-files — no destructive cleanup policy activation.
+        const submodules = yield* submoduleRemoval(checkoutPath);
+        if (submodules.reason !== null) return { keep: submodules.reason, force: false, bytes };
+        // preserve-racing-submodule-files: Git cannot isolate populated submodules.
+        if (submodules.force)
+          return { keep: "submodule worktree cannot be isolated safely", force: false, bytes };
+        return { keep: null, force: false, bytes };
+        // SCIENT-FORK:END preserve-user-local-files
+      },
+      Effect.catch((error) =>
+        Effect.succeed({ keep: cleanupFailureReason(error), force: false, bytes: null }),
+      ),
+    );
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
           FROM orchestration_v2_projection_threads t
@@ -1390,7 +1457,12 @@ const make = Effect.gen(function* () {
         return reason;
       };
       yield* Effect.gen(function* () {
-        const exists = yield* fs.exists(worktreePath).pipe(
+        const taskFolder = yield* taskFolders.find(worktreePath);
+        // Terminals, sessions and project folders anywhere in a task folder protect all of it.
+        const guardedPath = taskFolder?.root ?? worktreePath;
+        const guardedPaths =
+          taskFolder === null ? worktreePaths : [guardedPath, yield* canonical(guardedPath)];
+        const exists = yield* fs.exists(guardedPath).pipe(
           // A stored path under a regular file cannot exist, but access() fails with ENOTDIR.
           Effect.catchIf(
             (error) =>
@@ -1410,7 +1482,7 @@ const make = Effect.gen(function* () {
         if (thread.branch === null && !scratch) return keep("thread has no branch");
         if (group.some((member) => member.branch !== thread.branch))
           return keep("a subagent thread's branch differs from this worktree's branch");
-        if (yield* hasTerminal(worktreePaths)) return keep(waitForStop("open terminal"));
+        if (yield* hasTerminal(guardedPaths)) return keep(waitForStop("open terminal"));
         if (
           [...group, ...settlementChain.slice(1)].some(
             (member) =>
@@ -1470,13 +1542,13 @@ const make = Effect.gen(function* () {
           // SCIENT-FORK:START archived-worktree-retention — recheck the same archived and
           // queued-run view as the sweep; getThreadWorktreePaths omits archived threads.
           const latestSnapshot = yield* readThreads();
-          if (yield* containsProjectRoot(worktreePaths, [project, ...latestSnapshot.projects]))
+          if (yield* containsProjectRoot(guardedPaths, [project, ...latestSnapshot.projects]))
             return "contains a project checkout";
           const bound = latestSnapshot.threads.filter((entry) => entry.worktreePath !== null);
           const boundKeys = yield* Effect.forEach(bound, (entry) => canonical(entry.worktreePath!));
           const latest = bound.filter((_entry, index) => boundKeys[index] === worktreeKey);
           // SCIENT-FORK:END archived-worktree-retention
-          if (yield* hasTerminal(worktreePaths)) return waitForStop("open terminal");
+          if (yield* hasTerminal(guardedPaths)) return waitForStop("open terminal");
           if (deleted) {
             if (
               !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
@@ -1563,7 +1635,7 @@ const make = Effect.gen(function* () {
           // Ready persisted sessions may have released their runtime; only live sessions protect the path.
           for (const session of sessions) {
             if (
-              (yield* occupies(worktreePaths, session.cwd)) &&
+              (yield* occupies(guardedPaths, session.cwd)) &&
               (yield* providerSessions.isLive(session.id))
             )
               return waitForStop("provider session is still open");
@@ -1627,6 +1699,81 @@ const make = Effect.gen(function* () {
           );
           // SCIENT-FORK:END compute-worktree-retention
         }
+        if (taskFolder !== null) {
+          // Merged and unchanged compare one branch with one default branch; a task folder has
+          // a repository per folder, so only age, settling and deletion remove it.
+          if (!eligible) return keep(notDueReason);
+          const blockedTaskFolder = yield* blockedSinceCheck();
+          if (blockedTaskFolder !== null) return keep(blockedTaskFolder);
+          return yield* withWorkspaceLease(
+            worktreePath,
+            Effect.gen(function* () {
+              const blockedSinceLease = yield* blockedSinceCheck();
+              if (blockedSinceLease !== null) return keep(blockedSinceLease);
+              if (yield* settingsChangedSinceCheck) return keep("settings changed since check");
+              const checkoutBytes = new Map<string, number | null>();
+              // Each checkout passes the checks a single worktree does, or it stays.
+              const result = yield* taskFolders.remove({
+                root: taskFolder.root,
+                force: false,
+                forget: deleted,
+                inspect: (checkout) =>
+                  inspectCheckout(
+                    checkout.worktreePath,
+                    thread.branch,
+                    settings,
+                    settingsChangedSinceCheck,
+                  ).pipe(
+                    Effect.tap(({ bytes }) =>
+                      Effect.sync(() => checkoutBytes.set(checkout.worktreePath, bytes)),
+                    ),
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                  ),
+              });
+              for (const removedPath of result.removed)
+                entries.push({
+                  ...entry,
+                  path: removedPath,
+                  outcome: "removed",
+                  reason: sentence(removalReason),
+                  bytes: checkoutBytes.get(removedPath) ?? null,
+                });
+              for (const keptCheckout of result.kept)
+                entries.push({
+                  ...entry,
+                  path: keptCheckout.path,
+                  reason: sentence(keptCheckout.reason),
+                });
+              if (result.kept.length > 0 && deleted && settings.worktreeOnDelete)
+                kept.push(worktreePath);
+              yield* gitManager.invalidateStatus(project.workspaceRoot);
+              yield* Effect.logInfo("storage cleanup removed task folder", {
+                threadId: thread.id,
+                removed: result.removed.length,
+                kept: result.kept.length,
+              });
+            }).pipe(
+              // SCIENT-FORK:START compute-worktree-retention — physical owners block removal.
+              (removal) =>
+                Effect.suspend(() => {
+                  let admitted = false;
+                  return withoutComputeWorkspaceOwners(
+                    taskFolder.root,
+                    Effect.sync(() => {
+                      admitted = true;
+                    }).pipe(Effect.andThen(removal)),
+                  ).pipe(
+                    Effect.map(() => {
+                      if (!admitted)
+                        keep("Compute workspace is still owned or removal is in progress");
+                    }),
+                  );
+                }),
+              // SCIENT-FORK:END compute-worktree-retention
+            ),
+          );
+        }
         const pathReason = yield* worktreePathReason(worktreePath);
         if (pathReason !== null) return keep(pathReason);
         if (yield* containsProjectRoot(worktreePaths, [project, ...snapshot.projects]))
@@ -1636,8 +1783,6 @@ const make = Effect.gen(function* () {
           if (!deleted) yield* followBranch(worktreePath);
           return keep("repository or branch changed");
         }
-        const changes = yield* localChangesReason(worktreePath);
-        if (changes !== null) return keep(changes);
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
         if (!eligible) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
@@ -1732,7 +1877,7 @@ const make = Effect.gen(function* () {
           if (!eligible && remote !== null && settings.worktreeOnMerge && thread.branch !== null) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
-              { refresh: true },
+              { refresh: true, includeHeadRepository: true },
             );
             eligible = storageCleanupPullRequestMerged(pullRequest, {
               branch: thread.branch,
@@ -1746,6 +1891,9 @@ const make = Effect.gen(function* () {
             return keep(integrated ? notDueReason : "has commits beyond the project branch");
         }
         if (!eligible) return keep(notDueReason);
+        // A full status walks the whole checkout, so only a removable worktree pays for it.
+        const changes = yield* localChangesReason(worktreePath);
+        if (changes !== null) return keep(changes);
         const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
         // Inspect before the lease; provider startup must not wait for directory traversal.

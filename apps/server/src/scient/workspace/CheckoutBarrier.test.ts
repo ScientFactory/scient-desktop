@@ -30,6 +30,7 @@ import { vi } from "vite-plus/test";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import {
   CheckoutBarrier,
@@ -770,12 +771,16 @@ describe("CheckoutBarrier consumers", () => {
           IdAllocator.layer,
           Layer.succeed(CheckoutBarrier, barrier),
           Layer.mock(CheckpointStore.CheckpointStore)({
+            hasCheckpointRef: () => Effect.succeed(true),
+            deleteCheckpointRefs: () => Effect.void,
             restoreCheckpoint: (input) =>
               Effect.sync(() => {
                 restored.push(input.cwd);
                 return true;
               }),
           }),
+          NodeServices.layer,
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
         ),
       ),
       Layer.provideMerge(NodeCrypto.layer),
@@ -800,14 +805,19 @@ describe("CheckoutBarrier consumers", () => {
       const application = yield* holdApplication(barrier, NodePath.join(root, "paper"), release);
       const restoring = yield* checkpoints
         .restore({
-          scope,
-          checkpoint: {
-            id: CheckpointId.make("checkpoint:barrier"),
-            scopeId: scope.id,
-            ordinalWithinScope: 1,
-            ref: CheckpointRef.make("refs/scient/checkpoints/barrier"),
-            status: "ready",
-          } as never,
+          targets: [
+            {
+              scope,
+              checkpoint: {
+                id: CheckpointId.make("checkpoint:barrier"),
+                scopeId: scope.id,
+                ordinalWithinScope: 1,
+                ref: CheckpointRef.make("refs/scient/checkpoints/barrier"),
+                status: "ready",
+              } as never,
+            },
+          ],
+          scopes: [scope],
         })
         .pipe(Effect.forkChild);
       yield* waitForBulkAdmission(barrier, root);

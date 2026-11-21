@@ -35,6 +35,7 @@ import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as Settings from "../../serverSettings.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
+import * as TaskFolders from "../../workspace/TaskFolders.ts";
 import { presentQueuedRunsAsBusy } from "./QueuedRunWorktreeRetention.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
@@ -187,6 +188,8 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
             // The branch follow-up is a no-op without a current branch.
             Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
             Layer.mock(ThreadManagementService)({}),
+            // No task folders: the worktree is a single checkout.
+            Layer.mock(TaskFolders.TaskFolders)({ find: () => Effect.succeed(null) }),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),

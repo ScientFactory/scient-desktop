@@ -616,6 +616,21 @@ it.effect(
       });
       expect(launched).toHaveLength(2);
       expect(launched[1]?.runtimeMode).toBe("auto-accept-edits");
+      expect(launched[0]?.generateTitle).toBeUndefined();
+
+      yield* handle({ title: "Fix", projectId, generateTitle: true, message: "Fix the bug" });
+      expect(launched[2]).toMatchObject({ title: "Fix", generateTitle: true });
+
+      for (const message of [undefined, "", " \n "]) {
+        const idleTitled = yield* handle({
+          title: "Fix",
+          projectId,
+          generateTitle: true,
+          ...(message === undefined ? {} : { message }),
+        });
+        expect(idleTitled.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+      }
+      expect(launched).toHaveLength(3);
     }),
 );
 
@@ -1577,7 +1592,7 @@ it.effect("reading a project shows the default model and actions saved in Settin
   }),
 );
 
-it.effect("an update the project refuses tells the agent why", () =>
+it.effect("a project update or create that is refused tells the agent why", () =>
   Effect.gen(function* () {
     const harness = projectLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const detail = "Project monograms must contain at most two characters.";
@@ -1602,5 +1617,14 @@ it.effect("an update the project refuses tells the agent why", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
+
+    // A project started from its title has no folder yet for tracked folders to be checked against.
+    const dropped = yield* toolkit
+      .handle("scient_project_create", {
+        title: "Wrapper",
+        trackedFolders: [{ path: "/repos/api", name: "api" }],
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(dropped.at(-1)?.result).toMatchObject({ code: "invalid_request" });
   }),
 );

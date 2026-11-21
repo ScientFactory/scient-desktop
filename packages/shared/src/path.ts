@@ -133,6 +133,11 @@ export function fileBasename(path: string): string {
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
+/** A path's last segment composed to NFC for display: macOS stores many names in NFD. */
+export function fileDisplayName(path: string): string {
+  return fileBasename(path).normalize("NFC");
+}
+
 // SCIENT-FORK:START — canonical host paths preserve POSIX filename characters.
 const UNC_ROOT_PATTERN = /^\\\\[^\\/]+[\\/][^\\/]+/;
 const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?=[\\/])/;
