@@ -1,61 +1,35 @@
 ---
 name: overleaf-sync
-description: Link project folders to Overleaf projects and sync them in Scient. Use when the user mentions Overleaf, asks to bring in, link, sync, push to or pull from an Overleaf project, or when a file has Overleaf conflict marks.
+description: Overleaf transfer. Bring in or link an Overleaf project; sync, push or pull my paper; resolve Overleaf conflicts or conflict marks, recover an interrupted sync or undo a send. Use latex-authoring for editing or compiling .tex without transferring files.
 ---
 
-# Overleaf Sync
+# Overleaf sync
 
-The goal is to keep a paper in a Scient project and its Overleaf project in step, losing nobody's text, and to report plainly what moved each way.
+The goal is to keep a paper in a Scient project and its Overleaf project in step, losing nobody's text, and to report plainly what moved each way. Link, preview or sync only when the user asked to transfer files; resolving conflict marks in a local file is a local merge.
 
-You can do with Overleaf whatever the user can do in Scient. The tools ask no one for approval: do what the user asked, then report the result lines. This skill grants no tools or authority.
+## The folder
 
-Here means the linked folder on this project's server. For a remote project, Git 2.39 or newer and the project files must be on that server.
+One Overleaf project is one document, in its own folder inside the Scient project, and everything in that folder syncs: new files, deletions and renames included. Keep code, data and private notes outside it, and write the paper's figures into it. Bring a project in as a new folder (`scient_overleaf_connect`, mode `new-folder`) unless an existing folder holds just the paper; when the connect result says a folder looks like more than a paper, tell the user and prefer a new folder.
 
-## The Folder Model
+In a separate worktree, the tools act on the copy the link belongs to and say so; worktree edits reach Overleaf only once merged into that copy.
 
-- One Overleaf project is one document (a paper, thesis, slide deck or grant). It lives in its own folder inside the Scient project, and everything in that folder syncs. Nothing outside it ever does.
-- A project can hold several Overleaf folders side by side, for example `paper/` and `slides/`. A linked folder is never inside another.
-- Keep code, data and analysis outside Overleaf folders. Write figures for the paper into its folder, for example `paper/figures/`; the next sync sends them.
-- Bring a project in as a new folder by default (`scient_overleaf_connect` with mode `new-folder`), named after the paper. Link an existing folder (mode `link-folder`) only when it already holds just the paper. Link the project's top folder only when the whole project is the paper. If the connect result says the folder looks like more than a paper, tell the user and prefer a new folder.
-
-## The Token
-
-Syncing needs the user's Overleaf Git token (Git access needs a paid Overleaf plan, the user's or the project owner's). When a tool says no token is saved, or that Overleaf refused it:
-
-1. Call `request_secret` with the label "Overleaf Git token", explaining that the user creates it in Overleaf under Account settings, Git integration.
-2. Call `scient_overleaf_token` with action `save` and the returned `secretRef`.
-
-Never ask for the token in chat, never write it anywhere, and never repeat it.
+When a tool says the Overleaf Git token is missing or refused, ask for it with `request_secret` and save it with `scient_overleaf_token`; the token never goes through chat.
 
 ## Syncing
 
-1. Find the link with `scient_overleaf_status`; it lists each linked folder's `connectionId` and status without going online.
-2. Optionally preview with `scient_overleaf_preview`: what would come in and be sent, and any conflicts. Pass `diff: true` for bounded before/after text from the sync base to the fetched and publication trees; binary and oversized files are listed without contents. A stale diff needs another preview.
-3. Sync with `scient_overleaf_sync`. It saves the folder's open editors, brings Overleaf's changes in, then sends the folder's changes. New files, deletions, renames and older versions all sync, then get reported.
-4. New files are sent by default, except build output, hidden files and Scient's own project files. Send one of those with `files.send`. Keep a new file only here (notes to self, for example) with `files.keepOnlyHere`; it stays out until you send it the same way.
-5. Report the result lines to the user: what came in, what was sent, renames (Overleaf drops comments and tracked changes on renamed files), older versions sent, and any other agents working in the same copy.
+1. `scient_overleaf_status` lists each link and its state offline. A check-only question ends here: `scient_overleaf_preview` saves open editors and can finish an interrupted sync, so it changes things.
+2. `scient_overleaf_preview` shows what would come in and go out, and any conflicts (`diff: true` for text differences).
+3. `scient_overleaf_sync` brings Overleaf's changes in, then sends the folder's. "Push" and "pull" both sync both ways; tell the user so rather than promising a one-way transfer.
+4. Report from the result: what came in, what was sent, what was held or skipped (counted apart from sent), renames (Overleaf drops comments and tracked changes on renamed files) and any recovery the sync did first.
 
-If the thread works in a separate worktree, the tools act on the copy the link belongs to and say so. Your edits in the worktree reach Overleaf only after they are merged into that copy.
+## Conflicts and merges
 
-## Conflicts
+Decide as you would for a Git merge: follow the user's instructions and use only the choices each conflict allows. When both sides hold real work and `markers` is allowed, use it and merge them; when it isn't (binary files, renames, deletions), keep both versions and settle the choice with the user. Pass the review's `remoteTree` back as `reviewedRemote`; if Overleaf moved meanwhile, decide again for the new review. A file still holding conflict marks is held back; `files.release` sends it as it is only when the marks are its real content, and `files.send` sends a file that was held. Explain your choices to the user.
 
-A conflict stops a sync until you settle it; other problems stop it with a message to report. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
+As soon as merged text exists locally, and before a sync that would send it, check the merge: citations, captions, figures and numbers keep both sides' content, and no conflict marks remain. Then build with `scient_latex_build` from the real root, fix undefined citations, references and missing files, and look at the rendered pages: `pdftoppm` if installed, otherwise `pdf-authoring`'s `scripts/render_pdf.py` (read it with `scient_skill_read_resource`). Look at the changed pages, or every page of a short paper. If you couldn't build or look, say so and why.
 
-- `mine` keeps this folder's version; `theirs` takes Overleaf's.
-- `markers` writes both versions into the file between conflict marks (`<<<<<<<`, `=======`, `>>>>>>>`).
+## Recovery
 
-Decide the way you would for a Git merge conflict: follow the user's instructions, and when both sides hold real work, choose `markers` and merge. Call `scient_overleaf_sync` again with one choice per key and the `reviewedRemote` the result gave. If Overleaf changed meanwhile, the result shows a new review whose conflicts your choices don't answer; decide again for them. For `markers`, edit each marked file so it keeps the intended text from both sides, remove every mark, check the document still builds, then sync again. A file with marks is not sent until its marks are gone; everything else is. If the marks are the file's real content (a guide that quotes them), send it as it is with `files.release`. Explain your merge choices to the user.
+The version a sync replaced is kept: `scient_overleaf_kept_copies` lists and restores copies. `scient_overleaf_undo` puts back what Overleaf had before one send, then syncs; list the sends first. `scient_overleaf_manage` relinks, recovers an interrupted sync or cancels a running one. Restoring and undoing change files, so use them only for the recovery the user asked for. When a tool stops with an error, do what it says, or tell the user when only they can fix it.
 
-The version a sync replaced is kept as a copy. `scient_overleaf_kept_copies` lists them and restores one.
-
-## Undo
-
-Undo puts back what Overleaf had before one send: for example after an older branch's files were sent over a collaborator's newer text, or a deletion was sent by mistake. `scient_overleaf_undo` without `attemptNumber` lists the sends you can undo, with what each changed. With the send's number (`send #N` in a sync result) it saves the open editors, puts back the earlier version of every file that send changed, keeps the replaced files as copies, then syncs. A file edited since that send is left as it is and reported. Tell the user what was put back and what was left.
-
-## When Something Stops
-
-Errors name what happened and what to do next: Overleaf unreachable or limiting requests (wait a minute), a missing or refused token, an editor that could not save, a link to relink (`scient_overleaf_manage` with action `relink`), or an interrupted sync to recover (action `recover`). Action `cancel` asks a running sync to stop before its next step. Do what the message says, or tell the user when only they can fix it.
-
-- Two names that differ only by letter case or accents are refused with both names; rename one and sync again.
-- A link record Scient can't read (damaged, or made by a newer Scient) can't be settled with the tools. Tell the user to check Settings ▸ Synced folders ▸ Overleaf. While it is listed, Scient won't link folders, and may refuse branch switches, checkpoint restores and worktree removal in that project.
-- A sync result that says nothing came in, or that Overleaf's changes were applied only as far as the folder allowed, sent nothing. Check `scient_overleaf_status`, then sync again.
+Reply with links to the changed sources and any built PDF, what moved each way, the build and visual check, and anything unresolved. For a local-only merge, say that nothing was synced.

@@ -1,30 +1,25 @@
 ---
 name: pdf-authoring
-description: Create, revise, or export PDF documents in Scient. Use when the user asks to create a PDF, change an existing PDF, or export another document as PDF. Do not use when the task only involves reading or extracting information from a PDF.
+description: PDF output. Make, edit or export a PDF of my paper, report, poster, grant, handout or form, including Markdown and HTML-to-PDF. Use latex-authoring for writing or troubleshooting .tex. Reading or extracting a PDF and building an ordinary webpage are other tasks.
 ---
 
-# PDF Authoring
+# PDF authoring
 
-The goal is to deliver a PDF that meets the user’s requirements and accurately report what was produced and verified.
+Deliver the saved PDF, checked against what was asked for in content and layout, together with its editable source. If a build or the visual check can't be done, say which and give the useful files you have.
 
-## Choose a Method
+## Source
 
-Honor any format or editing method the user requests. When working from an editable source, preserve its format unless the user requests conversion or conversion is required to complete the task.
+Keep the document's existing editable format and design. HTML builds with `scient_pdf_build`, Markdown exports with `scient_document_export`, and LaTeX builds with `scient_latex_build` (load `latex-authoring` for source work). For HTML print layout, read this skill's `references/html-print.md`.
 
-Choose the method based on the requested changes, available source, future editing needs, and the tools available:
+To change a PDF's content, edit its source and rebuild; an existing PDF is not an HTML build input. For page operations or form filling, work on the PDF itself with a library such as `pypdf` in Scient Compute and write a new file, keeping the text and structure as they are rather than retyping or rasterizing; check that links, form fields, bookmarks, selectable text and untouched pages survive. If a text edit needs a source you don't have, say so.
 
-- For an existing PDF, use direct PDF operations when they can make the requested changes while preserving the rest of the document.
-- When authoring a document without an established source format, consider LaTeX for structured typesetting such as equations, citations, and cross-references, or HTML and CSS for browser-based layout and graphics.
-- Consider other available authoring, export, or PDF-editing tools when they better fit the task.
+Builds and exports write to `outputPath` and replace what is there, so choose it deliberately. A request only to check a PDF needs no rebuild or export; rendering page images in a temporary folder to look at them is fine.
 
-Use the relevant dedicated skill and tools available for the selected method. Use `latex-authoring` for LaTeX and `html-pdf-authoring` for HTML-to-PDF; follow equivalent guidance for other methods when available.
+## Check before finishing
 
-## Produce and Verify the PDF
+1. Confirm the build wrote the PDF at the returned `outputPath` and read every warning. An open preview tab is not proof of a built file.
+2. Check the page count against any limit, and that every section, figure, table and equation survived. Fix missing images and blocked assets, or name what is missing. Fit pages with all content kept and type at readable size.
+3. Render the pages to images and look at them (`references/visual-check.md` has the commands and `scripts/render_pdf.py`). Look at every page of a short document; for a long one, the changed pages, page breaks and each distinct layout, and say which pages you skipped. Rebuild and look again after fixes.
+4. Check what readers will notice: labels readable at print size, clipped tables, equations, glyphs, citations and cross-references. When the venue requires it, also check links, font embedding, image resolution and tagging; appearance alone doesn't show accessibility.
 
-This skill grants no tools or authority. When the requested deliverable is a PDF, source alone is not completion: produce the actual PDF using an available build, export, or editing capability. If that cannot be completed, provide any useful work produced and clearly explain what remains.
-
-Review the output against the requirements that matter for that document, including content completeness, readable layout, relevant text fidelity and navigation, and any explicitly requested page count.
-
-Successful generation or editing does not establish visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Inspect enough of the document to support the claims you make, fix material defects you observe, and verify the updated output. If visual inspection is unavailable, say so.
-
-When reporting completion in Scient chat, provide clickable Markdown links to the final PDF and any editable source created or updated. Use the actual output path; when a tool returns `outputPath`, use it for that tool’s output. Wrap destinations containing spaces in angle brackets. If no PDF was produced, link any useful work created and state what remains. Briefly report what was verified and any material limitation.
+Reply with links to the PDF and its source, the page count, the pages you inspected, warnings and anything unfinished. If you couldn't look at the pages, say "visual inspection not performed" and why, and call the PDF unchecked.

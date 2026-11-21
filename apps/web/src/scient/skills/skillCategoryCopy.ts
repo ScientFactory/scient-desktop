@@ -32,6 +32,14 @@ const CATEGORY_COPY: Readonly<
     title: msg("Research", { $context: "category of skills" }),
     description: msg("Check, find and cite the literature."),
   },
+  Analysis: {
+    title: msg("Analysis", { $context: "category of skills" }),
+    description: msg("Check research methods, results and manuscript reporting."),
+  },
+  "Planning and learning": {
+    title: msg("Planning and learning", { $context: "category of skills" }),
+    description: msg("Think a plan through, get expert input and learn new methods."),
+  },
 };
 
 /** A skill category's name and description in the app's language. */

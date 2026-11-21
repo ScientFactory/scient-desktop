@@ -1,16 +1,18 @@
 ---
 name: improve-workspace-readiness
-description: Apply safe changes that materially improve a workspace's clarity, organization, or agent guidance. Use when the user explicitly asks to improve readiness or apply findings from a readiness review.
+description: Apply workspace-readiness findings or improve onboarding and reproducibility guidance once the user asks for changes, including “yes, apply those findings”. Use workspace-readiness-review for a read-only assessment. Research analyses, protocols, manuscripts and application behaviour are out of scope.
 ---
 
-# Improve Workspace Readiness
+# Improve workspace readiness
 
-The goal is to improve the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results, while preserving the workspace's purpose and the user's intent.
+Make the smallest supporting changes that let the next collaborator follow the real workflow, and leave the research itself exactly as it was. State the routine choices you make.
 
-Use a recent readiness review when available, but verify the relevant workspace evidence before changing it. Without a review, inspect enough to identify grounded improvements.
+Work from the agreed review and recheck its evidence; without one, trace the relevant workflow before editing. Each change answers a real gap in that workflow; style reorganisation and invented documentation requirements are out.
 
-Make only changes that materially advance this goal. Where obstacles exist, remove or reduce them through the smallest coherent changes that address the user's request. Keep documentation truthful and consistent with the workspace.
+Write instructions, paths and provenance only from what you can establish: take counts from the current files or run records, keeping inputs, filtered data and the analysed sample distinct, and link an output to a script or notebook only when a run record or other evidence does. Write unknown access, licences, ethics approvals or run history as unknown and carry on rather than stopping to ask.
 
-Workspace-readiness work must not alter the user's substantive work itself (such as application behavior or source logic, a research or study protocol, an analysis, a draft, or other core content) unless the user separately asks for that change. It may clarify supporting documentation and, when safe, improve organization or names while preserving meaning, behavior, and references. Do not reorganize, rename, remove, broadly rewrite, or change tooling merely to enforce conventions. Ask before destructive, structurally disruptive, or materially broader changes.
+Code behaviour, raw and derived data, analyses, protocols, results and the argument stay unchanged. An unseeded sample, an unclear split or a missing cohort definition is a research decision: flag it for the researcher and leave seeds and logic as they are. Call a change result-preserving only when it cannot alter results. Moves, deletions, renames and tooling changes stay within the scope the user agreed; check links and references before moving anything.
 
-This skill provides guidance only and grants no tools or authority. After making changes, verify them where practical. Report exactly what changed, where it changed, and why each change meaningfully improves readiness. Mention any important recommendation that remains unapplied.
+Check the edited instructions against the actual paths, inputs and entry points, resolving relative links from their own file, with exact case and paths that contain spaces. Documentation is tested by reading: rerunning workflows that write, installing environments or changing data is outside the job. Say which commands you only read and which you ran.
+
+Reread the diff for scientific changes disguised as cleanup. Reply with links to the changed files, what each change does and how you checked it, and the findings you left unapplied with the decision or evidence each needs. If no edit is justified, say so and leave the files alone.
