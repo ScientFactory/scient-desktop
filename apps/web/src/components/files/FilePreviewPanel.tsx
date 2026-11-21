@@ -110,6 +110,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -421,6 +422,33 @@ function WorkspaceImagePreview(props: {
   );
 }
 
+interface HtmlPreviewFrame {
+  readonly revision: string | null;
+  readonly url: string;
+  /** When the loaded page's grant is about to expire and a fresh URL has to replace it. */
+  readonly renewAt: number;
+}
+
+const HTML_PREVIEW_RENEW_BEFORE_EXPIRY_MS = 2 * 60_000;
+// Grants last an hour. A client clock far from the server's would otherwise renew at once, forever.
+const HTML_PREVIEW_MIN_GRANT_HOLD_MS = 3 * 60_000;
+const HTML_PREVIEW_MAX_GRANT_HOLD_MS = 60 * 60_000;
+
+const htmlPreviewFrame = (
+  minted: { readonly revision: string | null; readonly url: string; readonly expiresAt: number },
+  now: number,
+): HtmlPreviewFrame => ({
+  revision: minted.revision,
+  url: minted.url,
+  renewAt: Math.min(
+    Math.max(
+      minted.expiresAt - HTML_PREVIEW_RENEW_BEFORE_EXPIRY_MS,
+      now + HTML_PREVIEW_MIN_GRANT_HOLD_MS,
+    ),
+    now + HTML_PREVIEW_MAX_GRANT_HOLD_MS,
+  ),
+});
+
 /** Opaque-origin HTML cannot reach app storage; adjacent assets may be outside the workspace. */
 export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
@@ -430,22 +458,63 @@ export function WorkspaceBrowserPreview(props: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly title: string;
+  readonly workspaceMutationId: string | null;
   readonly refreshKey: number;
+  // SCIENT-FORK: Reload file always reloads the page.
+  readonly manualReloadKey: number;
 }) {
   // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
   const resource = workspaceViewerAssetResource(props, "workspace-file", true);
   const messages = useMessages();
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — each change the file's watcher reports re-mints the URL: a file outside
-  // the workspace is signed by its inode, which an atomic replace changes. The HTML frame keeps
-  // its first URL per key, so the key moves only once the re-minted URL arrives.
-  const assetUrl = useAssetUrlState(props.environmentId, resource, String(props.refreshKey));
-  const [settledRefreshKey, setSettledRefreshKey] = useState(props.refreshKey);
-  if (assetUrl._tag === "Success" && !assetUrl.waiting && settledRefreshKey !== props.refreshKey) {
-    setSettledRefreshKey(props.refreshKey);
-  }
-  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, settledRefreshKey);
+  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
+  // inode, which an atomic replace changes.
+  // SCIENT-FORK:START — so does each change the file's watcher reports.
+  const mintRevision = `${props.workspaceMutationId ?? ""}:${props.refreshKey}:${props.manualReloadKey}`;
+  const assetUrl = useAssetUrlState(props.environmentId, resource, mintRevision);
   // SCIENT-FORK:END
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  // Servers that report the file's revision let an unchanged page stay loaded.
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  // SCIENT-FORK:START — Reload file always reloads the page. Without a server revision (a page
+  // outside the workspace, an older server), Scient's refresh of the page decides, as before.
+  const latestRevision =
+    fileRevision === undefined
+      ? `${props.refreshKey}:${props.manualReloadKey}`
+      : `${fileRevision}:${props.manualReloadKey}`;
+  // SCIENT-FORK:END
+  // The HTML frame keeps the URL it loaded, so it moves only once a re-minted URL has arrived.
+  const [frame, setFrame] = useState<HtmlPreviewFrame | null>(null);
+  const [endingGrant, setEndingGrant] = useState<string | null>(null);
+  const grantEnding = frame !== null && endingGrant === frame.url;
+  if (
+    assetUrl._tag === "Success" &&
+    (frame === null ||
+      (!assetUrl.waiting &&
+        (frame.revision !== latestRevision || (grantEnding && frame.url !== assetUrl.url))))
+  ) {
+    const { url, expiresAt } = assetUrl;
+    setFrame(() => htmlPreviewFrame({ revision: latestRevision, url, expiresAt }, Date.now()));
+  }
+  const renewGrant = useEffectEvent((url: string) => {
+    setEndingGrant(url);
+    // A command may have minted the next URL already; otherwise ask for it.
+    if (assetUrl._tag === "Success" && assetUrl.url === url) {
+      void refreshAssetUrl().catch(() => undefined);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mints a fresh URL shortly before the loaded page's grant expires
+  useEffect(() => {
+    if (frame === null) return;
+    const timer = setTimeout(() => renewGrant(frame.url), frame.renewAt - Date.now());
+    return () => clearTimeout(timer);
+  }, [frame]);
+  const revision = frame?.revision ?? latestRevision;
+  const url = assetUrl._tag !== "Success" ? null : (frame?.url ?? assetUrl.url);
+  const revisionSuffix =
+    revision === null
+      ? ""
+      : `${url?.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -464,11 +533,12 @@ export function WorkspaceBrowserPreview(props: {
       </div>
     );
   }
+  const documentId = `${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`;
   return (
     <BrowserDocumentFrame
-      src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${settledRefreshKey}`}
-      documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
+      src={`${url}${revisionSuffix}`}
+      documentKey={`${documentId}:${revision}:${frame?.renewAt}`}
+      documentId={documentId}
       title={props.title}
     />
   );
@@ -2895,7 +2965,9 @@ export default function FilePreviewPanel({
               workspaceRoot={cwd}
               relativePath={relativePath}
               title={relativePath}
+              workspaceMutationId={workspaceMutationId}
               refreshKey={viewerRefreshKey}
+              manualReloadKey={manualReloadKey}
             />
           ) : awaitingMarkdownLease && admissionError ? (
             // SCIENT-FORK:START — document session could not be admitted
