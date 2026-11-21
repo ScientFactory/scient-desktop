@@ -262,6 +262,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
       kind: "antigravity",
       installed: added,
       ...(installed === undefined ? { installationStateKnown: false } : {}),
+      ...(unavailable ? { storeUnavailable: true } : {}),
       ...(plugin.categories[0] ? { category: plugin.categories[0] } : {}),
       ...(plugin.version ? { version: plugin.version } : {}),
       ...(plugin.publisher ? { publisher: plugin.publisher } : {}),

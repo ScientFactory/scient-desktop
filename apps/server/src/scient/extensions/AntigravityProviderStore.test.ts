@@ -418,9 +418,11 @@ describe("AntigravityProviderStore", () => {
         });
         const page = yield* store.search({});
         expect(page.message).toBe(ANTIGRAVITY_NOT_CLI);
-        expect(page.entries.every((entry) => entry.disabledReason === ANTIGRAVITY_NOT_CLI)).toBe(
-          true,
-        );
+        expect(
+          page.entries.every(
+            (entry) => entry.disabledReason === ANTIGRAVITY_NOT_CLI && entry.storeUnavailable,
+          ),
+        ).toBe(true);
         expect((yield* actions.listPlugins({}).pipe(Effect.flip)).message).toBe(
           ANTIGRAVITY_NOT_CLI,
         );

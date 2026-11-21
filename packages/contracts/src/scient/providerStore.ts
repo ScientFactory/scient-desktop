@@ -26,6 +26,8 @@ export const ProviderStoreEntry = Schema.Struct({
   installed: Schema.Boolean,
   /** False when the agent's installed list could not be read; `installed` is then a guess. */
   installationStateKnown: Schema.optional(Schema.Boolean),
+  /** True when this agent cannot add from its store at all; `disabledReason` says why. */
+  storeUnavailable: Schema.optional(Schema.Boolean),
   version: Schema.optional(Schema.String),
   publisher: Schema.optional(Schema.String),
   website: Schema.optional(Schema.String),
