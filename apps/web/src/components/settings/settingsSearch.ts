@@ -686,6 +686,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "boring-sidebar",
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
+  // SCIENT-FORK:START — the sidebar's icon rail.
   {
     id: "sidebar-nav-rail",
     title: msg("Sidebar icon rail"),
@@ -694,6 +695,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       msg("beta sidebar rail icons home library scheduled tasks extensions code review"),
     ],
   },
+  // SCIENT-FORK:END
   {
     id: "tool-call-visibility",
     title: msg("Tool calls in chat"),

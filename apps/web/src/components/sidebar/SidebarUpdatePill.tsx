@@ -361,7 +361,8 @@ function SidebarUpdateControl({
   );
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
-    isAnimationLatched: isCheckAnimationLatched,
+    // SCIENT-FORK: the icon rail's header shows no check animation, so nothing would end its latch.
+    isAnimationLatched: !inHeader && isCheckAnimationLatched,
     isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
@@ -602,7 +603,8 @@ function SidebarUpdateControl({
   const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
     everything.run({ admitServer });
   // In the header (icon rail), this app's update stays up top and the circle for other updates
-  // sits in the rail.
+  // sits in the rail. Every header layout renders the portal first, so the circle and its card
+  // stay mounted when this app's update appears or goes.
   const railOtherUpdates =
     inHeader && railOtherUpdatesSlot
       ? createPortal(
@@ -614,34 +616,25 @@ function SidebarUpdateControl({
           railOtherUpdatesSlot,
         )
       : null;
-  if (!isElectron) {
-    return (
-      <>
-        {idleContent}
-        {inHeader ? (
-          railOtherUpdates
-        ) : (
-          <SidebarOtherUpdates
-            placement="footer"
-            servers={everything.otherServers}
-            updateAll={updateOthers}
-          />
-        )}
-      </>
-    );
-  }
   if (
     inHeader &&
-    !showUpdateIconState &&
-    !isPreparing &&
-    !restartNotice.open &&
-    askingPass === null
+    (!isElectron ||
+      (!showUpdateIconState && !isPreparing && !restartNotice.open && askingPass === null))
   ) {
     return (
       <>
-        {idleContent}
         {railOtherUpdates}
+        {idleContent}
       </>
+    );
+  }
+  if (!isElectron) {
+    return (
+      <SidebarOtherUpdates
+        placement="footer"
+        servers={everything.otherServers}
+        updateAll={updateOthers}
+      />
     );
   }
   // SCIENT-FORK:END
@@ -775,10 +768,8 @@ function SidebarUpdateControl({
   // SCIENT-FORK: the controls sit in the footer item or, with the icon rail, in the header.
   const controls = (
     <>
-      {/* SCIENT-FORK:START */}
-      {inHeader ? (
-        railOtherUpdates
-      ) : (
+      {/* SCIENT-FORK:START — in the header the circle is in the rail. */}
+      {inHeader ? null : (
         <SidebarOtherUpdates servers={everything.otherServers} updateAll={updateOthers} />
       )}
       {/* SCIENT-FORK:END */}
@@ -892,15 +883,18 @@ function SidebarUpdateControl({
   );
   // SCIENT-FORK:START — the icon rail's header puts the control after the Scient symbol.
   return inHeader ? (
-    <div className="flex shrink-0 items-center gap-2.5">
-      {activeLeading}
-      <div
-        className="relative z-10 flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
-        data-update-active={showUpdateDetails || undefined}
-      >
-        {controls}
+    <>
+      {railOtherUpdates}
+      <div className="flex shrink-0 items-center gap-2.5">
+        {activeLeading}
+        <div
+          className="relative z-10 flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
+          data-update-active={showUpdateDetails || undefined}
+        >
+          {controls}
+        </div>
       </div>
-    </div>
+    </>
   ) : (
     // SCIENT-FORK:END
     <SidebarMenuItem

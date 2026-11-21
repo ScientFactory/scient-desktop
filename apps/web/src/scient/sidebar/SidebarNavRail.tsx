@@ -1,5 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import {
   BookOpenTextIcon,
@@ -15,8 +15,10 @@ import { lazy, Suspense, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { useClientSettings } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { getNewThreadNavigationIntentCoordinator } from "../../lib/newThreadNavigationIntent";
 import {
   initializeScientProjectForOpening,
   inspectScientProjectForOpening,
@@ -26,7 +28,6 @@ import { openWholeLibrary } from "../sources/librarySourceRequest";
 import { readPreparedConnection } from "../../state/session";
 import { FeedbackIcon } from "../feedback/FeedbackCoordinator";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { IssueGlyph } from "../../components/issue/issuePresentation";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
 import {
   SidebarMenu,
@@ -40,6 +41,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useSidebarUtilityActions } from "./useSidebarUtilityActions";
 import "./sidebarNavRail.css";
 import { registerRailOtherUpdatesSlot } from "./railOtherUpdatesSlot";
+import { readCodeReviewPage } from "../codeReview/codeReviewPage";
 
 // Keeps Clerk out of the sidebar's bundle; Settings loads the same module this way.
 const T3ConnectRailAccount = lazy(() =>
@@ -52,8 +54,7 @@ type RailPage =
   | "home"
   | "scheduled-tasks"
   | "extensions"
-  | "pull-requests"
-  | "issues"
+  | "code-review"
   | "usage"
   | "cloud"
   | "settings";
@@ -65,8 +66,7 @@ function railPageFor(pathname: string): RailPage | null {
     return "extensions";
   }
   if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
-  if (pathname === "/pull-requests") return "pull-requests";
-  if (pathname === "/issues") return "issues";
+  if (pathname === "/pull-requests" || pathname === "/issues") return "code-review";
   if (pathname === "/usage") return "usage";
   if (pathname === "/cloud" || pathname.startsWith("/cloud/")) return "cloud";
   return null;
@@ -79,10 +79,21 @@ function railPageFor(pathname: string): RailPage | null {
  */
 function useOpenWholeLibrary() {
   const gt = useGT();
+  const router = useRouter();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const handleNewThread = useNewThreadHandler();
   return async () => {
+    // Claimed before setup yields, so navigating elsewhere meanwhile cancels the Library.
+    const navigationIntent = getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
+      router.subscribe("onBeforeNavigate", invalidate);
+    }).claim({
+      kind: "explicit",
+      scope:
+        router.state.location.state.__TSR_key ??
+        router.state.location.state.key ??
+        router.state.location.href,
+    });
     const environmentId = scratchEnvironmentId(primaryEnvironmentId);
     const prepared = environmentId === null ? null : readPreparedConnection(environmentId);
     if (environmentId === null || prepared === null) {
@@ -116,7 +127,9 @@ function useOpenWholeLibrary() {
         }),
       );
     }
-    const started = await handleNewThread(scopeProjectRef(project.environmentId, project.id));
+    const started = await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+      navigationIntent,
+    });
     if (!started) return;
     openWholeLibrary({
       threadRef: scopeThreadRef(project.environmentId, started.threadId),
@@ -177,14 +190,14 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
   const nav = (
     <nav
       aria-label={gt("Sidebar destinations")}
-      className={
-        collapsed
-          ? "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 flex w-12 flex-col items-center justify-between border-e border-sidebar-border py-2"
-          : "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 z-[2] flex w-12 flex-col items-center justify-between border-e border-sidebar-border py-2"
-      }
+      // A short window scrolls the rail rather than cutting off its last buttons.
+      className={cn(
+        "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 flex w-12 flex-col items-center justify-between gap-2 overflow-y-auto border-e border-sidebar-border py-2 [scrollbar-width:none]",
+        !collapsed && "z-[2]",
+      )}
       data-sidebar-nav-rail={collapsed ? undefined : ""}
     >
-      <SidebarMenu className="items-center">
+      <SidebarMenu className="shrink-0 items-center">
         <RailItem
           icon={<HouseIcon />}
           label={gt("Home")}
@@ -211,24 +224,26 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
           onClick={go("/settings/extensions")}
           active={page === "extensions"}
         />
-        {actions.pullRequestsSupported ? (
+        {actions.pullRequestsSupported || actions.issuesSupported ? (
           <RailItem
             icon={<PullRequestGlyph.pullRequest />}
-            label={gt("Pull Requests")}
-            onClick={actions.handlePullRequestsClick}
-            active={page === "pull-requests"}
-          />
-        ) : null}
-        {actions.issuesSupported ? (
-          <RailItem
-            icon={<IssueGlyph.issue />}
-            label={gt("Issues", { $context: "sidebar link to the list of issues" })}
-            onClick={actions.handleIssuesClick}
-            active={page === "issues"}
+            label={gt("Code review")}
+            onClick={() => {
+              // Reopens whichever page the title switch last showed.
+              if (
+                actions.issuesSupported &&
+                (readCodeReviewPage() === "issues" || !actions.pullRequestsSupported)
+              ) {
+                actions.handleIssuesClick();
+              } else {
+                actions.handlePullRequestsClick();
+              }
+            }}
+            active={page === "code-review"}
           />
         ) : null}
       </SidebarMenu>
-      <SidebarMenu className="items-center">
+      <SidebarMenu className="shrink-0 items-center">
         {actions.cloudAvailable ? (
           <RailItem
             icon={<CloudIcon />}

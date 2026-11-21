@@ -442,12 +442,14 @@ The linked pull request participates in automatic settlement.
 ## Icon rail
 
 On web and desktop, a column of icons runs along the sidebar's edge. At the top are **Home**,
-**Library**, **Scheduled tasks**, **Extensions**, and **Pull Requests** and **Issues** when your
-environment supports them. At the bottom are **Cloud conversations** when available,
+**Library**, **Scheduled tasks**, **Extensions**, and **Code review** when your environment
+supports pull requests or issues. At the bottom are **Cloud conversations** when available,
 **Settings**, **Usage**, **Send feedback** in the desktop app, **Import conversation**, and your
 Scient Connect account. **Library** opens My Library over the window, in a new thread without a
-project; see [Open the Library](sources.md#open-the-library). On a wide window the rail stays at
-the window's edge when you collapse the sidebar.
+project; see [Open the Library](sources.md#open-the-library). **Code review** opens pull requests
+or issues, whichever you showed last; switch between them with **Pull requests | Issues** at the
+top of the page. On a wide window the rail stays at the window's edge when you collapse the
+sidebar, and on a short window it scrolls.
 
 While a Scient update is ready, **Update** takes the place of the Scient name at the top of the
 sidebar. Updates for providers, other machines and Scient-managed runtimes show as a circle in the

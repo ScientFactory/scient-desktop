@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { T, useGT, useMessages } from "gt-react";
 import {
   scientSourcesMayBeVersions,
@@ -535,10 +536,19 @@ export function ScientSourcesPanel(props: {
     organize.clearSelection();
     void sources.selectScope(scope);
   };
+  // The whole-Library request shows the list, over any source, review or duplicate view left open.
   // Selecting reloads the list, which also picks up a folder set up just before the request. A
   // project server ignores the scope and keeps listing its project.
-  const showWholeLibrary = useStableCallback(() => selectScope("library"));
+  const showWholeLibrary = useStableCallback(() => {
+    setSelectedSourceId(null);
+    setEditingSource(false);
+    setHistorySourceId(null);
+    setShowingReviews(false);
+    setShowingDuplicates(null);
+    selectScope("library");
+  });
   useLibrarySourceRequest(
+    scopeThreadRef(props.environmentId, props.threadId),
     props.root,
     sources.overview !== null,
     setSelectedSourceId,

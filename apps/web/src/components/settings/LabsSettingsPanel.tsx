@@ -13,6 +13,9 @@ import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+// SCIENT-FORK:START — the sidebar's icon rail, on by default.
+import { SidebarNavRailSettingRow } from "~/scient/sidebar/SidebarNavRailSettingRow";
+// SCIENT-FORK:END
 
 /** Features still settling in. */
 export function LabsSettingsPanel() {
@@ -21,7 +24,9 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
         <BoringSidebarRow />
-        <SidebarNavRailRow />
+        {/* SCIENT-FORK:START — the sidebar's icon rail, on by default. */}
+        <SidebarNavRailSettingRow />
+        {/* SCIENT-FORK:END */}
         {/* SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links. */}
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : null}
@@ -82,28 +87,6 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label={gt("Two-line folder rows")}
-        />
-      }
-    />
-  );
-}
-
-function SidebarNavRailRow() {
-  const searchableSetting = useSearchableSetting();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const gt = useGT();
-  return (
-    <SettingsRow
-      {...searchableSetting("sidebar-nav-rail")}
-      description={gt(
-        "Show a column of icons along the sidebar's edge: Home, Library, Scheduled tasks, Extensions and code review at the top; Settings and other tools at the bottom.",
-      )}
-      control={
-        <Switch
-          checked={settings.sidebarNavRailEnabled}
-          onCheckedChange={(checked) => updateSettings({ sidebarNavRailEnabled: Boolean(checked) })}
-          aria-label={gt("Sidebar icon rail")}
         />
       }
     />

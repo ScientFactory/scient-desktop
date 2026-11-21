@@ -77,25 +77,21 @@ it.each(["beta", "latest"] as const)(
   },
 );
 
-it("shows the icon rail's header brand while idle and the Update button in its place once ready", async () => {
+it("shows the icon rail's header brand through a check, then the Update button once ready", async () => {
   const ready = setup("latest");
-  state.update = { ...ready, status: "idle", availableVersion: null, downloadedVersion: null };
-  {
-    await using screen = await render(
-      <SidebarProvider>
-        <SidebarUpdatePill placement="header" idleContent={<span>Scient</span>} />
-      </SidebarProvider>,
-    );
-    await expect.element(screen.getByText("Scient")).toBeVisible();
-    expect(screen.container.querySelector("button")).toBeNull();
-  }
-
-  state.update = ready;
-  await using screen = await render(
+  state.update = { ...ready, status: "checking", availableVersion: null, downloadedVersion: null };
+  const header = () => (
     <SidebarProvider>
       <SidebarUpdatePill placement="header" idleContent={<span>Scient</span>} />
-    </SidebarProvider>,
+    </SidebarProvider>
   );
+  await using screen = await render(header());
+  await expect.element(screen.getByText("Scient")).toBeVisible();
+  expect(screen.container.querySelector("button")).toBeNull();
+
+  // A check must not leave the header holding the brand once an update is ready.
+  state.update = ready;
+  await screen.rerender(header());
   await expect.element(screen.getByRole("button", { name: /^Update:/ })).toBeVisible();
   expect(screen.container.textContent).not.toContain("Scient");
 });
