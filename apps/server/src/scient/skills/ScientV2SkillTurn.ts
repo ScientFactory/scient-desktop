@@ -20,16 +20,16 @@ import * as ScientSkillSession from "./ScientSkillSession.ts";
  * catalog sends the index again; otherwise the turn points back to it. Server memory only, and
  * bounded: after a server restart or eviction a session simply gets the index once more.
  */
-const deliveredSkillIndex = new Map<
-  ThreadId,
-  { readonly providerSessionId: string; readonly digest: string }
->();
+interface SkillIndexDelivery {
+  readonly providerSessionId: string;
+  readonly digest: string;
+  /** The message that carried it: a retry of that same message sends the same full text. */
+  readonly messageId: string | undefined;
+}
+const deliveredSkillIndex = new Map<ThreadId, SkillIndexDelivery>();
 const DELIVERED_SKILL_INDEX_LIMIT = 2_000;
 
-const rememberSkillIndex = (
-  threadId: ThreadId,
-  delivery: { readonly providerSessionId: string; readonly digest: string },
-) => {
+const rememberSkillIndex = (threadId: ThreadId, delivery: SkillIndexDelivery) => {
   deliveredSkillIndex.delete(threadId);
   deliveredSkillIndex.set(threadId, delivery);
   if (deliveredSkillIndex.size > DELIVERED_SKILL_INDEX_LIMIT) {
@@ -49,6 +49,8 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
   readonly projectRoot: string | undefined;
   readonly text: string;
   readonly selectedScientSkillNames: ReadonlyArray<string>;
+  /** The persisted message this turn delivers; a retry of it repeats the same text. */
+  readonly messageId?: string;
 }) {
   const planner = yield* ScientSkillSession.ScientSkillSessionPlanner;
   // A token is authority, not proof the configured provider can receive it.
@@ -103,7 +105,8 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
     digest !== undefined &&
     previous !== undefined &&
     previous.providerSessionId === providerSessionId &&
-    previous.digest === digest;
+    previous.digest === digest &&
+    (input.messageId === undefined || previous.messageId !== input.messageId);
   const skillTurn = alreadyIndexed ? prepare(deliverable, "unchanged") : fullTurn;
   const sendsIndex =
     deliverable &&
@@ -131,7 +134,11 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
      */
     recordCatalogDelivered: Effect.sync(() => {
       if (sendsIndex && providerSessionId !== undefined && digest !== undefined)
-        rememberSkillIndex(input.threadId, { providerSessionId, digest });
+        rememberSkillIndex(input.threadId, {
+          providerSessionId,
+          digest,
+          messageId: input.messageId,
+        });
     }),
   };
 });
@@ -148,7 +155,7 @@ export const prepareScientV2SkillScopeForSteer = (input: {
   };
   readonly message: Pick<
     OrchestrationV2ConversationMessage,
-    "text" | "context" | "selectedScientSkillNames"
+    "id" | "text" | "context" | "selectedScientSkillNames"
   >;
   readonly skillPlanner: ScientSkillSession.ScientSkillSessionPlannerShape;
 }) =>
@@ -162,6 +169,7 @@ export const prepareScientV2SkillScopeForSteer = (input: {
       records: input.message.context?.records ?? [],
     }),
     selectedScientSkillNames: input.message.selectedScientSkillNames ?? [],
+    messageId: input.message.id,
   }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, input.skillPlanner));
 
 /** Validates a steer's prepared text as current input, falling back to the

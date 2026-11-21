@@ -515,7 +515,11 @@ it.effect("lists automatic skills once per provider session and catalog, then po
       });
       yield* mcpSessions.set(issued.config);
     });
-    const prepare = (text: string, skills: ReadonlyArray<ReturnType<typeof automaticSkill>>) =>
+    const prepare = (
+      text: string,
+      skills: ReadonlyArray<ReturnType<typeof automaticSkill>>,
+      messageId?: string,
+    ) =>
       prepareScientV2SkillScope({
         threadId,
         driver: ProviderDriverKind.make("codex"),
@@ -523,6 +527,7 @@ it.effect("lists automatic skills once per provider session and catalog, then po
         projectRoot: undefined,
         text,
         selectedScientSkillNames: [],
+        ...(messageId === undefined ? {} : { messageId }),
       }).pipe(
         Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, plannerFor(skills)),
       );
@@ -552,9 +557,15 @@ it.effect("lists automatic skills once per provider session and catalog, then po
 
     // A new provider session cannot see what the old one was told.
     yield* issue();
-    const fresh = yield* prepare("Start again.", [stats, numbers]);
+    const fresh = yield* prepare("Start again.", [stats, numbers], "message-1");
     assert.include(fresh.text, "- stats-check:");
     assert.include(fresh.text, "- numbers-check:");
+    yield* fresh.recordCatalogDelivered;
+    // A retry of the message that carried the list repeats the same full text; the next one does not.
+    const retry = yield* prepare("Start again.", [stats, numbers], "message-1");
+    assert.include(retry.text, "- stats-check:");
+    const next = yield* prepare("Next.", [stats, numbers], "message-2");
+    assert.include(next.text, "unchanged since the list an earlier turn gave");
     yield* mcpSessions.clear(threadId);
   }).pipe(Effect.provide(registryLayer)),
 );

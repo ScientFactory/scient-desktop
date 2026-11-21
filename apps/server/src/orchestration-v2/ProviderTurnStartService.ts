@@ -2366,6 +2366,7 @@ export const layer: Layer.Layer<
         text: userText,
         // A resumed prompt that never reached the provider keeps its own skill selection.
         selectedScientSkillNames: providerMessage.selectedScientSkillNames ?? [],
+        messageId: providerMessage.id,
       }).pipe(
         Effect.provideService(ScientSkillSessionPlanner, skillPlanner),
         Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
