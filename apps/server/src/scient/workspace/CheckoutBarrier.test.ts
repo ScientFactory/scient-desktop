@@ -828,4 +828,119 @@ describe("CheckoutBarrier consumers", () => {
       assert.deepEqual(restored, [root]);
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
+
+  /**
+   * Rewinds `/repo/first` then `/repo/second` on a store that only records, behind a barrier whose
+   * settler refuses the folders `refuse` names on that entry into a bulk section.
+   */
+  const rewindBehindBarrier = (options: {
+    readonly refuse: (root: string, entry: number) => boolean;
+    readonly failRestore?: string;
+    readonly kept?: string;
+  }) => {
+    const barrier = makeCheckoutBarrier((path) => Effect.succeed({ root: path, keys: [path] }));
+    const log: string[] = [];
+    const entries = new Map<string, number>();
+    const targets = ["first", "second"].map((name) => ({
+      scope: {
+        id: CheckpointScopeId.make(`checkpoint-scope:barrier-rewind:${name}`),
+        cwd: `/repo/${name}`,
+      },
+      checkpoint: {
+        ordinalWithinScope: 1,
+        ref: CheckpointRef.make(`refs/scient/test/rewind/${name}`),
+        status: "ready" as const,
+      },
+    }));
+    const isTarget = (ref: string) => targets.some((target) => target.checkpoint.ref === ref);
+    const name = (ref: string) => (isTarget(ref) ? "target" : "pre-rewind");
+    const layer = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.succeed(CheckoutBarrier, barrier),
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            hasCheckpointRef: (input) =>
+              Effect.succeed(isTarget(input.checkpointRef) || input.cwd === options.kept),
+            captureCheckpoint: (input) => Effect.sync(() => log.push(`capture ${input.cwd}`)),
+            restoreCheckpoint: (input) =>
+              Effect.sync(() => log.push(`restore ${input.cwd} ${name(input.checkpointRef)}`)).pipe(
+                Effect.andThen(
+                  input.cwd === options.failRestore && isTarget(input.checkpointRef)
+                    ? Effect.die("restore failed")
+                    : Effect.succeed(true),
+                ),
+              ),
+            deleteCheckpointRefs: (input) =>
+              Effect.sync(() => {
+                for (const ref of input.checkpointRefs)
+                  log.push(`delete ${input.cwd} ${name(ref)}`);
+              }),
+          }),
+          NodeServices.layer,
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+    return Effect.gen(function* () {
+      yield* barrier.settleBeforeBulk((section) => {
+        const entry = (entries.get(section.root) ?? 0) + 1;
+        entries.set(section.root, entry);
+        log.push(`settle ${section.root}`);
+        return options.refuse(section.root, entry)
+          ? Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root }))
+          : Effect.void;
+      });
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const exit = yield* Effect.exit(
+        checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
+      );
+      return { exit, log };
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  };
+
+  it.effect("a rewind leaves a folder whose restore the barrier refuses untouched", () =>
+    Effect.gen(function* () {
+      // The refused folder holds the snapshot an earlier failed rewind kept.
+      const { exit, log } = yield* rewindBehindBarrier({
+        refuse: (root) => root === "/repo/second",
+        kept: "/repo/second",
+      });
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepEqual(log, [
+        "settle /repo/first",
+        "capture /repo/first",
+        "restore /repo/first target",
+        "settle /repo/second",
+        // Putting the first folder back is a bulk change of its own.
+        "settle /repo/first",
+        "restore /repo/first pre-rewind",
+        "delete /repo/first pre-rewind",
+      ]);
+    }),
+  );
+
+  it.effect("a rewind keeps the snapshot of a folder the barrier will not let it put back", () =>
+    Effect.gen(function* () {
+      const { exit, log } = yield* rewindBehindBarrier({
+        refuse: (root, entry) => root === "/repo/first" && entry === 2,
+        failRestore: "/repo/second",
+      });
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepEqual(log, [
+        "settle /repo/first",
+        "capture /repo/first",
+        "restore /repo/first target",
+        "settle /repo/second",
+        "capture /repo/second",
+        "restore /repo/second target",
+        "settle /repo/second",
+        "restore /repo/second pre-rewind",
+        "settle /repo/first",
+        // The first folder's snapshot is still the only copy of how it was.
+        "delete /repo/second pre-rewind",
+      ]);
+    }),
+  );
 });

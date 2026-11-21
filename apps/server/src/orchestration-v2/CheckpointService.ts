@@ -912,18 +912,18 @@ export const layer: Layer.Layer<
                 snapshots.push({ ...folder, checkpointRef: preRewindRef });
                 // What this process knew of the folder no longer holds.
                 repositoryStates.delete(target.scope.id);
-                // SCIENT-FORK:START overleaf-checkout-barrier
-                const restored = yield* checkoutBarrier.bulk(
-                  target.scope.cwd,
-                  checkpointStore.restoreCheckpoint({
-                    ...folder,
-                    checkpointRef: target.checkpoint.ref,
-                    fallbackToHead: false,
-                  }),
-                );
-                // SCIENT-FORK:END overleaf-checkout-barrier
+                const restored = yield* checkpointStore.restoreCheckpoint({
+                  ...folder,
+                  checkpointRef: target.checkpoint.ref,
+                  fallbackToHead: false,
+                });
                 if (!restored) return yield* Effect.fail("Checkpoint ref is unavailable.");
-              }),
+              }).pipe(
+                // SCIENT-FORK:START overleaf-checkout-barrier — the snapshot is taken, registered
+                // for recovery and restored over in one bulk section: a refused folder is untouched.
+                (rewind) => checkoutBarrier.bulk(target.scope.cwd, rewind),
+                // SCIENT-FORK:END overleaf-checkout-barrier
+              ),
             ).pipe(Effect.catch((cause) => Effect.flip(failed(target, cause)))),
           { discard: true },
         ).pipe(
@@ -931,7 +931,13 @@ export const layer: Layer.Layer<
             Effect.forEach(
               snapshots.toReversed(),
               (snapshot) =>
-                withWorkspaceLock(snapshot.cwd, checkpointStore.restoreCheckpoint(snapshot)).pipe(
+                withWorkspaceLock(
+                  snapshot.cwd,
+                  // SCIENT-FORK:START overleaf-checkout-barrier — putting a folder back is a bulk
+                  // change too; a refusal keeps its snapshot.
+                  checkoutBarrier.bulk(snapshot.cwd, checkpointStore.restoreCheckpoint(snapshot)),
+                  // SCIENT-FORK:END overleaf-checkout-barrier
+                ).pipe(
                   Effect.catchCause((cause) => {
                     unrecovered.add(snapshot.checkpointRef);
                     return Effect.logWarning("A failed rewind left a folder partly restored", {
