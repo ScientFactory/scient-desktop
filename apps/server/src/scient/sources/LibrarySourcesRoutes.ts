@@ -35,7 +35,6 @@ import {
 import {
   readScientLibraryJoinDifferences,
   takeFromScientLibraryJoin,
-  undoScientLibraryJoin,
 } from "@scientfactory/scient-sources/library-join";
 import {
   listScientLibraryImportNotBrought,
@@ -147,7 +146,7 @@ import { scheduleSourceCategorization } from "./SourceCategories.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import type { ScientSourcesLibraryStore } from "./SourcesBackend.ts";
 import { startLibraryBackup } from "./LibraryBackupRuns.ts";
-import { runningLibraryJoins, startLibraryJoin } from "./LibraryJoinRuns.ts";
+import { runningLibraryJoins, startLibraryJoin, undoLibraryJoin } from "./LibraryJoinRuns.ts";
 
 type Store = ScientSourcesLibraryStore;
 
@@ -1311,26 +1310,9 @@ export async function organizeLibrarySources(
       // The join itself accepts only a checked backup or a Library a restore moved aside.
       return startLibraryJoin(store.library, change.fromFolder, ACTOR);
     case "undo-join": {
-      const undone = await undoScientLibraryJoin({
-        library: store.library,
-        joinId: change.joinId,
-        actor: ACTOR,
-      });
-      if (undone.outcome !== "undone") {
-        return {
-          outcome:
-            undone.outcome === "not-found"
-              ? ("join-not-found" as const)
-              : undone.outcome === "running"
-                ? ("join-busy" as const)
-                : ("already-undone" as const),
-        };
-      }
-      await afterChange(store, []);
-      return {
-        outcome: "join-undone" as const,
-        joinUndone: { trashed: undone.trashed, left: undone.left },
-      };
+      const undone = await undoLibraryJoin(store.library, change.joinId, ACTOR);
+      if (undone.outcome === "join-undone") await afterChange(store, []);
+      return undone;
     }
     case "take-from-library": {
       const taken = await takeFromScientLibraryJoin({

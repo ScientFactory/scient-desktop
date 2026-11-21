@@ -1,5 +1,8 @@
 // @effect-diagnostics globalDate:off -- A join's end is reported with an interoperable ISO timestamp.
-import { joinScientLibrary } from "@scientfactory/scient-sources/library-join";
+import {
+  joinScientLibrary,
+  undoScientLibraryJoin,
+} from "@scientfactory/scient-sources/library-join";
 import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
 import type { ScientSourceActor } from "@scientfactory/scient-sources";
 import type { ScientSourcesJoinStatus } from "@t3tools/contracts";
@@ -92,4 +95,26 @@ export function startLibraryJoin(
     )
     .finally(() => running.delete(library.root));
   return { outcome: "join-started" };
+}
+
+/** Moves what a join added to the Trash, each source only if unchanged since; as the panel answers. */
+export async function undoLibraryJoin(
+  library: ScientLibraryLocation,
+  joinId: string,
+  actor: ScientSourceActor,
+) {
+  const undone = await undoScientLibraryJoin({ library, joinId, actor });
+  switch (undone.outcome) {
+    case "undone":
+      return {
+        outcome: "join-undone" as const,
+        joinUndone: { trashed: undone.trashed, left: undone.left },
+      };
+    case "not-found":
+      return { outcome: "join-not-found" as const };
+    case "running":
+      return { outcome: "join-busy" as const };
+    case "already-undone":
+      return { outcome: "already-undone" as const };
+  }
 }

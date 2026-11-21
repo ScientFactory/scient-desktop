@@ -68,11 +68,8 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientSources.bulkUpdate": tool("scient_sources_bulk_update"),
   "scientSources.addByIdentifier": tool("scient_sources_add", "identifierList"),
   "scientSources.restore": tool("scient_sources_restore"),
-  "scientSources.libraryRestore": {
-    kind: "gap",
-    reason:
-      "An agent cannot restore a Library backup, or put back a Library a restore replaced, yet; it comes with the backup action on the organize tool, with its evals.",
-  },
+  // Organize restore-library, put-back-library and cancel-restore.
+  "scientSources.libraryRestore": tool("scient_sources_organize"),
   "scientSources.deletePermanently": tool("scient_sources_remove", "permanent"),
   "scientSources.revert": tool("scient_sources_revert"),
   "scientSources.localPdfUpload": {
@@ -124,16 +121,20 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientReferences.resolve": tool("scient_references_resolve"),
 };
 
+type OrganizeAction = ScientSourcesLibraryOrganizeAction["action"];
+
 /**
- * Every Library-only organize action and the action of the library organize tool that does the
- * same; `change-pins` is the panel's batch of the tool's pin and unpin.
+ * Every Library-only organize action and the actions of the library organize tool that do the
+ * same, or why an agent needs none (`exempt`) or has none yet (`gap`).
  */
 export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
-  ScientSourcesLibraryOrganizeAction["action"],
-  ReadonlyArray<ScientSourcesLibraryOrganizeAction["action"]>
+  OrganizeAction,
+  | readonly [OrganizeAction, ...OrganizeAction[]]
+  | { readonly kind: "exempt" | "gap"; readonly reason: string }
 > = {
   pin: ["pin"],
   unpin: ["unpin"],
+  // The panel's batch of the tool's pin and unpin.
   "change-pins": ["pin", "unpin"],
   merge: ["merge"],
   "undo-merge": ["undo-merge"],
@@ -141,10 +142,15 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "clear-distinct": ["clear-distinct"],
   "move-back": ["move-back"],
   "dismiss-move-summary": ["dismiss-move-summary"],
-  // Every change an agent makes runs a failed move again first.
-  "retry-move": [],
-  // "I have seen these" is the person's; an agent reads each source's notices and their history.
-  "dismiss-notice-changes": [],
+  "retry-move": {
+    kind: "exempt",
+    reason: "Every change an agent makes runs a failed move again first.",
+  },
+  "dismiss-notice-changes": {
+    kind: "exempt",
+    reason:
+      "\"I have seen these\" is the person's; an agent reads each source's notices and their history.",
+  },
   "link-pin": ["link-pin"],
   "unlink-pin": ["unlink-pin"],
   "keep-pin-separate": ["keep-pin-separate"],
@@ -155,14 +161,18 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "import-package": ["import-package"],
   "undo-import": ["undo-import"],
   "list-package-imports": ["list-package-imports"],
-  // Agents find package folders with their own file tools.
-  "list-packages": [],
-  // Not for agents yet: it needs a new action on the organize tool, with its evals.
-  "back-up-library": [],
-  // Not for agents yet, like the backup it reads: both come with the organize tool's next action.
-  "add-from-library": [],
-  "undo-join": [],
-  "take-from-library": [],
+  "list-packages": {
+    kind: "exempt",
+    reason: "Agents find package folders with their own file tools.",
+  },
+  "back-up-library": ["back-up-library"],
+  "add-from-library": ["add-from-library"],
+  "undo-join": ["undo-join"],
+  "take-from-library": {
+    kind: "gap",
+    reason:
+      "Taking a note, a PDF or a whole paper from the other Library needs the join's differences with their fingerprints, which the list tool does not read.",
+  },
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */
@@ -195,11 +205,8 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   // Library mode only: the list tool's duplicates.
   "scientSources.duplicates": tool("scient_sources_list"),
   "scientSources.moveStatus": tool("scient_sources_list"),
-  "scientSources.backupStatus": {
-    kind: "gap",
-    reason:
-      "An agent cannot start or watch a Library backup yet; it needs a new action on the organize tool, with its evals.",
-  },
+  // The Library's list tool takes `libraryCopies`.
+  "scientSources.backupStatus": tool("scient_sources_list"),
   "scientSources.revisions": tool("scient_sources_get"),
   "scientSources.zoteroStatus": tool("scient_sources_zotero_browse"),
   "scientSources.zoteroLibrary": tool("scient_sources_zotero_browse"),

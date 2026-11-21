@@ -8,10 +8,19 @@ import {
   type ScientLibraryRestoreFinished,
   type ScientLibraryRestorePrepared,
 } from "@scientfactory/scient-sources/library-restore";
-import { scientLibraryRootFor } from "@scientfactory/scient-sources/library-root";
-import type { ScientSourcesRestoreStatus } from "@t3tools/contracts";
+import {
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
+import type {
+  ScientSourcesLibraryCopies,
+  ScientSourcesLibraryRestoreRequest,
+  ScientSourcesRestoreStatus,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
+import { libraryJoinStatus } from "./LibraryJoinRuns.ts";
 import { ScientSourcesBackend } from "./SourcesBackend.ts";
 
 type Ended = Extract<ScientSourcesRestoreStatus, { readonly state: "restored" | "failed" }>;
@@ -107,7 +116,7 @@ export function startLibraryRestore(libraryRoot: string, fromFolder: string): vo
  * Arranges for a Library a restore kept to take the Library's place at the next start. It
  * copies nothing, so it is answered at once; a refusal is remembered like a failed restore.
  */
-export async function putBackLibrary(libraryRoot: string, folder: string): Promise<void> {
+async function putBackLibrary(libraryRoot: string, folder: string): Promise<void> {
   if (preparing.has(libraryRoot)) return;
   ended.delete(libraryRoot);
   problems.delete(libraryRoot);
@@ -148,12 +157,43 @@ export async function cancelLibraryRestore(
   libraryRoot: string,
   /** The waiting restore the person saw: another window may have replaced it since. */
   restoreId?: string,
-): Promise<void> {
-  if (preparing.has(libraryRoot)) return;
+) {
+  if (preparing.has(libraryRoot)) return "preparing" as const;
   const { outcome } = await cancelScientLibraryRestore(libraryRoot, restoreId);
-  if (outcome === "begun" || outcome === "another") return;
+  if (outcome === "begun" || outcome === "another") return outcome;
   problems.delete(libraryRoot);
   ended.delete(libraryRoot);
+  return outcome;
+}
+
+/**
+ * One restore request, from the panel or an agent. Preparing and putting back report through
+ * the status; a cancel says what it did, since the restore waiting may be another one.
+ */
+export async function changeLibraryRestore(
+  libraryRoot: string,
+  change: ScientSourcesLibraryRestoreRequest["change"],
+) {
+  switch (change.action) {
+    case "prepare":
+      startLibraryRestore(libraryRoot, change.fromFolder);
+      return "requested" as const;
+    case "put-back":
+      await putBackLibrary(libraryRoot, change.folder);
+      return "requested" as const;
+    case "cancel":
+      return cancelLibraryRestore(libraryRoot, change.restoreId);
+  }
+}
+
+/** Reads only: this server's own record of the Library's backup, restore and last addition. */
+export async function readLibraryCopies(libraryRoot: string): Promise<ScientSourcesLibraryCopies> {
+  const library = scientLibraryLocation(libraryRoot);
+  return {
+    backup: libraryBackupStatus(library),
+    restore: await libraryRestoreStatus(libraryRoot),
+    join: libraryJoinStatus(library),
+  };
 }
 
 function remember(libraryRoot: string, finished: ScientLibraryRestoreFinished): void {

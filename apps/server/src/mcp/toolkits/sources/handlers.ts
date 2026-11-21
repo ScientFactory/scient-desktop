@@ -167,6 +167,12 @@ import {
   readLibraryMoveStatus,
   scientLibraryMoveNotice,
 } from "../../../scient/sources/LibraryMove.ts";
+import { startLibraryBackup } from "../../../scient/sources/LibraryBackupRuns.ts";
+import { startLibraryJoin, undoLibraryJoin } from "../../../scient/sources/LibraryJoinRuns.ts";
+import {
+  changeLibraryRestore,
+  readLibraryCopies,
+} from "../../../scient/sources/LibraryRestoreRuns.ts";
 import {
   bothInLibrary,
   libraryDuplicates,
@@ -596,7 +602,17 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly revision?: string;
     readonly mergeId?: string;
     readonly recentChanges?: boolean;
+    readonly libraryCopies?: boolean;
   }) {
+    if (input.libraryCopies) {
+      const { library } = yield* resolveWholeLibrary("read");
+      return {
+        records: [],
+        total: 0,
+        nextOffset: null,
+        libraryCopies: yield* attempt(() => readLibraryCopies(library.root)),
+      };
+    }
     // Only the whole Library's lists are served without a project; every other list needs one.
     const wholeLibrary =
       (yield* namesNoProject) &&
@@ -901,7 +917,7 @@ export const organizeScientSourcesForInvocation = Effect.fn("ScientSourcesToolki
 
 type LibraryOrganizeChange = Exclude<
   ScientSourcesLibraryOrganizeAction,
-  ScientSourcesOrganizeAction
+  ScientSourcesOrganizeAction | LibraryCopyChange
 >;
 
 const isLibraryOrganizeChange = (
@@ -922,11 +938,97 @@ const isLibraryOrganizeChange = (
   change.action === "list-package-imports" ||
   isPinRepairAction(change);
 
+type LibraryCopyChange = Extract<
+  ScientSourcesLibraryOrganizeAction,
+  {
+    readonly action:
+      | "back-up-library"
+      | "restore-library"
+      | "put-back-library"
+      | "cancel-restore"
+      | "add-from-library"
+      | "undo-join";
+  }
+>;
+
+const isLibraryCopyChange = (
+  change: ScientSourcesLibraryOrganizeAction,
+): change is LibraryCopyChange =>
+  change.action === "back-up-library" ||
+  change.action === "restore-library" ||
+  change.action === "put-back-library" ||
+  change.action === "cancel-restore" ||
+  change.action === "add-from-library" ||
+  change.action === "undo-join";
+
+const CANCEL_OUTCOMES = {
+  cancelled: "restore-cancelled",
+  "nothing-waiting": "nothing-waiting",
+  begun: "restore-begun",
+  another: "another-restore",
+  preparing: "restore-preparing",
+} as const;
+
+/** A restore request needs write access but resolves only the Library's folder, as the panel's. */
+const requestLibraryRestore = Effect.fn("ScientSourcesToolkit.requestLibraryRestore")(function* (
+  request: Parameters<typeof changeLibraryRestore>[1],
+) {
+  yield* requireSourcesWrite;
+  const { library } = yield* resolveWholeLibrary("read");
+  const outcome = yield* attempt(() => changeLibraryRestore(library.root, request));
+  return {
+    library,
+    outcome: outcome === "requested" ? ("restore-requested" as const) : CANCEL_OUTCOMES[outcome],
+  };
+});
+
+/**
+ * The whole Library's backup, restore and additions from another Library, by the runners the
+ * panel uses. A restore never touches the Library or moves a project in: the swap waits for the
+ * next start. Projects pick up an undone join through their normal refresh.
+ */
+const changeLibraryCopies = Effect.fn("ScientSourcesToolkit.libraryCopies")(function* (
+  change: LibraryCopyChange,
+) {
+  const answer = <A extends object>(library: ScientLibraryLocation, changed: A) =>
+    attempt(() => readLibraryCopies(library.root)).pipe(
+      Effect.map((libraryCopies) => ({ ...changed, libraryCopies })),
+    );
+  switch (change.action) {
+    case "restore-library":
+    case "put-back-library":
+    case "cancel-restore": {
+      const { library, outcome } = yield* requestLibraryRestore(
+        change.action === "restore-library"
+          ? { action: "prepare", fromFolder: change.fromFolder }
+          : change.action === "put-back-library"
+            ? { action: "put-back", folder: change.folder }
+            : { action: "cancel", restoreId: change.restoreId },
+      );
+      return yield* answer(library, { outcome });
+    }
+    case "back-up-library": {
+      const { library } = yield* resolveWholeLibrary("write");
+      return yield* answer(library, startLibraryBackup(library, change.inFolder));
+    }
+    case "add-from-library": {
+      const { library } = yield* resolveWholeLibrary("write");
+      return yield* answer(library, startLibraryJoin(library, change.fromFolder, "agent"));
+    }
+    case "undo-join": {
+      const { library } = yield* resolveWholeLibrary("write");
+      const undone = yield* attempt(() => undoLibraryJoin(library, change.joinId, "agent"));
+      return yield* answer(library, undone);
+    }
+  }
+});
+
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
   "ScientSourcesToolkit.organizeLibrary",
 )(function* (input: { readonly change: ScientSourcesLibraryOrganizeAction }) {
   const { change } = input;
+  if (isLibraryCopyChange(change)) return yield* changeLibraryCopies(change);
   if (!isLibraryOrganizeChange(change)) {
     return yield* organizeScientSourcesForInvocation({ change });
   }

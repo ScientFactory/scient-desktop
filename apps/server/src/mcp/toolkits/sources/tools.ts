@@ -42,6 +42,7 @@ import {
   ScientManagedBibliographyStatus,
   ScientSourceLibraryMatch,
   ScientSourcesDuplicateReason,
+  ScientSourcesLibraryCopies,
   ScientSourcesMergeUndoState,
   ScientSourcesPinRepairAction,
   ScientSourcesMergeDifferences,
@@ -198,6 +199,8 @@ export const ScientSourcesListResult = Schema.Struct({
       restarted: Schema.optionalKey(Schema.Literal(true)),
     }),
   ),
+  /** Library mode, with libraryCopies: the Library's backup, its restore and its last addition. */
+  libraryCopies: Schema.optionalKey(ScientSourcesLibraryCopies),
   /** Library mode, with mergeId: that merge as the Merged list shows it, and whether Undo can run. */
   mergeReceipt: Schema.optionalKey(
     Schema.Struct({
@@ -304,7 +307,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
     description:
       mode === "project"
         ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${LIST_FILTERS}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${LIST_FILTERS} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt. recentChanges: bulk edits (undo unfinished parts' batchIds in reverse array order), merges, imports and Trash instead, newest first.`,
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${LIST_FILTERS} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt. recentChanges: bulk edits (undo unfinished parts' batchIds in reverse array order), merges, imports and Trash instead, newest first. libraryCopies: the Library's backup, restore and addition from another Library instead.`,
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
@@ -319,6 +322,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
             revision: Schema.optionalKey(NonEmptyString),
             mergeId: Schema.optionalKey(NonEmptyString),
             recentChanges: Schema.optionalKey(Schema.Boolean),
+            libraryCopies: Schema.optionalKey(Schema.Boolean),
           }),
     success: ScientSourcesListResult,
     failure: ScientSourcesToolError,
@@ -1189,6 +1193,12 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("import-package"), relativePath: NonEmptyString }),
   Schema.Struct({ action: Schema.Literal("list-package-imports") }),
   Schema.Struct({ action: Schema.Literal("undo-import"), importId: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("back-up-library"), inFolder: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("restore-library"), fromFolder: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("put-back-library"), folder: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("cancel-restore"), restoreId: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("add-from-library"), fromFolder: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("undo-join"), joinId: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -1225,6 +1235,19 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "imported",
     "not-a-package",
     "package-changed",
+    "backup-started",
+    "backup-running",
+    "restore-requested",
+    "restore-cancelled",
+    "nothing-waiting",
+    "restore-begun",
+    "another-restore",
+    "restore-preparing",
+    "join-started",
+    "join-running",
+    "join-undone",
+    "join-not-found",
+    "join-busy",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1255,10 +1278,14 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   packageReport: Schema.optionalKey(ScientProjectPackageReport),
   packageImports: Schema.optionalKey(ScientProjectPackageImports),
   packageImportDiagnostics: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** undo-join: sources moved to the Trash, and sources left because they changed since. */
+  joinUndone: Schema.optionalKey(Schema.Struct({ trashed: Schema.Int, left: Schema.Int })),
+  /** Backup, restore and adding from another Library: where each stands after the change. */
+  libraryCopies: Schema.optionalKey(ScientSourcesLibraryCopies),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer (abandon: true drops one that stopped part way and blocks the move); export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes or saved searches; relativePath, or a dated folder in inFolder; using paths on this environment, never .scient or an existing package), import-package brings one in from the named folder; list-package-imports lists this project’s imports, dates, counts, Undo availability and everything kept or left as evidence; undo-import with its importId removes unchanged project additions, keeps all Library papers and returns retainedSourceIds. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer (abandon: true drops one that stopped part way and blocks the move); export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes or saved searches; relativePath, or a dated folder in inFolder; using paths on this environment, never .scient or an existing package), import-package brings one in from the named folder; list-package-imports lists this project’s imports, dates, counts, Undo availability and everything kept or left as evidence; undo-import with its importId removes unchanged project additions, keeps all Library papers and returns retainedSourceIds. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes). The whole Library, with absolute folders on this environment: back-up-library copies it into a dated folder in inFolder; restore-library (fromFolder, a backup) or put-back-library (folder, a Library a restore kept, from recentChanges) takes its place when Scient next starts, unless cancel-restore with the restoreId libraryCopies shows; add-from-library adds what fromFolder's Library has and this one lacks (undo-join with its joinId).`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

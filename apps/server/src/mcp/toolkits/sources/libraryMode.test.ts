@@ -33,7 +33,7 @@ import {
   updateScientSourceMetadata,
 } from "@scientfactory/scient-sources/store";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ScientSourceAgentDetail } from "./tools.ts";
@@ -59,6 +59,11 @@ import {
   libraryReview,
   libraryReviewConflicts,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
+import {
+  changeLibraryRestore,
+  finishLibraryRestoreAtStart,
+  readLibraryCopies,
+} from "../../../scient/sources/LibraryRestoreRuns.ts";
 import {
   resolveScientLibraryStoreAt,
   ScientSourcesBackend,
@@ -1828,5 +1833,82 @@ describe("Sources tools on the library backend", () => {
       );
       expect(empty.message).toBe("Give metadata, readingStatus or starred.");
     }),
+  );
+
+  it.effect(
+    "an agent's backup is restored the panel's way, and an older restore ID cancels nothing",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const kept = yield* Effect.promise(() => libraryRecord(fixture, "kept"));
+        const destination = NodePath.join(fixture.base, "backups");
+        yield* Effect.promise(() => NodeFSP.mkdir(destination));
+        // The runners' own record, which the list tool's libraryCopies reads.
+        const copies = () => readLibraryCopies(fixture.libraryRoot);
+
+        const started = yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "back-up-library", inFolder: destination },
+          }),
+          fixture,
+        );
+        expect(started.outcome).toBe("backup-started");
+        const backup = yield* Effect.promise(() =>
+          vi.waitFor(async () => {
+            const { backup } = await copies();
+            if (backup.state !== "done") throw new Error(`The backup is ${backup.state}.`);
+            return backup.path;
+          }),
+        );
+        expect(
+          (yield* run(listScientSourcesForInvocation({ libraryCopies: true }), fixture))
+            .libraryCopies?.backup,
+        ).toMatchObject({ state: "done", path: backup, sources: 1 });
+        yield* Effect.promise(() => libraryRecord(fixture, "added-later"));
+
+        yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "restore-library", fromFolder: backup },
+          }),
+          fixture,
+        );
+        const ready = () =>
+          vi.waitFor(async () => {
+            const { restore } = await copies();
+            if (restore.state !== "ready") throw new Error(`The restore is ${restore.state}.`);
+            return restore.restoreId!;
+          });
+        const older = yield* Effect.promise(ready);
+        // The panel asks again; the agent's cancel names the restore it saw, which is gone.
+        yield* Effect.promise(() =>
+          changeLibraryRestore(fixture.libraryRoot, { action: "prepare", fromFolder: backup }),
+        );
+        const newer = yield* Effect.promise(() =>
+          vi.waitFor(async () => {
+            const restoreId = await ready();
+            if (restoreId === older) throw new Error("The first restore still waits.");
+            return restoreId;
+          }),
+        );
+        const cancelled = yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "cancel-restore", restoreId: older },
+          }),
+          fixture,
+        );
+        expect(cancelled).toMatchObject({
+          outcome: "another-restore",
+          libraryCopies: { restore: { state: "ready", restoreId: newer } },
+        });
+
+        yield* finishLibraryRestoreAtStart(fixture.stateDir).pipe(
+          Effect.provideService(ScientSourcesBackend, "library"),
+        );
+        expect(
+          (yield* Effect.promise(() => listScientSourceRecords(fixture.library))).map(
+            (record) => record.sourceId,
+          ),
+        ).toEqual([kept.sourceId]);
+      }),
   );
 });
