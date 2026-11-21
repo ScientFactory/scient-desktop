@@ -1474,6 +1474,21 @@ jobs:
               exit 1
             }
           fi
+      # SCIENT-FORK:START — the download mirror publishes the release to the update feeds now,
+      # instead of at its next scheduled run. Its own workflow waits for the feeds, outside this
+      # run's release lock, and runs right after publication is verified, so a later failed step
+      # cannot skip it. A failed dispatch only warns: the mirror's schedule publishes it anyway.
+      - name: Start the download mirror for this release
+        if: needs.preflight.outputs.channel == 'stable' || needs.preflight.outputs.channel == 'beta'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          gh workflow run sync-download-mirror.yml --repo "$GITHUB_REPOSITORY" \
+            -f channel="$RELEASE_CHANNEL" -f tag="$RELEASE_TAG"
+      # SCIENT-FORK:END
       # SCIENT-FORK:START — release events from github.token start no workflows, so dispatch
       # the hosted app's deploy on the published tag.
       - name: Deploy the hosted app for this release
@@ -1483,60 +1498,3 @@ jobs:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: gh workflow run deploy-hosted-web.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"
       # SCIENT-FORK:END
-
-  # SCIENT-FORK:START — the download mirror publishes the release to the update feeds now,
-  # instead of at its next scheduled run, so installed apps see it within minutes.
-  sync_download_mirror:
-    name: Publish to the download mirror
-    needs: [preflight, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && (needs.preflight.outputs.channel == 'stable' || needs.preflight.outputs.channel == 'beta') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    # The mirror's schedule publishes the release anyway; a failed call must not fail it.
-    continue-on-error: true
-    permissions: {}
-    steps:
-      - name: Run the mirror and wait for the update feeds
-        shell: bash
-        env:
-          SYNC_URL: ${{ secrets.RELEASE_MIRROR_SYNC_URL }}
-          SYNC_TOKEN: ${{ secrets.RELEASE_MIRROR_SYNC_TOKEN }}
-          RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
-          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          if [[ -z "$SYNC_URL" || -z "$SYNC_TOKEN" ]]; then
-            echo "::notice::The mirror trigger is not configured; its next scheduled run publishes $version."
-            exit 0
-          fi
-          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
-            manifests=(beta.yml beta-mac.yml beta-linux.yml)
-          else
-            manifests=(latest.yml latest-mac.yml latest-linux.yml)
-          fi
-          feed="https://downloads.scientfactory.com/scient-desktop/updates/$RELEASE_CHANNEL"
-          feeds_offer_release() {
-            local manifest offered
-            for manifest in "${manifests[@]}"; do
-              offered="$(curl -fsS --max-time 30 "$feed/$manifest?noCache=$RANDOM" \
-                | sed -nE "s/^version: *'?([^']*)'?\$/\\1/p")" || return 1
-              [[ "$offered" == "$version" ]] || return 1
-            done
-          }
-          # GitHub can take a minute to list a new release everywhere the mirror reads, so a
-          # run that finds nothing new is repeated.
-          for attempt in 1 2 3 4 5; do
-            echo "Mirror run $attempt for $RELEASE_TAG"
-            curl -sS -N --fail-with-body --max-time 900 -X POST \
-              -H "Authorization: Bearer $SYNC_TOKEN" "$SYNC_URL?channel=$RELEASE_CHANNEL" \
-              | grep -v '"Release mirror working"' \
-              || echo "::warning::Mirror run $attempt did not finish."
-            if feeds_offer_release; then
-              echo "The $RELEASE_CHANNEL update feeds offer $version."
-              exit 0
-            fi
-            sleep 60
-          done
-          echo "::warning::The $RELEASE_CHANNEL update feeds do not offer $version yet; the mirror's schedule publishes it."
-  # SCIENT-FORK:END
