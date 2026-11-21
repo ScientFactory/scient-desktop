@@ -2414,6 +2414,16 @@ export const layer: Layer.Layer<
               ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
             }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           let preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : skillUserText;
+          // SCIENT-FORK:START — a turn that went out without its catalog text did not deliver the skill index.
+          let catalogDropped = compact;
+          const dropCatalog = (fallback: string) => {
+            catalogDropped = true;
+            preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+            runtimeInstruction = usesRuntimeInstruction
+              ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+              : undefined;
+          };
+          // SCIENT-FORK:END
           let currentInput = compact
             ? skillUserText
             : yield* validateCurrent(preparedUserText).pipe(
@@ -2421,10 +2431,7 @@ export const layer: Layer.Layer<
                   ProviderCurrentInputError: (cause) => {
                     const fallback = preparedSkills.textWithoutCatalogMarker;
                     if (fallback === undefined) return Effect.fail(cause);
-                    preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                    runtimeInstruction = usesRuntimeInstruction
-                      ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                      : undefined;
+                    dropCatalog(fallback);
                     return validateCurrent(preparedUserText);
                   },
                 }),
@@ -2461,10 +2468,7 @@ export const layer: Layer.Layer<
               ContextHandoffBudgetError: Effect.fnUntraced(function* (cause) {
                 const fallback = preparedSkills.textWithoutCatalogMarker;
                 if (fallback === undefined) return yield* cause;
-                preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                runtimeInstruction = usesRuntimeInstruction
-                  ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                  : undefined;
+                dropCatalog(fallback);
                 currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
                 return yield* prepareDelivery();
               }),
@@ -2478,7 +2482,7 @@ export const layer: Layer.Layer<
               runId: run.id,
               cause: "The current native offer was declined after input preparation.",
             });
-          yield* preparedSkills.publish;
+          yield* catalogDropped ? preparedSkills.publishWithoutCatalog : preparedSkills.publish;
           const start = compact ? session.compactThread! : session.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =
@@ -2572,7 +2576,7 @@ export const layer: Layer.Layer<
       );
       // Native-initiated work has already begun under its captured policy;
       // preserve its adoption path rather than issuing another ordinary prompt.
-      if (providerWork !== undefined) yield* preparedSkills.publish;
+      if (providerWork !== undefined) yield* preparedSkills.publishWithoutCatalog;
       // SCIENT-FORK:START — every ordinary prompt delivers through skill preparation.
       const deliverySession =
         providerWork !== undefined ? session : makeDeliverySession(session, startWithHandoffs);

@@ -480,12 +480,14 @@ export const layer: Layer.Layer<
             skillPlanner,
           }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
           let text = prepared.text;
+          let catalogDropped = false;
           yield* validateScientV2SteerInput({
             prepared,
             attachments: message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
             useFallback: (fallback) => {
               text = fallback;
+              catalogDropped = true;
             },
           }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END
@@ -523,7 +525,7 @@ export const layer: Layer.Layer<
             )
               return;
           }
-          yield* prepared.publish;
+          yield* catalogDropped ? prepared.publishWithoutCatalog : prepared.publish;
           yield* current.session.value
             .steerTurn({
               threadId: input.threadId,

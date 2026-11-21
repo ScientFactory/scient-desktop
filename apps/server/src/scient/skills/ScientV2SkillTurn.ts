@@ -15,6 +15,17 @@ import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
 
 /**
+ * The automatic skill index each thread's current provider session last received, by catalog
+ * digest. A new provider session (restart, resume in a new process, provider switch) or a changed
+ * catalog sends the index again; otherwise the turn points back to it. Server memory only: after
+ * a server restart every session gets the index once more.
+ */
+const deliveredSkillIndex = new Map<
+  ThreadId,
+  { readonly providerSessionId: string; readonly digest: string }
+>();
+
+/**
  * Explicit names on the persisted user message are the sole skill-selection authority; serialized
  * provider text cannot select skills. Prepare each turn from that one snapshot.
  */
@@ -61,16 +72,32 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
     providerNativeSkillTool: tools.providerNativeSkillTool,
     deferred: tools.deferred,
   };
-  const prepare = (includeCatalogMarker: boolean) =>
+  const prepare = (includeCatalogMarker: boolean, catalogIndex?: "full" | "unchanged") =>
     prepareScientSkillTurn(
       input.text,
       deliverable ? plan.skills : [],
       deliverable ? plan.releases : new Map(),
-      { ...projection, includeCatalogMarker },
+      { ...projection, includeCatalogMarker, ...(catalogIndex ? { catalogIndex } : {}) },
       input.selectedScientSkillNames,
       plan.catalogStatus,
     );
-  const skillTurn = prepare(deliverable);
+  const fullTurn = prepare(deliverable, "full");
+  const digest = deliverable ? fullTurn.catalogIndexDigest : undefined;
+  const providerSessionId = mcpSession?.providerSessionId;
+  const previous = deliveredSkillIndex.get(input.threadId);
+  const alreadyIndexed =
+    plan.catalogStatus === "complete" &&
+    digest !== undefined &&
+    previous !== undefined &&
+    previous.providerSessionId === providerSessionId &&
+    previous.digest === digest;
+  const skillTurn = alreadyIndexed ? prepare(deliverable, "unchanged") : fullTurn;
+  const sendsIndex =
+    deliverable &&
+    !alreadyIndexed &&
+    providerSessionId !== undefined &&
+    digest !== undefined &&
+    skillTurn.catalogIndexIncluded;
   const text = skillTurn.input ?? input.text;
   const withoutCatalog = prepare(false);
   const withoutCatalogMarker = withoutCatalog.input ?? input.text;
@@ -83,6 +110,17 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
     // Preparation is inert: shared context validation owns when this scope
     // becomes visible to the provider's already-issued bearer credential.
     publish: deliverable
+      ? McpSessionRegistry.replaceActiveMcpSkillScope(input.threadId, skillTurn.skillScope).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (sendsIndex && providerSessionId !== undefined && digest !== undefined)
+                deliveredSkillIndex.set(input.threadId, { providerSessionId, digest });
+            }),
+          ),
+        )
+      : Effect.void,
+    /** Publishes the scope when the turn went out without its catalog text (size fallback). */
+    publishWithoutCatalog: deliverable
       ? McpSessionRegistry.replaceActiveMcpSkillScope(input.threadId, skillTurn.skillScope)
       : Effect.void,
   };

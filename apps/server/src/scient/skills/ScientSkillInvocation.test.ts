@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 
 import { BUILT_IN_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";
-import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
+import { prepareScientSkillTurn, SCIENT_SKILL_INDEX_MAX_BYTES } from "./ScientSkillInvocation.ts";
 
 const automaticRelease = BUILT_IN_SKILL_RELEASES.find(
   (release) => release.name === "workspace-readiness-review",
@@ -82,7 +82,7 @@ describe("turn-local Scient skill routing", () => {
     expect(unselected.skillScope.skills).toEqual([automatic]);
   });
 
-  it("never injects descriptions, including large multilingual metadata", () => {
+  it("injects no descriptions without the catalog index, including large multilingual metadata", () => {
     const longDescription = "מחקר 科学 🧪 ".repeat(200);
     const described = { ...automatic, description: longDescription };
     const unselected = prepareScientSkillTurn("Review.", [described], releases);
@@ -121,6 +121,75 @@ describe("turn-local Scient skill routing", () => {
       catalog: { status: "complete" },
     });
     expect(result.skillScope.catalog?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  });
+
+  it("lists automatic skills' names and descriptions, never explicit or selected ones", () => {
+    const indexed = { ...mcpProjection, catalogIndex: "full" as const };
+    const full = prepareScientSkillTurn("Review this workspace.", skills, releases, indexed);
+    expect(full.catalogIndexIncluded).toBe(true);
+    expect(full.runtimeInstruction).toContain(
+      `- ${automatic.name}: ${automatic.description.replace(/\s+/gu, " ").trim()}`,
+    );
+    expect(full.runtimeInstruction).not.toContain(`- ${explicit.name}:`);
+    expect(full.runtimeInstruction).toContain("`scient_skill_load`");
+    expect(full.runtimeInstruction).not.toContain(automatic.releaseKey);
+
+    const selected = prepareScientSkillTurn("Do it.", skills, releases, indexed, [explicit.name]);
+    expect(selected.runtimeInstruction).toContain(`- ${automatic.name}:`);
+    expect(selected.runtimeInstruction).not.toContain(`- ${explicit.name}:`);
+    expect(selected.runtimeInstruction).toContain(`\`${explicit.name}\` (selected by the user)`);
+    // A one-turn selection does not change what the index says.
+    expect(selected.catalogIndexDigest).toBe(full.catalogIndexDigest);
+
+    const unchanged = prepareScientSkillTurn("Next.", skills, releases, {
+      ...mcpProjection,
+      catalogIndex: "unchanged",
+    });
+    expect(unchanged.catalogIndexIncluded).toBe(false);
+    expect(unchanged.runtimeInstruction).not.toContain(automatic.description);
+    expect(unchanged.runtimeInstruction).toContain("unchanged since the list an earlier turn gave");
+
+    for (const input of ["/compact", "", "   "]) {
+      expect(prepareScientSkillTurn(input, skills, releases, indexed).catalogIndexIncluded).toBe(
+        false,
+      );
+    }
+  });
+
+  it("points to search instead of truncating an index past its allowance", () => {
+    const many = Array.from({ length: 60 }, (_, index) => ({
+      ...automatic,
+      releaseKey: `${automatic.releaseKey}-${index}`,
+      id: `${automatic.id}-${index}`,
+      name: `skill-${String(index).padStart(2, "0")}`,
+      description: "x".repeat(400),
+    }));
+    const manyReleases = new Map(
+      many.map((skill) => [skill.releaseKey, automaticRelease] as const),
+    );
+    const result = prepareScientSkillTurn("Review.", many, manyReleases, {
+      ...mcpProjection,
+      catalogIndex: "full",
+    });
+    expect(60 * 400).toBeGreaterThan(SCIENT_SKILL_INDEX_MAX_BYTES);
+    expect(result.catalogIndexIncluded).toBe(false);
+    expect(result.runtimeInstruction).toContain("too many to list here");
+    expect(result.runtimeInstruction).toContain("`scient_skills_list`");
+    expect(result.runtimeInstruction).not.toContain("skill-00");
+  });
+
+  it("lists the known skills of an incomplete scope without claiming completeness", () => {
+    const result = prepareScientSkillTurn(
+      "Review.",
+      skills,
+      releases,
+      { ...mcpProjection, catalogIndex: "full" },
+      [],
+      "incomplete",
+    );
+    expect(result.runtimeInstruction).toContain(`- ${automatic.name}:`);
+    expect(result.runtimeInstruction).toContain("incomplete, so others may exist");
+    expect(result.runtimeInstruction).not.toContain("complete;");
   });
 
   it("keeps unselected explicit, inactive, and partial names out of the turn", () => {
