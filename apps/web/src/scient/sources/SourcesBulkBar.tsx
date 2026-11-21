@@ -302,6 +302,18 @@ export function SourcesBulkBar(props: {
             : null}
         </span>
         <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:order-1 @max-[30rem]/bulk:basis-full">
+          {library?.listed === "library" && notInProject.length > 0 ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
+            >
+              <FolderPlus />
+              {m(LIBRARY_LABELS.addToProject)}
+            </Button>
+          ) : null}
           {count >= 2 ? <CompareSourcesButton records={selected} /> : null}
           <Menu>
             <MenuTrigger
@@ -425,20 +437,6 @@ export function SourcesBulkBar(props: {
                 ))}
               </MenuPopup>
             </Menu>
-          ) : null}
-          {library?.listed === "library" ? (
-            <ScientTooltip content={m(LIBRARY_LABELS.addToProject)}>
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label={gt("Add to project: {count} selected", { count })}
-                disabled={busy || notInProject.length === 0}
-                onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
-              >
-                <FolderPlus />
-              </Button>
-            </ScientTooltip>
           ) : null}
           {library?.listed === "project" ? (
             <ScientTooltip content={m(LIBRARY_LABELS.removeFromProject)}>
