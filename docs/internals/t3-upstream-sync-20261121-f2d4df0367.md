@@ -62,6 +62,9 @@ The branch is `codex/t3-sync-f2d4df0367-20261121`. The `upstream` push URL stays
   storage version moves 19 → 20 so existing tabs migrate; Scient's Agents and Scient surfaces stay.
   A quote joins a side chat tab, never a known subagent tab. "Open in main view" joins Scient's tab
   menu beside Open in new window and Duplicate.
+- **Cmd+T from a browser page (#39769).** The forwarded shortcut opens Scient's New tab launcher, as
+  the in-panel shortcut does; T3's add-surface menu is not rendered in Scient. Found in the live
+  test.
 - **Read-only timeline (#39406).** The guest page and linked threads share T3's read-only timeline,
   which uses Scient's reading follow and Scroll to end control.
 - **Usage limits (#39889).** T3's "Reset {time}" copy composes with Scient's Continue with.

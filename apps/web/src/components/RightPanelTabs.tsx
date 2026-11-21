@@ -1458,7 +1458,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   // Forwarded from a focused browser page. Focusing the trigger here would let ChatView's
   // window-focus handler see a plain button and refocus the composer, closing the menu.
   const onMenuAction = useEffectEvent((action: string) => {
-    if (action === "rightPanel.new" && !addSurfaceMenuBlocked()) setAddSurfaceMenuOpen(true);
+    if (action !== "rightPanel.new" || addSurfaceMenuBlocked()) return;
+    // SCIENT-FORK:START — Scient opens a New tab launcher; the menu is not rendered.
+    if (props.onAddNewTab) {
+      props.onAddNewTab();
+      return;
+    }
+    // SCIENT-FORK:END
+    setAddSurfaceMenuOpen(true);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes document keydown and the desktop menu action (forwarded from a focused browser page) for the new surface shortcut while the panel is open
   useEffect(() => {
