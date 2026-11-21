@@ -9,6 +9,58 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.32",
+    publishedAt: "2026-11-21",
+    format: "paragraphs",
+    headline: "A new sidebar rail, projects with several repositories, and journal covers.",
+    highlights: [
+      {
+        id: "icon-rail-0632",
+        title: "Reach everything from the new icon rail",
+        description:
+          "A column of icons along the sidebar’s edge opens Home, Library, Scheduled tasks, Extensions and Code review, which switches between Pull requests and Issues, with Settings, Usage and your Scient Connect account at the bottom. Library opens My Library over the whole window, no project needed. A new thread asks “What should we work on?” and picks its project in a chip above the message box. Turn the rail off in Settings → Labs → Sidebar icon rail.",
+      },
+      {
+        id: "multi-repo-0632",
+        title: "Work across several repositories in one project",
+        description:
+          "A plain folder that holds repositories, or a repository with others it depends on, is now one project. Settings → Projects → Repositories shows what it covers and adds folders from elsewhere. Each turn’s changes are grouped by repository, the Diff pane has a repository picker, and thread details lets you commit, push or open a pull request in each. New worktree gives the thread a worktree per repository, and Revert repositories too rewinds them.",
+      },
+      {
+        id: "library-covers-0632",
+        title: "See publishers and journal covers in your Library",
+        description:
+          "Library rows and cards now start with the publisher’s icon, worked out from the paper’s DOI, publisher or link, so papers imported from PubMed no longer show PubMed’s. Journals with their own icon, such as The Lancet, Cell and Nature, show it instead. Cards also show the journal’s current cover when its publisher offers one, including Elsevier, Wiley, Springer Nature, Science, PNAS and NEJM. Covers are saved for offline use.",
+      },
+      {
+        id: "side-threads-0632",
+        title: "Keep subagents and side chats beside your thread",
+        description:
+          "Click a subagent or side chat to open it as a tab in the right panel, so the thread you are in stays in view. ⌘-click, or Ctrl-click on Windows and Linux, opens it in the main view instead; Settings → Chat → Open subagents and side chats in swaps the two. To use what a side chat found, choose Add to chat or type @ in the thread’s composer, even while the thread is busy.",
+      },
+      {
+        id: "remote-0632",
+        title: "Forward ports and see your machines on a map",
+        description:
+          "In the desktop app, use a thread’s Servers list or Forwarded ports in the command palette to forward a port from a connected computer, so any app on yours reaches it at localhost. Turn off Settings → Sharing & access → Preview tunnel on a computer to stop other devices loading its localhost pages. Settings → Environments shows your machines as a map or a list. With Linked environments on in Labs, link several machines at once and read a linked machine’s threads.",
+      },
+      {
+        id: "agents-0632",
+        title: "Sign in to MCP servers and spot custom endpoints",
+        description:
+          "When an MCP server you added to Claude or Codex needs a sign-in, the thread shows Sign in; approve access, paste the address you land on and choose Finish sign-in. If ANTHROPIC_BASE_URL sends Claude elsewhere, Settings → Providers names that server and where it is set, and failed turns say where they went. Each Antigravity instance keeps its own Google sign-in and follows your global AGENTS.md and GEMINI.md. Scient Agent no longer lists Antigravity accounts, which could not sign in.",
+      },
+      {
+        id: "reading-0632",
+        title: "Clearer chat text and quicker everyday actions",
+        description:
+          "Text is darker and secondary text easier to read in light and dark themes, and chat follows your Interface font size with tighter line spacing. Copy chat tables as Markdown, CSV or HTML, and copy a text file from its preview with Copy contents. Edit from here rewinds without a dialog when a thread works in the project folder alone and no later reply changed files. Duplicate a browser tab with its page, and search actions when adding a shortcut in Settings → Shortcuts.",
+      },
+    ],
+    alsoIncluded:
+      "The thread restoration warning no longer returns on every launch. Repository change counts refresh after a rewind. A narrow composer shows the model’s icon. Issues can hide projects and show several Linear teams. Chrome and Edge sign-in windows explain a blank page and keep Cancel after Done. A ready update shows Update at the top of the sidebar. Faster Git status and pull request lookups.",
+  },
+  {
     version: "0.6.31",
     publishedAt: "2026-11-19",
     format: "paragraphs",
