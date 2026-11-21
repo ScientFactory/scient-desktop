@@ -2366,6 +2366,7 @@ export const layer: Layer.Layer<
         text: userText,
         // A resumed prompt that never reached the provider keeps its own skill selection.
         selectedScientSkillNames: providerMessage.selectedScientSkillNames ?? [],
+        messageId: providerMessage.id,
       }).pipe(
         Effect.provideService(ScientSkillSessionPlanner, skillPlanner),
         Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
@@ -2414,6 +2415,16 @@ export const layer: Layer.Layer<
               ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
             }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           let preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : skillUserText;
+          // SCIENT-FORK:START — a turn that went out without its catalog text did not deliver the skill index.
+          let catalogDropped = compact;
+          const dropCatalog = (fallback: string) => {
+            catalogDropped = true;
+            preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+            runtimeInstruction = usesRuntimeInstruction
+              ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+              : undefined;
+          };
+          // SCIENT-FORK:END
           let currentInput = compact
             ? skillUserText
             : yield* validateCurrent(preparedUserText).pipe(
@@ -2421,10 +2432,7 @@ export const layer: Layer.Layer<
                   ProviderCurrentInputError: (cause) => {
                     const fallback = preparedSkills.textWithoutCatalogMarker;
                     if (fallback === undefined) return Effect.fail(cause);
-                    preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                    runtimeInstruction = usesRuntimeInstruction
-                      ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                      : undefined;
+                    dropCatalog(fallback);
                     return validateCurrent(preparedUserText);
                   },
                 }),
@@ -2461,10 +2469,7 @@ export const layer: Layer.Layer<
               ContextHandoffBudgetError: Effect.fnUntraced(function* (cause) {
                 const fallback = preparedSkills.textWithoutCatalogMarker;
                 if (fallback === undefined) return yield* cause;
-                preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                runtimeInstruction = usesRuntimeInstruction
-                  ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                  : undefined;
+                dropCatalog(fallback);
                 currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
                 return yield* prepareDelivery();
               }),
@@ -2500,23 +2505,23 @@ export const layer: Layer.Layer<
               ? RESUME_PROMPT
               : preparedUserText;
           const text = goalCommand ? preparedUserText : withInlineContext(context, requestText);
-          const operation =
-            turnInput.resume && !prompted && session.resumeTurn !== undefined
-              ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
-              : start({
-                  ...(prompted ? contextInput : startInput),
-                  message: {
-                    ...turnInput.message,
-                    ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
-                    text,
-                    ...(missedAttachments.length === 0
-                      ? {}
-                      : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
-                  },
-                  ...(text === preparedUserText
+          const promptless = turnInput.resume && !prompted && session.resumeTurn !== undefined;
+          const operation = promptless
+            ? session.resumeTurn!({ ...resumeInput, messageId: resumeMessage.messageId })
+            : start({
+                ...(prompted ? contextInput : startInput),
+                message: {
+                  ...turnInput.message,
+                  ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
+                  text,
+                  ...(missedAttachments.length === 0
                     ? {}
-                    : { inlineContextLength: text.length - preparedUserText.length }),
-                });
+                    : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
+                },
+                ...(text === preparedUserText
+                  ? {}
+                  : { inlineContextLength: text.length - preparedUserText.length }),
+              });
           yield* operation.pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
@@ -2531,6 +2536,9 @@ export const layer: Layer.Layer<
                 : Effect.void,
             ),
           );
+          // SCIENT-FORK: the accepted prompt carried the skill list, unless it went without it.
+          if (!catalogDropped && !promptless && !goalCommand)
+            yield* preparedSkills.recordCatalogDelivered;
           // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
           yield* Effect.forEach(

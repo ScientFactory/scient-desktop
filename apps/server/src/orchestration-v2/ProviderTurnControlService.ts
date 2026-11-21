@@ -480,12 +480,14 @@ export const layer: Layer.Layer<
             skillPlanner,
           }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
           let text = prepared.text;
+          let catalogDropped = false;
           yield* validateScientV2SteerInput({
             prepared,
             attachments: message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
             useFallback: (fallback) => {
               text = fallback;
+              catalogDropped = true;
             },
           }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END
@@ -579,6 +581,8 @@ export const layer: Layer.Layer<
                 }),
               ),
             );
+          // SCIENT-FORK: the accepted steer carried the skill list, unless it went without it.
+          if (!catalogDropped) yield* prepared.recordCatalogDelivered;
         },
         (effect, input) =>
           effect.pipe(

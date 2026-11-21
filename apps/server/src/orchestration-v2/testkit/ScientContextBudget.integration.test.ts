@@ -642,8 +642,8 @@ it.live.each(
             selectedScientSkillNames: ["project-method"],
           }).pipe(Effect.provide(skillPlannerLayer));
           assert.ok(prepared.textWithoutCatalogMarker);
-          assert.include(prepared.text, "Scient skill scope");
-          assert.notInclude(prepared.textWithoutCatalogMarker, "Scient skill scope");
+          assert.include(prepared.text, "Scient skill");
+          assert.notInclude(prepared.textWithoutCatalogMarker, "Scient skill");
           const deliverySource = yield* ProjectionStoreV2;
           const deliveryAt = (window: number, userText: string) =>
             deliverContextHandoffs({
@@ -909,7 +909,7 @@ it.live.each(
             assert.deepEqual(offeredScopes, [issued]);
             assert.equal(publishedTo(target), 1);
             assert.isTrue(offers[0]!.endsWith(currentInput));
-            assert.notInclude(offers[0]!, "Scient skill scope");
+            assert.notInclude(offers[0]!, "Scient skill");
             assert.isAbove(
               offers[0]!.length,
               120_000,
@@ -971,14 +971,14 @@ it.live.each(
               assert.ok(markerFreeInput);
               assert.ok(markerFreeContext);
               assert.equal(offers[0], `${markerFreeContext}\n\nUser message:\n${markerFreeInput}`);
-              assert.notInclude(offers[0]!, "Scient skill scope");
+              assert.notInclude(offers[0]!, "Scient skill");
               assert.include(offers[0]!, "`project-method` (selected by the user)");
               assert.equal(handoff.delivery?.status, "inline");
               assert.equal(settled.runs.at(-1)?.status, "completed");
               assert.equal(settled.providerTurns.length, 1);
             }
             if (test.retainedScope) {
-              assert.include(offers[0]!, "Scient skill scope");
+              assert.include(offers[0]!, "Scient skill");
               const child = ThreadId.make(`${name}:delta`);
               yield* orchestrator.dispatch({
                 type: "thread.fork",

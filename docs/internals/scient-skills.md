@@ -272,20 +272,31 @@ establish spontaneous model discovery or equal task quality across providers.
 An externally managed OpenCode server does not
 receive Scient's per-session MCP connection and is therefore unsupported for
 this path. Each nonempty non-command input turn with actual `skills:read`
-capability appends a compact current-scope marker to provider input. It reports
-a complete empty scope, or
-the current nonempty scope's count and digest, or that discovery is incomplete;
-it never includes skill names, descriptions, or instruction bodies. Static
-awareness directs the agent to read this marker first. A complete empty scope
-needs no list call. For a complete nonempty scope, visible full-catalog
-summaries may be reused when their digest matches and they suffice; otherwise
-the agent can search or browse `scient_skills_list`. Pending or incomplete
-scope does not establish emptiness. Query and paginated results do not represent
-the whole catalog unless `scope.includesAllSkills` says they do. After context
-loss or uncertainty, rediscover. Acknowledgements and routine follow-ups do not
-require rediscovery. The tool definitions stay stable as the catalog changes;
-discovery reads the current turn snapshot, not cached tool descriptions.
-Provider-native skills remain separate from this Scient scope.
+capability appends a turn note to provider input. The first such turn of a
+provider session, and the next turn after the automatic catalog changes, lists
+every eligible **automatic** skill as `- name: description` (the descriptions are
+what a model needs to recognise a relevant skill). Later turns of the same
+provider session say the list is unchanged, give its count and digest, and point
+to `scient_skills_list` if that list is no longer in view (for example after
+compaction). A new provider session (restart, resume in a new process, provider
+switch) and a server restart send the list again. A turn that went out without
+its catalog text (the size fallback below) does not count as delivered. The list
+never carries instruction bodies, paths or release identifiers, and unselected
+explicit-only, inactive and conflicting skills are absent from it as from the
+scope. Past a 16 KiB allowance the note says the catalog is too large to list and
+asks the agent to search before choosing how to work; it never truncates the
+list. A complete empty scope still says that no list call is needed, and an
+incomplete scope lists the skills it knows and says others may exist.
+
+PR #322 removed an earlier per-turn index to save bytes and relied on a tool-first
+contract: the agent was to call `scient_skills_list` before substantive work. A
+November 2026 skills lab (about 600 unprompted runs) showed that this works for
+some models and fails for others: Codex Sol listed in 144 of 147 runs, Luna in
+113 of 182, Claude Opus in 78 of 145, and Claude Haiku in 11 of 128. Naming the
+skill fixed loading on every model, so the missing piece was routing information,
+not transport. Claude also defers MCP tools behind ToolSearch; the list and load
+tools are therefore marked `anthropic/alwaysLoad`, as Scient Agent already keeps
+them in its essential core. Provider-native skills remain separate from this Scient scope.
 
 An explicitly selected skill receives only a small turn-local loading instruction
 with its exact name and provider-projected loader. This selection signal still
@@ -323,8 +334,9 @@ not guessed. The two mobile outbox start producers collect names from their
 stored raw composer text before server augmentation. This is source/test
 coverage, not fresh native mobile or provider-device qualification.
 
-The final provider-input character bound is checked after attachments and explicit
-selection orientation are prepared. Automatic skills consume no input budget.
+The final provider-input character bound is checked after attachments, the skill
+note and explicit selection orientation are prepared. If the turn does not fit,
+the skill note is dropped first (selected-skill instructions stay).
 Over-limit requests report that nothing was sent;
 they neither silently omit selected attachments nor replace the current Skill
 scope. The bound is not a model-token or full-conversation budget. Combined
@@ -332,11 +344,9 @@ fixtures cover attachment identity, capture text, citations, context blocks,
 fork wrapping, explicit scope and exact character-boundary cases. Real-provider
 task quality, loaded resource/result cost and compaction remain separate proofs.
 
-The automatic index and its 2,800-byte truncation/fallback path have been removed.
-Only the compact current-scope marker and selected names add turn-local
-orientation. The marker contains freshness and completeness only; selected
-names add loading instructions. Descriptions and instruction bodies never
-appear in provider input; full instructions are loaded separately.
+The automatic index carries names and descriptions only; instruction bodies and
+resources never appear in provider input and are loaded separately. Selected
+names add their loading instructions.
 
 `scient_skills_list` accepts `{}` to browse one page. Optional `query` matches all supplied
 terms against name and description; `offset` and `limit` browse deterministic
@@ -389,10 +399,9 @@ agents can browse the available list, and a user can explicitly select a skill
 through `$name`. Neither provider has a reviewed private awareness seam; their
 awareness rides the first prompt, and Scient does not claim equal automatic
 discovery quality. When the session has
-Scient MCP skill capability, provider input carries only the compact current
-scope marker described above; it does not emulate a catalog or copy skill
-guidance into user input, generated project instructions, or provider
-configuration. Provider-native skill discovery remains separate. The composer
+Scient MCP skill capability, provider input carries the turn note described
+above; skill guidance is never copied into generated project instructions or
+provider configuration. Provider-native skill discovery remains separate. The composer
 appends active Scient skills only when the provider has reviewed MCP transport,
 and withholds a Scient entry when a native skill already owns the same name.
 

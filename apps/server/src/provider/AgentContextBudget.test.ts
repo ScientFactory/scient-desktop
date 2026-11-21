@@ -177,6 +177,10 @@ it.effect("only request_secret and send_to_user ask Claude Code to load them up 
       .filter(({ tool }) => tool._meta?.["anthropic/alwaysLoad"] !== undefined)
       .map(({ tool }) => [tool.name, tool._meta]);
     expect(alwaysLoad).toEqual([
+      // SCIENT-FORK:START — Scient's skill list and load find guidance before the work starts.
+      ["scient_skills_list", { "anthropic/alwaysLoad": true }],
+      ["scient_skill_load", { "anthropic/alwaysLoad": true }],
+      // SCIENT-FORK:END
       ["request_secret", { "anthropic/alwaysLoad": true }],
       ["send_to_user", { "anthropic/alwaysLoad": true }],
     ]);
