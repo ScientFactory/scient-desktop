@@ -5,7 +5,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
@@ -36,6 +37,8 @@ import {
   removeScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
+
+vi.mock("./libraryLock.ts", { spy: true });
 
 const fixtures: string[] = [];
 
@@ -460,6 +463,24 @@ describe("project pins", () => {
     release();
     await holder;
     expect(whileHeld).toEqual(fromMap);
+
+    // A merge or Undo half done (its receipt still pending) may have moved a record and not
+    // yet its alias: the answer comes from the locked resolver.
+    const receipt = NodePath.join(root, "merges", "pending", "undo_merge_test.json");
+    await NodeFSP.mkdir(NodePath.dirname(receipt), { recursive: true });
+    await NodeFSP.writeFile(receipt, "{}");
+    const lock = vi.mocked(withScientLibraryLock);
+    lock.mockClear();
+    expect(
+      await resolveScientProjectSources({
+        library,
+        projectRoot,
+        mode: "write",
+        sources: sources.slice(1, 3).map(({ projectSourceId }) => ({ projectSourceId, work: null })),
+      }),
+    ).toEqual(fromMap);
+    expect(lock).toHaveBeenCalled();
+    await NodeFSP.rm(receipt);
   });
 
   it("hydrates unmatched report pins once, preserving their full citation without a Library", async () => {
