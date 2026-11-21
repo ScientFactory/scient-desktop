@@ -1142,7 +1142,7 @@ describe("Library routes on the library backend", () => {
             }),
           ]),
         });
-        expect((detail as { keptCopies?: unknown[] }).keptCopies).toHaveLength(2);
+        expect(detail.keptCopies).toHaveLength(2);
       }),
   );
 

@@ -41,6 +41,9 @@ const ScientLibraryNoticeChange = Schema.Struct({
   dismissed: Schema.optionalKey(Schema.Literal(true)),
   /** Each file notice of this kind paired with the normalized identifiers that matched it. */
   matched: Schema.optionalKey(Schema.Array(MatchedWatchNotice)),
+  /** Legacy v2 fields kept readable until the first v3 pass rewrites them as `matched`. */
+  notices: Schema.optionalKey(Schema.Array(ScientSourceEditorialNotice)),
+  identifiers: Schema.optionalKey(Schema.Array(NonEmptyString)),
 });
 type ScientLibraryNoticeChange = typeof ScientLibraryNoticeChange.Type;
 type NoticeChangeMade = Omit<ScientLibraryNoticeChange, "at">;
@@ -297,11 +300,21 @@ export async function recordScientLibraryNoticeCheck(input: {
       const listedKeys = new Set(listed.map(noticeIdentity));
       const staleOwnedKeys = new Set(
         WatchedKind.literals.flatMap((kind) => {
-          const prior = previousByKey.get(`${record.sourceId}:${kind}`);
-          if (prior?.change !== "added" || !prior.matched) return [];
-          return prior.matched
-            .filter((entry) => !entry.identifiers.some((id) => keySet.has(id)))
-            .map((entry) => noticeIdentity(entry.notice));
+          const prior = previousByKey.get(changeKey({ sourceId: record.sourceId, kind }));
+          if (prior?.change !== "added") return [];
+          if (prior.matched) {
+            return prior.matched
+              .filter((entry) => !entry.identifiers.some((id) => keySet.has(id)))
+              .map((entry) => noticeIdentity(entry.notice));
+          }
+          if (
+            prior.notices &&
+            prior.identifiers &&
+            !prior.identifiers.some((id) => keySet.has(id))
+          ) {
+            return prior.notices.map(noticeIdentity);
+          }
+          return [];
         }),
       );
       const current = record.editorialStatus?.notices ?? [];
@@ -355,15 +368,19 @@ export async function recordScientLibraryNoticeCheck(input: {
     const changes = new Map<string, ScientLibraryNoticeChange>();
     for (const change of previous?.changes ?? []) {
       if (live && !live.has(change.sourceId)) continue;
-      if (change.change === "added" && change.matched) {
+      if (change.change === "added") {
         const ids = currentIdentifiers.get(change.sourceId);
-        if (ids) {
-          const surviving = change.matched.filter((entry) =>
-            entry.identifiers.some((id) => ids.has(id)),
-          );
+        if (ids && change.matched) {
+          const surviving = change.matched.flatMap((entry) => {
+            const matchedIds = entry.identifiers.filter((id) => ids.has(id));
+            return matchedIds.length > 0 ? [{ ...entry, identifiers: matchedIds }] : [];
+          });
           if (surviving.length === 0) continue;
           changes.set(changeKey(change), { ...change, matched: surviving });
           continue;
+        }
+        if (ids && !change.matched && change.identifiers) {
+          if (!change.identifiers.some((id) => ids.has(id))) continue;
         }
       }
       changes.set(changeKey(change), change);
@@ -371,10 +388,18 @@ export async function recordScientLibraryNoticeCheck(input: {
     for (const change of made) {
       const before = changes.get(changeKey(change));
       // Put back after a refresh took it off: the source is corrected, the person is not told twice.
-      // Same-direction entries from an older pass gain their matched payloads, keeping dismissal.
+      // Same-direction entries keep prior still-owned matches across partial feeds and drop v2 keys.
       if (before?.change === change.change) {
         if (change.matched) {
-          changes.set(changeKey(change), { ...before, matched: change.matched });
+          const merged = new Map<string, MatchedWatchNotice>();
+          for (const entry of before.matched ?? []) {
+            merged.set(noticeIdentity(entry.notice), entry);
+          }
+          for (const entry of change.matched) {
+            merged.set(noticeIdentity(entry.notice), entry);
+          }
+          const { notices: _legacyNotices, identifiers: _legacyIds, ...rest } = before;
+          changes.set(changeKey(change), { ...rest, matched: [...merged.values()] });
         }
         continue;
       }
@@ -441,6 +466,13 @@ export function withScientLibraryWatchNotices<A>(
             ...matchingHeld,
             ...allowed.filter((notice) => !matchingHeldKeys.has(noticeIdentity(notice))),
           ];
+        }
+        if (change.notices) {
+          if (change.identifiers && !change.identifiers.some((id) => currentIds.has(id))) {
+            return [];
+          }
+          const matchingHeld = held.filter((notice) => notice.kind === change.kind);
+          return matchingHeld.length > 0 ? matchingHeld : change.notices;
         }
         return held.filter((notice) => notice.kind === change.kind);
       }),

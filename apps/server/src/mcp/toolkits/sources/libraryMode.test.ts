@@ -624,7 +624,9 @@ describe("Sources tools on the library backend", () => {
             }),
           ]),
         });
-        expect((detail as { keptCopies?: unknown[] }).keptCopies).toHaveLength(2);
+        expect(
+          (detail as { readonly keptCopies?: ReadonlyArray<unknown> }).keptCopies,
+        ).toHaveLength(2);
       }),
   );
 

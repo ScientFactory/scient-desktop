@@ -332,8 +332,8 @@ describe("copies a project held and a merge Undo replaced", () => {
       ) => {
         if (readDone && !swapped && path === displaced) {
           lstatCountAfterOpen += 1;
-          // First post-open check belongs to readVerifiedFile; second belongs to quarantine.
-          if (lstatCountAfterOpen >= 2) {
+          // readVerifiedFile stats displaced twice inside sameVerifiedDirectory; 3rd lstat is quarantine's check.
+          if (lstatCountAfterOpen >= 3) {
             swapped = true;
             await actual.rm(displaced, { recursive: true, force: true });
             await actual.symlink(otherFolder, displaced, "dir");
@@ -371,6 +371,11 @@ describe("copies a project held and a merge Undo replaced", () => {
         copies: 0,
         unreadable: 1,
       });
+      await expect(
+        keepScientDisplacedCopies(root, { kind: "project" }, [
+          copy("key1", "2026-11-01T00:00:00.000Z", "Secret"),
+        ]),
+      ).rejects.toThrow("not a safe regular file");
     },
   );
 
