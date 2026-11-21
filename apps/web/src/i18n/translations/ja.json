@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, other {ドキュメントを {count} 回準備しようとしました}}",
   "0390ea5370ded535": "{count, plural, other {Overleaf を {count} 回使用しました}}",
   "7d731a70186a49b8": "{count, plural, other {Overleaf を {count} 回使用しようとしました}}",
+  "d89410af8ed20232": "{count, plural, other {カスタムモデルを {count} 回使用しました}}",
+  "b45c46842b99935e": "{count, plural, other {カスタムモデルを {count} 回使用しようとしました}}",
   "8f868975fffc4620": "{count, plural, other {計算機能を {count} 回使用しました}}",
   "1f97511c97da1198": "{count, plural, other {計算機能を {count} 回使用しようとしました}}",
   "420bea546d5f8802": "スレッドをコピーしました",

@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, one {Tried to prepare documents {count} time} other {Tried to prepare documents {count} times}}",
   "0390ea5370ded535": "{count, plural, one {Used Overleaf {count} time} other {Used Overleaf {count} times}}",
   "7d731a70186a49b8": "{count, plural, one {Tried to use Overleaf {count} time} other {Tried to use Overleaf {count} times}}",
+  "d89410af8ed20232": "{count, plural, one {Used custom models {count} time} other {Used custom models {count} times}}",
+  "b45c46842b99935e": "{count, plural, one {Tried to use custom models {count} time} other {Tried to use custom models {count} times}}",
   "8f868975fffc4620": "{count, plural, one {Used Compute {count} time} other {Used Compute {count} times}}",
   "1f97511c97da1198": "{count, plural, one {Tried to use Compute {count} time} other {Tried to use Compute {count} times}}",
   "420bea546d5f8802": "Thread copied",
