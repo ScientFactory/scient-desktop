@@ -262,10 +262,16 @@ export function useZoteroSync(input: {
   };
 }
 
+const refreshProblem = (item: ScientSourceZoteroRefreshResult["items"][number]) =>
+  item.outcome === "missing" || item.outcome === "failed" || item.outcome === "stale";
+
 function refreshSummary(result: ScientSourceZoteroRefreshResult, resolve: MessageResolver): string {
   const updated = result.items.filter((item) => item.outcome === "updated").length;
   if (result.items.length === 0) return resolve(msg("No sources here came from Zotero."));
   if (updated === 0) {
+    if (result.items.some((item) => item.conflicts.length > 0 || refreshProblem(item))) {
+      return resolve(msg("No source was updated from Zotero."));
+    }
     return result.items.some((item) => item.notBrought)
       ? resolve(msg("Nothing new came from Zotero."))
       : resolve(msg("Everything matches Zotero."));
@@ -297,9 +303,7 @@ export function ZoteroRefreshDialog(props: {
   const conflicts = (done?.items ?? []).flatMap((item) =>
     item.conflicts.map((conflict) => ({ item, conflict })),
   );
-  const problems = (done?.items ?? []).filter(
-    (item) => item.outcome === "missing" || item.outcome === "failed" || item.outcome === "stale",
-  );
+  const problems = (done?.items ?? []).filter(refreshProblem);
   const notBrought = notBroughtBySource(done?.items ?? []);
   return (
     <Dialog open={state !== null} onOpenChange={(open) => (open ? undefined : props.onClose())}>
