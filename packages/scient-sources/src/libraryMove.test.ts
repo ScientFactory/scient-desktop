@@ -921,28 +921,39 @@ describe("crash tests: each crash, then a rerun that ends in done with nothing l
     expect(joined.searches).toMatchObject([{ searchId: "search_here", sourceIds: ["s1", "s2"] }]);
     expect(report.differingSearches).toEqual([]);
 
-    // Each copy kept the other record of a pair: both stay in screening until one is chosen.
-    const kept = (sourceId: string, duplicateOf: string) => ({
+    // Each copy kept another record of a pair or of a longer cycle: united, every record of it
+    // would be left out, so all stay in screening until one is chosen.
+    const kept = (...pairs: ReadonlyArray<readonly [string, string]>) => ({
       ...base,
-      otherSourceIds: ["s1", "s2"],
+      otherSourceIds: ["s1", "s2", "s3"],
       screening: [],
-      duplicates: [
-        {
-          sourceId,
-          duplicateOf,
-          decidedAt: "2026-01-02T00:00:00.000Z",
-          decidedBy: "user" as const,
-        },
-      ],
+      duplicates: pairs.map(([sourceId, duplicateOf]) => ({
+        sourceId,
+        duplicateOf,
+        decidedAt: "2026-01-02T00:00:00.000Z",
+        decidedBy: "user" as const,
+      })),
     });
     const opposite = combineScientReviews({
-      existing: kept("s2", "s1"),
-      incoming: kept("s1", "s2"),
+      existing: kept(["s2", "s1"]),
+      incoming: kept(["s1", "s2"]),
       actor: "user",
       now: "2026-02-01T00:00:00.000Z",
     });
     expect(opposite.review.duplicates).toEqual([]);
     expect(opposite.report.undecidedPairs).toEqual([["s1", "s2"]]);
+    const around = combineScientReviews({
+      existing: kept(["s1", "s2"], ["s2", "s3"]),
+      incoming: kept(["s3", "s1"]),
+      actor: "user",
+      now: "2026-02-01T00:00:00.000Z",
+    });
+    expect(around.review.duplicates).toEqual([]);
+    expect(around.report.undecidedPairs).toEqual([
+      ["s1", "s2"],
+      ["s2", "s3"],
+      ["s1", "s3"],
+    ]);
   });
 });
 

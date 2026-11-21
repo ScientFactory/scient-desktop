@@ -286,7 +286,9 @@ Choose **Keep this version**, **Use the other**, or
 **Combine**. Combine keeps the searches and sources of both versions and
 reopens any source the two decided differently, so you can decide it again. Two
 records that the versions judged differently as duplicates (one kept each, or
-one called them different papers) both stay in screening until you decide. The
+one called them different papers) both stay in screening until you decide, and
+so do three or more whose duplicate choices together would leave none of them
+(one version keeps B over A and C over B, the other A over C). The
 version you do not keep is stored aside, not deleted. After Combine, a short
 report on the review lists what is left to decide until you dismiss it.
 

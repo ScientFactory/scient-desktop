@@ -155,6 +155,31 @@ function unionBy<A>(items: ReadonlyArray<A>, key: (item: A) => string): A[] {
   return [...seen.values()];
 }
 
+/**
+ * The pairs whose duplicate decisions close a cycle, as versions that each kept another record of
+ * it can make when united: every record of it would then be left out of screening.
+ */
+function cyclePairs(duplicates: ScientSystematicReview["duplicates"]): ReadonlyArray<string> {
+  const next = new Map<string, string[]>();
+  for (const entry of duplicates) {
+    next.set(entry.sourceId, [...(next.get(entry.sourceId) ?? []), entry.duplicateOf]);
+  }
+  const reaches = (from: string, to: string) => {
+    const seen = new Set<string>();
+    const stack = [from];
+    for (let at = stack.pop(); at !== undefined; at = stack.pop()) {
+      if (at === to) return true;
+      if (seen.has(at)) continue;
+      seen.add(at);
+      stack.push(...(next.get(at) ?? []));
+    }
+    return false;
+  };
+  return duplicates
+    .filter((entry) => reaches(entry.duplicateOf, entry.sourceId))
+    .map((entry) => pairKey(entry.sourceId, entry.duplicateOf));
+}
+
 export type { ScientReviewCombineReport } from "./systematicReview.ts";
 
 const searchDetails = ({ sourceIds: _ids, ...details }: ScientReviewSearch) => details;
@@ -190,24 +215,19 @@ export function combineScientReviews(input: {
     duplicatePairs(incoming),
   ];
   const [existingDistinct, incomingDistinct] = [distinctPairs(existing), distinctPairs(incoming)];
-  const existingReversed = new Set(
-    existing.duplicates.map((entry) => `${entry.duplicateOf}\0${entry.sourceId}`),
+  const conflicting = [...existingDuplicates, ...incomingDuplicates].filter(
+    (key) =>
+      (existingDuplicates.has(key) && incomingDistinct.has(key)) ||
+      (incomingDuplicates.has(key) && existingDistinct.has(key)),
   );
-  const undecided = new Set([
-    ...[...existingDuplicates, ...incomingDuplicates].filter(
-      (key) =>
-        (existingDuplicates.has(key) && incomingDistinct.has(key)) ||
-        (incomingDuplicates.has(key) && existingDistinct.has(key)),
-    ),
-    // Each version kept the other record of the pair: united, neither would be screened.
-    ...incoming.duplicates
-      .filter((entry) => existingReversed.has(`${entry.sourceId}\0${entry.duplicateOf}`))
-      .map((entry) => pairKey(entry.sourceId, entry.duplicateOf)),
-  ]);
-  const duplicates = unionBy(
+  const united = unionBy(
     [...existing.duplicates, ...incoming.duplicates],
     (entry) => `${entry.sourceId}\0${entry.duplicateOf}`,
-  ).filter((entry) => !undecided.has(pairKey(entry.sourceId, entry.duplicateOf)));
+  ).filter((entry) => !conflicting.includes(pairKey(entry.sourceId, entry.duplicateOf)));
+  const undecided = new Set([...conflicting, ...cyclePairs(united)]);
+  const duplicates = united.filter(
+    (entry) => !undecided.has(pairKey(entry.sourceId, entry.duplicateOf)),
+  );
   const distinct = unionBy(
     [...existing.distinctPairs, ...incoming.distinctPairs],
     ([left, right]) => pairKey(left, right),
