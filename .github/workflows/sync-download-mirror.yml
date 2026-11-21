@@ -21,9 +21,10 @@ on:
 
 permissions: {}
 
-# A newer release on the channel supersedes a wait for an older one.
+# Only a repeat dispatch for the same release replaces its run; a dispatch for another tag (a
+# typo, say) never cancels a sync in progress. Concurrent runs are safe for the mirror.
 concurrency:
-  group: sync-download-mirror-${{ inputs.channel }}
+  group: sync-download-mirror-${{ inputs.channel }}-${{ inputs.tag }}
   cancel-in-progress: true
 
 jobs:
@@ -52,10 +53,19 @@ jobs:
             manifests=(latest.yml latest-mac.yml latest-linux.yml)
           fi
           feed="https://downloads.scientfactory.com/scient-desktop/updates/$RELEASE_CHANNEL"
+          # One deadline for every check and call, inside the job's timeout.
+          deadline=$((SECONDS + 20 * 60))
+          remaining() {
+            local left=$((deadline - SECONDS))
+            (( left > $1 )) && left=$1
+            (( left > 0 )) || left=1
+            echo "$left"
+          }
           feeds_offer_release() {
             local manifest offered
             for manifest in "${manifests[@]}"; do
-              offered="$(curl -fsS --max-time 30 "$feed/$manifest?noCache=$RANDOM" \
+              (( SECONDS < deadline )) || return 1
+              offered="$(curl -fsS --max-time "$(remaining 30)" "$feed/$manifest?noCache=$RANDOM" \
                 | sed -nE "s/^version: *['\"]?([^'\"]*)['\"]?\$/\\1/p")" || return 1
               [[ "$offered" == "$version" ]] || return 1
             done
@@ -68,15 +78,13 @@ jobs:
             echo "::notice::The mirror trigger is not configured; its next scheduled run publishes $version."
             exit 0
           fi
-          # One deadline for every call and check, inside the job's timeout. GitHub can take a
-          # minute to list a new release everywhere the mirror reads, so a run that publishes
-          # nothing is repeated.
-          deadline=$((SECONDS + 20 * 60))
+          # GitHub can take a minute to list a new release everywhere the mirror reads, so a run
+          # that publishes nothing is repeated. Each call leaves time for the feed check after it.
           attempt=0
-          while (( SECONDS < deadline - 30 )); do
+          while (( SECONDS < deadline - 120 )); do
             attempt=$((attempt + 1))
-            budget=$((deadline - SECONDS))
-            (( budget > 600 )) && budget=600
+            budget=$(remaining 600)
+            (( budget > deadline - SECONDS - 90 )) && budget=$((deadline - SECONDS - 90))
             echo "Mirror run $attempt for $RELEASE_TAG (up to ${budget}s)"
             curl -sS -N --fail-with-body --max-time "$budget" -X POST \
               -H "Authorization: Bearer $SYNC_TOKEN" "$SYNC_URL?channel=$RELEASE_CHANNEL" \
