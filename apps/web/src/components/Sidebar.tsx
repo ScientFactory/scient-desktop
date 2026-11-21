@@ -3254,18 +3254,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       void handleNewThread(scopedProjectRef);
       return;
     }
-    // SCIENT-FORK:START
+    if (
+      shouldCreateNewThreadInCurrentProject(
+        event?.shiftKey ?? false,
+        scopeGroups.length,
+        projectGroups.length,
+      )
+    ) {
+      if (isMobile) setOpenMobile(false);
+      // With no current or open project, such as when every project is archived, pick one.
+      void startNewThreadFromContext({
+        activeDraftThread: newThreadContext.activeDraftThread,
+        activeThread: newThreadContext.activeThread ?? undefined,
+        defaultProjectRef: newThreadContext.defaultProjectRef,
+        handleNewThread,
+      }).then((started) => {
+        if (!started) openCommandPalette({ open: "new-thread-in" });
+      });
+      return;
+    }
     if (isMobile) setOpenMobile(false);
-    // With no current or open project, such as when every project is archived, pick one.
-    void startNewThreadFromContext({
-      activeDraftThread: newThreadContext.activeDraftThread,
-      activeThread: newThreadContext.activeThread ?? undefined,
-      defaultProjectRef: newThreadContext.defaultProjectRef,
-      handleNewThread,
-    }).then((started) => {
-      if (!started) openCommandPalette({ open: "new-thread-in" });
-    });
+    openCommandPalette({ open: "new-thread-in" });
   };
+
+  // SCIENT-FORK:START
   // The New thread row: Shift+click starts straight in the current project,
   // and a separate button starts without a project.
   const { handleNewThreadRowClick, handleNewWithoutProject } = useSidebarNewThreadRowActions({
