@@ -37,6 +37,9 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
+// SCIENT-FORK:START — Scient's icon rail stays at the window's edge while the sidebar is collapsed.
+import { CollapsedSidebarNavRail } from "../scient/sidebar/SidebarNavRail";
+// SCIENT-FORK:END
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -452,6 +455,9 @@ export function AppSidebarLayout({
             </Sidebar>
           </>
         ) : null}
+        {/* SCIENT-FORK:START */}
+        {showSidebar ? <CollapsedSidebarNavRail /> : null}
+        {/* SCIENT-FORK:END */}
         {children}
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />

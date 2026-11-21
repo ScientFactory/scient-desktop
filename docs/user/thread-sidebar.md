@@ -439,6 +439,23 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Icon rail
+
+On web and desktop, a column of icons runs along the sidebar's edge. At the top are **Home**,
+**Library**, **Scheduled tasks**, **Extensions**, and **Pull Requests** and **Issues** when your
+environment supports them. At the bottom are **Cloud conversations** when available,
+**Settings**, **Usage**, **Send feedback** in the desktop app, **Import conversation**, and your
+Scient Connect account. **Library** opens My Library over the window, in a new thread without a
+project; see [Open the Library](sources.md#open-the-library). On a wide window the rail stays at
+the window's edge when you collapse the sidebar.
+
+While a Scient update is ready, **Update** takes the place of the Scient name at the top of the
+sidebar. Updates for providers, other machines and Scient-managed runtimes show as a circle in the
+rail above **Settings**; see [Update Scient](updating.md).
+
+The rail is on by default. Turn off **Settings → Labs → Sidebar icon rail** to put these buttons
+back in a row at the bottom of the sidebar. Each device keeps its own choice.
+
 ## Find threads
 
 On web and desktop, press `Cmd/Ctrl+K` to open the command palette and search threads across

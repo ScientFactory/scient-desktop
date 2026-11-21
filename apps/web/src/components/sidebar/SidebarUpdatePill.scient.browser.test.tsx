@@ -31,8 +31,8 @@ vi.mock(import("../../scient/desktopUpdate/SidebarOtherUpdates"), async (origina
 }));
 
 // Offered updates download in the background, so the pill presents a ready one.
-function setup(channel: "beta" | "latest") {
-  state.update = {
+function setup(channel: "beta" | "latest"): DesktopUpdateState {
+  const update: DesktopUpdateState = {
     enabled: true,
     status: "downloaded",
     channel,
@@ -52,6 +52,8 @@ function setup(channel: "beta" | "latest") {
     errorContext: null,
     canRetry: true,
   };
+  state.update = update;
+  return update;
 }
 
 it.each(["beta", "latest"] as const)(
@@ -74,3 +76,26 @@ it.each(["beta", "latest"] as const)(
     } else expect(document.body.textContent).not.toContain("A reviewed Beta change");
   },
 );
+
+it("shows the icon rail's header brand while idle and the Update button in its place once ready", async () => {
+  const ready = setup("latest");
+  state.update = { ...ready, status: "idle", availableVersion: null, downloadedVersion: null };
+  {
+    await using screen = await render(
+      <SidebarProvider>
+        <SidebarUpdatePill placement="header" idleContent={<span>Scient</span>} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Scient")).toBeVisible();
+    expect(screen.container.querySelector("button")).toBeNull();
+  }
+
+  state.update = ready;
+  await using screen = await render(
+    <SidebarProvider>
+      <SidebarUpdatePill placement="header" idleContent={<span>Scient</span>} />
+    </SidebarProvider>,
+  );
+  await expect.element(screen.getByRole("button", { name: /^Update:/ })).toBeVisible();
+  expect(screen.container.textContent).not.toContain("Scient");
+});

@@ -379,7 +379,6 @@ export function ScientSourcesPanel(props: {
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  useLibrarySourceRequest(props.root, sources.overview !== null, setSelectedSourceId);
   const [editingSource, setEditingSource] = useState(false);
   /** The import started here last: the result-slot operation it began, and what it did. */
   const [importReceipt, setImportReceipt] = useState<ImportReceipt | null>(null);
@@ -536,6 +535,15 @@ export function ScientSourcesPanel(props: {
     organize.clearSelection();
     void sources.selectScope(scope);
   };
+  // Selecting reloads the list, which also picks up a folder set up just before the request. A
+  // project server ignores the scope and keeps listing its project.
+  const showWholeLibrary = useStableCallback(() => selectScope("library"));
+  useLibrarySourceRequest(
+    props.root,
+    sources.overview !== null,
+    setSelectedSourceId,
+    showWholeLibrary,
+  );
   // Stable: Activity items built during render hold it, and it reads the panel's refs.
   const showPackageSources = useStableCallback(
     (sourceIds: ReadonlyArray<string>, label?: string) => {

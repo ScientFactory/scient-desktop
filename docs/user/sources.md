@@ -20,6 +20,11 @@ Library beside the conversation or expand it when you need more room. If the
 folder is not yet set up as a Scient project, the Library offers the same optional
 project setup used by **Add project**.
 
+To browse My Library without a project, choose **Library** in the sidebar's
+[icon rail](thread-sidebar.md#icon-rail). It starts a thread without a project, sets up that
+thread's folder as a Scient project the first time, and opens My Library over the whole window.
+Choose **Restore panel size** to see the thread beside it.
+
 Each computer has its own Library. When a project runs on another computer,
 the Library shown is that computer's, and the line under the title names it
 ("On lab-server").

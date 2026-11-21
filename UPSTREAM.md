@@ -202,6 +202,15 @@ seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
 `desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
 installation remain inherited. Do not copy the updater into a second component
 or restore upstream's muted active-state styling during alignment.
+Scient's sidebar icon rail (`apps/web/src/scient/sidebar/SidebarNavRail.tsx`, on by default,
+`sidebarNavRailEnabled` in Settings → Labs) moves the footer's utility buttons into a column along
+the sidebar's edge; `Sidebar.tsx`, `AppSidebarLayout.tsx` and `SidebarChrome.tsx` carry marked
+mounts, and the footer row and the rail share `scient/sidebar/useSidebarUtilityActions.ts`. With
+the rail on, `SidebarChromeHeader` renders the same update control in the brand's place
+(`placement="header"`): the brand while idle, without the idle check icon; the compact Update after
+the Scient symbol when there is something to act on; its cards open below. The header control
+keeps owning `useUpdateEverything`, so the other-updates circle reaches the rail through a portal
+(`scient/sidebar/railOtherUpdatesSlot.ts`) rather than a second control.
 Scient downloads an offered update in the background (`autoDownloadLoop` in
 `DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
 download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a

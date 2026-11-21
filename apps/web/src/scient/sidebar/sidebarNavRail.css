@@ -1,0 +1,42 @@
+/*
+ * Icon rail. The sidebar body leaves the rail's column free below the header; the header
+ * keeps the full width so the brand and window controls stay where they are.
+ */
+:has(> [data-sidebar-nav-rail]) {
+  padding-inline-start: 3rem;
+}
+
+:has(> [data-sidebar-nav-rail]) > [data-sidebar-chrome-header] {
+  margin-inline-start: -3rem;
+}
+
+/* The rail's icons are 18px, a step above the sidebar's 16px, in the same 32px buttons. */
+:is([data-sidebar-nav-rail], [data-sidebar-nav-rail-collapsed]) [data-sidebar="menu-button"] > svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+/*
+ * Collapsed sidebar: the rail stands at the window's edge, so the main area's titlebar starts 3rem
+ * further right and leaves only what the window controls and sidebar toggle still overlap.
+ */
+[data-sidebar-nav-rail-collapsed] ~ * {
+  --workspace-titlebar-content-left: max(
+    0.75rem,
+    calc(
+      var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +
+        var(--workspace-titlebar-control-gap) - 3rem
+    )
+  );
+}
+
+/*
+ * Collapsed sidebar: the toggle moves left by the difference between the rail's centre (1.5rem)
+ * and where a toggle's centre normally sits, so without window controls it lines up with the
+ * rail's icons. Beside macOS window controls it stays after them, a few pixels further left.
+ */
+:root:has([data-sidebar-nav-rail-collapsed]) [data-sidebar-control] {
+  left: calc(
+    var(--workspace-controls-left) + 0.75rem - var(--workspace-titlebar-control-size) / 2 - 1px
+  );
+}

@@ -687,6 +687,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
   {
+    id: "sidebar-nav-rail",
+    title: msg("Sidebar icon rail"),
+    to: "/settings/labs",
+    searchTerms: [
+      msg("beta sidebar rail icons home library scheduled tasks extensions code review"),
+    ],
+  },
+  {
     id: "tool-call-visibility",
     title: msg("Tool calls in chat"),
     to: "/settings/chat",

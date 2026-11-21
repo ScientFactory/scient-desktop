@@ -13,9 +13,16 @@ its tooltip shows the download. Installing is your choice:
 
 1. When the download is ready, the update control shows **Update**. Its tooltip
    says **Restart and update to** that version.
-2. Choose **Update**. A card opens just above the control with **Restart now**.
+2. Choose **Update**. A card opens next to the control with **Restart now**.
    Choose it to install that version. The card stays until you use it, close
    it, or choose **Update** again.
+
+Where the update control sits depends on the sidebar's
+[icon rail](thread-sidebar.md#icon-rail), which is on by default. With the rail,
+**Update** takes the place of the Scient name at the top of the sidebar while an
+update is ready, and its cards open below it; there is no check-for-updates
+button there, so use **Settings** to check. Without the rail, the control sits at
+the bottom of the sidebar and its cards open above it.
 
 If a newer release appears before you restart, Scient downloads it in place of
 the older one, and **Update** returns once it is ready. **Restart now**
@@ -25,7 +32,7 @@ Scient tells you instead of installing a different version.
 If the background download fails, Scient tries again after 1, 5 and 15
 minutes, then hourly and every 4 hours. The control shows **Retry** in the
 meantime; choose it to download right away. When that download finishes, a
-notice appears just above the control for about five seconds with **Restart
+notice appears next to the control for about five seconds with **Restart
 now**; afterwards the control shows **Update**.
 
 **Install** in **Settings** also restarts Scient right away for the version
@@ -34,10 +41,10 @@ opens that version's Scient release notes; reading them does not install the
 update. On Windows, Scient can stay closed for a few minutes while the update
 installs, then reopens.
 
-On a narrow sidebar, **Import conversation** and **Usage** move into the
-three-dot **More sidebar actions** menu while the update control or the update
-circle is showing. Widening the sidebar brings their icons back into the footer
-row.
+Without the icon rail, on a narrow sidebar, **Import conversation** and
+**Usage** move into the three-dot **More sidebar actions** menu while the update
+control or the update circle is showing. Widening the sidebar brings their
+icons back into the footer row.
 
 Scient installs an update only after you choose **Restart now** or
 **Install**, or run an update of everything that includes this app (below).
@@ -92,11 +99,13 @@ updater is unavailable, download the current installer from the
 ## Update other machines and providers
 
 Updates for connected machines and providers have their own control: a small
-light-blue circle with an up arrow, beside the update control. It covers
-servers and desktop apps on connected machines, provider CLIs Scient can update
-in one step, and Scient-managed provider runtimes. Updates Scient can't run
-itself are listed in Settings instead. Hover, focus, or click the circle to open
-its card; a click keeps the card open.
+light-blue circle with an up arrow, beside the update control. With the icon
+rail, the circle sits in the rail above **Settings** instead, as a dashed ring
+with a down arrow, and its card opens to the right. It covers servers and
+desktop apps on connected machines, provider CLIs Scient can update in one step,
+and Scient-managed provider runtimes. Updates Scient can't run itself are
+listed in Settings instead. Hover, focus, or click the circle to open its card;
+a click keeps the card open.
 
 Each row names the item, its machine when that is not this one, and the version
 change. Choose **Update** on a row, or **Update all**. Neither restarts this
@@ -123,7 +132,7 @@ first, then servers that are behind, then this desktop app. Servers move to the
 version this app is installing, or to your web app's version. A background
 service stays on its current release channel, and a remote desktop app installs
 the latest release from its own channel. If servers would stop running threads,
-a small card above the control says how many and waits for you to choose
+a small card next to the control says how many and waits for you to choose
 **Update** or **Cancel**; otherwise the step starts straight away. Progress
 appears in the circle. Once each server has started its own restart, this app
 restarts right away if no agent on this computer is in the middle of a turn and
@@ -135,8 +144,8 @@ ready. A server that is still restarting finishes on its own.
 
 ## Keep a connected server in sync
 
-If a connected environment uses a different server version, the update control
-at the bottom of the sidebar and **Settings → Environments** offer to update it.
+If a connected environment uses a different server version, the sidebar's
+update controls and **Settings → Environments** offer to update it.
 
 **Settings → Maintenance → Continue threads after restarts** is on by default. Scient once
 shipped it off; the first start of a version with the new default turns it on everywhere, including
