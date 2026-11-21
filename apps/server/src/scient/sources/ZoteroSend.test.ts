@@ -352,6 +352,17 @@ async function sourceInScient(fields: Partial<ScientSourceCandidate> = {}) {
   return { root, sourceId: imported.record.sourceId };
 }
 
+async function editHere(root: string, sourceId: string, change: { readonly title: string }) {
+  const record = await readScientSourceRecord(root, sourceId);
+  if (!record) throw new Error("missing");
+  await updateScientSourceMetadata({
+    root,
+    sourceId,
+    expectedRevision: record.revision,
+    metadata: { ...editableMetadataFromRecord(record), ...change },
+  });
+}
+
 /** A source in Scient with one PDF, "paper.pdf", whose bytes carry `text`. */
 async function sourceWithPdf(text: string) {
   const { root, sourceId } = await sourceInScient();
@@ -390,6 +401,22 @@ const attachmentsIn = (org: { readonly items: ReadonlyMap<string, ZoteroRawItem>
       filename: data.filename,
       md5: "md5" in data && typeof data.md5 === "string" ? data.md5 : null,
     }));
+
+/** `org`'s zotero.org, running `after` once each request has its answer. */
+const afterEachRequest = (
+  org: { readonly zotero: ZoteroAccess & { readonly http: ZoteroWebHttp } },
+  after: (request: ZoteroWebRequest) => Promise<void> | void,
+): ZoteroAccess => ({
+  ...org.zotero,
+  http: {
+    ...org.zotero.http,
+    request: async (request) => {
+      const response = await org.zotero.http.request(request);
+      await after(request);
+      return response;
+    },
+  },
+});
 
 describe("Send to Zotero", () => {
   it("creates the item with its note and links the source to it", async () => {
@@ -991,6 +1018,80 @@ describe("Send to Zotero", () => {
 
     await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
     expect((await readScientSourceRecord(root, sourceId))?.title).toBe("Edited in Zotero");
+  });
+
+  it("leaves what Zotero changed during a Send for Refresh to bring, and never sends it back", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg();
+    const send = (zotero: ZoteroAccess) =>
+      sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero });
+    await send(org.zotero);
+    await editHere(root, sourceId, { title: "Retitled in Scient" });
+    let correct = true;
+    const during = afterEachRequest(org, (request) => {
+      if (request.method !== "PATCH" || !correct) return;
+      correct = false;
+      org.editInZotero("NEWA2345", { pages: "1-10" });
+    });
+
+    expect((await send(during)).items[0]?.outcome).toBe("updated");
+    expect((await send(org.zotero)).items[0]?.outcome).toBe("changed-in-zotero");
+    await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+
+    expect(await readScientSourceRecord(root, sourceId)).toMatchObject({
+      title: "Retitled in Scient",
+      pages: "1-10",
+    });
+    expect(org.items.get("NEWA2345")?.data).toMatchObject({
+      title: "Retitled in Scient",
+      pages: "1-10",
+    });
+  });
+
+  it("keeps a note changed in Zotero for Refresh when a Send updates the item", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg();
+    await sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+    // Zotero versions a note apart from its item, and a Send to an item sends no note.
+    org.editInZotero("NEWB2345", { note: "<p>Read once more</p>" });
+    await editHere(root, sourceId, { title: "Retitled in Scient" });
+
+    await sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+    await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Read once more");
+  });
+
+  it("links the item it made when the source is edited during the Send, and makes no second one", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg();
+    let edit = true;
+    const during = afterEachRequest(org, async (request) => {
+      if (!edit || request.method !== "GET" || !request.url.pathname.endsWith("/NEWA2345")) return;
+      edit = false;
+      await editHere(root, sourceId, { title: "Retitled meanwhile" });
+    });
+
+    const first = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: during,
+    });
+    const second = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+
+    expect(first.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+    expect(await readScientSourceRecord(root, sourceId)).toMatchObject({
+      title: "Retitled meanwhile",
+      externalReferences: [expect.objectContaining({ itemKey: "NEWA2345" })],
+    });
+    expect(second.items[0]).toMatchObject({ outcome: "updated", itemKey: "NEWA2345" });
+    expect([...org.items.values()].filter((item) => item.data.itemType !== "note")).toHaveLength(1);
   });
 
   it("says so, and makes no second item, when an earlier Send made the item but did not finish", async () => {

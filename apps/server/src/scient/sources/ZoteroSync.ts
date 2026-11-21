@@ -195,9 +195,12 @@ export async function recordZoteroSync(input: {
   readonly attachmentKeys: ReadonlyArray<string>;
   readonly pdfs: Readonly<Record<string, string>> | undefined;
   readonly annotationLibraryId?: string;
+  /** The notes of an earlier base, kept when what was written to Zotero had none. */
+  readonly notes?: Pick<ScientSourceZoteroSync, "note" | "notes">;
 }): Promise<void> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return;
+  const notes = input.notes ?? input.material;
   const { citationKey: _key, ...metadata } = normalizeScientSourceEditableMetadata({
     ...input.material.candidate,
     customType: input.material.candidate.customType ?? null,
@@ -213,8 +216,8 @@ export async function recordZoteroSync(input: {
     itemVersion: reference.itemVersion,
     syncedAt: new Date().toISOString(),
     metadata,
-    note: input.material.note,
-    notes: [...input.material.notes],
+    note: notes.note,
+    ...(notes.notes ? { notes: [...notes.notes] } : {}),
     attachmentKeys: [...input.attachmentKeys],
     ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
   });
@@ -644,11 +647,24 @@ function writeToken(record: ScientSourceRecord, purpose: string): string {
     .slice(0, 32);
 }
 
+/** Stale answers in a row before a Send stops trying to link the source to its item. */
+const LINK_ATTEMPTS = 5;
+
+/**
+ * Links the source to its item and moves the base only by what this Send wrote: Zotero's values
+ * when the item is still at `sentVersion`, so a change made there meanwhile stays for Refresh,
+ * and the earlier base's notes for an item that was only updated, as no note was sent to it.
+ */
 async function syncAfterSend(input: {
   readonly root: ScientSourceStoreLocation;
   readonly library: ZoteroWebLibrary;
   readonly record: ScientSourceRecord;
   readonly itemKey: string;
+  /**
+   * The item's version once this Send's write landed, or as read when nothing was written.
+   * Absent for an item this Send made: only it knows the item until it is linked.
+   */
+  readonly sentVersion?: number;
   readonly actor: ScientSourceActor;
   readonly reference?: ScientSourceExternalReference;
   readonly verifiedLocalOwner?: string | undefined;
@@ -656,36 +672,51 @@ async function syncAfterSend(input: {
   const material = await readZoteroItemMaterial(input.library.transport, input.itemKey);
   const fresh = zoteroReference(material.candidate);
   if (!fresh) return;
-  const others = input.record.externalReferences.filter(
-    (entry) =>
-      !(
-        entry.system === "zotero" &&
-        ((entry.libraryId === fresh.libraryId && entry.itemKey === fresh.itemKey) ||
-          (input.reference &&
-            entry.libraryId === input.reference.libraryId &&
-            entry.itemKey === input.reference.itemKey))
-      ),
-  );
-  const updated = await updateScientSourceExternalReferences({
-    root: input.root,
-    sourceId: input.record.sourceId,
-    expectedRevision: input.record.revision,
-    externalReferences: [fresh, ...others],
-    actor: input.actor,
-  });
-  const previous = await readScientSourceZoteroSync(input.root, input.record.sourceId);
+  const sentVersion = input.sentVersion ?? fresh.itemVersion;
+  const linked = { ...fresh, itemVersion: sentVersion };
+  let record = input.record;
+  // Against the record as it is now: an edit made during the Send keeps itself and the link.
+  for (let attempt = 1; ; attempt += 1) {
+    const others = record.externalReferences.filter(
+      (entry) =>
+        !(
+          entry.system === "zotero" &&
+          ((entry.libraryId === fresh.libraryId && entry.itemKey === fresh.itemKey) ||
+            (input.reference &&
+              entry.libraryId === input.reference.libraryId &&
+              entry.itemKey === input.reference.itemKey))
+        ),
+    );
+    const result = await updateScientSourceExternalReferences({
+      root: input.root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      externalReferences: [linked, ...others],
+      actor: input.actor,
+    });
+    record = result.record;
+    if (result.outcome !== "stale") break;
+    if (attempt === LINK_ATTEMPTS) {
+      throw new Error(
+        `Zotero has item ${fresh.itemKey} from this Send, but Scient could not link this source to it while the source kept changing. Look for the item in Zotero before you send this source again.`,
+      );
+    }
+  }
+  if (fresh.itemVersion !== sentVersion) return;
+  const previous = await readScientSourceZoteroSync(input.root, record.sourceId);
   const same =
     previous?.itemKey === fresh.itemKey &&
     sameZoteroLibrary(previous.libraryId, fresh.libraryId, input.verifiedLocalOwner);
   await recordZoteroSync({
     root: input.root,
-    record: updated.record,
+    record,
     material,
     attachmentKeys: same ? previous.attachmentKeys : [],
     pdfs: same ? previous.pdfs : undefined,
     annotationLibraryId: same
       ? (previous.annotationLibraryId ?? previous.libraryId)
       : (input.reference?.libraryId ?? fresh.libraryId),
+    ...(same ? { notes: previous } : {}),
   });
 }
 
@@ -863,7 +894,13 @@ async function sendOne(input: {
     const patch = zoteroPatchFor({ record, current });
     if (Object.keys(patch).length === 0) {
       if (reference !== zoteroReference(record) || reference.libraryId === "0") {
-        await syncAfterSend({ ...input, reference, verifiedLocalOwner, itemKey: current.key });
+        await syncAfterSend({
+          ...input,
+          reference,
+          verifiedLocalOwner,
+          itemKey: current.key,
+          sentVersion: current.version,
+        });
       }
       return { ...summary, outcome: "unchanged", itemKey: current.key, message: null };
     }
@@ -876,7 +913,13 @@ async function sendOne(input: {
         message: CHANGED_IN_ZOTERO,
       };
     }
-    await syncAfterSend({ ...input, reference, verifiedLocalOwner, itemKey: current.key });
+    await syncAfterSend({
+      ...input,
+      reference,
+      verifiedLocalOwner,
+      itemKey: current.key,
+      sentVersion: result.version,
+    });
     return { ...summary, outcome: "updated", itemKey: current.key, message: null };
   }
   const itemType = zoteroItemTypeFor(record);
