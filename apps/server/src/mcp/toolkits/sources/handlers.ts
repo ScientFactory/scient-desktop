@@ -35,6 +35,10 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
+import {
+  readScientLibraryAliases,
+  resolveScientLibraryAlias,
+} from "@scientfactory/scient-sources/library-aliases";
 import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
 import {
   ensureScientLibrary,
@@ -1396,8 +1400,24 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         )
       : null;
     // Only after a merge Undo replaced this project's saved details; absent otherwise.
+    const keptId =
+      fromSnapshot && store.kind === "library" && store.exists && work
+        ? resolveScientLibraryAlias(
+            yield* attempt(() => readScientLibraryAliases(store.library)),
+            work.projectSourceId,
+          )
+        : sourceId;
     const kept =
-      store.kind === "library" ? yield* attempt(() => keptCopiesOf(store, sourceId, record)) : {};
+      store.kind === "library"
+        ? yield* attempt(() =>
+            keptCopiesOf(
+              store,
+              keptId,
+              record,
+              fromSnapshot && work ? { citationKey: work.citationKey } : undefined,
+            ),
+          )
+        : {};
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;

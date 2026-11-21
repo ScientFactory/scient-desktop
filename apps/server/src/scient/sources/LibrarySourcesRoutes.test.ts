@@ -7,7 +7,10 @@ import * as NodePath from "node:path";
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-backup";
-import { mergeScientLibrarySources } from "@scientfactory/scient-sources/library-merge";
+import {
+  mergeScientLibrarySources,
+  undoScientLibraryMerge,
+} from "@scientfactory/scient-sources/library-merge";
 import { recordScientLibraryNoticeCheck } from "@scientfactory/scient-sources/library-notice-watch";
 import { changeScientLibraryReview } from "@scientfactory/scient-sources/library-reviews";
 import { keepScientDisplacedCopies } from "@scientfactory/scient-sources/project-displaced-copies";
@@ -19,6 +22,7 @@ import {
 import {
   pinScientLibrarySource,
   readScientProjectPins,
+  refreshScientProjectPinSnapshots,
   renameScientProjectPinKey,
   setScientProjectPinNote,
 } from "@scientfactory/scient-sources/project-pins";
@@ -1032,6 +1036,85 @@ describe("Library routes on the library backend", () => {
                   current: "Scient Journal",
                 },
               ],
+            },
+          ],
+        });
+      }),
+  );
+
+  it.effect(
+    "shows kept values for a trashed pin whose alias points to another Library record",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const chained = yield* Effect.promise(async () => {
+          const a = await libraryRecord(fixture, "chain-a", {
+            title: "Sepsis bundle",
+            containerTitle: "Journal A",
+          });
+          const b = await libraryRecord(fixture, "chain-b", {
+            title: "Sepsis bundle",
+            containerTitle: "Journal B",
+          });
+          const c = await libraryRecord(fixture, "chain-c", {
+            title: "Sepsis bundle",
+            containerTitle: "Journal C",
+          });
+          const pinA = await pin(fixture, a.sourceId);
+          // Merge A -> B, then B -> C, and refresh so pin A's snapshot carries C's details.
+          const firstMerge = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [a.sourceId, b.sourceId],
+            survivorId: b.sourceId,
+            actor: "user",
+          });
+          if (firstMerge.outcome !== "merged") throw new Error("Expected A -> B merge.");
+          const secondMerge = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [b.sourceId, c.sourceId],
+            survivorId: c.sourceId,
+            actor: "user",
+          });
+          if (secondMerge.outcome !== "merged") throw new Error("Expected B -> C merge.");
+          await refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          });
+          // Undo B -> C and refresh: displaced values are saved under B, not A.
+          const undone = await undoScientLibraryMerge({
+            library: fixture.library,
+            mergeId: secondMerge.merge.mergeId,
+            actor: "user",
+          });
+          if (undone.outcome !== "undone") throw new Error("Expected B -> C undo.");
+          await refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          });
+          await removeScientSource({
+            root: fixture.library,
+            sourceId: undone.loser.sourceId,
+            expectedRevision: undone.loser.revision,
+          });
+          return { pinSourceId: a.sourceId, citationKey: pinA.citationKey };
+        });
+
+        const store = yield* storeFor(fixture, "read");
+        const detail = encodeDetail(
+          yield* Effect.promise(() =>
+            librarySourceDetail(store, { sourceId: chained.pinSourceId }),
+          ),
+        );
+        expect(detail).toMatchObject({
+          fromSnapshot: true,
+          keptCopies: [
+            {
+              holder: "citation-key",
+              heldBy: chained.citationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
             },
           ],
         });

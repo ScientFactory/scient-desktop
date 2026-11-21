@@ -55,6 +55,10 @@ import {
   readScientReviewVersions,
   resolveScientReviewConflict,
 } from "@scientfactory/scient-sources/library-review-conflicts";
+import {
+  readScientLibraryAliases,
+  resolveScientLibraryAlias,
+} from "@scientfactory/scient-sources/library-aliases";
 import { readScientDisplacedCopiesOf } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   changeScientLibraryReview,
@@ -677,11 +681,15 @@ export async function librarySourceDetail(
     const match = (await libraryReviewRecordMatches(store, [entry])).get(input.sourceId);
     const libraryId = await libraryIdOf(store, input.sourceId);
     const current = store.exists ? await readScientSourceRecord(store.library, libraryId) : null;
+    const keptId =
+      current || !store.exists
+        ? libraryId
+        : resolveScientLibraryAlias(await readScientLibraryAliases(store.library), input.sourceId);
     return {
       ...normalizeSourceRecordForRead(routeRecord(entry.record, undefined)),
       ...(entry.from === "snapshot" ? { label: SNAPSHOT_LABEL } : {}),
       ...(match ? { libraryMatch: match } : {}),
-      ...(await keptCopiesOf(store, libraryId, current)),
+      ...(await keptCopiesOf(store, keptId, current ?? entry.record)),
     };
   }
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -713,6 +721,12 @@ export async function librarySourceDetail(
   const match = store.exists
     ? (await libraryPinMatches(store, new Set([input.sourceId]))).get(input.sourceId)
     : undefined;
+  const keptId = store.exists
+    ? resolveScientLibraryAlias(
+        await readScientLibraryAliases(store.library),
+        snapshot.projectSourceId,
+      )
+    : sourceId;
   return {
     ...routeRecord(snapshot.record, {
       citationKey: snapshot.citationKey,
@@ -723,7 +737,9 @@ export async function librarySourceDetail(
     projectNote: snapshot.projectNote,
     ...(match ? { libraryMatch: match } : {}),
     ...(await noteHistoryOf(store, snapshot.citationKey)),
-    ...(await keptCopiesOf(store, sourceId, snapshot.record)),
+    ...(await keptCopiesOf(store, keptId, snapshot.record, {
+      citationKey: snapshot.citationKey,
+    })),
   };
 }
 
@@ -891,16 +907,22 @@ const KEPT_FIELDS = {
  * What this project's saved details held before a merge Undo replaced them, beside the values
  * the details show now; copies whose citation key or review has since gone are included.
  */
-export async function keptCopiesOf(store: Store, sourceId: string, shown: Readonly<object> | null) {
+export async function keptCopiesOf(
+  store: Store,
+  sourceId: string,
+  shown: Readonly<object> | null,
+  options?: { readonly citationKey?: string },
+) {
   const copies = (await readScientDisplacedCopiesOf(store.root, sourceId)).flatMap((copy) => {
     const differs = copy.differs.filter((field) => KEPT_FIELDS[copy.holder].has(field));
     return differs.length > 0 ? [{ ...copy, differs }] : [];
   });
   if (copies.length === 0) return {};
   const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
-  // A pin served from its snapshot is in no group: its own ID names it.
+  // A pin served from its snapshot is in no group: its key or own ID names it.
   const keys = new Set([
     ...(group ? [group.pin.citationKey, ...group.alsoCitedAs] : []),
+    ...(options?.citationKey ? [options.citationKey] : []),
     ...(await readScientProjectPins(store.root)).flatMap((pin) =>
       pin.sourceId === sourceId ? [pin.citationKey] : [],
     ),

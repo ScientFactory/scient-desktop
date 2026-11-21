@@ -18,6 +18,7 @@ import {
 import {
   markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
+  undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
 import { bulkUpdateScientSources } from "@scientfactory/scient-sources/collections";
 import { keepScientDisplacedCopies } from "@scientfactory/scient-sources/project-displaced-copies";
@@ -494,6 +495,108 @@ describe("Sources tools on the library backend", () => {
       );
       expect(yield* get()).toMatchObject({ fromSnapshot: true, keptCopies: [kept] });
     }),
+  );
+
+  it.effect(
+    "an agent reads kept values from a trashed pin whose alias points to another Library record",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const a = (yield* run(
+          addScientSourceForInvocation({
+            type: "article",
+            title: "Chain A",
+            creators: [ada],
+            issuedYear: 2026,
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-a" }],
+            containerTitle: "Journal A",
+          }),
+          fixture,
+        )).sourceId!;
+        // B and C live only in the Library: only A is pinned in this project.
+        const b = (yield* Effect.promise(() =>
+          libraryRecord(fixture, "chain-b", {
+            title: "Chain B",
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-b" }],
+            containerTitle: "Journal B",
+          }),
+        )).sourceId;
+        const c = (yield* Effect.promise(() =>
+          libraryRecord(fixture, "chain-c", {
+            title: "Chain C",
+            identifiers: [{ scheme: "doi", value: "10.1000/chain-c" }],
+            containerTitle: "Journal C",
+          }),
+        )).sourceId;
+        const pinA = (yield* Effect.promise(() => readScientProjectPins(fixture.root))).find(
+          (entry) => entry.sourceId === a,
+        )!;
+        const firstMerge = yield* Effect.promise(() =>
+          mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [a, b],
+            survivorId: b,
+            actor: "user",
+          }),
+        );
+        if (firstMerge.outcome !== "merged") throw new Error("Expected A -> B merge.");
+        const secondMerge = yield* Effect.promise(() =>
+          mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [b, c],
+            survivorId: c,
+            actor: "user",
+          }),
+        );
+        if (secondMerge.outcome !== "merged") throw new Error("Expected B -> C merge.");
+        yield* Effect.promise(() =>
+          refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          }),
+        );
+        const undone = yield* Effect.promise(() =>
+          undoScientLibraryMerge({
+            library: fixture.library,
+            mergeId: secondMerge.merge.mergeId,
+            actor: "user",
+          }),
+        );
+        if (undone.outcome !== "undone") throw new Error("Expected B -> C undo.");
+        yield* Effect.promise(() =>
+          refreshScientProjectPinSnapshots({
+            projectRoot: fixture.root,
+            library: fixture.library,
+          }),
+        );
+        yield* run(
+          removeScientSourceForInvocation({
+            sourceId: undone.loser.sourceId,
+            expectedRevision: undone.loser.revision,
+          }),
+          fixture,
+        );
+        const detail = yield* run(getScientSourceForInvocation({ sourceId: a }), fixture).pipe(
+          Effect.flatMap(
+            Schema.encodeUnknownEffect(
+              ScientSourcesLibraryToolkit.tools.scient_sources_get.successSchema,
+            ),
+          ),
+        );
+        expect(detail).toMatchObject({
+          fromSnapshot: true,
+          keptCopies: [
+            {
+              holder: "citation-key",
+              heldBy: pinA.citationKey,
+              holderPresent: true,
+              fields: expect.arrayContaining([
+                { field: "containerTitle", earlier: "Journal C", current: "Journal B" },
+              ]),
+            },
+          ],
+        });
+      }),
   );
 
   it.effect("reads and writes each merged pin's project note by its own key", () =>

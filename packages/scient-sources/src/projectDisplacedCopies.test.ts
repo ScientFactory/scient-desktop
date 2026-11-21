@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import {
   countScientDisplacedCopiesInProject,
@@ -13,9 +14,20 @@ import {
   scientValuesChangedBy,
 } from "./projectDisplacedCopies.ts";
 
+vi.mock("node:fs/promises", { spy: true });
+
 const fixtures: string[] = [];
 
+const fixture = async () => {
+  const root = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-displaced-")),
+  );
+  fixtures.push(root);
+  return root;
+};
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -120,6 +132,77 @@ describe("copies a project held and a merge Undo replaced", () => {
     ).rejects.toThrow("not a safe directory");
     expect(await NodeFSP.readdir(otherFolder)).toEqual(["project.json", "reviews"]);
     expect(await NodeFSP.readFile(NodePath.join(otherFolder, "project.json"), "utf8")).toBe(before);
+  });
+
+  it("refuses a displaced folder replaced with a symlink mid-read or mid-keep without renaming the target", async () => {
+    const root = await fixture();
+    const other = await fixture();
+    const first = "2026-11-01T00:00:00.000Z";
+    const second = "2026-11-02T00:00:00.000Z";
+    const displaced = NodePath.join(root, ".scient", "library", "displaced");
+    const otherFolder = NodePath.join(other, ".scient", "library", "displaced");
+    await keepScientDisplacedCopies(root, { kind: "project" }, [copy("key1", first, "Local")]);
+    await keepScientDisplacedCopies(other, { kind: "project" }, [copy("otherKey", first, "Other")]);
+    const otherFile = NodePath.join(otherFolder, "project.json");
+    const otherBefore = await NodeFSP.readFile(otherFile, "utf8");
+
+    const actual = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    // Swap the displaced directory to a symlink to another checkout right when open() runs.
+    let swapped = false;
+    vi.spyOn(NodeFSP, "open").mockImplementation((async (
+      path: Parameters<typeof actual.open>[0],
+      flags?: Parameters<typeof actual.open>[1],
+      mode?: Parameters<typeof actual.open>[2],
+    ) => {
+      if (!swapped && path === NodePath.join(displaced, "project.json")) {
+        swapped = true;
+        await actual.rm(displaced, { recursive: true, force: true });
+        await actual.symlink(otherFolder, displaced, "dir");
+      }
+      return actual.open(path, flags, mode);
+    }) as typeof actual.open);
+
+    await expect(readScientDisplacedCopies(root, { kind: "project" })).rejects.toThrow(
+      "not a safe directory",
+    );
+    expect(await readScientDisplacedCopiesOf(root, "source_a")).toEqual([]);
+    expect(await countScientDisplacedCopiesInProject(root)).toEqual({ copies: 0, unreadable: 1 });
+
+    // Restore a real folder and repeat the mid-operation swap during keepScientDisplacedCopies:
+    // the second checkout's file must not be quarantined or overwritten.
+    await actual.rm(displaced, { recursive: true, force: true });
+    await actual.mkdir(displaced, { recursive: true });
+    await actual.writeFile(NodePath.join(displaced, "project.json"), "{ not valid json");
+    swapped = false;
+    await expect(
+      keepScientDisplacedCopies(root, { kind: "project" }, [copy("key2", second, "Here")]),
+    ).rejects.toThrow("not a safe directory");
+    expect(await actual.readdir(otherFolder)).toEqual(["project.json"]);
+    expect(await actual.readFile(otherFile, "utf8")).toBe(otherBefore);
+  });
+
+  it("handles a displaced directory that disappears or cannot be listed without throwing", async () => {
+    const root = await fixture();
+    const first = "2026-11-01T00:00:00.000Z";
+    await keepScientDisplacedCopies(root, { kind: "project" }, [copy("key1", first, "Local")]);
+    const actual = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+
+    // Directory disappears between validation and readdir -> treated as absent.
+    const enoent = Object.assign(new Error("gone"), { code: "ENOENT" });
+    vi.spyOn(NodeFSP, "readdir").mockImplementationOnce((async () => {
+      throw enoent;
+    }) as typeof actual.readdir);
+    expect(await countScientDisplacedCopiesInProject(root)).toEqual({ copies: 0, unreadable: 0 });
+    expect(await readScientDisplacedCopiesOf(root, "source_a")).toEqual([
+      expect.objectContaining({ heldBy: "key1" }),
+    ]);
+
+    // Directory cannot be listed -> counted as one unreadable folder, never throws.
+    const eacces = Object.assign(new Error("denied"), { code: "EACCES" });
+    vi.spyOn(NodeFSP, "readdir").mockImplementationOnce((async () => {
+      throw eacces;
+    }) as typeof actual.readdir);
+    expect(await countScientDisplacedCopiesInProject(root)).toEqual({ copies: 0, unreadable: 1 });
   });
 
   it("names the fields a replacement changes or drops, not how the copy was captured", () => {
