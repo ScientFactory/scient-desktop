@@ -358,10 +358,15 @@ export interface PluginSignInToolNotice {
 }
 
 type Notification = EffectAcpSchema.SessionNotification;
-type ChunkUpdate = Extract<
-  EffectAcpSchema.SessionUpdate,
-  { readonly sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" }
->;
+/** How many leading bytes end on a whole UTF-8 character; the rest waits for the next chunk. */
+const utf8Boundary = (bytes: Uint8Array) => {
+  let start = bytes.length - 1;
+  while (start >= 0 && bytes.length - start < 4 && (bytes[start]! & 0xc0) === 0x80) start -= 1;
+  if (start < 0) return bytes.length;
+  const lead = bytes[start]!;
+  const width = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+  return bytes.length - start < width ? start : bytes.length;
+};
 
 const exitCodeOf = (rawOutput: unknown) => {
   if (!Predicate.isObject(rawOutput)) return undefined;
@@ -399,8 +404,13 @@ export function makeAntigravityPluginSignIns(
   >();
   const redactors = new Map<
     string,
-    { readonly redactor: ReturnType<typeof makeStreamRedactor>; template: Notification }
+    {
+      readonly redactor: ReturnType<typeof makeStreamRedactor>;
+      rebuild: (text: string) => Notification;
+    }
   >();
+  // Terminal output arrives as base64 bytes; a character split across chunks waits here.
+  const terminalPending = new Map<string, Buffer>();
   const tools = new Map<string, TrackedTool>();
   // Secrets of every challenge a session printed, admitted or not.
   const secretsBySession = new Map<string, Array<string>>();
@@ -415,6 +425,9 @@ export function makeAntigravityPluginSignIns(
       .map((attempt) => `<plugin-card catalog-id="${attempt.plugin}"></plugin-card>`),
   });
 
+  // Tool call ids are unique only within one ACP session.
+  const noticeKey = (sessionId: string, toolCallId: string) => `${sessionId}\u0000${toolCallId}`;
+
   const rememberSecrets = (sessionId: string, secrets: ReadonlyArray<string>) => {
     const known = secretsBySession.get(sessionId) ?? [];
     for (const secret of secrets) if (!known.includes(secret)) known.push(secret);
@@ -428,16 +441,10 @@ export function makeAntigravityPluginSignIns(
     for (const [key, entry] of redactors) {
       if (!key.startsWith(prefix) || !ends(key.slice(prefix.length))) continue;
       redactors.delete(key);
+      terminalPending.delete(key);
       const text = entry.redactor.flush();
       if (text.length === 0) continue;
-      const update = entry.template.update;
-      flushed.push({
-        ...entry.template,
-        update:
-          update.sessionUpdate === "tool_call_content_chunk"
-            ? { ...update, content: { type: "content", content: { type: "text", text } } }
-            : { ...(update as ChunkUpdate), content: { type: "text", text } },
-      });
+      flushed.push(entry.rebuild(text));
     }
     return flushed;
   };
@@ -451,16 +458,28 @@ export function makeAntigravityPluginSignIns(
     const key = `${notification.sessionId}\u0000${channel}`;
     let entry = redactors.get(key);
     if (entry === undefined) {
-      entry = {
-        redactor: makeStreamRedactor(sessionPatterns(notification.sessionId)),
-        template: notification,
-      };
+      entry = { redactor: makeStreamRedactor(sessionPatterns(notification.sessionId)), rebuild };
       redactors.set(key, entry);
     }
-    entry.template = notification;
+    entry.rebuild = rebuild;
     const emitted = entry.redactor.push(text);
     return emitted.length === 0 ? [] : [rebuild(emitted)];
   };
+
+  /** A whole message, scrubbed at once: nothing of it can be released before its end. */
+  const scrubWhole = (sessionId: string, text: string) => {
+    const redactor = makeStreamRedactor(sessionPatterns(sessionId));
+    return redactor.push(text) + redactor.flush();
+  };
+  const scrubBlocks = <B extends { readonly type: string }>(
+    sessionId: string,
+    blocks: ReadonlyArray<B> | null | undefined,
+  ) =>
+    blocks?.map((block) =>
+      block.type === "text" && "text" in block && Predicate.isString(block.text)
+        ? { ...block, text: scrubWhole(sessionId, block.text) }
+        : block,
+    );
 
   const trackTool = (sessionId: string, toolCallId: string) => {
     const key = `${sessionId}\u0000${toolCallId}`;
@@ -523,6 +542,57 @@ export function makeAntigravityPluginSignIns(
               update: { ...update, content: { ...update.content, text } },
             }),
           ),
+          candidate: undefined,
+        };
+      }
+      // Every other update that shows text goes through the same scrub before projection.
+      if (update.sessionUpdate === "agent_message" || update.sessionUpdate === "agent_thought") {
+        const content = scrubBlocks(sessionId, update.content);
+        return {
+          notifications: [
+            { ...notification, update: { ...update, ...(content ? { content } : {}) } },
+          ],
+          candidate: undefined,
+        };
+      }
+      if (update.sessionUpdate === "compaction_update") {
+        const summary = scrubBlocks(sessionId, update.summary);
+        return {
+          notifications: [
+            { ...notification, update: { ...update, ...(summary ? { summary } : {}) } },
+          ],
+          candidate: undefined,
+        };
+      }
+      if (update.sessionUpdate === "compaction_summary_chunk" && update.content.type === "text") {
+        return {
+          notifications: streamChunk(
+            notification,
+            `compaction:${update.compactionId}`,
+            update.content.text,
+            (text) => ({
+              ...notification,
+              update: { ...update, content: { ...update.content, text } },
+            }),
+          ),
+          candidate: undefined,
+        };
+      }
+      if (update.sessionUpdate === "terminal_output_chunk") {
+        const channel = `terminal:${update.terminalId}`;
+        const key = `${sessionId}\u0000${channel}`;
+        const bytes = Buffer.concat([
+          terminalPending.get(key) ?? Buffer.alloc(0),
+          Buffer.from(update.data, "base64"),
+        ]);
+        const end = utf8Boundary(bytes);
+        terminalPending.set(key, bytes.subarray(end));
+        const text = bytes.subarray(0, end).toString("utf8");
+        return {
+          notifications: streamChunk(notification, channel, text, (shown) => ({
+            ...notification,
+            update: { ...update, data: Buffer.from(shown, "utf8").toString("base64") },
+          })),
           candidate: undefined,
         };
       }
@@ -592,7 +662,10 @@ export function makeAntigravityPluginSignIns(
         if (waiting !== undefined) {
           waiting.signedIn = true;
           waiting.live = false;
-          pendingNotices.set(update.toolCallId, { attemptId: waiting.id, signedIn: true });
+          pendingNotices.set(noticeKey(sessionId, update.toolCallId), {
+            attemptId: waiting.id,
+            signedIn: true,
+          });
         }
       }
       if (terminal) tools.delete(key);
@@ -639,7 +712,10 @@ export function makeAntigravityPluginSignIns(
         attempts.set(attempt.id, attempt);
         evict();
       }
-      pendingNotices.set(candidate.toolCallId, { attemptId: attempt.id, signedIn: false });
+      pendingNotices.set(noticeKey(candidate.sessionId, candidate.toolCallId), {
+        attemptId: attempt.id,
+        signedIn: false,
+      });
     },
     /** Ends every stream of an agent process's sessions when its prompt ends. */
     flush: (generation: number) =>
@@ -648,12 +724,14 @@ export function makeAntigravityPluginSignIns(
         .flatMap(([sessionId]) => flushStreams(sessionId, () => true)),
     /** The notice a tool call raised, once; it binds the attempt to the thread that shows it. */
     takeToolNotice: (
+      sessionId: string,
       toolCallId: string,
       owner: PluginSignInOwner,
     ): PluginSignInToolNotice | undefined => {
-      const pending = pendingNotices.get(toolCallId);
+      const key = noticeKey(sessionId, toolCallId);
+      const pending = pendingNotices.get(key);
       if (pending === undefined) return undefined;
-      pendingNotices.delete(toolCallId);
+      pendingNotices.delete(key);
       const attempt = attempts.get(pending.attemptId);
       if (attempt === undefined) return undefined;
       attempt.owner ??= owner;

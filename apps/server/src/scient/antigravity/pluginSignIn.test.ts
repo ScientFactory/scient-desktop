@@ -258,12 +258,12 @@ describe("makeAntigravityPluginSignIns", () => {
     expect(JSON.stringify(notifications)).toContain(LINK_REMOVED);
     expect(candidate).toMatchObject({ program: "gmail", toolCallId: "call-1" });
     admit(candidate);
-    expect(signIns.takeToolNotice("call-1", owner)?.pluginSignIn).toEqual({
+    expect(signIns.takeToolNotice("session-1", "call-1", owner)?.pluginSignIn).toEqual({
       attemptId: "attempt-1",
       plugin: "gmail",
       displayName: "Gmail",
     });
-    expect(signIns.takeToolNotice("call-1", owner)).toBeUndefined();
+    expect(signIns.takeToolNotice("session-1", "call-1", owner)).toBeUndefined();
     expect(
       signIns.redeem({ attemptId: "attempt-1", owner, nativeSessionId: "session-1", now: 1 }),
     ).toEqual({ url: URL_OK });
@@ -297,13 +297,13 @@ describe("makeAntigravityPluginSignIns", () => {
       expect(candidate).toBeUndefined();
       expect(JSON.stringify(notifications)).not.toContain(STATE);
     }
-    expect(signIns.takeToolNotice("call-1", owner)).toBeUndefined();
+    expect(signIns.takeToolNotice("session-1", "call-1", owner)).toBeUndefined();
   });
 
   it("never opens the page for another thread or session", () => {
     const { signIns, observe, admit } = setup();
     admit(observe(challengeUpdate()).candidate);
-    signIns.takeToolNotice("call-1", owner);
+    signIns.takeToolNotice("session-1", "call-1", owner);
     const other = { ...owner, threadId: ThreadId.make("thread-2") };
     expect(
       signIns.redeem({
@@ -321,7 +321,7 @@ describe("makeAntigravityPluginSignIns", () => {
   it("expires attempts and retires them with their agent process", () => {
     const { signIns, generation, observe, admit } = setup({ ttlMs: 1_000 });
     admit(observe(challengeUpdate()).candidate);
-    signIns.takeToolNotice("call-1", owner);
+    signIns.takeToolNotice("session-1", "call-1", owner);
     const redeem = (now: number) =>
       signIns.redeem({ attemptId: "attempt-1", owner, nativeSessionId: "session-1", now });
     expect(redeem(1_000)).toEqual({ failure: "expired" });
@@ -334,7 +334,7 @@ describe("makeAntigravityPluginSignIns", () => {
     const { signIns, observe } = setup();
     const { candidate } = observe(textChunk(challengeText()));
     expect(candidate).toBeUndefined();
-    expect(signIns.takeToolNotice("call-1", owner)).toBeUndefined();
+    expect(signIns.takeToolNotice("session-1", "call-1", owner)).toBeUndefined();
   });
 
   it("scrubs a repeated page across chunks and hides the repeated card", () => {
@@ -379,10 +379,72 @@ describe("makeAntigravityPluginSignIns", () => {
     expect(textOf(projected)).toBe(`Open ${LINK_REMOVED} please`);
   });
 
+  // regression: whole messages, compaction summaries and terminal output skipped the scrub.
+  it("scrubs a page from every other update that shows text", () => {
+    const { signIns, generation, observe } = setup();
+    const reply = `Open ${URL_OK} please`;
+    const whole = observe({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message",
+        messageId: "m-1",
+        content: [{ type: "text", text: reply }],
+      },
+    } as EffectAcpSchema.SessionNotification).notifications;
+    const summary = [
+      ...observe({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "compaction_summary_chunk",
+          compactionId: "c-1",
+          content: { type: "text", text: reply.slice(0, 120) },
+        },
+      } as EffectAcpSchema.SessionNotification).notifications,
+      ...observe({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "compaction_summary_chunk",
+          compactionId: "c-1",
+          content: { type: "text", text: reply.slice(120) },
+        },
+      } as EffectAcpSchema.SessionNotification).notifications,
+    ];
+    const bytes = Buffer.from(reply, "utf8");
+    const terminal = (data: Buffer) =>
+      observe({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "terminal_output_chunk",
+          terminalId: "t-1",
+          data: data.toString("base64"),
+        },
+      } as EffectAcpSchema.SessionNotification).notifications;
+    const output = [...terminal(bytes.subarray(0, 120)), ...terminal(bytes.subarray(120))];
+    const rest = signIns.flush(generation);
+    const shown = JSON.stringify([...whole, ...summary, ...rest]);
+    expect(shown).not.toContain(STATE);
+    expect(shown).toContain(LINK_REMOVED);
+    const terminalText = [...output, ...rest]
+      .map((entry) =>
+        entry.update.sessionUpdate === "terminal_output_chunk"
+          ? Buffer.from(entry.update.data, "base64").toString("utf8")
+          : "",
+      )
+      .join("");
+    expect(terminalText).toBe(`Open ${LINK_REMOVED} please`);
+  });
+
+  it("keeps two sessions' notices for the same tool call id apart", () => {
+    const { signIns, observe, admit } = setup();
+    admit(observe(challengeUpdate()).candidate);
+    expect(signIns.takeToolNotice("session-2", "call-1", owner)).toBeUndefined();
+    expect(signIns.takeToolNotice("session-1", "call-1", owner)).toBeDefined();
+  });
+
   it("reports the plugin's next successful call as signed in", () => {
     const { signIns, observe, admit } = setup();
     admit(observe(challengeUpdate()).candidate);
-    signIns.takeToolNotice("call-1", owner);
+    signIns.takeToolNotice("session-1", "call-1", owner);
     observe(
       toolUpdate("call-2", {
         status: "completed",
@@ -391,7 +453,7 @@ describe("makeAntigravityPluginSignIns", () => {
         rawOutput: { output: "3 messages", exit_code: 0 },
       }),
     );
-    expect(signIns.takeToolNotice("call-2", owner)?.pluginSignIn).toEqual({
+    expect(signIns.takeToolNotice("session-1", "call-2", owner)?.pluginSignIn).toEqual({
       attemptId: "attempt-1",
       plugin: "gmail",
       displayName: "Gmail",
@@ -405,7 +467,7 @@ describe("makeAntigravityPluginSignIns", () => {
   it("replaces an older attempt for the same plugin", () => {
     const { signIns, observe, admit } = setup();
     admit(observe(challengeUpdate()).candidate);
-    signIns.takeToolNotice("call-1", owner);
+    signIns.takeToolNotice("session-1", "call-1", owner);
     const second = challengeText(signInUrl({ state: "second-state" }));
     admit(
       observe(
@@ -417,7 +479,7 @@ describe("makeAntigravityPluginSignIns", () => {
         }),
       ).candidate,
     );
-    signIns.takeToolNotice("call-3", owner);
+    signIns.takeToolNotice("session-1", "call-3", owner);
     expect(
       signIns.redeem({ attemptId: "attempt-1", owner, nativeSessionId: "session-1", now: 1 }),
     ).toEqual({ failure: "expired" });

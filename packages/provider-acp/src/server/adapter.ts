@@ -793,6 +793,7 @@ export interface AcpAdapterV2Flavor {
   // SCIENT-FORK:START — typed notices about root tool calls, and the plugin sign-ins they offer.
   /** The notice a root tool call raised, taken once; `owner` is the thread that shows it. */
   readonly scientToolNotice?: (
+    sessionId: string,
     toolCallId: string,
     owner: { readonly threadId: ThreadId; readonly providerThreadId: ProviderThreadId },
   ) => ProviderAdapter.ScientToolNotice | undefined;
@@ -5455,9 +5456,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // SCIENT-FORK:START — see AcpAdapterV2Flavor.scientToolNotice.
         const emitScientToolNotice = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
+          sessionId: string,
           toolCallId: string,
         ) {
-          const notice = flavor.scientToolNotice?.(toolCallId, {
+          const notice = flavor.scientToolNotice?.(sessionId, toolCallId, {
             threadId: context.input.threadId,
             providerThreadId: context.input.providerThread.id,
           });
@@ -6816,7 +6818,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (event._tag === "ToolCallUpdated") {
                   yield* emitTool(context, event.toolCall, undefined, event.rawPayload);
                   // SCIENT-FORK: see AcpAdapterV2Flavor.scientToolNotice.
-                  yield* emitScientToolNotice(context, event.toolCall.toolCallId);
+                  yield* emitScientToolNotice(
+                    context,
+                    notification.sessionId,
+                    event.toolCall.toolCallId,
+                  );
                 } else if (event._tag === "PlanUpdated") {
                   yield* emitPlan(context, event.payload, update.sessionUpdate !== "plan");
                 } else if (event._tag === "NoticeReceived") {

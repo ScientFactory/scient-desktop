@@ -428,7 +428,8 @@ export function makeAntigravityAcpAdapterFlavor(
     },
     normalizeToolCall: normalizeAntigravityToolCall,
     // SCIENT-FORK:START — plugin sign-in notices and the pages they open.
-    scientToolNotice: (toolCallId, owner) => pluginSignIns.takeToolNotice(toolCallId, owner),
+    scientToolNotice: (sessionId, toolCallId, owner) =>
+      pluginSignIns.takeToolNotice(sessionId, toolCallId, owner),
     scientPluginSignIn: {
       open: Effect.fn("AntigravityAdapterV2.pluginSignIn.open")(function* (input) {
         const redeemed = pluginSignIns.redeem({
