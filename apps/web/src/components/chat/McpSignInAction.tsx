@@ -21,6 +21,8 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
+// SCIENT-FORK: only a verified same-computer connection waits for the agent's own callback.
+import { sameHostEnvironmentIdsAtom } from "~/scient/sameHost";
 
 type SignIn =
   | { readonly phase: "starting" }
@@ -51,6 +53,8 @@ export function McpSignInAction({
   const gt = useGT();
   const formId = useId();
   const allowed = useAtomValue(threadEnvironment.mcpSignInStart.permissionAtom(environmentId));
+  // SCIENT-FORK: only the desktop app proves the agent shares its computer; see awaitBrowser.
+  const sameHost = useAtomValue(sameHostEnvironmentIdsAtom).has(environmentId);
   const signedIn = useAtomValue(
     threadEnvironment.mcpSignedInAtom(environmentId, { threadId, server, noticeAt }),
   );
@@ -107,7 +111,7 @@ export function McpSignInAction({
   // the sign-in finishes when the agent reports it; pasting stays for other setups.
   const awaitBrowser = async () => {
     const current = attempt.current;
-    if (awaiting.current === current) return;
+    if (!sameHost || awaiting.current === current) return;
     awaiting.current = current;
     const result = await complete({ environmentId, input });
     if (current !== attempt.current || result._tag === "Failure") return;

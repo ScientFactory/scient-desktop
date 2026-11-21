@@ -7,7 +7,7 @@ import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
-import { localEnvironmentIdAtom } from "../../state/primaryEnvironment";
+import { sameHostEnvironmentIdsAtom } from "../sameHost";
 import { PluginSignInAction } from "./PluginSignInAction";
 
 const environmentId = EnvironmentId.make("synthetic-local");
@@ -25,8 +25,8 @@ const fixture = vi.hoisted(() => ({
 vi.mock("./pluginSignInCommands", () => ({
   pluginSignInOpenCommand: { permissionAtom: () => Atom.make(true) },
 }));
-vi.mock("../../state/primaryEnvironment", () => ({
-  localEnvironmentIdAtom: Atom.make<string | null>("synthetic-local"),
+vi.mock("../sameHost", () => ({
+  sameHostEnvironmentIdsAtom: Atom.make<ReadonlySet<string>>(new Set(["synthetic-local"])),
 }));
 vi.mock("../../state/entities", () => ({
   useQuietThreadVisibleTurnItems: () => fixture.items,
@@ -42,7 +42,7 @@ vi.mock("../extensions/openAuthorizationPage", () => ({
   },
 }));
 
-const local = localEnvironmentIdAtom as Atom.Writable<string | null>;
+const sameHost = sameHostEnvironmentIdsAtom as Atom.Writable<ReadonlySet<string>>;
 
 /** Resets the shared fixture when the test ends. */
 function setup() {
@@ -51,7 +51,7 @@ function setup() {
       fixture.items = [];
       fixture.opening = "opened";
       fixture.open.mockReset();
-      appAtomRegistry.set(local, "synthetic-local");
+      appAtomRegistry.set(sameHost, new Set(["synthetic-local"]));
     },
   };
 }
@@ -119,7 +119,7 @@ it("shows Signed in once the plugin's next call worked", async () => {
 
 it("never offers the page to a client on another computer", async () => {
   using _fixture = setup();
-  appAtomRegistry.set(local, null);
+  appAtomRegistry.set(sameHost, new Set());
   await using _screen = await render(action());
   await expect
     .element(page.getByText("Sign in on the computer that runs this agent"))

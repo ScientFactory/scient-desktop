@@ -15,7 +15,7 @@ import { useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { InlineButton } from "../../components/ui/button";
 import { formatEnvironmentQueryError } from "../../state/query";
 import { useQuietThreadVisibleTurnItems } from "../../state/entities";
-import { localEnvironmentIdAtom } from "../../state/primaryEnvironment";
+import { sameHostEnvironmentIdsAtom } from "../sameHost";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openAuthorizationPage } from "../extensions/openAuthorizationPage";
 import { pluginSignInOpenCommand } from "./pluginSignInCommands";
@@ -46,7 +46,7 @@ export function PluginSignInAction({
 }) {
   const gt = useGT();
   const allowed = useAtomValue(pluginSignInOpenCommand.permissionAtom(environmentId));
-  const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
+  const sameHost = useAtomValue(sameHostEnvironmentIdsAtom).has(environmentId);
   const items = useQuietThreadVisibleTurnItems(scopeThreadRef(environmentId, threadId));
   const open = useAtomCommand(pluginSignInOpenCommand, { reportFailure: false });
   const [state, setState] = useState<Phase>({ phase: "idle" });
@@ -68,7 +68,7 @@ export function PluginSignInAction({
     );
   }
   if (!allowed) return null;
-  if (localEnvironmentId !== environmentId) {
+  if (!sameHost) {
     return (
       <span className="shrink-0 text-sm text-muted-foreground">
         <T>Sign in on the computer that runs this agent</T>
