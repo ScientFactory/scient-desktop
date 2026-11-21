@@ -7447,6 +7447,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // SCIENT-FORK: a browser on this machine finishes Claude's sign-in on Claude's own page.
+  it.effect("finishes a chat MCP sign-in without an address once Claude reports it connected", () =>
+    Effect.gen(function* () {
+      const checks = yield* Ref.make(0);
+      const harness = yield* makeWakeHarnessWithOptions({
+        mcp: {
+          mcpServerStatus: Ref.updateAndGet(checks, (count) => count + 1).pipe(
+            Effect.map((count) => [
+              { name: "linear", status: count >= 3 ? "connected" : "needs-auth" },
+            ]),
+          ),
+          readMcpResource: () => Effect.die("unexpected MCP resource read"),
+          callMcpTool: () => Effect.die("unexpected MCP tool call"),
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-sign-in-wait"),
+          text: "Plan the sprint",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "mcp-sign-in-wait-init",
+          session_id: WAKE_NATIVE_SESSION,
+          mcp_servers: [{ name: "linear", status: "needs-auth" }],
+        }),
+      );
+      const finished = yield* harness.runtime
+        .mcpSignIn!.complete({
+          providerThread: harness.providerThread,
+          server: "linear",
+          callbackUrl: undefined,
+        })
+        .pipe(Effect.forkChild);
+      for (let step = 0; step < 4; step += 1) yield* TestClock.adjust("2 seconds");
+      yield* Fiber.join(finished);
+      assert.isAtLeast(yield* Ref.get(checks), 3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
   it.effect("sends MCP app model context with the next Claude turn", () =>
     Effect.gen(function* () {
