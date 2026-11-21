@@ -665,7 +665,8 @@ const LINK_ATTEMPTS = 5;
 /**
  * Links the source to its item and moves the base only by what this Send wrote: Zotero's values
  * when the item is still at `sentVersion`, so a change made there meanwhile stays for Refresh,
- * and the earlier base's notes for an item that was only updated, as no note was sent to it.
+ * and the earlier base's notes for an item that was only updated, as no note was sent to it:
+ * none when that base is another item's, so Refresh compares the item's notes as new.
  */
 async function syncAfterSend(input: {
   readonly root: ScientSourceStoreLocation;
@@ -728,7 +729,11 @@ async function syncAfterSend(input: {
     annotationLibraryId: same
       ? (previous.annotationLibraryId ?? previous.libraryId)
       : (input.reference?.libraryId ?? fresh.libraryId),
-    ...(same ? { notes: previous } : {}),
+    ...(same
+      ? { notes: previous }
+      : input.sentVersion === undefined
+        ? {}
+        : { notes: { note: null } }),
   });
 }
 

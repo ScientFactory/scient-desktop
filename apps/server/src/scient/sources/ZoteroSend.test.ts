@@ -1062,6 +1062,42 @@ describe("Send to Zotero", () => {
     expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Read once more");
   });
 
+  it("reports a note on an existing item Scient never read once a Send updates that item", async () => {
+    const mine = {
+      system: "zotero",
+      libraryId: String(USER),
+      itemKey: "MINE2345",
+      itemVersion: 10,
+      rawItemType: "journalArticle",
+    };
+    const { root, sourceId } = await sourceInScient({ externalReferences: [mine] });
+    const org = zoteroOrg();
+    org.items.set(
+      "MINE2345",
+      zoteroItem("MINE2345", { version: 10, title: "Titled in Zotero" }, USER),
+    );
+    org.items.set(
+      "MEMO2345",
+      zoteroItem(
+        "MEMO2345",
+        { version: 10, itemType: "note", parentItem: "MINE2345", note: "<p>Written in Zotero</p>" },
+        USER,
+      ),
+    );
+
+    const sent = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    const refreshed = await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
+
+    expect(sent.items[0]?.outcome).toBe("updated");
+    expect(refreshed.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, sourceId))?.note).toBe("Read **twice**");
+  });
+
   it("links the item it made when the source is edited during the Send, and makes no second one", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg();

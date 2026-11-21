@@ -565,6 +565,8 @@ Zotero's **Extra**, where Zotero reads it. If the item was changed in Zotero aft
 overwritten: refresh from Zotero first, then send again. A change someone makes
 in Zotero while you send is kept the same way, for the next refresh to bring,
 and so is a note changed in Zotero, since a send never changes notes there.
+For a source linked to two Zotero libraries, a note on the item you send to that
+Scient never read is compared at the next refresh like any new note.
 This needs the Zotero
 key in Accounts with write access. Changes are not sent automatically; there is
 no two-way sync. At most 500 sources are sent at a time; with more selected,

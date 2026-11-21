@@ -4130,7 +4130,10 @@ The base then moves only by what the Send wrote: to Zotero's item as read back
 when it is still at the version the write left it at (else the earlier base
 stays and the link keeps that version, so Zotero's change is seen by the next
 Send and brought by Refresh), keeping the earlier base's notes for an item that
-was only patched. The link is written against the record as it is then, so an
+was only patched. A Send to an existing item whose base is another item's (a
+source linked to two libraries) stores `note: null` without `notes`, so Refresh
+treats that item's notes as new; only a created item's notes, which the Send
+wrote, become the base. The link is written against the record as it is then, so an
 edit made during the Send keeps both.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
 the citation key and identifiers without a Zotero field.
