@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { T, useGT, useMessages } from "gt-react";
 import {
   scientSourcesMayBeVersions,
@@ -379,7 +380,6 @@ export function ScientSourcesPanel(props: {
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  useLibrarySourceRequest(props.root, sources.overview !== null, setSelectedSourceId);
   const [editingSource, setEditingSource] = useState(false);
   /** The import started here last: the result-slot operation it began, and what it did. */
   const [importReceipt, setImportReceipt] = useState<ImportReceipt | null>(null);
@@ -536,6 +536,24 @@ export function ScientSourcesPanel(props: {
     organize.clearSelection();
     void sources.selectScope(scope);
   };
+  // The whole-Library request shows the list, over any source, review or duplicate view left open.
+  // Selecting reloads the list, which also picks up a folder set up just before the request. A
+  // project server ignores the scope and keeps listing its project.
+  const showWholeLibrary = useStableCallback(() => {
+    setSelectedSourceId(null);
+    setEditingSource(false);
+    setHistorySourceId(null);
+    setShowingReviews(false);
+    setShowingDuplicates(null);
+    selectScope("library");
+  });
+  useLibrarySourceRequest(
+    scopeThreadRef(props.environmentId, props.threadId),
+    props.root,
+    sources.overview !== null,
+    setSelectedSourceId,
+    showWholeLibrary,
+  );
   // Stable: Activity items built during render hold it, and it reads the panel's refs.
   const showPackageSources = useStableCallback(
     (sourceIds: ReadonlyArray<string>, label?: string) => {

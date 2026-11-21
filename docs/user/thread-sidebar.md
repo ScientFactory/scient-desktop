@@ -225,10 +225,17 @@ The small dashed chat button to the left of **New thread**, separated by a verti
 line, starts a chat without a project directly. Its tooltip is **Chat without a
 project**. It appears when the current environment offers scratch conversations.
 
+A new thread, and **Home**, which opens one in your most recent project, ask **What should we
+work on?** The chip above the message box shows the project. Open it to search your projects,
+**Add project**, or, where the machine offers scratch conversations, choose **No project**. Text
+you have typed moves with the thread when you pick another project or **No project**; **Add
+project** opens a fresh thread in the new project and leaves your text in this one.
+
 ### Threads without a project
 
-**No project** opens the usual composer. Before sending, its project picker lets you switch
-to a real project without losing the draft. The sidebar row and Add project flow stay the same.
+**No project** opens the usual composer. Before sending, the project chip above the message box
+lets you switch to a real project without losing the draft. The sidebar row and Add project flow
+stay the same.
 
 Scient creates one internal scratch project per machine and a separate plain folder for
 each conversation under its data directory. Files, Library, Documents, and Compute use
@@ -438,6 +445,26 @@ On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread** to select a different PR. Use **Unlink from thread** on the
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
+
+## Icon rail
+
+On web and desktop, a column of icons runs along the sidebar's edge. At the top are **Home**,
+**Library**, **Scheduled tasks**, **Extensions**, and **Code review** when your environment
+supports pull requests or issues. At the bottom are **Cloud conversations** when available,
+**Settings**, **Usage**, **Send feedback** in the desktop app, **Import conversation**, and your
+Scient Connect account. **Library** opens My Library over the window, in a new thread without a
+project; see [Open the Library](sources.md#open-the-library). **Code review** opens pull requests
+or issues, whichever you showed last; switch between them with **Pull requests | Issues** at the
+top of the page. On a wide window the rail stays at the window's edge when you collapse the
+sidebar, and on a short window it scrolls. With the rail on, the sidebar can't be dragged quite as
+narrow, so the thread list keeps room beside it.
+
+While a Scient update is ready, **Update** takes the place of the Scient name at the top of the
+sidebar. Updates for providers, other machines and Scient-managed runtimes show as a circle in the
+rail above **Settings**; see [Update Scient](updating.md).
+
+The rail is on by default. Turn off **Settings → Labs → Sidebar icon rail** to put these buttons
+back in a row at the bottom of the sidebar. Each device keeps its own choice.
 
 ## Find threads
 

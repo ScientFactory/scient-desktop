@@ -3698,15 +3698,6 @@
   "328fba0afb99764c": "Välj en arbetsyta",
   "074db680e148e829": "Lägg till ett projekt",
   "a0e0e2640219f1b0": "Välj ett projekt",
-  "1bbfd30a652f7e0f": "eller starta utan projekt",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " för att starta"
-  ],
   "99c183d2407cd36d": "Lägg till ett projekt för att starta",
   "06b6bb85f2e34802": "Vad ska vi bygga i {project}?",
   "5a405f15d9985bd6": "Vad ska vi bygga?",
@@ -21257,5 +21248,15 @@
   "af96d13065c3b2ce": "{days} d kvar",
   "e5efdfa2c982cace": "Kunde inte nå servern. Försök igen.",
   "3cf2e2fa75b5e1c7": "Skapa en parkopplingskod på {environment}, i dess Inställningar → Delning och åtkomst eller med `scient auth pairing create`, och ange den här.",
-  "c84ba778237d165e": "{label}, på ditt Scient Connect-konto, inte tillagd i den här appen. {status}"
+  "c84ba778237d165e": "{label}, på ditt Scient Connect-konto, inte tillagd i den här appen. {status}",
+  "cbdac942e1af4858": "Försök igen med Scient Connect",
+  "134c375d1d819cba": "Ikonkolumn i sidofältet",
+  "4fea432f523e6058": "beta sidofält ikonkolumn ikoner hem bibliotek schemalagda uppgifter tillägg kodgranskning",
+  "479381a0da261d9d": "Kodgranskning",
+  "5e493e0df23815a8": "Biblioteket är inte tillgängligt än",
+  "647910684fc1a923": "Det öppnas när den här datorns server är ansluten.",
+  "2a342c9ca8b0bbf6": "Det gick inte att öppna biblioteket",
+  "9d9b8c9f5c29ab89": "Det gick inte att konfigurera biblioteket",
+  "25f2a2eb5096cc07": "Mål i sidofältet",
+  "dab3050c171b5e7c": "Visar en kolumn med ikoner längs sidofältets kant: Hem, Bibliotek, Schemalagda uppgifter, Tillägg och kodgranskning överst; Inställningar och andra verktyg längst ned."
 }

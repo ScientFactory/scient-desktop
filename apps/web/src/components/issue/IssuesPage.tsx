@@ -99,6 +99,9 @@ import { useEnvironments, useIssuesSupported } from "~/state/environments";
 import { issueEnvironment, useIssueList } from "~/state/issues";
 import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+// SCIENT-FORK:START — the title switches between pull requests and issues.
+import { CodeReviewTitle } from "~/scient/codeReview/CodeReviewTitle";
+// SCIENT-FORK:END
 
 export interface IssuesSearch extends IssueListPreferences {
   readonly selectedEnvironmentId?: EnvironmentId | undefined;
@@ -668,9 +671,9 @@ export function IssuesPage() {
           >
             <WorkspaceBreadcrumb ariaLabel={gt("Issues breadcrumb")}>
               <WorkspaceBreadcrumbItem current>
-                <h1 className="truncate">
-                  <T context="page title, list of issues">Issues</T>
-                </h1>
+                {/* SCIENT-FORK:START — the title switches between pull requests and issues. */}
+                <CodeReviewTitle current="issues" />
+                {/* SCIENT-FORK:END */}
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
             <div className="min-w-0 flex-1" />

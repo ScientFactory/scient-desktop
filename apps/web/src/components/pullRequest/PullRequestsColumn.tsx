@@ -1,5 +1,7 @@
 import type { PullRequestInvolvement, PullRequestListState } from "@t3tools/contracts";
-import { T, useGT, useMessages } from "gt-react";
+// SCIENT-FORK:START — the title moved to CodeReviewTitle, which owns its own <T>.
+import { useGT, useMessages } from "gt-react";
+// SCIENT-FORK:END
 import { Plug2Icon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
@@ -18,6 +20,9 @@ import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import type { PullRequestFilterOption } from "./PullRequestListFilters";
 import { INVOLVEMENT_TABS, resolveFilterOptions, STATE_TABS } from "./pullRequestListOptions";
+// SCIENT-FORK:START — the title switches between pull requests and issues.
+import { CodeReviewTitle } from "~/scient/codeReview/CodeReviewTitle";
+// SCIENT-FORK:END
 
 function ExpandableSearch({
   searchInput,
@@ -182,9 +187,10 @@ export function PullRequestsColumn({
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel={gt("Pull request scope")} className="overflow-hidden">
             <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>
-              <h1 className="truncate">
-                <T>Pull requests</T>
-              </h1>
+              {/* SCIENT-FORK:START — the title switches between pull requests and issues; an open
+              search leaves only its heading. */}
+              <CodeReviewTitle current="pull-requests" headingOnly={searchExpanded} />
+              {/* SCIENT-FORK:END */}
             </WorkspaceBreadcrumbItem>
             {searchExpanded ? null : <WorkspaceBreadcrumbSeparator />}
             <WorkspaceBreadcrumbItem className="shrink gap-1.5">
@@ -214,9 +220,9 @@ export function PullRequestsColumn({
         ) : (
           <WorkspaceBreadcrumb ariaLabel={gt("Pull requests breadcrumb")}>
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">
-                <T>Pull requests</T>
-              </h1>
+              {/* SCIENT-FORK:START — the title switches between pull requests and issues. */}
+              <CodeReviewTitle current="pull-requests" />
+              {/* SCIENT-FORK:END */}
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}

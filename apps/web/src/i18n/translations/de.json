@@ -3699,15 +3699,6 @@
   "328fba0afb99764c": "Arbeitsbereich wählen",
   "074db680e148e829": "Projekt hinzufügen",
   "a0e0e2640219f1b0": "Projekt wählen",
-  "1bbfd30a652f7e0f": "oder ohne Projekt starten",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " zum Starten"
-  ],
   "99c183d2407cd36d": "Füge ein Projekt hinzu, um zu starten",
   "06b6bb85f2e34802": "Was sollen wir in {project} bauen?",
   "5a405f15d9985bd6": "Was sollen wir bauen?",
@@ -21244,5 +21235,15 @@
   "af96d13065c3b2ce": "Noch {days} T.",
   "e5efdfa2c982cace": "Der Server konnte nicht erreicht werden. Versuche es erneut.",
   "3cf2e2fa75b5e1c7": "Erstelle auf {environment} einen Kopplungscode, in dessen Einstellungen → Freigabe & Zugriff oder mit `scient auth pairing create`, und gib ihn hier ein.",
-  "c84ba778237d165e": "{label}, in deinem T3-Connect-Konto, dieser App nicht hinzugefügt. {status}"
+  "c84ba778237d165e": "{label}, in deinem T3-Connect-Konto, dieser App nicht hinzugefügt. {status}",
+  "cbdac942e1af4858": "Scient Connect erneut versuchen",
+  "134c375d1d819cba": "Symbolspalte in der Seitenleiste",
+  "4fea432f523e6058": "beta seitenleiste symbolspalte symbole start bibliothek geplante aufgaben erweiterungen code-review",
+  "479381a0da261d9d": "Code-Review",
+  "5e493e0df23815a8": "Die Bibliothek ist noch nicht verfügbar",
+  "647910684fc1a923": "Sie öffnet sich, sobald der Server dieses Computers verbunden ist.",
+  "2a342c9ca8b0bbf6": "Die Bibliothek konnte nicht geöffnet werden",
+  "9d9b8c9f5c29ab89": "Die Bibliothek konnte nicht eingerichtet werden",
+  "25f2a2eb5096cc07": "Ziele in der Seitenleiste",
+  "dab3050c171b5e7c": "Zeigt eine Spalte mit Symbolen am Rand der Seitenleiste: Start, Bibliothek, Geplante Aufgaben, Erweiterungen und Code-Review oben; Einstellungen und weitere Werkzeuge unten."
 }
