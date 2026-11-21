@@ -23,6 +23,9 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { rewindToMessage } from "./chatViewSend";
 import { makeThreadErrorSetter } from "../ChatView.logic";
+// SCIENT-FORK:START
+import { laterTurnsChangedNoFiles } from "../../scient/chat/editFromHereRewind";
+// SCIENT-FORK:END
 interface TimelineRewindInput {
   readonly hasProjectWorkspace: boolean;
   readonly environmentId: EnvironmentId;
@@ -82,6 +85,8 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     turnCount: number,
     messageId: MessageId,
     restoreFiles?: boolean,
+    // SCIENT-FORK: rewinding without the dialog, which then opens only to show a failure.
+    direct = false,
   ) => {
     const localApi = readLocalApi();
     if (
@@ -129,12 +134,19 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
+      // SCIENT-FORK:START — no turn after this message changed files, so there is nothing to
+      // choose: rewind as "Revert and keep changes" does.
+      if (laterTurnsChangedNoFiles(serverProjection, turnCount)) {
+        await onRevertToTurnCount(turnCount, messageId, false, true);
+        return;
+      }
+      // SCIENT-FORK:END
       openRevertConfirm(routeThreadKey, { turnCount, messageId });
       return;
     }
 
     // SCIENT-FORK: a retry clears the last failure while the dialog stays open.
-    openRevertConfirm(routeThreadKey, { turnCount, messageId });
+    if (!direct) openRevertConfirm(routeThreadKey, { turnCount, messageId });
     useComposerDraftStore.setState((store) => ({
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
@@ -160,8 +172,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return { rewindingThreadKeys: remaining };
     });
     // SCIENT-FORK:START — the rewind dialog stays open on failure and shows why; success closes it.
-    // A failure on a thread the user has left lands in that thread's banner, as in T3.
-    if (!settleRevertConfirm(routeThreadKey, rewind.error) && rewind.error !== null) {
+    // A failure on a thread the user has left lands in that thread's banner, as in T3. A direct
+    // rewind's failure opens the dialog to show it.
+    if (direct && rewind.error !== null && currentRouteThreadKeyRef.current === routeThreadKey) {
+      openRevertConfirm(routeThreadKey, { turnCount, messageId, error: rewind.error });
+    } else if (!settleRevertConfirm(routeThreadKey, rewind.error) && rewind.error !== null) {
       setThreadError(activeThread.id, rewind.error);
     }
     if (rewind.error !== null) return;
