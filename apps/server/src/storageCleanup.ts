@@ -1235,6 +1235,41 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // SCIENT-FORK:START preserve-racing-worktree-files — isolate, inspect, then remove.
+  // An unfinished Overleaf sync in the worktree keeps it (overleaf-checkout-barrier).
+  const removeGuardedWorktree = Effect.fn("StorageCleanup.removeGuardedWorktree")(function* (
+    worktreePath: string,
+    branch: string,
+    commitSha: string,
+  ) {
+    // Git removes a worktree through the repository that registered it.
+    const repository = yield* worktreeRepository(worktreePath);
+    return yield* checkoutBarrier
+      .bulk(
+        worktreePath,
+        removeIsolatedWorktree(repository, worktreePath, branch, commitSha).pipe(
+          Effect.uninterruptible,
+        ),
+        { missing: "skip" },
+      )
+      .pipe(
+        Effect.catchTags({
+          CheckoutRecoveryRequiredError: (error) =>
+            Effect.succeed(
+              error.reason === "unreadable-record"
+                ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
+                : error.reason === "newer-unfinished-record"
+                  ? "a newer version of Scient left an Overleaf sync unfinished; finish it there"
+                  : error.reason === "unlinked-unfinished-sync"
+                    ? "an unlinked Overleaf folder has an unfinished sync; link it again to finish it"
+                    : "an unfinished Overleaf sync needs recovery first",
+            ),
+          CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
+        }),
+      );
+  });
+  // SCIENT-FORK:END preserve-racing-worktree-files
+
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
@@ -1730,6 +1765,18 @@ const make = Effect.gen(function* () {
                     Effect.provideService(FileSystem.FileSystem, fs),
                     Effect.provideService(Path.Path, path),
                   ),
+                // SCIENT-FORK:START preserve-racing-worktree-files — each checkout is isolated,
+                // inspected again and removed as a single worktree is.
+                removeCheckout: (checkout) =>
+                  git.resolveCommit({ cwd: checkout.worktreePath, revision: "HEAD" }).pipe(
+                    Effect.flatMap(({ commitSha }) =>
+                      removeGuardedWorktree(checkout.worktreePath, thread.branch!, commitSha),
+                    ),
+                    Effect.catch((error) => Effect.succeed(cleanupFailureReason(error))),
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                // SCIENT-FORK:END preserve-racing-worktree-files
               });
               for (const removedPath of result.removed)
                 entries.push({
@@ -1930,35 +1977,11 @@ const make = Effect.gen(function* () {
               if (submodules.force) return keep("submodule worktree cannot be isolated safely");
               // SCIENT-FORK:END preserve-racing-submodule-files
               // SCIENT-FORK:START preserve-racing-worktree-files — isolate, inspect, then remove.
-              // An unfinished Overleaf sync in the worktree keeps it (overleaf-checkout-barrier).
-              // Git removes a worktree through the repository that registered it.
-              const repository = yield* worktreeRepository(worktreePath);
-              const isolationChanges = yield* checkoutBarrier
-                .bulk(
-                  worktreePath,
-                  removeIsolatedWorktree(
-                    repository,
-                    worktreePath,
-                    thread.branch!,
-                    head.commitSha,
-                  ).pipe(Effect.uninterruptible),
-                  { missing: "skip" },
-                )
-                .pipe(
-                  Effect.catchTags({
-                    CheckoutRecoveryRequiredError: (error) =>
-                      Effect.succeed(
-                        error.reason === "unreadable-record"
-                          ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
-                          : error.reason === "newer-unfinished-record"
-                            ? "a newer version of Scient left an Overleaf sync unfinished; finish it there"
-                            : error.reason === "unlinked-unfinished-sync"
-                              ? "an unlinked Overleaf folder has an unfinished sync; link it again to finish it"
-                              : "an unfinished Overleaf sync needs recovery first",
-                      ),
-                    CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
-                  }),
-                );
+              const isolationChanges = yield* removeGuardedWorktree(
+                worktreePath,
+                thread.branch!,
+                head.commitSha,
+              );
               if (isolationChanges !== null) return keep(isolationChanges);
               // SCIENT-FORK:END preserve-racing-worktree-files
               entries.push({

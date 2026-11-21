@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import { type ProjectTrackedFolder, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,6 +21,7 @@ import {
   taskFoldersTestProjectId as projectId,
   type TaskFoldersTestState,
 } from "./TaskFolders.testkit.ts";
+import { withWorkspaceLease } from "./workspaceLease.ts";
 
 const threadId = ThreadId.make("thread:task-folders");
 
@@ -798,6 +800,51 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
     }),
   ),
 );
+
+// SCIENT-FORK:START task-folder-removal-lease
+it.live("removes a task folder only after an add in progress lands, with what it added", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository, worktreeCount } = yield* fixture;
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const store = yield* TaskFolderStore.TaskFolderStore;
+      const shop = path.join(tmp, "shop");
+      const api = yield* repository("shop/api");
+      const web = yield* repository("shop/web");
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api, web);
+      const { taskFolder } = yield* create("feature", [{ path: api }]);
+      const root = taskFolder.root;
+
+      // Adding a repository holds this lease while it checks the repository out and records it.
+      const removal = yield* withWorkspaceLease(
+        path.resolve(taskFolder.projectPath),
+        Effect.gen(function* () {
+          const pending = yield* taskFolders
+            .removeIfTaskFolder({ path: root, force: false })
+            .pipe(Effect.forkChild);
+          yield* run(web, "worktree", "add", "-q", "-b", "feature", path.join(root, "web"));
+          yield* store.put({
+            ...taskFolder,
+            repositories: [
+              ...taskFolder.repositories,
+              { repositoryPath: web, worktreePath: path.join(root, "web"), name: "web" },
+            ],
+          });
+          assert.isTrue(yield* fileSystem.exists(path.join(root, "api", "README.md")));
+          return pending;
+        }),
+      );
+
+      assert.isTrue(yield* Fiber.join(removal));
+      assert.isFalse(yield* fileSystem.exists(root));
+      assert.equal(yield* worktreeCount(api), 1);
+      assert.equal(yield* worktreeCount(web), 1);
+      assert.isNull(yield* taskFolders.find(root));
+    }),
+  ),
+);
+// SCIENT-FORK:END task-folder-removal-lease
 
 it.live("keeps a repository git will not remove and removes the rest", () =>
   withState((state) =>

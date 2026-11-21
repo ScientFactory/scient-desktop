@@ -25,6 +25,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ThreadShell,
   type ServerSettings,
+  type StorageCleanupReport,
   type StorageCleanupSettings,
   type TerminalMetadataStreamEvent,
   type TerminalSummary,
@@ -45,6 +46,12 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import { withComputeWorkspaceReservation } from "./scient/compute/ComputeWorkspaceLifetime.ts";
+// SCIENT-FORK:START preserve-racing-worktree-files
+import {
+  CheckoutBarrier,
+  CheckoutRecoveryRequiredError,
+} from "./scient/workspace/CheckoutBarrier.ts";
+// SCIENT-FORK:END preserve-racing-worktree-files
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -1287,6 +1294,168 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
     }),
   ),
 );
+
+// SCIENT-FORK:START preserve-racing-worktree-files — a task folder's checkouts get the guards
+// a single worktree gets.
+const taskFolderCleanupFixture = Effect.gen(function* () {
+  const fixture = yield* cleanupFixture();
+  const { fs, repo, command } = fixture;
+  const trackedRepository = Effect.fnUntraced(function* (name: string) {
+    const folder = `${repo}/dist/${name}`;
+    yield* fs.makeDirectory(folder, { recursive: true });
+    yield* command(folder, ["init", "-b", "main"]);
+    yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
+    yield* command(folder, ["config", "user.name", "Cleanup test"]);
+    yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
+    yield* fs.writeFileString(`${folder}/.gitignore`, ".env\n");
+    yield* command(folder, ["add", "."]);
+    yield* command(folder, ["commit", "-m", "initial"]);
+    return { name, path: folder };
+  });
+  const api = yield* trackedRepository("api");
+  const web = yield* trackedRepository("web");
+  const context = yield* Layer.build(
+    layerTaskFoldersWithGit({
+      workspaceRoot: repo,
+      trackedFolders: [api, web],
+      thread: null,
+    }).pipe(Layer.provide(NodeCrypto.layer)),
+  );
+  const taskFolders = Context.get(context, TaskFolders.TaskFolders);
+  const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
+  const { taskFolder } = yield* taskFolders.create({
+    plan: plan!,
+    branch: "task",
+    projectStart: { refName: "main", baseRefName: "main" },
+    startFromOrigin: false,
+  });
+  fixture.setTaskFolders(taskFolders);
+  fixture.setThreads([shell({ branch: "task", worktreePath: taskFolder.root })]);
+  return { ...fixture, taskFolders, root: taskFolder.root };
+});
+
+const taskFolderEntries = (report: StorageCleanupReport, root: string) =>
+  report.entries
+    .filter((entry) => entry.path?.startsWith(root))
+    .map(({ path, outcome, reason }) => ({ path, outcome, reason }))
+    .toSorted((left, right) => left.path!.localeCompare(right.path!));
+
+it.live("keeps a task folder's checkout while its Overleaf sync needs recovery", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, root } = yield* taskFolderCleanupFixture;
+      const web = yield* fs.realPath(`${root}/dist/web`);
+      yield* (yield* CheckoutBarrier).settleBeforeBulk((section) =>
+        section.root === web
+          ? Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root }))
+          : Effect.void,
+      );
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        { path: root, outcome: "kept", reason: "Holds a repository that was kept" },
+        { path: `${root}/dist/api`, outcome: "removed", reason: expect.any(String) },
+        {
+          path: `${root}/dist/web`,
+          outcome: "kept",
+          reason: "An unfinished Overleaf sync needs recovery first",
+        },
+      ]);
+      expect(yield* fs.readFileString(`${root}/dist/web/tracked.txt`)).toBe("original\n");
+    }),
+  ),
+);
+
+it.live("keeps the files an Overleaf sync finishes into a task folder's checkout at removal", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, root } = yield* taskFolderCleanupFixture;
+      const web = yield* fs.realPath(`${root}/dist/web`);
+      yield* (yield* CheckoutBarrier).settleBeforeBulk((section) =>
+        section.root === web
+          ? fs.writeFileString(`${web}/.env`, "synced from Overleaf\n").pipe(Effect.orDie)
+          : Effect.void,
+      );
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        { path: root, outcome: "kept", reason: "Holds a repository that was kept" },
+        { path: `${root}/dist/api`, outcome: "removed", reason: expect.any(String) },
+        { path: `${root}/dist/web`, outcome: "kept", reason: "Has ignored files (.env)" },
+      ]);
+      expect(yield* fs.readFileString(`${root}/dist/web/.env`)).toBe("synced from Overleaf\n");
+    }),
+  ),
+);
+
+it.live("keeps a task folder's checkout that gains ignored files after it was inspected", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, root, taskFolders, setTaskFolders } = yield* taskFolderCleanupFixture;
+      // A build writes its output into the checkout right after its checks passed.
+      setTaskFolders({
+        find: taskFolders.find,
+        remove: (input) =>
+          taskFolders.remove({
+            ...input,
+            inspect: (checkout) =>
+              input.inspect!(checkout).pipe(
+                Effect.tap(() =>
+                  checkout.worktreePath.endsWith("web")
+                    ? fs
+                        .writeFileString(`${checkout.worktreePath}/.env`, "late output\n")
+                        .pipe(Effect.orDie)
+                    : Effect.void,
+                ),
+              ),
+          }),
+      });
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        { path: root, outcome: "kept", reason: "Holds a repository that was kept" },
+        { path: `${root}/dist/api`, outcome: "removed", reason: expect.any(String) },
+        { path: `${root}/dist/web`, outcome: "kept", reason: "Has ignored files (.env)" },
+      ]);
+      expect(yield* fs.readFileString(`${root}/dist/web/.env`)).toBe("late output\n");
+      expect(yield* fs.readFileString(`${root}/dist/web/tracked.txt`)).toBe("original\n");
+    }),
+  ),
+);
+
+it.live("leaves a task folder whose project has a teardown command to the user", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, root } = yield* taskFolderCleanupFixture;
+      yield* fs.writeFileString(
+        `${repo}/t3.json`,
+        JSON.stringify({
+          worktreeLayout: {
+            create: 'mkdir -p "$T3_WORKTREE_PROJECT_PATH"',
+            remove: 'touch "$T3_PROJECT_ROOT/torn-down" && rm -rf "$T3_WORKTREE_ROOT"',
+          },
+        }),
+      );
+
+      const report = yield* service.runNow;
+
+      expect(taskFolderEntries(report, root)).toEqual([
+        {
+          path: root,
+          outcome: "kept",
+          reason: "Its project has a teardown command, so it is removed only when you remove it",
+        },
+      ]);
+      expect(yield* fs.exists(`${repo}/torn-down`)).toBe(false);
+      expect(yield* fs.readFileString(`${root}/dist/api/tracked.txt`)).toBe("original\n");
+      expect(yield* fs.readFileString(`${root}/dist/web/tracked.txt`)).toBe("original\n");
+    }),
+  ),
+);
+// SCIENT-FORK:END preserve-racing-worktree-files
 
 // SCIENT-FORK: Scient keeps a submodule worktree Git cannot isolate instead of removing it.
 it.live(

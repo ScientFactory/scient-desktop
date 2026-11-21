@@ -153,6 +153,13 @@ export class TaskFolders extends Context.Service<
       readonly inspect?: (
         checkout: TaskFolderCheckout,
       ) => Effect.Effect<{ readonly keep: string | null; readonly force: boolean }>;
+      // SCIENT-FORK:START guarded-task-folder-cleanup
+      /**
+       * Removes one inspected checkout in place of `git worktree remove`; a reason keeps it. With
+       * it, a project teardown command keeps the whole folder: the command is not guarded.
+       */
+      readonly removeCheckout?: (checkout: TaskFolderCheckout) => Effect.Effect<string | null>;
+      // SCIENT-FORK:END guarded-task-folder-cleanup
     }) => Effect.Effect<TaskFolderRemoval, TaskFolderError>;
     /**
      * Removes the task folder `path` is the root or the project folder of, for good. False when
@@ -714,6 +721,18 @@ const make = Effect.gen(function* () {
     // The project's own teardown goes first; what it leaves is removed below as usual. Only when
     // every checkout may go: the command cannot be told which ones to keep.
     const layout = laidOut ? yield* worktreeLayout(taskFolder.projectRoot) : null;
+    // SCIENT-FORK:START guarded-task-folder-cleanup
+    if (layout?.remove !== undefined && input.removeCheckout !== undefined)
+      return {
+        removed: [],
+        kept: [
+          {
+            path: taskFolder.root,
+            reason: "its project has a teardown command, so it is removed only when you remove it",
+          },
+        ],
+      } satisfies TaskFolderRemoval;
+    // SCIENT-FORK:END guarded-task-folder-cleanup
     if (layout?.remove !== undefined) {
       const checkouts = [
         ...taskFolder.repositories,
@@ -753,6 +772,17 @@ const make = Effect.gen(function* () {
         kept.push({ path: checkout.worktreePath, reason: keep });
         return false;
       }
+      // SCIENT-FORK:START guarded-task-folder-cleanup
+      if (input.removeCheckout !== undefined) {
+        const guardedKeep = yield* input.removeCheckout(checkout);
+        if (guardedKeep !== null) {
+          kept.push({ path: checkout.worktreePath, reason: guardedKeep });
+          return false;
+        }
+        removed.push(checkout.worktreePath);
+        return true;
+      }
+      // SCIENT-FORK:END guarded-task-folder-cleanup
       return yield* removeCheckout(
         checkout,
         force,
@@ -1272,7 +1302,18 @@ const make = Effect.gen(function* () {
     const target = path.resolve(input.path);
     if (taskFolder === null || (target !== taskFolder.root && target !== taskFolder.projectPath))
       return false;
-    const { kept } = yield* removeLocked(taskFolder, { force: input.force, forget: true });
+    // SCIENT-FORK:START task-folder-removal-lease — the lease addRepository holds; read again
+    // under it, since an add may have landed. The race is upstream's too.
+    const { kept } = yield* locked(
+      taskFolder,
+      Effect.gen(function* () {
+        const current = yield* store.findContaining(taskFolder.root);
+        if (current === null || current.root !== taskFolder.root)
+          return { removed: [], kept: [] } satisfies TaskFolderRemoval;
+        return yield* removeLocked(current, { force: input.force, forget: true });
+      }),
+    );
+    // SCIENT-FORK:END task-folder-removal-lease
     if (kept.length > 0) {
       return yield* new TaskFolderError({
         operation: "remove",
