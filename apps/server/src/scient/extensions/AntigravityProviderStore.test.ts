@@ -98,6 +98,7 @@ const partnerFeed = (canva: Buffer) => ({
       description: "Designs",
       author: { name: "Canva" },
       skills: ["./skills/edit-design"],
+      mcpServers: "./mcp_config.json",
       source: { type: "archive", url: CANVA_ZIP, sha256: sha256(canva) },
     },
   ],
@@ -236,7 +237,7 @@ describe("AntigravityProviderStore", () => {
         expect(page.entries[2]).toMatchObject({
           publisherType: "third-party",
           publisher: "Canva",
-          includes: ["Skills"],
+          includes: ["Skills", "MCP servers"],
         });
         expect((yield* store.search({ query: "science" })).entries.map((e) => e.name)).toEqual([
           "chemistry",

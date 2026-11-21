@@ -323,7 +323,11 @@ function catalogPlugin(
     scientCategories: antigravityCategories(plugin.name, categories, keywords),
     logoUrl: httpsUrl(plugin.logo),
     keywords,
-    includes: [...(skills.length ? ["Skills"] : []), ...(mcpServers.length ? ["MCP servers"] : [])],
+    // A single path (`"mcpServers": "./mcp_config.json"`) declares servers named only inside it.
+    includes: [
+      ...(skills.length ? ["Skills"] : []),
+      ...(mcpServers.length || typeof plugin.mcpServers === "string" ? ["MCP servers"] : []),
+    ],
     skills,
     mcpServers,
     archive,

@@ -23,12 +23,14 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcessSpawner } from "effect/process";
 import type {
   ProviderNativeInventory,
   ProviderPluginActions,
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import { nextInventoryReadSequence } from "../../provider/ProviderNativeInventory.ts";
+import { resolveAntigravityUserHome } from "../../provider/Drivers/AntigravitySkills.ts";
 import type {
   AntigravityExecutable,
   AntigravityInstallationError,
@@ -558,9 +560,9 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
         return yield* fail(
           `Antigravity has a different plugin named ${name} now, so Scient did not add this one.`,
         );
-      yield* writeReceipts((receipts) => receipts.filter((receipt) => receipt.name !== name)).pipe(
-        Effect.ignore,
-      );
+      yield* writeReceipts((receipts) =>
+        receipts.filter((receipt) => receipt.path !== afterNamed.path),
+      ).pipe(Effect.ignore);
       return;
     }
     if (named._tag === "Some")
@@ -626,7 +628,8 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     const version = listed.version?.trim() || undefined;
     const source = listed.source?.trim() || undefined;
     yield* writeReceipts((receipts) => [
-      ...receipts.filter((receipt) => receipt.name !== name),
+      // Receipts are per installed folder: another plugin home's receipt for the name stays.
+      ...receipts.filter((receipt) => receipt.path !== listed.path),
       {
         name,
         marketplace,
@@ -742,7 +745,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
               const plugin = yield* nativePlugin(input.pluginId);
               yield* options.run(["plugin", "uninstall", plugin.name]);
               yield* writeReceipts((receipts) =>
-                receipts.filter((receipt) => receipt.name !== plugin.name),
+                receipts.filter((receipt) => receipt.path !== plugin.path),
               ).pipe(Effect.ignore);
             }),
           ),
@@ -830,12 +833,20 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
       ),
       Effect.orElseSucceed(() => "Install Antigravity to add its plugins."),
     );
-    const home = input.environment.HOME ?? input.environment.USERPROFILE;
+    // The same home agy and the chat runtime resolve, so every instance writing one plugin
+    // folder shares its lock; Windows paths compare case-insensitively.
+    const platform = yield* HostProcess.Platform;
+    const home = resolveAntigravityUserHome(
+      platform,
+      input.environment,
+      yield* HostProcess.HomeDirectory,
+    );
+    const pluginHome = path.resolve(home, ".gemini", "config", "plugins");
     return yield* makeAntigravityPluginActions({
       stateDir: input.stateDir,
       run,
       unavailable,
-      pluginHome: home ? path.resolve(home, ".gemini", "config", "plugins") : undefined,
+      pluginHome: platform === "win32" ? pluginHome.toLowerCase() : pluginHome,
     });
   },
 );

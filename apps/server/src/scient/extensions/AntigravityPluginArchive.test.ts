@@ -80,6 +80,13 @@ describe("extractAntigravityArchive", () => {
     ).pipe(Effect.asVoid),
   );
 
+  it.effect("refuses Windows device names, with or without an extension", () =>
+    Effect.gen(function* () {
+      for (const name of ["skills/CON", "skills/nul.txt", "LPT1.md", "com9/x"])
+        yield* refusal(makeZip([{ name, data: "x" }]));
+    }),
+  );
+
   it.effect("refuses two members that land on one name", () =>
     refusal(
       makeZip([

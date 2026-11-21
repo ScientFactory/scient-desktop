@@ -117,7 +117,9 @@ function memberSegments(fileName: string): ReadonlyArray<string> | undefined {
         segment === ".." ||
         segment.length > 255 ||
         /[\u0000-\u001f\\:*?"<>|]/.test(segment) ||
-        /[. ]$/.test(segment),
+        /[. ]$/.test(segment) ||
+        // Windows device names, with or without an extension, never name a file there.
+        /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(\.|$)/i.test(segment),
     )
   )
     return undefined;
