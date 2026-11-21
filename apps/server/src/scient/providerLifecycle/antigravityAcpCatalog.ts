@@ -1,8 +1,19 @@
 import {
   ANTIGRAVITY_ACP_REGISTRY_VERSION,
   ANTIGRAVITY_ACP_TARGETS,
+  compareManagedRuntimeVersions,
+  MANAGED_RUNTIME_POLICY,
+  resolveReviewedAntigravityArtifact,
 } from "@scientfactory/provider-runtime";
+import {
+  parseAntigravityCliRelease,
+  type AntigravityCliReleaseAsset,
+} from "../../provider/antigravityCliRelease.ts";
 import { type AntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
+import {
+  resolveManagedRuntimeCatalogArtifact,
+  type ManagedRuntimeCatalogData,
+} from "./ManagedRuntimeCatalog.ts";
 
 export {
   ANTIGRAVITY_ACP_REGISTRY_VERSION,
@@ -102,4 +113,56 @@ export function bundledAntigravityAcpAsset(
     return null;
   const asset = resolveAntigravityReleaseAsset(platform, arch);
   return asset ? { ...asset, registryVersion: ANTIGRAVITY_ACP_REGISTRY_VERSION } : null;
+}
+
+// The first agy CLI qualified with Scient's ACP launch (profile flags, sign-in, plugins).
+// Earlier catalog CLIs, including the bundled 1.1.x floor, cannot serve ACP.
+const ANTIGRAVITY_CLI_ACP_MINIMUM_VERSION = "1.5.12";
+
+export interface AntigravityCliCatalogAsset extends AntigravityCliReleaseAsset {
+  readonly archiveBytes: number;
+}
+
+/** The catalog's agy CLI for an ACP target, when it is new enough to serve ACP. */
+export function resolveAntigravityCliCatalogAsset(
+  catalog: ManagedRuntimeCatalogData,
+  platform: NodeJS.Platform,
+  arch: string,
+  musl = false,
+): AntigravityCliCatalogAsset | undefined {
+  const acpTarget = ANTIGRAVITY_ACP_TARGETS.find(
+    (target) => target.platform === platform && target.arch === arch,
+  );
+  if (!acpTarget) return undefined;
+  const policy = resolveReviewedAntigravityArtifact({
+    platform: acpTarget.platform,
+    arch: acpTarget.arch,
+    ...(acpTarget.platform === "linux" ? { libc: musl ? "musl" : "glibc" } : {}),
+  });
+  const artifact = policy
+    ? resolveManagedRuntimeCatalogArtifact({
+        catalog,
+        policy,
+        contractRevision: MANAGED_RUNTIME_POLICY.antigravity.revision,
+      })
+    : undefined;
+  if (
+    !artifact ||
+    artifact.checksum.algorithm !== "sha512" ||
+    !["equal", "newer"].includes(
+      compareManagedRuntimeVersions({
+        provider: "antigravity",
+        current: ANTIGRAVITY_CLI_ACP_MINIMUM_VERSION,
+        candidate: artifact.version,
+      }),
+    )
+  )
+    return undefined;
+  const release = parseAntigravityCliRelease(
+    { version: artifact.version, url: artifact.url, sha512: artifact.checksum.digest },
+    platform,
+    arch,
+    musl,
+  );
+  return release ? { ...release, archiveBytes: artifact.size } : undefined;
 }
