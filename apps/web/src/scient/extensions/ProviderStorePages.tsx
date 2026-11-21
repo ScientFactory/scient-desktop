@@ -35,6 +35,7 @@ import {
   extensionsProviderStoreEntry,
   extensionsProviderStorePage,
 } from "./extensionsState";
+import { isAccountServiceStoreEntry } from "./accountServices";
 import { providerAvailable, providerStoreAudience } from "./extensionsView";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
@@ -245,6 +246,8 @@ function StoreResults({
     page.data?.entries.filter(
       (entry) =>
         (entry.kind !== "codex" || !preview || !entry.installed) &&
+        // Gmail and the like are offered on their service pages; the full store keeps them.
+        !(preview && entry.kind === "antigravity" && isAccountServiceStoreEntry(entry)) &&
         !(claudeServesOfficial && entry.marketplace === "claude-plugins-official"),
     ) ?? [];
   return (

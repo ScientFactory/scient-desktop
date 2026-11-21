@@ -259,6 +259,11 @@ vi.mock("../../state/query", async () => {
       if (atom.kind === "skill-document")
         return { data: { instructions: "Skill instructions" }, error: null };
       if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
+      if (atom.kind === "store")
+        return {
+          data: state.storePages[String(atom.input?.instanceId)] ?? { entries: [], total: 0 },
+          error: null,
+        };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
       if (atom.kind === "entry") {
@@ -548,7 +553,7 @@ import {
   ProviderPluginDetailPage,
   ServerDetailPage,
 } from "./ExtensionDetailPages";
-import { ProviderStoreDetailPage } from "./ProviderStorePages";
+import { ProviderStoreDetailPage, ProviderStorePage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
 import { AccountServiceDetailPage } from "./AccountServicePages";
 import { forgetListPage } from "./ExtensionsPage";
@@ -2599,6 +2604,133 @@ describe("Antigravity Marketplace", () => {
     await userEvent.click(buttonIn(fixture.container, "Add to Antigravity")!);
     await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledOnce());
     expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+  });
+
+  it("gives Gmail's page an Antigravity row for each plugin state", async () => {
+    await using fixture = setup();
+    const gmail = storeEntry("gmail", { displayName: "Gmail" });
+    const added = (enabled: boolean) => ({
+      id: gmail.id,
+      name: "gmail",
+      source: "local" as const,
+      enabled,
+      canUninstall: true,
+      canSetEnabled: true,
+    });
+    const show = async (patch: Partial<ServerProvider>, entry = gmail) => {
+      await fixture.reset();
+      state.providersByEnvironment = {
+        local: [provider(antigravity, "antigravity", { displayName: "Antigravity", ...patch })],
+      };
+      state.storeEntry = entry;
+      await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+      await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+      return fixture.section("Your agents");
+    };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+
+    let agents = await show({ plugins: [] });
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull());
+    await userEvent.click(buttonIn(agents, "Add to Antigravity")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "gmail@antigravity-plugins-official" },
+        },
+      }),
+    );
+    expect(state.confirm).not.toHaveBeenCalled();
+
+    agents = await show({ plugins: [added(true)] });
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain("Added · signs in the first time a chat uses it"),
+    );
+    expect(agents.textContent).not.toContain("Connected");
+
+    agents = await show({ plugins: [added(false)] });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
+    await userEvent.click(buttonIn(agents, "Turn on")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenLastCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "set-enabled", pluginId: gmail.id, enabled: true },
+        },
+      }),
+    );
+
+    agents = await show({ plugins: [] }, { ...gmail, installationStateKnown: false });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Checking…"));
+
+    // An Antigravity that cannot add plugins (not the agy CLI) gets no row.
+    agents = await show({ plugins: [] }, { ...gmail, storeUnavailable: true });
+    expect(agents.textContent).not.toContain("Antigravity");
+  });
+
+  it("leaves Gmail off the Discover shelf, which its own page offers, but keeps it in the store", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = {
+      entries: [storeEntry("gmail", { displayName: "Gmail" }), storeEntry("chemistry")],
+      total: 2,
+    };
+    await fixture.render(<DiscoverPage />);
+    // Every store shelf's grid; Gmail's own row elsewhere on Discover is its service page.
+    const shelves = () =>
+      [...fixture.container.querySelectorAll('[aria-label="Plugins"]')].flatMap((grid) =>
+        fixture.rowNames(grid),
+      );
+    await vi.waitFor(() => expect(shelves()).toContain("Chemistry"));
+    expect(shelves()).not.toContain("Gmail");
+    await fixture.reset();
+    await fixture.render(<ProviderStorePage instanceId="antigravity" />);
+    await vi.waitFor(() =>
+      expect(fixture.rowNames(fixture.section("Plugins"))).toEqual(["Gmail", "Chemistry"]),
+    );
+  });
+
+  it("shows the partner notice before adding a partner service's plugin from its page", async () => {
+    await using fixture = setup();
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          auth: { status: "authenticated", type: "chatgpt" },
+          plugins: [],
+          mcpServers: [
+            {
+              name: "Canva",
+              status: "connected",
+              scope: "chatgpt",
+              connectUrl: "https://chatgpt.com/apps/canva/connector_canva",
+            },
+          ],
+        }),
+        provider(antigravity, "antigravity", { displayName: "Antigravity", plugins: [] }),
+      ],
+    };
+    state.storeEntry = canva;
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<AccountServiceDetailPage serviceId="canva" />);
+    await vi.waitFor(() =>
+      expect(buttonIn(fixture.section("Your agents"), "Add to Antigravity")).not.toBeNull(),
+    );
+    // ChatGPT's row for the same service is unchanged.
+    expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account");
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.section("Your agents"), "Add to Antigravity")!);
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
+        },
+      }),
+    );
   });
 
   it("removes an added plugin from the user's Antigravity after saying what that affects", async () => {
