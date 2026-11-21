@@ -1425,6 +1425,44 @@ describe("library merge engine", () => {
     expect(await membership()).toEqual(["source_gone"]);
   });
 
+  it("takes the Zotero base with the link it gave the survivor, also when the merge stopped first", async () => {
+    const { root, library } = await newLibrary();
+    const zotero = {
+      system: "zotero",
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion: 3,
+      rawItemType: "journalArticle",
+    };
+    await seed(root, [
+      record("source_keep", { title: "Linked" }),
+      record("source_gone", { title: "Linked", externalReferences: [zotero] }),
+    ]);
+    // The loser took one Zotero PDF and left the other, removed here.
+    await writeScientSourceZoteroSync(library, zoteroBase("source_gone", ["PDFA2345", "LEFT2345"]));
+    failNext("rename", /zotero[\\/]source_keep\.json$/u);
+    await expect(
+      mergeScientLibrarySources({
+        library,
+        sourceIds: ["source_keep", "source_gone"],
+        survivorId: "source_keep",
+      }),
+    ).rejects.toThrow("Injected");
+
+    await settleScientLibraryMerges(library);
+
+    expect(await readScientSourceRecord(library, "source_keep")).toMatchObject({
+      externalReferences: [zotero],
+    });
+    expect(await readScientSourceZoteroSync(library, "source_keep")).toEqual({
+      ...zoteroBase("source_gone", ["PDFA2345", "LEFT2345"]),
+      sourceId: "source_keep",
+    });
+    const [entry] = await readScientSourceTrashEntries(library);
+    await undoScientLibraryMerge({ library, mergeId: entry!.mergedInto!.mergeId });
+    expect(await readScientSourceZoteroSync(library, "source_keep")).toBeNull();
+  });
+
   it("pages every pair and undoable merge past 200 and 100 without writing, and restarts on a change", async () => {
     const { root, library } = await newLibrary();
     const numbered = (count: number, make: (index: number) => ScientSourceRecord[]) =>

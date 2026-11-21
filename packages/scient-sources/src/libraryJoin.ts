@@ -936,9 +936,7 @@ async function addSource(input: {
   // would bring back a PDF removed here.
   const zotero = await theirBytes(NodePath.join(otherRoot, "zotero", `${id}.json`));
   const zoteroBase =
-    zotero && decodeZoteroSync(JSON.parse(zotero.toString("utf8"))).sourceId === id
-      ? zotero
-      : null;
+    zotero && decodeZoteroSync(JSON.parse(zotero.toString("utf8"))).sourceId === id ? zotero : null;
   const theirHighlights = new Map<string, Buffer | null>();
   for (const attachment of record.attachments) {
     theirHighlights.set(

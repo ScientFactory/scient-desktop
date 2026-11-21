@@ -64,11 +64,13 @@ import {
   readScientSourceAttachmentPdf,
   readScientSourceRecord,
   readScientSourceTrashEntries,
+  readScientSourceZoteroSync,
   removeScientSource,
   restoreScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
   updateSourceImportOperationItem,
+  writeScientSourceZoteroSync,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { organizeScientSources } from "./collections.ts";
@@ -1087,8 +1089,25 @@ async function expectMovedBack(
 describe("move back into this project", () => {
   it("rebuilds the v1 store with a later edit, copies the PDF back and removes pins.json", async () => {
     const { library, project, a, b, sha256 } = await seededMove();
+    const metadata = editableMetadataFromRecord(
+      (await readScientSourceRecord(project, b.sourceId))!,
+    );
+    const zoteroBase = (attachmentKeys: ReadonlyArray<string>) => ({
+      formatVersion: 1 as const,
+      sourceId: b.sourceId,
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion: 3,
+      syncedAt: "2026-11-21T08:00:00.000Z",
+      metadata,
+      note: null,
+      attachmentKeys: [...attachmentKeys],
+    });
+    await writeScientSourceZoteroSync(project, zoteroBase(["PDFA2345"]));
     await move(library, project);
     await editTitle(library, b.sourceId, "Edited in the library");
+    // A Zotero PDF that arrived in the Library and was removed there.
+    await writeScientSourceZoteroSync(library, zoteroBase(["PDFA2345", "LEFT2345"]));
     const result = await moveScientProjectBackIntoProject({
       library,
       projectRoot: project,
@@ -1096,6 +1115,10 @@ describe("move back into this project", () => {
     });
     expect(result).toMatchObject({ outcome: "moved-back", restoredSources: 2, restoredPdfs: 1 });
     expect(await exists(NodePath.join(project, ".scient/library/pins.json"))).toBe(false);
+    expect((await readScientSourceZoteroSync(project, b.sourceId))?.attachmentKeys).toEqual([
+      "PDFA2345",
+      "LEFT2345",
+    ]);
     expect((await readScientSourceRecord(project, b.sourceId))?.title).toBe(
       "Edited in the library",
     );

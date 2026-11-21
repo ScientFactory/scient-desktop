@@ -56,6 +56,7 @@ import {
 } from "./organize.ts";
 import {
   ScientSourceTrashEntry,
+  ScientSourceZoteroSync,
   type ScientSourceActor,
   type ScientSourceRecord,
 } from "./model.ts";
@@ -279,6 +280,7 @@ interface MoveContext {
 const decodeJournal = Schema.decodeUnknownSync(ScientLibraryMoveJournal);
 const decodeReview = Schema.decodeUnknownSync(ScientSystematicReview);
 const decodeTrashEntry = Schema.decodeUnknownSync(ScientSourceTrashEntry);
+const decodeZoteroSync = Schema.decodeUnknownSync(ScientSourceZoteroSync);
 const decodeCollections = Schema.decodeUnknownSync(ScientSourceCollectionsDocument);
 const { sourceStorePaths, maxRecordBytes } = scientSourceStoreInternals;
 
@@ -2516,6 +2518,32 @@ async function refreshRestoredStore(
   };
 }
 
+/**
+ * The Library's Zotero base for a record written from it, under the project's ID: it names the
+ * Zotero files the record took or left since the move. A damaged one leaves the backup's.
+ */
+async function restoreZoteroBase(
+  ctx: MoveContext,
+  base: string,
+  librarySourceId: string,
+  sourceId: string,
+): Promise<void> {
+  const bytes = await readRegularFile(
+    NodePath.join(libraryFiles(ctx).zotero, `${librarySourceId}.json`),
+  );
+  if (!bytes) return;
+  let found: ScientSourceZoteroSync;
+  try {
+    found = decodeZoteroSync(JSON.parse(bytes.toString("utf8")));
+  } catch {
+    return;
+  }
+  await replaceAtomically(
+    absolute(base, `sync/zotero/${sourceId}.json`),
+    Buffer.from(formatJson({ ...found, sourceId }), "utf8"),
+  );
+}
+
 /** The records, reviews and managed-file copies of the restored store, and the PDFs it names. */
 async function writeRestoredRecords(
   ctx: MoveContext,
@@ -2603,6 +2631,7 @@ async function writeRestoredRecords(
         maxRecordBytes,
       );
     }
+    await restoreZoteroBase(ctx, base, library.sourceId, pin.sourceId);
     restoredSources += 1;
     for (const attachment of next.attachments) {
       if (SHA256.test(attachment.sha256)) pdfs.add(attachment.sha256);
