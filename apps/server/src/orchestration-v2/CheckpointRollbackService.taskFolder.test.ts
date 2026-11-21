@@ -45,6 +45,9 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+// SCIENT-FORK:START rewind-status-refresh
+import { RunFinalizationObserver } from "./RunFinalizationService.ts";
+// SCIENT-FORK:END rewind-status-refresh
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
@@ -65,6 +68,8 @@ interface Options {
 /** What the test supplies before the layer is built; the last commit's events land in `committed`. */
 interface State extends TaskFoldersTestState {
   readonly committed: Array<OrchestrationV2DomainEvent>;
+  // SCIENT-FORK: the folders each rewind asked to re-read Git status for.
+  readonly statusRefreshes: Array<ReadonlyArray<string>>;
 }
 
 const layerFor = (state: State, options: Options) => {
@@ -186,6 +191,13 @@ const layerFor = (state: State, options: Options) => {
               } as never),
           }),
           Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+          // SCIENT-FORK:START rewind-status-refresh
+          Layer.succeed(RunFinalizationObserver, {
+            refresh: () => Effect.void,
+            refreshAfterTurn: () => Effect.void,
+            refreshRepositories: ({ cwds }) => Effect.sync(() => state.statusRefreshes.push(cwds)),
+          }),
+          // SCIENT-FORK:END rewind-status-refresh
         ),
       ),
     ),
@@ -477,6 +489,8 @@ const taskFolderThread = Effect.fn(function* (state: State, options: Options) {
     recorded,
     records,
     apply,
+    // SCIENT-FORK: rewind-status-refresh
+    statusRefreshes: state.statusRefreshes,
   };
 });
 
@@ -486,7 +500,14 @@ const withThread = <A, E>(
     thread: Effect.Success<ReturnType<typeof taskFolderThread>>,
   ) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof layerFor>>>,
 ) => {
-  const state: State = { workspaceRoot: "/unset", trackedFolders: [], thread: null, committed: [] };
+  const state: State = {
+    workspaceRoot: "/unset",
+    trackedFolders: [],
+    thread: null,
+    committed: [],
+    // SCIENT-FORK: rewind-status-refresh
+    statusRefreshes: [],
+  };
   return taskFolderThread(state, options).pipe(
     Effect.flatMap(test),
     Effect.provide(layerFor(state, options)),
@@ -581,6 +602,51 @@ it.live("rewinds a linked project folder's repositories to how each was before t
     }),
   ),
 );
+
+// SCIENT-FORK:START rewind-status-refresh — also offered upstream.
+it.live.each([{ restoreFiles: true }, { restoreFiles: false }])(
+  "re-reads Git status of the repositories a rewind restored, restoreFiles=$restoreFiles",
+  ({ restoreFiles }) =>
+    withThread({ projectIsRepository: false }, (thread) =>
+      Effect.gen(function* () {
+        const { path, folders, write } = thread;
+        yield* thread.turn(
+          1,
+          Effect.all([
+            write(path.join(folders.api, "index.js"), "one\n"),
+            write(path.join(folders.web, "index.js"), "one\n"),
+          ]),
+        );
+        yield* thread.turn(
+          2,
+          Effect.all([
+            write(path.join(folders.api, "index.js"), "one\ntwo\n"),
+            write(path.join(folders.web, "index.js"), "one\ntwo\n"),
+          ]),
+        );
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const rollbacks = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+        const { checkpointScopes } = yield* thread.records;
+        const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
+        yield* rollbacks.execute({
+          threadId,
+          providerThreadId,
+          checkpointId: yield* ids.allocate
+            .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
+            .pipe(Effect.orDie),
+          scopeId: rootScope.id,
+          restoreFiles,
+        });
+
+        // Restoring files moves no ref, so only this re-read updates the repositories' totals.
+        assert.deepEqual(
+          thread.statusRefreshes.map((cwds) => cwds.toSorted()),
+          restoreFiles ? [[folders.api, folders.web].toSorted()] : [],
+        );
+      }),
+    ),
+);
+// SCIENT-FORK:END rewind-status-refresh
 
 it.live.each([
   { label: "whose baseline is lost", runSnapshot: "ready" },

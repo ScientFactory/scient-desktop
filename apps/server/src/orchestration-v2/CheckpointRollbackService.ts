@@ -46,6 +46,9 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 // SCIENT-FORK:START task-folder-rewind
 import { prepareTaskFolderForRewind } from "../scient/workspace/TaskFolderRewind.ts";
 // SCIENT-FORK:END task-folder-rewind
+// SCIENT-FORK:START rewind-status-refresh
+import { RunFinalizationObserver } from "./RunFinalizationService.ts";
+// SCIENT-FORK:END rewind-status-refresh
 
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
@@ -151,6 +154,9 @@ export const layer: Layer.Layer<
     const taskFolders = yield* TaskFolders.TaskFolders;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    // SCIENT-FORK:START rewind-status-refresh
+    const finalizationObserver = yield* RunFinalizationObserver;
+    // SCIENT-FORK:END rewind-status-refresh
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -449,6 +455,13 @@ export const layer: Layer.Layer<
             });
       if (restoreFiles) {
         yield* checkpoints.restore({ targets: restoreTargets, scopes: [scope, ...repositories] });
+        // SCIENT-FORK:START rewind-status-refresh — a restore moves no ref, so no watcher or poll
+        // re-reads these folders' cached Git status, as a turn's end does; also offered upstream.
+        yield* finalizationObserver.refreshRepositories({
+          threadId: input.threadId,
+          cwds: restoreTargets.map((target) => target.scope.cwd),
+        });
+        // SCIENT-FORK:END rewind-status-refresh
       }
       // SCIENT-FORK: only a ready checkpoint has a Git ref to delete.
       const staleScopeCheckpoints = staleCheckpoints.filter(
