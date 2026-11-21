@@ -1712,6 +1712,19 @@ them to send. An agent brings a large collection 500 references at a time and
 goes on until none remain; it does not go on with an import you stopped. An agent can also read the same **Recent changes** list as you,
 so you can ask it to undo yesterday's tagging or to restore a paper it removed.
 
+An agent can also [back up](#back-up-my-library) the whole Library into a
+folder you name, [restore](#restore-from-a-backup) it from a backup or put back
+a Library a restore kept, and [add from another Library](#add-from-another-library)
+or undo that addition, and read how each stands, as **Backup and recovery**
+shows it. A restore it asks for takes effect the next time Scient starts, as
+yours does. To cancel a waiting restore it names the one it saw, so it never
+cancels a restore you chose after it looked. It cannot yet take a single note,
+PDF or paper from **Show differences**.
+
+Agents you connect from outside Scient, such as Claude Code or Codex in your
+own terminal, can use the Library too; see
+[Outside agents](outside-agents.md#your-library).
+
 ## Current limits
 
 The Library supports Zotero (on this computer or on zotero.org), direct PDF import

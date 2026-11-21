@@ -971,9 +971,9 @@ without the author's library can still list, screen and count:
 their backend through the `ScientSourcesBackend` reference, whose default is
 the constant (tests written for the project store provide `"project"`). `resolveScientSourcesStoreFor` gives every Sources
 call its store: the project root, or the project root plus
-`scientLibraryLocation(scientLibraryRootFor(stateDir))`. The project still
-comes only from the thread's workspace binding (`resolveScientSourcesProject`),
-so tools take no project argument. The same reference picks the advertised
+`scientLibraryLocation(scientLibraryRootFor(stateDir))`. For an agent in a
+thread the project comes only from the thread's workspace binding
+(`resolveScientSourcesProject`), so its tools take no project argument. The same reference picks the advertised
 tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
 share operations and handlers. The agent-context budget tests measure the
 complete advertised tool list against `agentContextBudget.scient.json`; output
@@ -987,6 +987,24 @@ environment authority for people and agents.
   hydrates pins: unresolved pins and review records use their saved snapshots.
 - Any tool that takes a source ID accepts a library ID or a project source ID
   of this project; both resolve through aliases and the instance map.
+- A client connected through Copy MCP URL (no thread, not a peer link) is
+  offered the Sources toolkit only (`toolkits/sources/outside.ts`):
+  `outsideCall` is the one eligibility rule that listing
+  (`ScientMcpProtocol.ts`) and dispatch (`registerScientToolkit` in
+  `McpHttpServer.ts`) share. McpOAuth grants it `sources:read`, plus
+  `sources:write` unless it was approved Read only; a tool whose grants it
+  lacks is not listed and its call is refused before any store is resolved.
+  Its listing is generated from the same tools with an extra `projectId`
+  property; the call takes `projectId` out and decodes the rest with the
+  tool's own schema, so a thread's tool list and decoding stay byte for byte
+  the same. `projectId` resolves through the project registry
+  (`ProjectService.getById`) and `resolveWorkspaceRoot` to the verified
+  canonical checkout on this server, and reaches the handlers as
+  `ScientSourcesOutsideCall`; `resolveScientSourcesProject` answers
+  `project-required` without it. Without a project only whole-Library calls
+  run (`resolveWholeLibrary`): list `scope: "library"`, `recentChanges` and
+  `libraryCopies`, and the organize backup, restore and join actions; their
+  rows carry no checkout's keys, notes or `pinned`.
 - `scient_sources_list` lists this project's pins under their project keys
   (`fromSnapshot` marks a pin this library lacks); `scope: "library"` lists the
   whole library with `pinned` per record. `scient_sources_search` searches the
@@ -2811,8 +2829,10 @@ the menu item where this computer's folder dialog can choose the folder, asks
 the status each second while one runs (whether or not the last read
 succeeded), and announces the end once in each window that started the backup
 or saw it running, also after a switch to another project. Library writes wait on the lock meanwhile (30 s, then
-`ScientLibraryBusyError`). Agents have no action for it yet (a recorded
-parity gap).
+`ScientLibraryBusyError`). Agents start it with organize `back-up-library`
+and read it with list `libraryCopies` (`readLibraryCopies`, which
+`backupStatus` serves too); their call admits the Library alone as a write
+does (no unfinished restore, merges settled) and moves no project in.
 
 ## Library restore
 
@@ -2927,8 +2947,11 @@ and, unlike `organize`, resolves no store: it never creates the Library or
 moves the open project into it. `backupStatus` answers both the backup and
 the restore. The panel shows the waiting copy with Cancel, says once per
 window how a restore ended, asks again until the first answer comes, and
-drops an answer that arrives for a project it has left. Scient does not restart itself. Agents have no
-action for it yet (a recorded parity gap).
+drops an answer that arrives for a project it has left. Scient does not restart itself. Agents
+prepare, put back and cancel with organize `restore-library`,
+`put-back-library` and `cancel-restore` through the same
+`changeLibraryRestore`; an agent's cancel must name the `restoreId` it read,
+and a newer restore answers `another-restore` and keeps waiting.
 
 A "Move back into this project" chosen after the backup was made is recorded
 only in the Library the restore replaces. Commit carries it over first
@@ -4363,9 +4386,13 @@ tool does more. The only exemptions are one step of an interactive flow that a
 single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
-an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. Two gaps stand: an
-agent cannot start or watch a Library backup, and cannot restore one.
+an exemption: such a command is a `gap` with its reason. The Library-only
+organize actions have their own table: each names the tool's actions that do
+the same, or is `exempt` or a `gap` with its reason. `libraryParity.test.ts`
+reports every gap as a test annotation in each run. One gap stands: an agent cannot take
+a note, a PDF or a whole paper from another Library's differences
+(`take-from-library`), because the list tool does not read a join's
+differences.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is
