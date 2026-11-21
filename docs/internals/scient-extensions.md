@@ -934,6 +934,31 @@ limited to 64 KiB, checked for PNG/JPEG/WebP signatures, converted to
 has a five-second budget; a slow icon leaves the usual fallback tile. Signed
 logo URLs never reach the renderer.
 
+### Antigravity Marketplace
+
+An Antigravity instance whose resolved runtime is the agy CLI exposes Google's
+two public catalogs (`antigravity-plugins-official` and
+`antigravity-plugins-partners`, fixed `www.gstatic.com` feeds, no sign-in).
+Each feed is fetched without redirects, capped at 4 MiB, schema-decoded and
+cached for ten minutes; a failed feed is a `sourceFailures` entry while the
+other stays listed. Partner entries carry `publisherType: "third-party"` and
+show a developer notice before Add. Discover categories come from a reviewed
+per-plugin map, then the feed's own category and keywords.
+
+Add does not use agy's named installs, which need the CLI's own sign-in.
+Scient downloads the entry's gstatic archive (64 MiB cap), checks the feed's
+SHA-256 before opening it, unpacks it without links, special files, escaping or
+colliding names, keeps executable bits, checks `plugin.json`'s name and
+version, then runs `agy plugin install <staging-dir>` with a minimal
+environment. The plugin lands in the OS user's `~/.gemini/config/plugins`,
+shared with the Antigravity app. agy's listing does not keep the catalog, so
+`<stateDir>/antigravity-plugins/receipts.json` records name, catalog, version,
+digest and folder; only a matching receipt makes a listed plugin the catalog
+entry's installation. Installed state, enable/disable and Remove use
+`agy plugin list --json`, `enable|disable` and `uninstall`. A catalog outage
+keeps Installed and Remove; an unreadable listing pauses Add and Remove. A
+paired-harness instance lists the catalogs with Add disabled and says why.
+
 `providerPlugins.act` accepts `install` (entry id, with an optional source
 instance for shared stores), `add-official-store`, and the existing lifecycle
 operations. Codex installation calls `plugin/install { pluginName,

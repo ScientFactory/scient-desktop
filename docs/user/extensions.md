@@ -13,7 +13,7 @@ extensions.
   (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Telegram,
   PubMed, Semantic Scholar, Exa, Playwright, Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
   literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
-  each agent's store in its own section (**From Claude's store**, **From Codex's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
+  each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
   registry, and what you have already installed.
 - **Installed** lists what this environment already has, grouped by who manages
@@ -285,6 +285,19 @@ An app's page lists **Your agents**, each with its own state and action:
 Return to Scient afterwards and the rows update. Under the Installed table,
 **Add apps on ChatGPT** and **Add connectors on claude.ai** open each account's
 own page. Scient does not add Google's official MCP servers itself.
+
+## Antigravity plugins
+
+**From the Antigravity Marketplace** lists Google's own Antigravity plugins and
+partner plugins from other developers. It needs an Antigravity agent that uses
+the agy command-line runtime; otherwise the store explains what to change.
+Category pages show these plugins in **From Antigravity's store**.
+
+Choose **Add to Antigravity**. A partner plugin first says which developer makes
+it; add it only if you trust them. The plugin goes into Antigravity's plugins
+for your user account on the computer Scient runs on, so the Antigravity app
+there gets it too. Installed lists it with an On/Off switch and **Remove from
+Antigravity**.
 
 ## See what a conversation received
 
