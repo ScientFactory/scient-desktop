@@ -53,6 +53,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerAuthComplete]: "provider",
   [WS_METHODS.providerMcpSignInStart]: "provider",
   [WS_METHODS.providerMcpSignInComplete]: "provider",
+  // SCIENT-FORK: Antigravity plugin sign-in from its chat notice.
+  [WS_METHODS.pluginSignInOpen]: "provider",
   [WS_METHODS.chatGptReconnectProfile]: "provider",
   [WS_METHODS.chatGptImportProfile]: "provider",
   [WS_METHODS.chatGptHandoffSubscribe]: "provider",

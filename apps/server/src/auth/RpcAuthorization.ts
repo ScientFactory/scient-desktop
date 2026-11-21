@@ -80,6 +80,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
+  // SCIENT-FORK: an Antigravity plugin sign-in takes the same grant as an MCP sign-in.
+  [WS_METHODS.pluginSignInOpen]: AuthProvidersManageScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptHandoffSubscribe]: AuthProvidersManageScope,

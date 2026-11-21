@@ -33,6 +33,8 @@ import {
   type ThreadId,
   isRuntimeModeAbove,
   type TurnTokenUsage,
+  // SCIENT-FORK: plugin sign-in failures are safe to show.
+  type PluginSignInError,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { MODEL_TOKEN_LIMIT_MESSAGE, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -788,6 +790,21 @@ export interface AcpAdapterV2Flavor {
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  // SCIENT-FORK:START — typed notices about root tool calls, and the plugin sign-ins they offer.
+  /** The notice a root tool call raised, taken once; `owner` is the thread that shows it. */
+  readonly scientToolNotice?: (
+    toolCallId: string,
+    owner: { readonly threadId: ThreadId; readonly providerThreadId: ProviderThreadId },
+  ) => ProviderAdapter.ScientToolNotice | undefined;
+  readonly scientPluginSignIn?: {
+    readonly open: (input: {
+      readonly owner: { readonly threadId: ThreadId; readonly providerThreadId: ProviderThreadId };
+      /** The live root session, or null when no agent process runs. */
+      readonly nativeSessionId: string | null;
+      readonly attemptId: string;
+    }) => Effect.Effect<{ readonly authorizationUrl: string }, PluginSignInError>;
+  };
+  // SCIENT-FORK:END
   readonly isCancelledToolCall?: (payload: unknown) => boolean;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
@@ -5435,6 +5452,47 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         });
 
+        // SCIENT-FORK:START — see AcpAdapterV2Flavor.scientToolNotice.
+        const emitScientToolNotice = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          toolCallId: string,
+        ) {
+          const notice = flavor.scientToolNotice?.(toolCallId, {
+            threadId: context.input.threadId,
+            providerThreadId: context.input.providerThread.id,
+          });
+          if (notice === undefined) return;
+          const nativeItemId = `${toolCallId}:plugin-sign-in:${notice.pluginSignIn.attemptId}${
+            notice.pluginSignIn.signedIn === true ? ":signed-in" : ""
+          }`;
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: providerTurnItemId(nativeItemId),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: notice.title,
+              message: notice.message,
+              level: notice.level,
+              pluginSignIn: notice.pluginSignIn,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+        // SCIENT-FORK:END
+
         const emitPlan = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           update: AcpPlanUpdate,
@@ -6757,6 +6815,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               for (const event of parsed.events) {
                 if (event._tag === "ToolCallUpdated") {
                   yield* emitTool(context, event.toolCall, undefined, event.rawPayload);
+                  // SCIENT-FORK: see AcpAdapterV2Flavor.scientToolNotice.
+                  yield* emitScientToolNotice(context, event.toolCall.toolCallId);
                 } else if (event._tag === "PlanUpdated") {
                   yield* emitPlan(context, event.payload, update.sessionUpdate !== "plan");
                 } else if (event._tag === "NoticeReceived") {
@@ -11343,6 +11403,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }),
               ),
             ),
+          // SCIENT-FORK:START — see AcpAdapterV2Flavor.scientPluginSignIn.
+          ...(flavor.scientPluginSignIn === undefined
+            ? {}
+            : {
+                scientPluginSignIn: {
+                  open: Effect.fn("AcpAdapterV2.scientPluginSignIn.open")(function* ({
+                    threadId,
+                    providerThread,
+                    attemptId,
+                  }) {
+                    const pluginSignIn = flavor.scientPluginSignIn!;
+                    return yield* pluginSignIn.open({
+                      owner: { threadId, providerThreadId: providerThread.id },
+                      nativeSessionId: yield* Ref.get(activeSessionId),
+                      attemptId,
+                    });
+                  }),
+                },
+              }),
+          // SCIENT-FORK:END
           readThreadSnapshot: Effect.fn("AcpAdapterV2.readThreadSnapshot")(
             function* (snapshotInput) {
               return yield* runtimeTransitionPermit.withPermit(
