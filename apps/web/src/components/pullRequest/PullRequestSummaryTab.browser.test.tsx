@@ -277,7 +277,8 @@ it("scrolls from the keyboard after a click inside it", async () => {
   setup();
   const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
   const container = document.createElement("div");
-  container.className = "flex h-[300px]";
+  // SCIENT-FORK: Scient's CSS omits Tailwind classes used only in tests.
+  container.style.cssText = "display: flex; height: 300px;";
   await using screen = await renderUi(
     // The panel area takes focus itself, so a click on plain text lands on it unless the tab can.
     <div {...workspaceAreaProps("panel", 4, "Workspace panel")} className="flex min-w-0 flex-1">
