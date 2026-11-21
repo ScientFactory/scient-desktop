@@ -77,10 +77,12 @@ async function openSignInTestWindow(
   onTestFinished(close);
   let probing: Promise<void> | undefined;
   // A window that never asks for its page: see what the dialog's advice, a reload, does.
-  const firstLoad = pageWithin(pageAsked, STALL_AFTER_MS).then((asked) => {
-    if (!asked && platform === "win32" && !requested.includes("/"))
-      probing = probeStall({ browser, folder, url, pageAsked, requested, notes: stall, signal });
-  });
+  const firstLoad = pageWithin(pageAsked, STALL_AFTER_MS, () => requested.includes("/")).then(
+    (asked) => {
+      if (!asked && platform === "win32")
+        probing = probeStall({ browser, folder, url, pageAsked, requested, notes: stall, signal });
+    },
+  );
   try {
     await Promise.race([
       signed.promise,
@@ -105,19 +107,22 @@ async function openSignInTestWindow(
 /** A first page request that takes this long is a stall; fresh CI machines take up to ~25 s. */
 const STALL_AFTER_MS = 45_000;
 
-/** True once the test page is requested, false if `ms` pass first. */
-const pageWithin = (pageAsked: EventTarget, ms: number) =>
+/** True once `asked()` holds, checked now and at each page request; false if `ms` pass first. */
+const pageWithin = (pageAsked: EventTarget, ms: number, asked: () => boolean) =>
   new Promise<boolean>((resolve) => {
-    const asked = () => {
+    if (asked()) return resolve(true);
+    const check = () => {
+      if (!asked()) return;
       clearTimeout(timer);
+      pageAsked.removeEventListener("page", check);
       resolve(true);
     };
     // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- how long a real browser takes to ask for a page is the thing measured; no event marks "never"
     const timer = setTimeout(() => {
-      pageAsked.removeEventListener("page", asked);
+      pageAsked.removeEventListener("page", check);
       resolve(false);
     }, ms);
-    pageAsked.addEventListener("page", asked, { once: true });
+    pageAsked.addEventListener("page", check);
   });
 
 /** Brings the window of the browser on `profile` to the front and presses F5 there. */
@@ -167,25 +172,35 @@ async function probeStall(input: {
     notes.push("the page was asked for while processes were listed");
     return;
   }
+  // The page can be asked for again before PowerShell has even returned.
+  const beforeReload = pages();
   const reload = await powershell(RELOAD_SCRIPT, { SCIENT_PROFILE: folder });
   if (reload !== "sent") notes.push(`reload not tried: ${reload}`);
-  else if (await pageWithin(pageAsked, 20_000)) {
+  else if (await pageWithin(pageAsked, 20_000, () => pages() > beforeReload)) {
     notes.push("a reload in the window brought the page");
     return;
   } else notes.push("a reload in the window brought nothing");
   if (input.signal.aborted) return;
   // A second launch on the profile hands the address to the browser already running on it.
+  const beforeAgain = pages();
   const again = NodeChildProcess.spawn(browser.executable, [`--user-data-dir=${folder}`, url], {
     stdio: "ignore",
   });
   again.on("error", () => undefined);
   input.signal.addEventListener("abort", () => again.kill(), { once: true });
+  const exited = new Promise<boolean>((resolve) => again.once("exit", () => resolve(true)));
   notes.push(
-    (await pageWithin(pageAsked, 20_000))
+    (await pageWithin(pageAsked, 20_000, () => pages() > beforeAgain))
       ? "opening the page again brought it"
       : "opening the page again brought nothing",
   );
-  if (again.exitCode === null && again.signalCode === null) {
+  // It hands the address over and exits; one that stays would hold the profile folder.
+  const handedOver = await Promise.race([
+    exited,
+    // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a launcher that never exits has no event; this bounds the wait for it
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
+  ]);
+  if (!handedOver && again.exitCode === null && again.signalCode === null) {
     notes.push("the second launch kept running, so it was stopped");
     again.kill();
   }
