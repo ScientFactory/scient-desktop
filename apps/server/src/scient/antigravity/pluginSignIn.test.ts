@@ -364,6 +364,21 @@ describe("makeAntigravityPluginSignIns", () => {
     expect(textOf(projected)).toBe(`Open ${LINK_REMOVED} please`);
   });
 
+  // regression: a tool status between two reply chunks used to flush the reply's held text.
+  it("holds a split page in the reply across another tool's updates", () => {
+    const { signIns, generation, observe } = setup();
+    const reply = `Open ${URL_OK} please`;
+    const projected = [
+      ...observe(textChunk(reply.slice(0, 120))).notifications,
+      ...observe(toolUpdate("call-9", { status: "in_progress", kind: "read" })).notifications,
+      ...observe(toolUpdate("call-9", { status: "completed", kind: "read" })).notifications,
+      ...observe(textChunk(reply.slice(120))).notifications,
+      ...signIns.flush(generation),
+    ];
+    expect(JSON.stringify(projected)).not.toContain(STATE);
+    expect(textOf(projected)).toBe(`Open ${LINK_REMOVED} please`);
+  });
+
   it("reports the plugin's next successful call as signed in", () => {
     const { signIns, observe, admit } = setup();
     admit(observe(challengeUpdate()).candidate);

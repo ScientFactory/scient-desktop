@@ -95,6 +95,8 @@ const encodeReceipts = Schema.encodeEffect(ReceiptFile);
 export type AntigravityInstalledPlugin = ServerProviderPlugin & {
   readonly path: string;
   readonly nativeSource?: string | undefined;
+  /** The catalog this copy matches, recorded (agy, receipt) or only by its manifest. */
+  readonly catalogMarketplace?: string | undefined;
   readonly skills: ReadonlyArray<string>;
   readonly mcpServers: ReadonlyArray<string>;
 };
@@ -208,7 +210,8 @@ const manifestMatches = Effect.fn("AntigravityProviderStore.manifestMatches")(fu
 
 /**
  * The marketplace an installed copy came from: agy's own record first, then Scient's receipt for
- * an archive Add, then, for a copy installed before agy recorded origins, its manifest.
+ * an archive Add (both `recorded`), then, for a copy installed before agy recorded origins, its
+ * manifest. A manifest match only shows the copy as added; it never acts as the catalog entry.
  */
 const installedMarketplace = Effect.fn("AntigravityProviderStore.installedMarketplace")(function* (
   plugin: {
@@ -221,15 +224,17 @@ const installedMarketplace = Effect.fn("AntigravityProviderStore.installedMarket
   catalog: ReadonlyMap<string, AntigravityCatalogPlugin> | undefined,
 ) {
   if (plugin.source !== undefined && MARKETPLACE_NAMES.has(plugin.source))
-    return { marketplace: plugin.source, receipt: undefined };
+    return { marketplace: plugin.source, recorded: true, receipt: undefined };
   const receipt = yield* receiptFor(receipts, plugin);
-  if (receipt) return { marketplace: receipt.marketplace, receipt };
+  if (receipt) return { marketplace: receipt.marketplace, recorded: true, receipt };
   const entry = catalog?.get(plugin.name);
   if (!entry || (plugin.source !== undefined && plugin.source !== "antigravity")) return undefined;
   const matches = yield* manifestMatches(plugin.path, plugin.name, entry.identity).pipe(
     Effect.orElseSucceed(() => false),
   );
-  return matches ? { marketplace: entry.marketplace, receipt: undefined } : undefined;
+  return matches
+    ? { marketplace: entry.marketplace, recorded: false, receipt: undefined }
+    : undefined;
 });
 
 /** `agy plugin list --json` as provider plugins; any malformed listing fails as a whole. */
@@ -253,9 +258,9 @@ const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList
       receipts,
       catalog,
     );
-    const marketplace = origin?.marketplace;
+    const marketplace = origin?.recorded ? origin.marketplace : undefined;
     const listedName =
-      (marketplace ? catalog?.get(item.name)?.displayName : undefined) ??
+      (origin ? catalog?.get(item.name)?.displayName : undefined) ??
       origin?.receipt?.displayName?.trim();
     plugins.push({
       id: marketplace ? entryId(item.name, marketplace) : `antigravity:${item.name}`,
@@ -271,6 +276,7 @@ const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList
       scope: "user",
       path: item.path,
       ...(source ? { nativeSource: source } : {}),
+      ...(origin ? { catalogMarketplace: origin.marketplace } : {}),
       skills: item.skills ?? [],
       mcpServers: item.mcpServers ?? [],
     });
@@ -301,6 +307,8 @@ function declaredContents(plugin: AntigravityCatalogPlugin): ExtensionPluginCont
  * user, so one instance's change is every same-home instance's change.
  */
 const instancesByPluginHome = new Map<string, Set<Effect.Effect<void>>>();
+/** One write at a time per plugin folder, across every instance and its receipt file. */
+const writesByPluginHome = new Map<string, Semaphore.Semaphore>();
 
 const WORKSPACE_REFUSED =
   "Antigravity plugins belong to your user account, not a workspace. Change them from the agent's own list.";
@@ -333,7 +341,15 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
   );
   const retired = yield* Deferred.make<void>();
   yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
-  const writes = yield* Semaphore.make(1);
+  const writes =
+    options.pluginHome === undefined
+      ? yield* Semaphore.make(1)
+      : (writesByPluginHome.get(options.pluginHome) ??
+        (yield* Semaphore.make(1).pipe(
+          Effect.tap((created) =>
+            Effect.sync(() => writesByPluginHome.set(options.pluginHome!, created)),
+          ),
+        )));
 
   const readReceipts = fs.exists(receiptsFile).pipe(
     Effect.flatMap((exists) =>
@@ -362,13 +378,14 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
 
   const readList = Effect.fn("AntigravityProviderStore.readList")(
     function* () {
-      const sequence = yield* nextInventoryReadSequence;
-      const output = yield* options.run(["plugin", "list", "--json"]);
       // The cached catalog, when it reads, names plugins installed before agy recorded origins.
+      // Read before agy's list, so a slow catalog never makes the listing stale.
       const known = yield* catalog.read(false).pipe(
         Effect.map((read) => new Map(read.plugins.map((plugin) => [plugin.name, plugin]))),
         Effect.option,
       );
+      const sequence = yield* nextInventoryReadSequence;
+      const output = yield* options.run(["plugin", "list", "--json"]);
       const plugins = yield* parseAntigravityPluginList(
         output,
         yield* readReceipts,
@@ -378,6 +395,13 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     },
     Effect.provideService(Path.Path, path),
     Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.mapError(() => ({ message: "Could not read Antigravity's installed plugins." })),
+  );
+  /** agy's own list and nothing else: the last check before a change acts on it. */
+  const nativeListed = Effect.fn("AntigravityProviderStore.nativeListed")(
+    function* () {
+      return yield* decodeListed((yield* options.run(["plugin", "list", "--json"])).trim());
+    },
     Effect.mapError(() => ({ message: "Could not read Antigravity's installed plugins." })),
   );
   const list = Effect.fn("AntigravityProviderStore.list")(function* () {
@@ -393,7 +417,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
   ): ProviderStoreEntry => {
     const id = entryId(plugin.name, plugin.marketplace);
     const native = installed?.find((item) => item.name === plugin.name);
-    const added = native?.id === id;
+    const added = native?.id === id || native?.catalogMarketplace === plugin.marketplace;
     const disabledReason =
       unavailable ??
       (installed === undefined
@@ -521,54 +545,63 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     const item = yield* find(id);
     if (item.entry.disabledReason) return yield* fail(item.entry.disabledReason);
     if (item.entry.installed) return;
-    // agy's own marketplace install records the origin and keeps the plugin updated. It needs
-    // agy's own sign-in; without one, Scient adds the catalog's checked archive instead.
-    const nativeAdd = yield* options.run(["plugin", "install", id]).pipe(Effect.option);
-    if (nativeAdd._tag === "Some") {
-      const listed = (yield* list()).plugins.find((plugin) => plugin.name === item.plugin.name);
-      if (listed?.id !== id)
-        return yield* fail("Antigravity did not list the plugin after adding it.");
-      yield* writeReceipts((receipts) =>
-        receipts.filter((receipt) => receipt.name !== listed.name),
-      ).pipe(Effect.ignore);
+    const name = item.plugin.name;
+    const marketplace = item.plugin.marketplace;
+    // agy's own marketplace install records the origin, keeps the plugin updated and refuses a
+    // folder another source holds. It needs agy's own sign-in; without one, Scient adds the
+    // catalog's checked archive instead.
+    const named = yield* options.run(["plugin", "install", id]).pipe(Effect.option);
+    const afterNamed = (yield* nativeListed()).find((plugin) => plugin.name === name);
+    if (afterNamed) {
+      if (afterNamed.source?.trim() !== marketplace)
+        return yield* fail(
+          `Antigravity has a different plugin named ${name} now, so Scient did not add this one.`,
+        );
+      yield* writeReceipts((receipts) => receipts.filter((receipt) => receipt.name !== name)).pipe(
+        Effect.ignore,
+      );
       return;
     }
+    if (named._tag === "Some")
+      return yield* fail("Antigravity did not list the plugin after adding it.");
     const archive = item.plugin.archive;
     if (!archive) return yield* fail("This plugin cannot be added from Scient.");
-    yield* Effect.scoped(
-      stageAntigravityPlugin({
-        name: item.plugin.name,
-        version: item.plugin.version,
-        archive,
-        stagingRoot,
-      }).pipe(
-        Effect.mapError((cause) =>
-          isAntigravityPluginArchiveError(cause)
-            ? { message: cause.message }
-            : { message: "Scient could not prepare this plugin to add." },
-        ),
-        // agy has no no-replace install and overwrites a same-name folder, so the download
-        // window must not hide a plugin the Antigravity app installed meanwhile.
-        Effect.tap(() =>
-          list().pipe(
-            Effect.flatMap((current) =>
-              current.plugins.some((plugin) => plugin.name === item.plugin.name)
-                ? fail(
-                    `Antigravity got a plugin named ${item.plugin.name} while Scient was preparing this one, so Scient did not replace it.`,
-                  )
-                : Effect.void,
-            ),
+    const added = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* stageAntigravityPlugin({
+          name,
+          version: item.plugin.version,
+          archive,
+          stagingRoot,
+        }).pipe(
+          Effect.mapError((cause) =>
+            isAntigravityPluginArchiveError(cause)
+              ? { message: cause.message }
+              : { message: "Scient could not prepare this plugin to add." },
           ),
-        ),
-        Effect.flatMap((directory) => options.run(["plugin", "install", directory])),
-      ),
+        );
+        const staged = sha256Hex(
+          yield* fs
+            .readFile(path.join(directory, "plugin.json"))
+            .pipe(
+              Effect.mapError(() => ({ message: "Scient could not read the prepared plugin." })),
+            ),
+        );
+        // A directory install replaces a same-name folder, so agy's own list is the last read
+        // before it: nothing else may run between them.
+        if ((yield* nativeListed()).some((plugin) => plugin.name === name))
+          return yield* fail(
+            `Antigravity got a plugin named ${name} while Scient was preparing this one, so Scient did not replace it.`,
+          );
+        yield* options.run(["plugin", "install", directory]);
+        return staged;
+      }),
     ).pipe(
       Effect.provideService(HttpClient.HttpClient, http),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    const after = yield* list();
-    const listed = after.plugins.find((plugin) => plugin.name === item.plugin.name);
+    const listed = (yield* nativeListed()).find((plugin) => plugin.name === name);
     if (!listed) return yield* fail("Antigravity did not list the plugin after adding it.");
     const installation = yield* installationIdentity(listed.path).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -577,13 +610,20 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
         message: "The plugin was added, but Scient could not read its installed folder.",
       })),
     );
+    // The receipt vouches only for the copy this Add installed, never one swapped in after.
+    if (!installation.endsWith(`:${added}`))
+      return yield* fail(
+        `The plugin named ${name} changed while Scient added it, so Scient did not claim it.`,
+      );
+    const version = listed.version?.trim() || undefined;
+    const source = listed.source?.trim() || undefined;
     yield* writeReceipts((receipts) => [
-      ...receipts.filter((receipt) => receipt.name !== listed.name),
+      ...receipts.filter((receipt) => receipt.name !== name),
       {
-        name: listed.name,
-        marketplace: item.plugin.marketplace,
-        ...(listed.version ? { version: listed.version } : {}),
-        ...(listed.nativeSource ? { source: listed.nativeSource } : {}),
+        name,
+        marketplace,
+        ...(version ? { version } : {}),
+        ...(source ? { source } : {}),
         sha256: archive.sha256,
         path: listed.path,
         displayName: item.plugin.displayName,

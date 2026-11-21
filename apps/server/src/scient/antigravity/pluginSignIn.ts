@@ -549,12 +549,12 @@ export function makeAntigravityPluginSignIns(
       if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
         return { notifications: [notification], candidate: undefined };
       }
-      // A tool call ends the reply streams; its own output stream ends with the call.
+      // A tool's output stream ends with its call. Reply and thought streams keep their held
+      // text across tool updates, so a status in between never releases half a sign-in link.
       const terminal = isTerminal(update.status);
       const flushed = flushStreams(
         sessionId,
-        (channel) =>
-          !channel.startsWith("tool:") || (terminal && channel === `tool:${update.toolCallId}`),
+        (channel) => terminal && channel === `tool:${update.toolCallId}`,
       );
       const { key, tool } = trackTool(sessionId, update.toolCallId);
       if (update.kind !== undefined) tool.kind = update.kind;

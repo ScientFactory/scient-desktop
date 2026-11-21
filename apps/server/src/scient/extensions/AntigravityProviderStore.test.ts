@@ -52,6 +52,10 @@ interface Fixture {
   unavailable?: string;
   /** Whether agy itself is signed in, which its own marketplace install needs. */
   nativeSignedIn?: boolean;
+  /** Runs right after a directory install, as another program might. */
+  afterArchiveInstall?: () => Effect.Effect<void>;
+  /** The named install times out even though agy installed the plugin. */
+  namedTimesOut?: boolean;
 }
 
 const GMAIL_DESCRIPTION = "Search, read, draft, and send emails in Gmail.";
@@ -153,6 +157,8 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
           // agy's own marketplace install: it records the marketplace as the plugin's source.
           if (!fixture.nativeSignedIn) return yield* Effect.fail("unknown marketplace");
           const [name, marketplace] = target!.split("@") as [string, string];
+          // Like agy: a folder another source holds is refused, never replaced.
+          if (fixture.installed.has(name)) return yield* Effect.fail("another plugin is installed");
           yield* fs.makeDirectory(pluginPath(name), { recursive: true });
           yield* fs.writeFileString(
             path.join(pluginPath(name), "plugin.json"),
@@ -164,6 +170,7 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
             path: pluginPath(name),
             source: marketplace,
           });
+          if (fixture.namedTimesOut) return yield* Effect.fail("timed out");
           return "";
         }
         if (command === "install") {
@@ -181,6 +188,7 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
             version: parsed.version,
             path: pluginPath(parsed.name),
           });
+          if (fixture.afterArchiveInstall) yield* fixture.afterArchiveInstall();
           return "";
         }
         if (command === "uninstall") {
@@ -522,7 +530,7 @@ describe("AntigravityProviderStore", () => {
   it.effect("recognises a copy installed before agy recorded origins by its manifest", () =>
     provide(
       Effect.gen(function* () {
-        const { store, fixture, pluginPath, fs, path } = yield* setup();
+        const { store, actions, fixture, pluginPath, fs, path } = yield* setup();
         const id = "gmail@antigravity-plugins-official";
         const older = (description: string) =>
           Effect.gen(function* () {
@@ -540,11 +548,59 @@ describe("AntigravityProviderStore", () => {
           });
         yield* older(GMAIL_DESCRIPTION);
         expect((yield* store.entry(id)).installed).toBe(true);
+        // Shown as added, but it keeps its own identity: Marketplace Remove never acts on it.
+        expect((yield* actions.listPlugins({})).plugins[0]).toMatchObject({
+          id: "antigravity:gmail",
+          displayName: "Gmail",
+        });
+        expect((yield* actions.uninstall({ pluginId: id }).pipe(Effect.flip)).message).toMatch(
+          /no longer installed/,
+        );
+        expect(fixture.calls.some((call) => call[1] === "uninstall")).toBe(false);
         // Same name, nothing else in common: someone else's plugin, never claimed.
         yield* older("My own mail helper");
         const entry = yield* store.entry(id);
         expect(entry.installed).toBe(false);
         expect(entry.disabledReason).toMatch(/different plugin named gmail/);
+      }),
+    ),
+  );
+
+  it.effect("trusts agy's list after a named install, whatever the command reported", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, fixture } = yield* setup((fixture) => {
+          fixture.nativeSignedIn = true;
+          fixture.namedTimesOut = true;
+        });
+        const id = "gmail@antigravity-plugins-official";
+        // agy installed it before the command failed: that is an Add, not a reason to fall back.
+        yield* store.install(id);
+        expect(fixture.calls.some(isArchiveInstall)).toBe(false);
+        expect((yield* store.entry(id)).installed).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("records no receipt for a copy swapped in right after the archive install", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, actions, stateDir, pluginPath, fs, path } = yield* setup((fixture) => {
+          fixture.afterArchiveInstall = () =>
+            fs
+              .writeFileString(
+                path.join(pluginPath("gmail"), "plugin.json"),
+                encode({ name: "gmail", version: "0.0.7", description: "someone else's" }),
+              )
+              .pipe(Effect.orDie);
+        });
+        const id = "gmail@antigravity-plugins-official";
+        const error = yield* store.install(id).pipe(Effect.flip);
+        expect(error.message).toMatch(/changed while Scient added it/);
+        const receipts = path.join(stateDir, "antigravity-plugins", "receipts.json");
+        if (yield* fs.exists(receipts))
+          expect(yield* fs.readFileString(receipts)).not.toContain('"gmail"');
+        expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe("antigravity:gmail");
       }),
     ),
   );

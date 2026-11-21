@@ -178,8 +178,13 @@ function AntigravityServiceRow({
   const entry = useEnvironmentQuery(atom);
   const plugin = provider.plugins?.find((item) => item.id === route.storeEntryId);
   if (entry.error || entry.data?.storeUnavailable) return null;
+  // The store also knows copies installed before agy recorded origins, by their manifest.
   const state =
-    entry.data === null || entry.data.installationStateKnown === false ? "checking" : route.state;
+    entry.data === null || entry.data.installationStateKnown === false
+      ? "checking"
+      : route.state === "add" && entry.data.installed
+        ? "added"
+        : route.state;
   return (
     <CardRow>
       <ProviderInstanceIcon
