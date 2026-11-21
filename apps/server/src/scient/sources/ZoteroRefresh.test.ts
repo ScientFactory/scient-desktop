@@ -474,6 +474,51 @@ describe("Zotero refresh", () => {
     expect((await readScientSourceRecord(root, record.sourceId))?.note ?? null).toBeNull();
   });
 
+  it.each([
+    { meanwhile: "the title", note: "First, revised", clash: false },
+    { meanwhile: "the note", note: "Mine meanwhile", clash: true },
+  ])(
+    "keeps Zotero's new note in view when $meanwhile is edited here during the refresh",
+    async ({ meanwhile, note, clash }) => {
+      const { root, library, zotero, record } = await importedFromZotero(original, [
+        zoteroItem("NOTE2345", { itemType: "note", note: "<p>First</p>" }),
+      ]);
+      library.items.set("ABCD2345", {
+        item: original,
+        children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>First, revised</p>" })],
+      });
+      const transport = fakeZoteroTransport(library);
+      let edit = true;
+      const during = fakeZoteroAccess({
+        ...transport,
+        get: async (path) => {
+          const response = await transport.get(path);
+          if (edit && path.includes("/children")) {
+            edit = false;
+            if (meanwhile === "the title") await editHere(root, record.sourceId, { title: "Mine" });
+            else {
+              await updateScientSourceNote({
+                root,
+                sourceId: record.sourceId,
+                expectedRevision: record.revision,
+                note: "Mine meanwhile",
+              });
+            }
+          }
+          return response;
+        },
+      });
+
+      await refreshZoteroSources({ root, actor: "user", zotero: during });
+      const next = await refreshZoteroSources({ root, actor: "user", zotero });
+
+      expect(next.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(
+        clash ? ["note"] : [],
+      );
+      expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe(note);
+    },
+  );
+
   // The same Zotero note, as an import wrote it before notes became Markdown and as it is now.
   const noteHtml = '<h1>Aims</h1><p>See <a href="https://example.org">the errata</a>.</p>';
   const earlierText = "Aims\n\nSee the errata.";

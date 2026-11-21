@@ -431,13 +431,25 @@ async function refreshOne(input: {
     record = result.record;
   }
   if (plan.note) {
+    // Against the note the plan read, so an edit elsewhere in the source does not refuse it.
     const result = await updateScientSourceNote({
       root: input.root,
       sourceId: record.sourceId,
       expectedRevision: record.revision,
+      expectedNote: input.record.note ?? null,
       note: plan.note.value,
       actor: input.actor,
     });
+    // No base is written, so the next refresh still sees Zotero's note as new.
+    if (result.outcome === "stale") {
+      return {
+        ...summary,
+        ...empty,
+        changedFields,
+        outcome: "stale",
+        message: "This source changed during the refresh. Refresh again.",
+      };
+    }
     if (result.outcome === "updated") changedFields.push("note");
     record = result.record;
   }
