@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, one {{count}-mal versucht, Dokumente vorzubereiten} other {{count}-mal versucht, Dokumente vorzubereiten}}",
   "0390ea5370ded535": "{count, plural, one {Overleaf {count}-mal verwendet} other {Overleaf {count}-mal verwendet}}",
   "7d731a70186a49b8": "{count, plural, one {{count}-mal versucht, Overleaf zu verwenden} other {{count}-mal versucht, Overleaf zu verwenden}}",
+  "d89410af8ed20232": "{count, plural, one {Eigene Modelle {count}-mal verwendet} other {Eigene Modelle {count}-mal verwendet}}",
+  "b45c46842b99935e": "{count, plural, one {{count}-mal versucht, eigene Modelle zu verwenden} other {{count}-mal versucht, eigene Modelle zu verwenden}}",
   "8f868975fffc4620": "{count, plural, one {Compute {count}-mal verwendet} other {Compute {count}-mal verwendet}}",
   "1f97511c97da1198": "{count, plural, one {{count}-mal versucht, Compute zu verwenden} other {{count}-mal versucht, Compute zu verwenden}}",
   "420bea546d5f8802": "Thread kopiert",

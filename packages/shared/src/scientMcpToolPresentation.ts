@@ -9,6 +9,7 @@ export type ScientMcpToolSummaryAction =
   | "scient-sources"
   | "scient-documents"
   | "scient-overleaf"
+  | "scient-custom-models"
   | "scient-compute";
 
 function tool(
@@ -185,6 +186,11 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_overleaf_token: tool(
     ["Manage", "Managing", "Managed", "the Overleaf token"],
     "scient-overleaf",
+  ),
+  t3_custom_models: tool(["List", "Listing", "Listed", "custom models"], "scient-custom-models"),
+  t3_custom_models_manage: tool(
+    ["Change", "Changing", "Changed", "custom models"],
+    "scient-custom-models",
   ),
   t3_compute_run: tool(["Run", "Running", "Ran", "code"], "scient-compute"),
   t3_compute_run_file: tool(["Run", "Running", "Ran", "a project file"], "scient-compute"),

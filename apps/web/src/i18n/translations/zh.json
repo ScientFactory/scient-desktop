@@ -384,6 +384,8 @@
   "818dee337b1146a2": "{count, plural, other {尝试准备文档 {count} 次}}",
   "0390ea5370ded535": "{count, plural, other {已使用 Overleaf {count} 次}}",
   "7d731a70186a49b8": "{count, plural, other {尝试使用 Overleaf {count} 次}}",
+  "d89410af8ed20232": "{count, plural, other {已使用自定义模型 {count} 次}}",
+  "b45c46842b99935e": "{count, plural, other {尝试使用自定义模型 {count} 次}}",
   "8f868975fffc4620": "{count, plural, other {已使用计算 {count} 次}}",
   "1f97511c97da1198": "{count, plural, other {尝试使用计算 {count} 次}}",
   "420bea546d5f8802": "已复制会话",
