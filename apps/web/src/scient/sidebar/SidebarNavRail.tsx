@@ -299,6 +299,14 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+/** With the rail on, the open sidebar is at least 15.75rem wide, so the thread list keeps 202px. */
+const SIDEBAR_MIN_WIDTH_WITH_RAIL = 15.75 * 16;
+
+export function useSidebarMinimumWidthWithRail(minimumWidth: number) {
+  const enabled = useClientSettings((settings) => settings.sidebarNavRailEnabled);
+  return enabled ? Math.max(minimumWidth, SIDEBAR_MIN_WIDTH_WITH_RAIL) : minimumWidth;
+}
+
 /** Keeps the rail at the window's edge while the sidebar is collapsed (desktop widths). */
 export function CollapsedSidebarNavRail() {
   const enabled = useClientSettings((settings) => settings.sidebarNavRailEnabled);

@@ -39,8 +39,12 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
-// SCIENT-FORK:START — Scient's icon rail stays at the window's edge while the sidebar is collapsed.
-import { CollapsedSidebarNavRail } from "../scient/sidebar/SidebarNavRail";
+// SCIENT-FORK:START — Scient's icon rail stays at the window's edge while the sidebar is collapsed,
+// and widens the sidebar's minimum by its own width.
+import {
+  CollapsedSidebarNavRail,
+  useSidebarMinimumWidthWithRail,
+} from "../scient/sidebar/SidebarNavRail";
 // SCIENT-FORK:END
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
@@ -276,7 +280,10 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   // SCIENT-FORK:START — the toggle centres over the collapsed icon rail (sidebarNavRail.css).
   const { toggleSidebar, open, isMobile } = useSidebar();
   const overCollapsedRail =
-    useClientSettings((settings) => settings.sidebarNavRailEnabled) && !open && !isMobile;
+    useClientSettings((settings) => settings.sidebarNavRailEnabled) &&
+    showSidebar &&
+    !open &&
+    !isMobile;
   // SCIENT-FORK:END
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const isSidebarVisible = useSidebarVisibility();
@@ -405,7 +412,11 @@ export function AppSidebarLayout({
   // A clamped drag may not change width, so viewport changes need a separate subscription.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const [brandWidth, setBrandWidth] = useState(0);
-  const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
+  // SCIENT-FORK:START — with the icon rail on, the sidebar's minimum leaves the thread list room.
+  const sidebarMinimumWidth = useSidebarMinimumWidthWithRail(
+    resolveThreadSidebarMinimumWidth(brandWidth),
+  );
+  // SCIENT-FORK:END
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
   const resetSidebarWidth = () => {
     try {

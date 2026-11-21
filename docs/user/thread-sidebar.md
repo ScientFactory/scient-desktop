@@ -456,7 +456,8 @@ Scient Connect account. **Library** opens My Library over the window, in a new t
 project; see [Open the Library](sources.md#open-the-library). **Code review** opens pull requests
 or issues, whichever you showed last; switch between them with **Pull requests | Issues** at the
 top of the page. On a wide window the rail stays at the window's edge when you collapse the
-sidebar, and on a short window it scrolls.
+sidebar, and on a short window it scrolls. With the rail on, the sidebar can't be dragged quite as
+narrow, so the thread list keeps room beside it.
 
 While a Scient update is ready, **Update** takes the place of the Scient name at the top of the
 sidebar. Updates for providers, other machines and Scient-managed runtimes show as a circle in the
