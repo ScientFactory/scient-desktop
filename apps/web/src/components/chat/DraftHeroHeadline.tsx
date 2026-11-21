@@ -6,8 +6,8 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+// SCIENT-FORK:START — the project chip above the composer; the sentence no longer embeds it.
 import { T, useGT } from "gt-react";
-// SCIENT-FORK:START — the project chip above the composer.
 import { ChevronDownIcon, FolderIcon, FolderPlusIcon, XIcon } from "lucide-react";
 // SCIENT-FORK:END
 import { useRef, useState } from "react";
@@ -46,10 +46,10 @@ import {
   useComboboxFilter,
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-// SCIENT-FORK:START — the project chip above the composer.
+// SCIENT-FORK:START — the project chip above the composer replaces the heading's inline picker.
 import { Button } from "../ui/button";
-// SCIENT-FORK:END
 import { DraftProjectName } from "./DraftProjectName";
+// SCIENT-FORK:END
 import { TriageDraftHero } from "./TriageDraftHero";
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -135,7 +135,6 @@ export function DraftHeroHeadline({
     activeProjectRef?.projectId != null &&
     (activeProjectGroup !== null || activeProjectTitle !== null);
   const canChooseProject = projectPickerEntries.length > 0;
-  const shouldShowProjectMenu = canChooseProject;
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
@@ -153,21 +152,24 @@ export function DraftHeroHeadline({
   const isScratchDraft =
     activeProject !== null &&
     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
+  // SCIENT-FORK:START — the chip's menu also offers No project, so it shows when only that does.
+  const canStartScratch = scratchWorkspaceRoot !== null && !isScratchDraft;
+  const shouldShowProjectMenu = canChooseProject || canStartScratch;
+  // SCIENT-FORK:END
 
   // Pinning from a row keeps rows in place while the picker is open.
-  const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
-    [
-      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
-      { value: ADD_PROJECT_VALUE, label: gt("Add project") },
-      // SCIENT-FORK:START
-      ...(scratchWorkspaceRoot !== null && !isScratchDraft
-        ? [{ value: NO_PROJECT_VALUE, label: gt("No project") }]
-        : []),
-      // SCIENT-FORK:END
-    ],
+  // SCIENT-FORK:START — only project rows keep their order; the actions always come last.
+  const orderedProjectItems: readonly PickerItem[] = useOrderWhileOpen(
+    menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
     (item) => item.value,
     pickerOpen,
   );
+  const pickerItems: readonly PickerItem[] = [
+    ...orderedProjectItems,
+    { value: ADD_PROJECT_VALUE, label: gt("Add project") },
+    ...(canStartScratch ? [{ value: NO_PROJECT_VALUE, label: gt("No project") }] : []),
+  ];
+  // SCIENT-FORK:END
   const pickerSearch = pickerQuery.trim();
   const filteredPickerItems =
     pickerSearch.length === 0
@@ -239,16 +241,16 @@ export function DraftHeroHeadline({
         setPickerQuery("");
       }}
       value={selectedPickerItem}
-      onValueChange={(item) => {
+      onValueChange={(item, details) => {
         if (!item) return;
         setPickerOpen(false);
         if (item.value === ADD_PROJECT_VALUE) {
           openAddProject();
           return;
         }
-        // SCIENT-FORK:START
+        // SCIENT-FORK:START — a click or Enter on the row, never a typed letter on the closed chip.
         if (item.value === NO_PROJECT_VALUE) {
-          void startScratch();
+          if (details.reason === "item-press") void startScratch();
           return;
         }
         // SCIENT-FORK:END
@@ -294,12 +296,9 @@ export function DraftHeroHeadline({
           <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
         ) : null}
       </Tooltip>
-      <ComboboxPopup
-        // SCIENT-FORK:START — opens from the chip's left edge.
-        align="start"
-        // SCIENT-FORK:END
-        className="w-72 overflow-hidden"
-      >
+      {/* SCIENT-FORK:START — opens from the chip's left edge. */}
+      <ComboboxPopup align="start" className="w-72 overflow-hidden">
+        {/* SCIENT-FORK:END */}
         <ComboboxSearchInput
           aria-label={gt("Search projects")}
           placeholder={gt("Search projects...")}
@@ -324,15 +323,15 @@ export function DraftHeroHeadline({
             const entry = projectEntryByKey.get(item.value);
             return (
               <ComboboxItem key={item.value} hideIndicator value={item}>
+                {/* SCIENT-FORK:START — No project's icon. */}
                 {item.value === ADD_PROJECT_VALUE ? (
                   <FolderPlusIcon className="size-4 shrink-0" />
-                ) : // SCIENT-FORK:START
-                item.value === NO_PROJECT_VALUE ? (
+                ) : item.value === NO_PROJECT_VALUE ? (
                   <XIcon className="size-4 shrink-0" />
-                ) : // SCIENT-FORK:END
-                entry ? (
+                ) : entry ? (
                   <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
                 ) : null}
+                {/* SCIENT-FORK:END */}
                 <Tooltip>
                   <TooltipTrigger render={<span className="min-w-0 flex-1 text-sm" />}>
                     <DraftProjectName value={item.label} />
@@ -361,7 +360,8 @@ export function DraftHeroHeadline({
       </ComboboxPopup>
     </Combobox>
   ) : (
-    // SCIENT-FORK:START — without projects the chip adds one.
+    // SCIENT-FORK:START — without projects the chip adds one; the "or start without a project"
+    // line is the chip's No project item.
     <Button
       variant="ghost-muted"
       size="compact"
@@ -371,8 +371,8 @@ export function DraftHeroHeadline({
       <FolderPlusIcon className="shrink-0" />
       <DraftProjectName value={activeProjectTitle ?? gt("Add a project")} singleLine />
     </Button>
-    // SCIENT-FORK:END
   );
+  // SCIENT-FORK:END
 
   if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
@@ -390,7 +390,7 @@ export function DraftHeroHeadline({
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col">
       <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:sr-only">
-        {hasResolvedProject || isScratchDraft || canChooseProject ? (
+        {hasResolvedProject || isScratchDraft || canChooseProject || canStartScratch ? (
           <T>What should we work on?</T>
         ) : (
           <T>Add a project to start</T>

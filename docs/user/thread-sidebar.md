@@ -227,8 +227,9 @@ project**. It appears when the current environment offers scratch conversations.
 
 A new thread, and **Home**, which opens one in your most recent project, ask **What should we
 work on?** The chip above the message box shows the project. Open it to search your projects,
-**Add project**, or choose **No project**; a thread you have typed in keeps its text when you
-switch.
+**Add project**, or, where the machine offers scratch conversations, choose **No project**. Text
+you have typed moves with the thread when you pick another project or **No project**; **Add
+project** opens a fresh thread in the new project and leaves your text in this one.
 
 ### Threads without a project
 
