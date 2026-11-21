@@ -39,7 +39,7 @@ try {
   );
   const sha = NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(asset)).digest("hex");
   const installed = NodePath.join(root, ".t3/wsl-runtime", `sha256-${sha}`);
-  run("bash", ["-c", buildWslRuntimeInstallScript(asset, `sha256-${sha}`, sha)]);
+  run("bash", ["-c", buildWslRuntimeInstallScript(asset, `sha256-${sha}`, sha, null)]);
   cwd = installed;
   // The extracted payload must supply every module; do not install replacements.
   NodeFS.writeFileSync(
