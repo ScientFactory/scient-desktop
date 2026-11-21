@@ -5,8 +5,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -297,9 +299,9 @@ describe("AntigravityProviderStore", () => {
           pluginId: "gmail@antigravity-plugins-official",
           enabled: false,
         });
-        expect(fixture.calls.at(-1)).toEqual(["plugin", "disable", "gmail"]);
+        expect(fixture.calls).toContainEqual(["plugin", "disable", "gmail"]);
         yield* actions.uninstall({ pluginId: "gmail@antigravity-plugins-official" });
-        expect(fixture.calls.at(-1)).toEqual(["plugin", "uninstall", "gmail"]);
+        expect(fixture.calls).toContainEqual(["plugin", "uninstall", "gmail"]);
         expect((yield* store.entry("gmail@antigravity-plugins-official")).installed).toBe(false);
       }),
     ),
@@ -510,6 +512,69 @@ describe("AntigravityProviderStore", () => {
     ),
   );
 });
+
+it.live("refreshes every instance that shares the plugin folder after a change", () =>
+  provide(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      const shared = path.join(stateDir, "home", ".gemini", "config", "plugins");
+      const other = path.join(stateDir, "other", ".gemini", "config", "plugins");
+      const enabled = new Map([["canva", true]]);
+      const run = (args: ReadonlyArray<string>) =>
+        Effect.sync(() => {
+          const [, command, name] = args;
+          if (command === "enable" || command === "disable")
+            enabled.set(name!, command === "enable");
+          return command === "list"
+            ? encode(
+                [...enabled].map(([plugin, on]) => ({
+                  name: plugin,
+                  enabled: on,
+                  path: path.join(shared, plugin),
+                })),
+              )
+            : "";
+        });
+      const http = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 404 }))),
+      );
+      const instance = (pluginHome: string) =>
+        makeAntigravityPluginActions({
+          stateDir,
+          run,
+          unavailable: Effect.undefined,
+          pluginHome,
+        }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      const [acting, peer, elsewhere] = yield* Effect.all([
+        instance(shared),
+        instance(shared),
+        instance(other),
+      ]);
+      const latest = (reports: typeof peer.reports) =>
+        Stream.runHead(reports).pipe(Effect.timeoutOption("1 second"), Effect.map(Option.flatten));
+      const refused = yield* acting.actions.setEnabled!({
+        pluginId: "antigravity:canva",
+        enabled: false,
+        cwd: "/work",
+      }).pipe(Effect.flip);
+      expect(refused.message).toMatch(/not a workspace/);
+      expect(enabled.get("canva")).toBe(true);
+
+      yield* acting.actions.setEnabled!({ pluginId: "antigravity:canva", enabled: false });
+      for (const reports of [acting.reports, peer.reports]) {
+        const report = yield* latest(reports);
+        expect(report._tag).toBe("Some");
+        if (report._tag === "Some") {
+          expect(report.value.cwd).toBeUndefined();
+          expect(report.value.plugins?.map((plugin) => plugin.enabled)).toEqual([false]);
+        }
+      }
+      expect((yield* latest(elsewhere.reports))._tag).toBe("None");
+    }),
+  ),
+);
 
 it("files catalog plugins under reviewed Discover categories, then the catalog's own labels", () => {
   expect(antigravityCategories("scientific-literature", [], [])).toEqual(["papers"]);

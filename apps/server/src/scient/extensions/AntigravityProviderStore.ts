@@ -216,6 +216,15 @@ function declaredContents(plugin: AntigravityCatalogPlugin): ExtensionPluginCont
   };
 }
 
+/**
+ * Each live instance's inventory refresh, by the plugin folder it shares: agy installs per OS
+ * user, so one instance's change is every same-home instance's change.
+ */
+const instancesByPluginHome = new Map<string, Set<Effect.Effect<void>>>();
+
+const WORKSPACE_REFUSED =
+  "Antigravity plugins belong to your user account, not a workspace. Change them from the agent's own list.";
+
 export interface AntigravityPluginStoreOptions {
   /** Scient's state folder: receipts and the private staging folder live under it. */
   readonly stateDir: string;
@@ -223,6 +232,8 @@ export interface AntigravityPluginStoreOptions {
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<string, Failure>;
   /** Why this instance cannot manage plugins (it is not the agy CLI), or `undefined`. */
   readonly unavailable: Effect.Effect<string | undefined>;
+  /** The resolved plugin folder agy writes, shared by every instance with the same home. */
+  readonly pluginHome?: string | undefined;
   readonly marketplaces?: ReadonlyArray<AntigravityMarketplace>;
 }
 
@@ -496,12 +507,36 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     const listing = yield* list();
     yield* PubSub.publish(reports, { plugins: listing.plugins, sequence: listing.sequence });
   });
+  const refreshThis = Effect.suspend(() => publish()).pipe(Effect.ignore);
+  const home = options.pluginHome;
+  if (home !== undefined) {
+    const peers = instancesByPluginHome.get(home) ?? new Set();
+    peers.add(refreshThis);
+    instancesByPluginHome.set(home, peers);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        peers.delete(refreshThis);
+        if (peers.size === 0 && instancesByPluginHome.get(home) === peers)
+          instancesByPluginHome.delete(home);
+      }),
+    );
+  }
+  /** After a change, every instance sharing this plugin folder publishes its verified list. */
+  const announce = Effect.suspend(() =>
+    Effect.forEach(
+      home === undefined ? [refreshThis] : [...(instancesByPluginHome.get(home) ?? [refreshThis])],
+      (refresh) => refresh,
+      { concurrency: "unbounded", discard: true },
+    ),
+  );
+  const changeAll = <A, E>(change: Effect.Effect<A, E>) =>
+    writes.withPermits(1)(change.pipe(Effect.ensuring(announce)));
 
   const actions: ProviderPluginActions = {
     store: {
       search,
       entry: (id) => find(id).pipe(Effect.flatMap(({ entry, plugin }) => withIcon(entry, plugin))),
-      install: (id) => writes.withPermits(1)(install(id)),
+      install: (id) => changeAll(install(id)),
       contents: (id) =>
         find(id).pipe(
           Effect.flatMap(({ entry, plugin, installed }) => {
@@ -540,24 +575,28 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
       ),
     readMcpServer: () => Effect.undefined,
     setEnabled: (input) =>
-      writes.withPermits(1)(
-        nativePlugin(input.pluginId).pipe(
-          Effect.flatMap((plugin) =>
-            options.run(["plugin", input.enabled ? "enable" : "disable", plugin.name]),
+      input.cwd !== undefined
+        ? fail(WORKSPACE_REFUSED)
+        : changeAll(
+            nativePlugin(input.pluginId).pipe(
+              Effect.flatMap((plugin) =>
+                options.run(["plugin", input.enabled ? "enable" : "disable", plugin.name]),
+              ),
+              Effect.asVoid,
+            ),
           ),
-          Effect.asVoid,
-        ),
-      ),
     uninstall: (input) =>
-      writes.withPermits(1)(
-        Effect.gen(function* () {
-          const plugin = yield* nativePlugin(input.pluginId);
-          yield* options.run(["plugin", "uninstall", plugin.name]);
-          yield* writeReceipts((receipts) =>
-            receipts.filter((receipt) => receipt.name !== plugin.name),
-          ).pipe(Effect.ignore);
-        }),
-      ),
+      input.cwd !== undefined
+        ? fail(WORKSPACE_REFUSED)
+        : changeAll(
+            Effect.gen(function* () {
+              const plugin = yield* nativePlugin(input.pluginId);
+              yield* options.run(["plugin", "uninstall", plugin.name]);
+              yield* writeReceipts((receipts) =>
+                receipts.filter((receipt) => receipt.name !== plugin.name),
+              ).pipe(Effect.ignore);
+            }),
+          ),
     startMcpSignIn: () =>
       fail("Sign in to this plugin's service from an Antigravity chat when it asks."),
     isRetired: Deferred.isDone(retired),
@@ -642,6 +681,12 @@ export const makeAntigravityInstancePlugins = Effect.fn("makeAntigravityInstance
       ),
       Effect.orElseSucceed(() => "Install Antigravity to add its plugins."),
     );
-    return yield* makeAntigravityPluginActions({ stateDir: input.stateDir, run, unavailable });
+    const home = input.environment.HOME ?? input.environment.USERPROFILE;
+    return yield* makeAntigravityPluginActions({
+      stateDir: input.stateDir,
+      run,
+      unavailable,
+      pluginHome: home ? path.resolve(home, ".gemini", "config", "plugins") : undefined,
+    });
   },
 );
