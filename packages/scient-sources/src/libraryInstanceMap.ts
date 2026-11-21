@@ -722,8 +722,7 @@ export async function resolveScientProjectSources(
   // A source found in the map writes nothing, so when every one is, the lock other changes wait
   // on is not taken. Anything else (a new mapping, hydration, a first registration) takes it.
   return (
-    (await resolveMapped(root, input)) ??
-    withScientLibraryLock(root, () => resolveAt(root, input))
+    (await resolveMapped(root, input)) ?? withScientLibraryLock(root, () => resolveAt(root, input))
   );
 }
 

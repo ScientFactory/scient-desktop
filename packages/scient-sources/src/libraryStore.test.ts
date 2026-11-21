@@ -362,10 +362,12 @@ describe("personal library store", () => {
     await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
     const { lstat } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
     // The scan's stat saw the file before the rewrite; its read sees the new contents.
-    using _stale = vi.spyOn(NodeFSP, "lstat").mockImplementation((async (
-      path: Parameters<typeof lstat>[0],
-      options?: Parameters<typeof lstat>[1],
-    ) => (path === filePath ? statsBefore : lstat(path, options))) as typeof lstat);
+    using _stale = vi
+      .spyOn(NodeFSP, "lstat")
+      .mockImplementation((async (
+        path: Parameters<typeof lstat>[0],
+        options?: Parameters<typeof lstat>[1],
+      ) => (path === filePath ? statsBefore : lstat(path, options))) as typeof lstat);
     const after = await inspectScientLibrarySources(library);
     expect(after.records[0]?.title).toBe("After");
     expect(after.recordsRevision).toBeDefined();

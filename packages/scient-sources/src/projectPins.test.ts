@@ -476,7 +476,9 @@ describe("project pins", () => {
         library,
         projectRoot,
         mode: "write",
-        sources: sources.slice(1, 3).map(({ projectSourceId }) => ({ projectSourceId, work: null })),
+        sources: sources
+          .slice(1, 3)
+          .map(({ projectSourceId }) => ({ projectSourceId, work: null })),
       }),
     ).toEqual(fromMap);
     expect(lock).toHaveBeenCalled();
