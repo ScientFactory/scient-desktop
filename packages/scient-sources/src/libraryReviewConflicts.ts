@@ -8,6 +8,7 @@ import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   publishScientReviewSnapshotAt,
   readScientReviewSnapshotAt,
@@ -274,11 +275,14 @@ async function backUp(
     reviewId,
     `${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}-${label}`,
   );
-  await ensureDirectory(directory);
-  for (const file of files) {
-    if (file.text === null) continue;
-    await NodeFSP.writeFile(NodePath.join(directory, file.name), file.text, { flag: "wx" });
-  }
+  // Inside the Library's lock, so a backup copies both files of the version or neither.
+  await withScientLibraryLock(libraryRoot, async () => {
+    await ensureDirectory(directory);
+    for (const file of files) {
+      if (file.text === null) continue;
+      await NodeFSP.writeFile(NodePath.join(directory, file.name), file.text, { flag: "wx" });
+    }
+  });
 }
 
 async function publishChecked(filePath: string, text: string, maximumBytes: number): Promise<void> {

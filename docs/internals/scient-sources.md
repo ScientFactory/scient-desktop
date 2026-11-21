@@ -1316,7 +1316,9 @@ removed.
 
 **Review conflicts** (`libraryReviewConflicts.ts`): `listScientReviewConflicts`
 and `resolveScientReviewConflict` with `keep`, `use-other` or `combine`. The
-version not kept goes to `migrations/<instanceId>/reviews/<reviewId>/` first.
+version not kept goes to `migrations/<instanceId>/reviews/<reviewId>/` first,
+written inside the Library lock so a backup holds its review and its work
+snapshot together or neither.
 Combine unites searches (a search in both keeps its details and the union of
 its IDs; differing details are reported), other IDs, duplicates, distinct
 pairs, screening and retrieval. A pair marked duplicate in one version and
