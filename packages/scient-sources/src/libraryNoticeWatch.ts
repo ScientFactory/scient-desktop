@@ -27,16 +27,20 @@ type WatchedKind = typeof WatchedKind.Type;
  * A notice the weekly check put on a source or took off it, and whether the person dismissed it.
  * `added` also when the file confirms a notice the source already had: the check keeps it then.
  */
+const MatchedWatchNotice = Schema.Struct({
+  notice: ScientSourceEditorialNotice,
+  identifiers: Schema.Array(NonEmptyString),
+});
+type MatchedWatchNotice = typeof MatchedWatchNotice.Type;
+
 const ScientLibraryNoticeChange = Schema.Struct({
   sourceId: NonEmptyString,
   kind: WatchedKind,
   change: Schema.Literals(["added", "withdrawn"]),
   at: NonEmptyString,
   dismissed: Schema.optionalKey(Schema.Literal(true)),
-  /** The file's notices of this kind, kept by a registry check when the source has none of them. */
-  notices: Schema.optionalKey(Schema.Array(ScientSourceEditorialNotice)),
-  /** The normalized DOIs or PMIDs that matched this notice; kept only while the source holds one. */
-  identifiers: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  /** Each file notice of this kind paired with the normalized identifiers that matched it. */
+  matched: Schema.optionalKey(Schema.Array(MatchedWatchNotice)),
 });
 type ScientLibraryNoticeChange = typeof ScientLibraryNoticeChange.Type;
 type NoticeChangeMade = Omit<ScientLibraryNoticeChange, "at">;
@@ -84,7 +88,7 @@ export async function scientLibraryWatchedIdentifiers(
  * did not match, so the check asks for the file again whenever the set differs.
  */
 /** Bumped when ownership rules change so an upgraded Library runs one full pass to backfill. */
-const COVERAGE_VERSION = "v2";
+const COVERAGE_VERSION = "v3";
 
 export function scientLibraryNoticeCoverage(keys: Iterable<string>): string {
   return NodeCrypto.createHash("sha256")
@@ -249,35 +253,76 @@ export async function recordScientLibraryNoticeCheck(input: {
   let missed = false;
   // One locked change for the records read, the notices written and who keeps them.
   await withScientLibraryLock(input.library.root, async () => {
+    const previous = await readScientLibraryNoticeWatch(input.library);
+    const previousByKey = new Map(
+      (previous?.changes ?? []).map((change) => [changeKey(change), change]),
+    );
     const { records } = input.found
       ? await inspectScientLibrarySources(input.library)
       : { records: null };
     const currentIdentifiers = new Map<string, ReadonlySet<string>>();
     for (const record of records ?? []) {
       const keys = watchedIdentifiers(record);
-      currentIdentifiers.set(record.sourceId, new Set(keys));
+      const keySet = new Set(keys);
+      currentIdentifiers.set(record.sourceId, keySet);
       // A source added or re-identified while the file was read was not asked about: next check.
       if (keys.length === 0 || keys.some((key) => !input.found?.notices.has(key))) continue;
-      const listed = keys.flatMap((key) => input.found?.notices.get(key) ?? []);
+      // Group matched notices per kind with every identifier on this record that matched each row.
+      const matchedByKind = new Map<WatchedKind, ReadonlyArray<MatchedWatchNotice>>();
+      const listed: ScientSourceEditorialNotice[] = [];
+      for (const kind of WatchedKind.literals) {
+        const byNotice = new Map<
+          string,
+          { readonly notice: ScientSourceEditorialNotice; readonly identifiers: Set<string> }
+        >();
+        for (const key of keys) {
+          for (const notice of input.found?.notices.get(key) ?? []) {
+            if (notice.kind !== kind) continue;
+            const nk = noticeIdentity(notice);
+            const existing = byNotice.get(nk);
+            if (existing) {
+              existing.identifiers.add(key);
+            } else {
+              byNotice.set(nk, { notice, identifiers: new Set([key]) });
+            }
+          }
+        }
+        const entries = [...byNotice.values()].map(({ notice, identifiers }) => ({
+          notice,
+          identifiers: [...identifiers].toSorted(),
+        }));
+        matchedByKind.set(kind, entries);
+        for (const entry of entries) listed.push(entry.notice);
+      }
+      const listedKeys = new Set(listed.map(noticeIdentity));
+      const staleOwnedKeys = new Set(
+        WatchedKind.literals.flatMap((kind) => {
+          const prior = previousByKey.get(`${record.sourceId}:${kind}`);
+          if (prior?.change !== "added" || !prior.matched) return [];
+          return prior.matched
+            .filter((entry) => !entry.identifiers.some((id) => keySet.has(id)))
+            .map((entry) => noticeIdentity(entry.notice));
+        }),
+      );
       const current = record.editorialStatus?.notices ?? [];
       const listedKinds = new Set(listed.map((notice) => notice.kind));
       const currentKinds = new Set(current.map((notice) => notice.kind));
-      const added = listed.filter((notice) => !currentKinds.has(notice.kind));
       const reinstated =
         keys.some((key) => input.found?.reinstated.has(key)) && !listedKinds.has("retraction");
-      const kept = current.filter(
-        (notice) =>
-          !(reinstated && notice.source === RETRACTION_WATCH && notice.kind === "retraction"),
-      );
+      const kept = current.filter((notice) => {
+        if (notice.source !== RETRACTION_WATCH) return true;
+        if (reinstated && notice.kind === "retraction") return false;
+        const nk = noticeIdentity(notice);
+        if (staleOwnedKeys.has(nk) && !listedKeys.has(nk)) return false;
+        return true;
+      });
       const keptKinds = new Set(kept.map((notice) => notice.kind));
+      const added = listed.filter((notice) => !keptKinds.has(notice.kind));
       const changes = WatchedKind.literals.flatMap(
         (kind): ReadonlyArray<Omit<NoticeChangeMade, "sourceId">> => {
-          const notices = listed.filter((notice) => notice.kind === kind);
-          const identifiers = keys.filter((key) =>
-            (input.found?.notices.get(key) ?? []).some((notice) => notice.kind === kind),
-          );
+          const matched = matchedByKind.get(kind) ?? [];
           if (added.some((notice) => notice.kind === kind)) {
-            return [{ kind, change: "added", notices, identifiers }];
+            return [{ kind, change: "added", matched }];
           }
           if (currentKinds.has(kind) && !keptKinds.has(kind))
             return [{ kind, change: "withdrawn" }];
@@ -285,9 +330,7 @@ export async function recordScientLibraryNoticeCheck(input: {
           if (kind === "retraction" && reinstated) {
             return [{ kind, change: "withdrawn", dismissed: true }];
           }
-          return notices.length > 0
-            ? [{ kind, change: "added", dismissed: true, notices, identifiers }]
-            : [];
+          return matched.length > 0 ? [{ kind, change: "added", dismissed: true, matched }] : [];
         },
       );
       if (added.length > 0 || kept.length < current.length) {
@@ -308,31 +351,30 @@ export async function recordScientLibraryNoticeCheck(input: {
       }
       made.push(...changes.map((change) => ({ sourceId: record.sourceId, ...change })));
     }
-    const previous = await readScientLibraryNoticeWatch(input.library);
     const live = records ? new Set(records.map((record) => record.sourceId)) : null;
-    const changes = new Map(
-      (previous?.changes ?? [])
-        .filter((change) => {
-          if (live && !live.has(change.sourceId)) return false;
-          if (change.change === "added" && change.identifiers) {
-            const ids = currentIdentifiers.get(change.sourceId);
-            if (ids && !change.identifiers.some((id) => ids.has(id))) return false;
-          }
-          return true;
-        })
-        .map((change) => [changeKey(change), change]),
-    );
+    const changes = new Map<string, ScientLibraryNoticeChange>();
+    for (const change of previous?.changes ?? []) {
+      if (live && !live.has(change.sourceId)) continue;
+      if (change.change === "added" && change.matched) {
+        const ids = currentIdentifiers.get(change.sourceId);
+        if (ids) {
+          const surviving = change.matched.filter((entry) =>
+            entry.identifiers.some((id) => ids.has(id)),
+          );
+          if (surviving.length === 0) continue;
+          changes.set(changeKey(change), { ...change, matched: surviving });
+          continue;
+        }
+      }
+      changes.set(changeKey(change), change);
+    }
     for (const change of made) {
       const before = changes.get(changeKey(change));
       // Put back after a refresh took it off: the source is corrected, the person is not told twice.
-      // Same-direction entries from an older pass gain their notices and identifiers, keeping dismissal.
+      // Same-direction entries from an older pass gain their matched payloads, keeping dismissal.
       if (before?.change === change.change) {
-        if (change.notices || change.identifiers) {
-          changes.set(changeKey(change), {
-            ...before,
-            ...(change.notices ? { notices: change.notices } : {}),
-            ...(change.identifiers ? { identifiers: change.identifiers } : {}),
-          });
+        if (change.matched) {
+          changes.set(changeKey(change), { ...before, matched: change.matched });
         }
         continue;
       }
@@ -357,6 +399,15 @@ export async function recordScientLibraryNoticeCheck(input: {
   return { changedSources };
 }
 
+function noticeIdentity(notice: ScientSourceEditorialNotice): string {
+  return JSON.stringify([
+    notice.kind,
+    notice.doi ?? null,
+    notice.date ?? null,
+    notice.source ?? null,
+  ]);
+}
+
 /**
  * Runs a registry check's write with the notices the weekly check keeps on the source, read under
  * the lock that check publishes them under. A registry check that does not report one keeps it:
@@ -376,12 +427,22 @@ export function withScientLibraryWatchNotices<A>(
     return write(
       (watch?.changes ?? []).flatMap((change) => {
         if (change.sourceId !== record.sourceId || change.change !== "added") return [];
-        if (change.identifiers && !change.identifiers.some((id) => currentIds.has(id))) {
-          return [];
+        if (change.matched) {
+          const allowed = change.matched
+            .filter((entry) => entry.identifiers.some((id) => currentIds.has(id)))
+            .map((entry) => entry.notice);
+          if (allowed.length === 0) return [];
+          const allowedKeys = new Set(allowed.map(noticeIdentity));
+          const matchingHeld = held.filter(
+            (notice) => notice.kind === change.kind && allowedKeys.has(noticeIdentity(notice)),
+          );
+          const matchingHeldKeys = new Set(matchingHeld.map(noticeIdentity));
+          return [
+            ...matchingHeld,
+            ...allowed.filter((notice) => !matchingHeldKeys.has(noticeIdentity(notice))),
+          ];
         }
-        const here = held.filter((notice) => notice.kind === change.kind);
-        if (here.length > 0) return here;
-        return change.identifiers ? (change.notices ?? []) : [];
+        return held.filter((notice) => notice.kind === change.kind);
       }),
     );
   });

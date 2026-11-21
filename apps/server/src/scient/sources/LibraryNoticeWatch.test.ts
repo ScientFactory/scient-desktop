@@ -283,7 +283,7 @@ describe("the weekly notice check", () => {
         kind: "retraction",
         change: "added",
         dismissed: true,
-        identifiers: ["doi:10.1002/jcb.21852"],
+        matched: [expect.objectContaining({ identifiers: ["doi:10.1002/jcb.21852"] })],
       },
     ]);
 
