@@ -1600,7 +1600,8 @@ describe("code review guards", () => {
         "--input-type=module",
         "-e",
         `const m = await import(${JSON.stringify(module.href)});
-         m.acquireHomeLock(${JSON.stringify(home)}); console.log("held");
+         // Kept referenced: a collected lock connection would close and free the lock.
+         globalThis.release = m.acquireHomeLock(${JSON.stringify(home)}); console.log("held");
          setInterval(() => {}, 1000);`,
       ],
       { stdio: ["ignore", "pipe", "inherit"] },
