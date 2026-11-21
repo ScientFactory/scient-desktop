@@ -459,7 +459,7 @@ describe("Sources project scope", () => {
       .toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "My Library", exact: true }));
     await vi.waitFor(() =>
-      expect(mocks.read).toHaveBeenCalledWith("environment-1", "/project", "library"),
+      expect(mocks.read).toHaveBeenCalledWith("environment-1", "/project", "library", undefined),
     );
     await expect.element(screen.getByRole("button", { name: "Import sources" })).toBeEnabled();
     gate.resolve();

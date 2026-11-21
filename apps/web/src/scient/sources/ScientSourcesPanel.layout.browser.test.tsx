@@ -330,7 +330,7 @@ describe.each(["en", "de"] as const)("Library panel layout (%s)", (language) => 
         const toggle = screen.getByRole("button", { name: /^Show as|^Als /u });
         if (
           (view === "cards") ===
-          /cards/u.test(toggle.element().getAttribute("aria-label") ?? "")
+          /cards|Karten/u.test(toggle.element().getAttribute("aria-label") ?? "")
         ) {
           await toggle.click();
         }
