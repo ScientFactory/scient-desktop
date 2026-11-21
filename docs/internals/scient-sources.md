@@ -2818,7 +2818,9 @@ differs ends it as `damaged` with that file's name and removes the copy. It
 adds the restore to the copy's `restores.json` (restore ID, backup ID, who,
 counts, when), and last writes the intent `<library>.restore.json`. A second
 request that succeeds replaces a waiting copy, which is removed only once the
-new copy is whole; one that fails at any point leaves it waiting.
+new copy is whole; one that fails at any point leaves it waiting. A replaced
+copy that cannot be removed then (a file held open) stays until the sweep after
+the next start; the new intent stands either way.
 `cancelScientLibraryRestore` drops it. All three hold
 `<library>.restore.lock`. Once a start has moved a folder for a restore (its
 copy is no longer where it waited, or the Library it replaces stands aside),

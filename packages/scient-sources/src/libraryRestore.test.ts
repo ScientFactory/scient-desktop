@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import {
   bulkUpdateScientSources,
@@ -44,6 +45,8 @@ import {
   type Scenario,
 } from "./testing/librarySteps.ts";
 import { sourceCandidate } from "./testing/sourceFixtures.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const roots: string[] = [];
 
@@ -803,6 +806,48 @@ describe("restoring a backup of the Library", () => {
         outcome: "not-a-library",
       });
     }
+  });
+
+  it("keeps a new choice when the copy it replaces cannot be removed yet, and the next start removes it", async () => {
+    const { scenario, kept } = await restoredByMistake();
+    const root = scenario.libraryRoot;
+    const backup = await backUp(scenario);
+    const { rm } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    const held = new Set<string>();
+    // A file in the copy is open elsewhere, as Windows refuses to remove it then.
+    using _held = vi.spyOn(NodeFSP, "rm").mockImplementation(async (path, options) => {
+      if ([...held].some((restoreId) => String(path).endsWith(restoreId))) {
+        throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+      }
+      return rm(path, options);
+    });
+    const waiting = async () => {
+      const prepared = await prepareScientLibraryRestore({ libraryRoot: root, backup });
+      if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+      held.add(prepared.restoreId);
+      return prepared;
+    };
+    await waiting();
+    const copy = await waiting();
+    expect(await readScientLibraryRestorePending(root)).toMatchObject({
+      restoreId: copy.restoreId,
+      begun: false,
+    });
+    const back = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+    if (back.outcome !== "ready") throw new Error(`Not ready: ${back.outcome}`);
+    expect(await readScientLibraryRestorePending(root)).toMatchObject({
+      restoreId: back.restoreId,
+      begun: false,
+    });
+
+    held.clear();
+    expect(await finishScientLibraryRestore(root)).toMatchObject({
+      outcome: "restored",
+      putBack: true,
+    });
+    expect((await besideOf(root)).filter((name) => name.startsWith("library.restoring-"))).toEqual(
+      [],
+    );
   });
 
   it("cancels only the waiting restore that was named", async () => {
