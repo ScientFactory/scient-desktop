@@ -143,8 +143,10 @@ change your account or installation. Saved favorites keep their exact model
 and reasoning level, so their labels still include the level.
 
 Skills for every project go in `~/.gemini/config/skills` or
-`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
-so a skill there only appears when the project itself is your home directory.
+`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`
+on its own; to share a folder like that one, list it in `~/.gemini/config/skills.json`
+(or a project's `.agents/skills.json`), and Scient shows the skills it declares,
+honoring `inherits`, `include_only`, and `exclude`.
 
 Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
 workspace when a session starts. Git does not track empty folders, so they never

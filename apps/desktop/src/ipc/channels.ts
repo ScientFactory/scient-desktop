@@ -185,6 +185,9 @@ export const SPELLING_DICTIONARY_READY_CHANNEL = "scient:spelling:dictionary-rea
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
+export const APPLE_SPEECH_AVAILABLE_CHANNEL = "desktop:apple-speech-available";
+export const APPLE_SPEECH_PREPARE_CHANNEL = "desktop:apple-speech-prepare";
+export const APPLE_SPEECH_TRANSCRIBE_CHANNEL = "desktop:apple-speech-transcribe";
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 export const RENDER_DOCUMENT_PAGE_PDF_CHANNEL = "desktop:render-document-page-pdf";

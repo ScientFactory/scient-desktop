@@ -95,6 +95,7 @@ const helperFields = {
   rollbackRequestId: "reset",
   rollbackCompletedRequestId: "reset",
   rollbackFailure: "reset",
+  rollbackUnrestored: "reset",
   deletedAt: "reset",
   sectionId: "inherited",
   conversationImport: "reset",

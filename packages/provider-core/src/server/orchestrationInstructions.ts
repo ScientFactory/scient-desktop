@@ -57,7 +57,7 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 
 // ACP only: some ACP agents accept the injected MCP server but never expose
 // its tools, so they need the terminal transport other harnesses never use.
-const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
+const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
 
@@ -173,26 +173,33 @@ export function t3OrchestrationPrompt(input: {
   /** The session's granted MCP capabilities, for host copy that depends on them. */
   readonly capabilities?: ReadonlySet<string>;
   // SCIENT-FORK:END
+  /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
+  readonly providerInstructions?: string;
+  readonly providerInstructionsDelivered?: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
-  if (!input.orchestrationDelivered) {
-    return prependT3OrchestrationInstructions(
-      input.prompt,
-      // SCIENT-FORK:START — host copy through the shared delivery decision.
-      orchestrationInstructions(input.hasDeviceTools, input.instructions, input.deviceInstructions),
-      input.wrapperElement,
-      // SCIENT-FORK:END
-    );
-  }
-  return input.hasDeviceTools && !input.deviceInstructionsDelivered
-    ? prependT3OrchestrationInstructions(
+  const instructions = [
+    !input.orchestrationDelivered
+      ? // SCIENT-FORK: host copy through the shared delivery decision.
+        orchestrationInstructions(
+          input.hasDeviceTools,
+          input.instructions,
+          input.deviceInstructions,
+        )
+      : input.hasDeviceTools && !input.deviceInstructionsDelivered
+        ? // SCIENT-FORK: host copy through the shared delivery decision.
+          (input.deviceInstructions ?? T3_CODE_DEVICE_TOOL_INSTRUCTIONS)
+        : undefined,
+    input.providerInstructionsDelivered === true ? undefined : input.providerInstructions,
+  ].flatMap((part) => (part === undefined ? [] : [part.trim()]));
+  return instructions.length === 0
+    ? input.prompt
+    : prependT3OrchestrationInstructions(
         input.prompt,
-        // SCIENT-FORK:START — host copy through the shared delivery decision.
-        input.deviceInstructions ?? T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+        instructions.join("\n\n"),
+        // SCIENT-FORK: the shared wrapper accepts a host-owned identity.
         input.wrapperElement,
-        // SCIENT-FORK:END
-      )
-    : input.prompt;
+      );
 }
 
 export function t3OrchestrationSystemPrompt(

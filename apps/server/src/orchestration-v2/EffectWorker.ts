@@ -55,6 +55,9 @@ import {
   isCheckpointSettlementPending,
 } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
 // SCIENT-FORK:END checkpoint-capture-final-attempt
+// SCIENT-FORK:START task-folder-rewind
+import { isTaskFolderRebuildFailure } from "../scient/workspace/TaskFolderRewind.ts";
+// SCIENT-FORK:END task-folder-rewind
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlService.ProviderTurnControlError);
 
@@ -220,6 +223,7 @@ export const layerExecutor: Layer.Layer<
               ...(effect.request.processLossCount === undefined
                 ? {}
                 : { processLossCount: effect.request.processLossCount }),
+              ...(effect.request.cause === undefined ? {} : { cause: effect.request.cause }),
             }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
@@ -806,6 +810,7 @@ export const layerExecutor: Layer.Layer<
                 checkpointId: effect.request.checkpointId,
                 commandId: effect.commandId,
                 scopeId: effect.request.scopeId,
+                requestId: effect.commandId,
                 ...(effect.request.restoreFiles === undefined
                   ? {}
                   : { restoreFiles: effect.request.restoreFiles }),
@@ -820,7 +825,13 @@ export const layerExecutor: Layer.Layer<
                   }),
                 ),
                 Effect.tapCause((cause) =>
-                  willRetry || Cause.hasInterruptsOnly(cause)
+                  // SCIENT-FORK:START task-folder-rewind — a failed rebuild is final: recorded now.
+                  (willRetry &&
+                    !Cause.findErrorOption(cause).pipe(
+                      Option.exists(isTaskFolderRebuildFailure),
+                    )) ||
+                  // SCIENT-FORK:END task-folder-rewind
+                  Cause.hasInterruptsOnly(cause)
                     ? Effect.void
                     : threads
                         .dispatch({
@@ -1255,6 +1266,10 @@ export const layerWithOptions = (
           const checkpointSettlementPending =
             Option.isSome(failure) && isCheckpointSettlementPending(failure.value);
           // SCIENT-FORK:END checkpoint-capture-final-attempt
+          // SCIENT-FORK:START task-folder-rewind
+          const taskFolderRebuildFailed =
+            Option.isSome(failure) && isTaskFolderRebuildFailure(failure.value);
+          // SCIENT-FORK:END task-folder-rewind
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* deferredDroidSteer
@@ -1271,6 +1286,9 @@ export const layerWithOptions = (
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : uncertainDroidSteer ||
+                // SCIENT-FORK:START task-folder-rewind
+                taskFolderRebuildFailed ||
+                // SCIENT-FORK:END task-folder-rewind
                 (effect.attemptCount >= maxAttempts &&
                   (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause)) &&
                   !awaitingNativeReceipt &&

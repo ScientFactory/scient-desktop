@@ -94,6 +94,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -613,6 +614,12 @@ const withNativeQueue = <A, E, R>(
                   // Use the production worktree/project resolver for relocation
                   // witnesses instead of the fixture's fixed cwd override.
                   runtimePolicyLayer: RuntimePolicy.layerFromProjectStore.pipe(
+                    // SCIENT-FORK: these threads track no other folders.
+                    Layer.provide(
+                      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+                      }),
+                    ),
                     Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
                     Layer.provide(
                       Layer.mergeAll(
@@ -634,6 +641,7 @@ const withNativeQueue = <A, E, R>(
                               faviconPath: null,
                               projectIcon: null,
                               scripts: [],
+                              trackedFolders: [],
                               createdAt: "2026-10-12T00:00:00.000Z",
                               updatedAt: "2026-10-12T00:00:00.000Z",
                               deletedAt: null,
@@ -3638,6 +3646,7 @@ it.live(
     ).pipe(
       Effect.provideService(RunFinalizationObserver, {
         refresh: () => Effect.void,
+        refreshRepositories: () => Effect.void,
         refreshAfterTurn: (projectId) =>
           Effect.sync(() => {
             refreshed.push(projectId);
@@ -4102,6 +4111,12 @@ it.live(
           Layer.provide(NodeServices.layer),
         );
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          // SCIENT-FORK: these threads track no other folders.
+          Layer.provide(
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+            }),
+          ),
           Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
@@ -4451,7 +4466,10 @@ it.live(
                 // Future project authority is B, but restoring a captured A boundary must use A.
                 yield* relocate(workspaceB);
                 const capturedB = yield* snapshotB;
-                yield* checkpoints.restore({ scope: scopeA, checkpoint: checkpointA });
+                yield* checkpoints.restore({
+                  targets: [{ scope: scopeA, checkpoint: checkpointA }],
+                  scopes: [scopeA],
+                });
                 assert.equal(
                   yield* fs.readFileString(`${workspaceA}/evidence.txt`),
                   "Native A output\n",
@@ -4640,6 +4658,12 @@ it.live(
         );
         const serverConfigLayer = Layer.succeed(ServerConfig, yield* makeReplayServerConfig(name));
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          // SCIENT-FORK: these threads track no other folders.
+          Layer.provide(
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+            }),
+          ),
           Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(

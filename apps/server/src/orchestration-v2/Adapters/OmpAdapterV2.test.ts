@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -97,6 +98,14 @@ const harness = Effect.fnUntraced(function* (
     readonly homePath?: string;
     readonly profile?: string;
     readonly cwd?: string;
+    readonly workspace?: {
+      readonly folders: ReadonlyArray<{
+        readonly name: string;
+        readonly path: string;
+        readonly isGitRepository: boolean;
+      }>;
+      readonly extraRoots: ReadonlyArray<string>;
+    };
     readonly prepareOpen?: (
       input: Parameters<Effect.Success<ReturnType<typeof makeOmpAdapterV2>>["openSession"]>[0],
       adapter: Effect.Success<ReturnType<typeof makeOmpAdapterV2>>,
@@ -147,6 +156,7 @@ const harness = Effect.fnUntraced(function* (
     cwd: behavior?.cwd ?? config.stateDir,
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
+    ...(behavior?.workspace === undefined ? {} : { workspace: behavior.workspace }),
   };
   const adapter = yield* makeOmpAdapterV2({
     ...(behavior?.onAccountSignedOut ? { onAccountSignedOut: behavior.onAccountSignedOut } : {}),
@@ -3003,6 +3013,88 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
         // A session without connectors keeps the bootstrap's original shape.
         assert.isUndefined(bootstrap.value.connectors);
+      }),
+    ),
+  );
+
+  it.effect("lists the thread's folders in OMP's prompt and refreshes them on a later turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        let extension: string | undefined;
+        let beforeAgentStart:
+          | ((event: { readonly systemPrompt: ReadonlyArray<string> }) => {
+              readonly systemPrompt?: ReadonlyArray<string>;
+            })
+          | undefined;
+        const api = { name: "api", path: "/repos/api", isGitRepository: true };
+        const h = yield* harness(false, {
+          workspace: { folders: [api], extraRoots: [api.path] },
+          makeProcess: (options) =>
+            Effect.gen(function* () {
+              const args = options.extraArgs ?? [];
+              const extensionPath = args[args.indexOf("--extension") + 1];
+              if (!extensionPath) return yield* Effect.die("Missing native Scient extension");
+              extension = extensionPath;
+              // Load the configured extension as OMP does, while its bootstrap is unread.
+              const loaded = (yield* Effect.promise(
+                () => import(/* @vite-ignore */ NodeURL.pathToFileURL(extensionPath).href),
+              )) as { readonly default: (api: unknown) => Promise<void> };
+              const handlers = new Map<string, unknown>();
+              yield* Effect.promise(() =>
+                loaded.default({
+                  on: (event: string, handler: unknown) => handlers.set(event, handler),
+                  registerTool: () => undefined,
+                  registerCommand: () => undefined,
+                }),
+              );
+              beforeAgentStart = handlers.get("before_agent_start") as typeof beforeAgentStart;
+              return yield* peer.makeProcess(options);
+            }),
+        });
+        const hook = beforeAgentStart;
+        if (!extension || !hook) return yield* Effect.die("The extension was not observed");
+        const prompt = () => {
+          const systemPrompt = hook({ systemPrompt: ["base"] }).systemPrompt ?? [];
+          assert.equal(systemPrompt.length, 2);
+          assert.equal(systemPrompt[0], "base");
+          return systemPrompt[1]!;
+        };
+        const opened = prompt();
+        assert.include(opened, "<workspace_folders>");
+        assert.include(opened, `- Your working directory: ${h.input.runtimePolicy.cwd}`);
+        assert.include(opened, "- api (Git repository): /repos/api");
+        assert.notInclude(opened, "/repos/web");
+        // The list the extension reads sits beside it, readable only by its owner.
+        const sessionDir = h.path.dirname(extension);
+        const lists = NodeFS.readdirSync(sessionDir)
+          .map((name) => h.path.join(sessionDir, name))
+          .filter(
+            (file) =>
+              file !== extension &&
+              NodeFS.statSync(file).isFile() &&
+              NodeFS.readFileSync(file, "utf8").includes("- api (Git repository): /repos/api"),
+          );
+        assert.equal(lists.length, 1);
+        assert.equal(NodeFS.statSync(lists[0]!).mode & 0o777, 0o600);
+
+        // A folder added to the thread reaches the next turn's prompt.
+        const web = { name: "web", path: "/repos/web", isGitRepository: false };
+        yield* h.runtime.startTurn({
+          ...h.input,
+          runtimePolicy: {
+            ...h.input.runtimePolicy,
+            workspace: { folders: [api, web], extraRoots: [api.path, web.path] },
+          },
+        });
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const refreshed = prompt();
+        assert.include(refreshed, "- api (Git repository): /repos/api");
+        assert.include(refreshed, "- web (folder): /repos/web");
       }),
     ),
   );

@@ -46,6 +46,7 @@ import {
 } from "~/components/issue/issueListPreferences";
 import { IssueGlyph, issueTrackerPresentation } from "~/components/issue/issuePresentation";
 import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDetailPanel";
+import { PullRequestMarkdownPanelContext } from "~/components/pullRequest/PullRequestMarkdown";
 import { PullRequestListGhost } from "~/components/pullRequest/PullRequestGhosts";
 import {
   PullRequestFilterOptionIcon,
@@ -99,6 +100,9 @@ import { useEnvironments, useIssuesSupported } from "~/state/environments";
 import { issueEnvironment, useIssueList } from "~/state/issues";
 import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+// SCIENT-FORK:START — the title switches between pull requests and issues.
+import { CodeReviewTitle } from "~/scient/codeReview/CodeReviewTitle";
+// SCIENT-FORK:END
 
 export interface IssuesSearch extends IssueListPreferences {
   readonly selectedEnvironmentId?: EnvironmentId | undefined;
@@ -668,9 +672,9 @@ export function IssuesPage() {
           >
             <WorkspaceBreadcrumb ariaLabel={gt("Issues breadcrumb")}>
               <WorkspaceBreadcrumbItem current>
-                <h1 className="truncate">
-                  <T context="page title, list of issues">Issues</T>
-                </h1>
+                {/* SCIENT-FORK:START — the title switches between pull requests and issues. */}
+                <CodeReviewTitle current="issues" />
+                {/* SCIENT-FORK:END */}
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
             <div className="min-w-0 flex-1" />
@@ -847,44 +851,46 @@ export function IssuesPage() {
             computeAvailable={false}
             deviceAvailable={false}
           >
-            {renderedSurface.kind === "issue" ? (
-              <IssueDetailPanel
-                key={`${panelEnvironmentId}:${renderedSurface.id}`}
-                environmentId={panelEnvironmentId}
-                listEntry={panelListEntry}
-                reference={{
-                  projectId: renderedSurface.projectId as ProjectId,
-                  tracker: renderedSurface.tracker as IssueTrackerKind,
-                  ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
-                  scope: renderedSurface.scope,
-                  key: renderedSurface.key,
-                }}
-                onSelectPullRequest={(reference) => {
-                  useRightPanelStore.getState().openPullRequest(rightPanelRef, {
-                    projectId: reference.projectId,
-                    repository: reference.repository,
-                    number: reference.number,
-                    ...(reference.host === undefined ? {} : { host: reference.host }),
-                    environmentId: panelEnvironmentId,
-                  });
-                }}
-              />
-            ) : (
-              <PullRequestDetailPanel
-                key={renderedSurface.id}
-                getShortcutContext={getShortcutContext}
-                shortcutsEnabled={panelSurface?.id === renderedSurface.id}
-                environmentId={panelEnvironmentId}
-                reference={{
-                  projectId: (renderedSurface as PullRequestSurface).projectId as ProjectId,
-                  repository: (renderedSurface as PullRequestSurface).repository,
-                  number: (renderedSurface as PullRequestSurface).number,
-                  ...((renderedSurface as PullRequestSurface).host
-                    ? { host: (renderedSurface as PullRequestSurface).host }
-                    : {}),
-                }}
-              />
-            )}
+            <PullRequestMarkdownPanelContext value={rightPanelRef}>
+              {renderedSurface.kind === "issue" ? (
+                <IssueDetailPanel
+                  key={`${panelEnvironmentId}:${renderedSurface.id}`}
+                  environmentId={panelEnvironmentId}
+                  listEntry={panelListEntry}
+                  reference={{
+                    projectId: renderedSurface.projectId as ProjectId,
+                    tracker: renderedSurface.tracker as IssueTrackerKind,
+                    ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
+                    scope: renderedSurface.scope,
+                    key: renderedSurface.key,
+                  }}
+                  onSelectPullRequest={(reference) => {
+                    useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                      projectId: reference.projectId,
+                      repository: reference.repository,
+                      number: reference.number,
+                      ...(reference.host === undefined ? {} : { host: reference.host }),
+                      environmentId: panelEnvironmentId,
+                    });
+                  }}
+                />
+              ) : (
+                <PullRequestDetailPanel
+                  key={renderedSurface.id}
+                  getShortcutContext={getShortcutContext}
+                  shortcutsEnabled={panelSurface?.id === renderedSurface.id}
+                  environmentId={panelEnvironmentId}
+                  reference={{
+                    projectId: (renderedSurface as PullRequestSurface).projectId as ProjectId,
+                    repository: (renderedSurface as PullRequestSurface).repository,
+                    number: (renderedSurface as PullRequestSurface).number,
+                    ...((renderedSurface as PullRequestSurface).host
+                      ? { host: (renderedSurface as PullRequestSurface).host }
+                      : {}),
+                  }}
+                />
+              )}
+            </PullRequestMarkdownPanelContext>
           </RightPanelTabs>
         ) : null}
       </div>

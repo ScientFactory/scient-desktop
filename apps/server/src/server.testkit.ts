@@ -190,6 +190,8 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -205,6 +207,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -706,6 +709,8 @@ export const buildAppUnderTest = (options?: {
         diffCheckpoints: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         listAuthoredPaths: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
         deleteCheckpointRefs: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        resolveCleanHead: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        captureHeadCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
       },
       execute: () =>
         Effect.succeed({
@@ -851,6 +856,17 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(T3ProjectFileLoader.layer),
       ),
       NativeAppIconResolver.layer,
+      // Single-folder threads: no task folder and no other tracked folders.
+      Layer.mock(TaskFolders.TaskFolders)({
+        plan: () => Effect.succeed(null),
+        find: () => Effect.succeed(null),
+        createForProjectFolder: () => Effect.succeed(null),
+        removeIfTaskFolder: () => Effect.succeed(false),
+      }),
+      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+        submodules: () => Effect.succeed([]),
+      }),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),
@@ -1460,7 +1476,9 @@ export const buildAppUnderTest = (options?: {
           };
         }),
         Layer.provideMerge(makeAuthTestLayer()),
-        Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
+        Layer.provideMerge(
+          Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer, WorkspacePreviewRevisions.layer),
+        ),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
         // Reuse the same fixture owners for dependencies introduced by later layers.

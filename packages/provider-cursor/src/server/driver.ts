@@ -329,6 +329,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
         auth.withAccess,
         () => catalogModels,
         () => catalogSdkModels,
+        sdkRunner,
       );
       const readMachineSkills = (yield* makeCursorMachineSkillCatalog(effectiveEnvironment).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

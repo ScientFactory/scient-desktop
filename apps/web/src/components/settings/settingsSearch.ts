@@ -686,6 +686,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "boring-sidebar",
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
+  // SCIENT-FORK:START — the sidebar's icon rail.
+  {
+    id: "sidebar-nav-rail",
+    title: msg("Sidebar icon rail"),
+    to: "/settings/labs",
+    searchTerms: [
+      msg("beta sidebar rail icons home library scheduled tasks extensions code review"),
+    ],
+  },
+  // SCIENT-FORK:END
   {
     id: "tool-call-visibility",
     title: msg("Tool calls in chat"),
@@ -1026,6 +1036,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Follow-up behavior"),
     to: "/settings/chat",
     searchTerms: [msg("queue steer running turn send default behavior composer")],
+  },
+  {
+    id: "side-thread-open-target",
+    title: msg("Open subagents and side chats in"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg(
+        "subagent side chat linked thread click right panel side panel main view command ctrl middle click",
+      ),
+    ],
   },
   {
     id: "provider-update-checks",
@@ -1610,6 +1630,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Actions"),
     to: "/settings/projects",
     searchTerms: [msg("commands scripts setup run dev server checkout worktree t3.json import")],
+  },
+  {
+    id: "project-repositories",
+    title: msg("Repositories"),
+    to: "/settings/projects",
+    searchTerms: [msg("tracked folders multi repo workspace code-workspace rescan add folder")],
   },
   {
     id: "environment-icon",

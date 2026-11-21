@@ -353,7 +353,10 @@ describe("TextGeneration.make", () => {
                   expect(Result.isFailure(result)).toBe(true);
                   if (Result.isFailure(result)) {
                     expect(result.failure.operation).toBe("generateBranchName");
-                    expect(result.failure.detail).toContain(instanceId);
+                    // T3 refuses a disabled provider before Scient resolves its model.
+                    if (caseName !== "a disabled instance") {
+                      expect(result.failure.detail).toContain(instanceId);
+                    }
                     expect(result.failure.detail).toContain("Settings");
                   }
                 }),

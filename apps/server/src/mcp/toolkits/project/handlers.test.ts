@@ -11,6 +11,7 @@ import {
   type ServerProvider,
   type Project as ProjectRecord,
   type ModelSelection,
+  type ProjectScript,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -361,11 +362,13 @@ const projectLaunchHarness = (input: {
   readonly defaultThreadEnvMode?: "local" | "worktree";
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
+  /** Where Settings saves a project's model; the legacy project field stays null. */
+  readonly overrideModel?: ModelSelection;
+  readonly overrideScripts?: readonly ProjectScript[];
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly threadCaller?: boolean;
   readonly defaultRuntimeMode?: RuntimeMode;
-  readonly overrideModel?: ModelSelection;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
@@ -413,7 +416,12 @@ const projectLaunchHarness = (input: {
         : {
             projectSettingsFolded: true,
             projectSettingsOverrides: {
-              [projectId]: { defaultModelSelection: input.overrideModel },
+              [projectId]: {
+                defaultModelSelection: input.overrideModel,
+                ...(input.overrideScripts === undefined
+                  ? {}
+                  : { defaultProjectScripts: input.overrideScripts }),
+              },
             },
           }),
     }),
@@ -608,6 +616,21 @@ it.effect(
       });
       expect(launched).toHaveLength(2);
       expect(launched[1]?.runtimeMode).toBe("auto-accept-edits");
+      expect(launched[0]?.generateTitle).toBeUndefined();
+
+      yield* handle({ title: "Fix", projectId, generateTitle: true, message: "Fix the bug" });
+      expect(launched[2]).toMatchObject({ title: "Fix", generateTitle: true });
+
+      for (const message of [undefined, "", " \n "]) {
+        const idleTitled = yield* handle({
+          title: "Fix",
+          projectId,
+          generateTitle: true,
+          ...(message === undefined ? {} : { message }),
+        });
+        expect(idleTitled.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+      }
+      expect(launched).toHaveLength(3);
     }),
 );
 
@@ -1513,15 +1536,19 @@ it.effect("an agent cannot delete the built-in scratch project, even with force"
   }),
 );
 
-it.effect("reading a project shows the default model saved in Settings", () =>
+it.effect("reading a project shows the default model and actions saved in Settings", () =>
   Effect.gen(function* () {
     const overrideModel = {
       instanceId: ProviderInstanceId.make("claudeAgent"),
       model: "claude-sonnet",
     };
+    const overrideScripts = [
+      { id: "test", name: "Test", command: "pnpm test", icon: "test", runOnWorktreeCreate: false },
+    ] satisfies ProjectScript[];
     const harness = projectLaunchHarness({
       runtimeModeCeiling: "full-access",
       overrideModel,
+      overrideScripts,
       launched: [],
     });
     const dependencies = Layer.merge(
@@ -1533,7 +1560,15 @@ it.effect("reading a project shows the default model saved in Settings", () =>
             title: "Client target",
             workspaceRoot: "/projects/client-target",
             defaultModelSelection: null,
-            scripts: [],
+            scripts: [
+              {
+                id: "stale",
+                name: "Stale",
+                command: "true",
+                icon: "play",
+                runOnWorktreeCreate: false,
+              },
+            ],
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
             deletedAt: null,
@@ -1550,11 +1585,14 @@ it.effect("reading a project shows the default model saved in Settings", () =>
       .handle("scient_project_read", { projectId: harness.projectId })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect(read.at(-1)?.result).toMatchObject({ defaultModelSelection: overrideModel });
+    expect(read.at(-1)?.result).toMatchObject({
+      defaultModelSelection: overrideModel,
+      scripts: overrideScripts,
+    });
   }),
 );
 
-it.effect("an update the project refuses tells the agent why", () =>
+it.effect("a project update or create that is refused tells the agent why", () =>
   Effect.gen(function* () {
     const harness = projectLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const detail = "Project monograms must contain at most two characters.";
@@ -1579,5 +1617,14 @@ it.effect("an update the project refuses tells the agent why", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
+
+    // A project started from its title has no folder yet for tracked folders to be checked against.
+    const dropped = yield* toolkit
+      .handle("scient_project_create", {
+        title: "Wrapper",
+        trackedFolders: [{ path: "/repos/api", name: "api" }],
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(dropped.at(-1)?.result).toMatchObject({ code: "invalid_request" });
   }),
 );

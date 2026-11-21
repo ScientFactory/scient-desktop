@@ -35,6 +35,7 @@ import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
 import { subagentWorkflowIdsFor } from "~/scient/presentation/subagentRowGroups";
 import { T, useGT, useMessages, Var } from "gt-react";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -291,6 +292,8 @@ interface MessagesTimelineProps {
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
+    /** How the click asked to open a subagent or side chat; a plain click when absent. */
+    intent?: SideThreadOpenIntent,
   ) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
@@ -1879,7 +1882,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return (
         <>
           {activityAnnouncer}
-          <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />
+          <div className="h-full min-h-0" data-timeline-loading="true" />
         </>
       );
     }

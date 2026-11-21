@@ -16,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 106 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 109 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -78,6 +78,9 @@ layer("059_OrchestrationV2", (it) => {
         [104, "TurnStartReadIndexes"],
         [105, "DelegatedTaskReadIndexes"],
         [106, "ThreadItemCounts"],
+        [107, "IssueTrackerAdditionalScopes"],
+        [108, "ProjectionProjectsTrackedFolders"],
+        [109, "TaskFolders"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -149,6 +152,9 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 104, name: "TurnStartReadIndexes" },
         { migration_id: 105, name: "DelegatedTaskReadIndexes" },
         { migration_id: 106, name: "ThreadItemCounts" },
+        { migration_id: 107, name: "IssueTrackerAdditionalScopes" },
+        { migration_id: 108, name: "ProjectionProjectsTrackedFolders" },
+        { migration_id: 109, name: "TaskFolders" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

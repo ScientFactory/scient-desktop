@@ -202,6 +202,23 @@ seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
 `desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
 installation remain inherited. Do not copy the updater into a second component
 or restore upstream's muted active-state styling during alignment.
+Scient's sidebar icon rail (`apps/web/src/scient/sidebar/SidebarNavRail.tsx`, on by default,
+`sidebarNavRailEnabled` in Settings → Labs) moves the footer's utility buttons into a column along
+the sidebar's edge; `Sidebar.tsx`, `AppSidebarLayout.tsx`, `SidebarChrome.tsx`,
+`LabsSettingsPanel.tsx` and `settingsSearch.ts` carry marked mounts, and the footer row and the
+rail share `scient/sidebar/useSidebarUtilityActions.ts`. The rail's one Code review item opens pull
+requests or issues; both pages' titles are `scient/codeReview/CodeReviewTitle.tsx`, a switch
+between them, mounted in `PullRequestsColumn.tsx` and `IssuesPage.tsx`. With the rail on,
+`SidebarChromeHeader` renders the same update control in the brand's place
+(`placement="header"`): the brand while idle, without the idle check icon or its animation latch;
+the compact Update after the Scient symbol when there is something to act on; its cards open
+below. The header control keeps owning `useUpdateEverything`, so the other-updates circle reaches
+the rail through a portal (`scient/sidebar/railOtherUpdatesSlot.ts`) rather than a second control.
+An empty draft asks one question, "What should we work on?", and picks its project in a chip
+above the composer; marked regions in `DraftHeroHeadline.tsx` restyle upstream's project combobox
+as that chip and add **No project** as its last item in place of the line under the heading.
+Upstream's `DraftHeroProjectHeading.tsx`, which puts the picker in the sentence, stays unmounted
+(a knip entry) so its changes still merge.
 Scient downloads an offered update in the background (`autoDownloadLoop` in
 `DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
 download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a
@@ -707,6 +724,28 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`c1464d6774cf4c690aba3fb20b8094a35396d130` is recorded in
+[the 2026-11-21 c5514042ad receipt](docs/internals/t3-upstream-sync-20261121-c5514042ad.md).
+Literal merge `7682072b3125ea5850eb816349a405d801e8c0a8` has owned base
+`2686e308b4dfd27b06bab7ea3ee7388f5e370939` and the frozen official target as parents, retaining
+the 119 official commits after `c5514042ad`. The range lets a project cover several repositories,
+links a machine through another environment, adds a TanStack Source forge behind a flag, Copy as
+HTML for chat tables and Duplicate and Reload for browser tabs, and moves to Effect 4.1.5. Task
+folders go through Scient's guarded cleanup and rewind; New thread keeps Scient's project picker.
+The alignment is Scient PR #1051. Release remains separate.
+
+The previous committed alignment through
+`c5514042adfb2cb2323c75b449ffd5e950c6a40b` is recorded in
+[the 2026-11-21 f2d4df0367 receipt](docs/internals/t3-upstream-sync-20261121-f2d4df0367.md).
+Literal merge `649f43e495936493337c6091b430a807ba01e7e1` has owned base
+`f50f249d2b8015de70d23aa3d319a8c532239cb8` and the frozen official target as parents, retaining
+the 112 official commits after `f2d4df0367`. The range adds a map of linked environments, reading
+their threads, MCP sign-in from an agent's warning, multi-value secret cards, Cursor agents out of
+process and typed turn results, plus many fixes. Scient keeps its WSL home, its cross-track update
+offers and its watcher-driven HTML previews, and keeps T3's Apple Speech dictation dormant with
+the rest of T3 voice. Release remains separate.
+
+An earlier committed alignment through
 `f2d4df0367451f1771e94619021dfbb9982b463f` is recorded in
 [the 2026-11-20 f6d941fa4f receipt](docs/internals/t3-upstream-sync-20261120-f6d941fa4f.md).
 Literal merge `7baaaf047c8c698fa9ea8c383184b73c1a5922a5` has owned base
@@ -716,7 +755,7 @@ rules and its managed CLI, credential scoping, delegation and chat, plus linking
 environments at once. Google-account Antigravity instances keep their own sign-in, so limits need
 no keychain. The alignment is Scient PR #1038. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `f6d941fa4fa41741a881b8f646c6737d845ea91c` is recorded in
 [the 2026-11-20 0317d4f4e5 receipt](docs/internals/t3-upstream-sync-20261120-0317d4f4e5.md).
 Literal merge `c3ab5cc489c6598120ecbf6c571da9db1f7e2016` has owned base

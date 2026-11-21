@@ -1007,7 +1007,10 @@ it.live(
           assert.equal(yield* fsRead(cwd, "evidence.txt"), "Provider turn edit");
           // Qualify the actual file-store semantics separately from the ownership policy.
           const checkpoints = yield* CheckpointServiceV2;
-          yield* checkpoints.restore({ scope, checkpoint: baseline });
+          yield* checkpoints.restore({
+            targets: [{ scope, checkpoint: baseline }],
+            scopes: [scope],
+          });
           assert.equal(yield* fsRead(cwd, "evidence.txt"), "Between fork and first send");
           yield* git(cwd, ["update-ref", "-d", baseline.ref]);
           yield* fs.writeFileString(
@@ -1022,11 +1025,15 @@ it.live(
           });
           assert.equal(absent.status, "missing");
           assert.equal(
-            (yield* checkpoints.restore({ scope, checkpoint: absent }).pipe(Effect.result))._tag,
+            (yield* checkpoints
+              .restore({ targets: [{ scope, checkpoint: absent }], scopes: [scope] })
+              .pipe(Effect.result))._tag,
             "Failure",
           );
           assert.equal(
-            (yield* checkpoints.restore({ scope, checkpoint: baseline }).pipe(Effect.result))._tag,
+            (yield* checkpoints
+              .restore({ targets: [{ scope, checkpoint: baseline }], scopes: [scope] })
+              .pipe(Effect.result))._tag,
             "Failure",
           );
           assert.equal(yield* fsRead(cwd, "evidence.txt"), "Preserve after missing ref");

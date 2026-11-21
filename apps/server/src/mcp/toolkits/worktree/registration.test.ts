@@ -40,6 +40,7 @@ import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -65,6 +66,7 @@ import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -115,6 +117,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(AssetSigner.AssetSigner)({}),
+  Layer.mock(WorkspacePreviewRevisions.WorkspacePreviewRevisions)({}),
   layerRepositories,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
@@ -126,6 +129,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(LatexBuildService.LatexBuildService)({}),
   Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),

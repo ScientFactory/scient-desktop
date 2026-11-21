@@ -18,8 +18,11 @@ const panelTabs = () =>
 // Only the fields the copy reads matter here.
 const previewTab = { id: "preview:page-1", kind: "preview", resourceId: "page-1" };
 const session = {
-  navStatus: { url: "https://example.com/docs" },
+  tabId: "page-1",
+  navStatus: { _tag: "Success", url: "https://example.com/docs" },
   profileId: "work",
+  viewport: { _tag: "fill" },
+  runtime: "desktop",
 } as unknown as PreviewSessionSnapshot;
 
 afterEach(() => {
@@ -41,7 +44,9 @@ describe("duplicatePanelSurface", () => {
     expect(openPreviewSession).not.toHaveBeenCalled();
   });
 
-  it("opens the same page in the same profile as a new browser tab", async () => {
+  it("opens the same page, profile and viewport beside its source", async () => {
+    useRightPanelStore.getState().openBrowser(ref, "page-1");
+    useRightPanelStore.getState().openBrowser(ref, "page-3");
     openPreviewSession.mockResolvedValue({ _tag: "Success", value: { tabId: "page-2" } });
     duplicatePanelSurface({
       surface: previewTab as unknown as RightPanelSurface,
@@ -51,9 +56,16 @@ describe("duplicatePanelSurface", () => {
       addTerminal: vi.fn(),
     });
     expect(openPreviewSession).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://example.com/docs", profileId: "work" }),
+      expect.objectContaining({
+        url: "https://example.com/docs",
+        profileId: "work",
+        viewport: { _tag: "fill" },
+        runtime: "desktop",
+      }),
     );
-    await vi.waitFor(() => expect(panelTabs()).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(panelTabs()).toEqual(["browser:page-1", "browser:page-2", "browser:page-3"]),
+    );
     expect(addToast).not.toHaveBeenCalled();
   });
 

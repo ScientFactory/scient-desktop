@@ -79,7 +79,7 @@ import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
 import {
@@ -207,6 +207,7 @@ const OpenCode2ProviderCapabilities = {
     emitsToolOutput: true,
     supportsMcpTools: false,
     supportsDynamicToolCallbacks: false,
+    supportsBackgroundWait: true,
   },
   approvals: {
     supportsCommandApproval: true,
@@ -441,7 +442,7 @@ type TurnTerminal =
 type Rule = Permission.Rule;
 type RulesPolicy = Pick<
   ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  "runtimeMode" | "interactionMode"
+  "runtimeMode" | "interactionMode" | "workspace"
 >;
 type NativeForm = EventOf<"form.created">["data"]["form"];
 
@@ -518,6 +519,15 @@ const sessionRules = (
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
+        // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+        // A glob character in the path would allow sibling folders, so such a root keeps asking.
+        ...(policy.workspace?.extraRoots ?? [])
+          .filter((root) => !/[*?]/.test(root))
+          .map((root): Rule => ({
+            action: "external_directory",
+            resource: `${root.replace(/\/$/, "")}/*`,
+            effect: "allow",
+          })),
       ]),
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
@@ -818,7 +828,7 @@ const modelRef = (
 ) => {
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
   if (parsed === null) return undefined;
-  const selected = getModelSelectionStringOptionValue(selection, "variant");
+  const selected = OpenCodeRuntime.openCodeVariant(selection);
   const variant =
     selected === undefined || listedVariants === undefined || listedVariants.has(selected)
       ? selected
@@ -831,6 +841,7 @@ const modelRef = (
 };
 const malformedModel = (model: string) =>
   `OpenCode model '${model}' must use provider/model format`;
+// OpenCode 2 reports a session created without a variant as variant "default".
 const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.providerID === right?.providerID &&
   left.id === right?.id &&
@@ -4609,6 +4620,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         (options.runtimeInstructions ?? buildRuntimeInstructions)({
           harness: "OpenCode",
           model: turnInput.modelSelection.model,
+          runtimePolicy: turnInput.runtimePolicy,
         }),
         (options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt)(
           mcpAvailable,

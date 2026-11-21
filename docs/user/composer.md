@@ -125,7 +125,17 @@ Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to sen
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. If that shortcut sends the opposite
 action for your draft, move focus outside the composer to steer the queued message. Change
-`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
+`thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut. To make
+`Cmd+Enter` or `Ctrl+Enter` steer the oldest queued message when the composer is empty, add
+this rule to your [keybindings file](keybindings.md#edit-the-configuration-file):
+
+```json
+{
+  "key": "mod+enter",
+  "command": "thread.steerQueuedMessage",
+  "when": "composerFocus && turnRunning && composerEmpty"
+}
+```
 
 Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
 start of the composer to edit the most recently queued message. Change
@@ -350,6 +360,12 @@ changed files are too large, the dialog offers only **Rewind chat**, which leave
 the files as they are. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
 
+In a thread that works in the project directory alone, with no tracked folders, repositories or
+submodules, the dialog offers only **Rewind chat**. There, **Edit from here** rewinds right away,
+without the dialog, when no reply from that message on changed any files. If a reply changed files,
+or Scient cannot tell, the dialog asks first. A thread in a worktree, or one that reaches other
+folders or repositories, always asks. If the rewind fails, the dialog opens to show why.
+
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
 memory. The action is available only when the provider supports rewind.
@@ -368,8 +384,9 @@ and use **Attach again** or remove the missing file before sending.
 ## Voice input on web and desktop
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
-is transcribed on an environment you choose in **Settings → Voice**; nothing is
-sent until you choose one. See [Voice input](./voice-input.md).
+is transcribed on an environment you choose in **Settings → Voice**, or on the Mac
+with Apple Speech in the macOS desktop app; nothing is sent until you choose one.
+See [Voice input](./voice-input.md).
 
 ## Voice input on mobile
 

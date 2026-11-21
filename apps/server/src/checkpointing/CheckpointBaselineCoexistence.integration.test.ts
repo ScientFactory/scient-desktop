@@ -37,6 +37,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { CheckpointRefUnavailableError } from "./Errors.ts";
 
 // Retained historical metadata is the fixture; native completion is exercised
@@ -72,6 +73,13 @@ it.live.each(["historical", "workspace-bound"] as const)(
           ProjectionReplay.layer.pipe(Layer.provideMerge(stores)),
           Checkpoints.layer.pipe(
             Layer.provideMerge(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
+            // SCIENT-FORK: these threads track no other folders.
+            Layer.provide(
+              Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+                submodules: () => Effect.succeed([]),
+              }),
+            ),
           ),
         );
         const threadId = ThreadId.make(`thread:${name}`);

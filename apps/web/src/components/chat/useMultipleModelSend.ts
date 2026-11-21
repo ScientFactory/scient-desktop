@@ -59,6 +59,7 @@ interface MultipleModelSendInput {
   readonly composerRef: ComposerHandleRef;
   readonly promptRef: { current: string };
   readonly startFromOrigin: boolean;
+  readonly worktreeRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly resetLocalDispatch: LocalDispatchActions["resetLocalDispatch"];
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
 }
@@ -78,6 +79,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     composerRef,
     promptRef,
     startFromOrigin,
+    worktreeRepositories,
     resetLocalDispatch,
     setThreadError,
   } = input;
@@ -209,6 +211,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       requireWorktree: true,
                       branch: buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(worktreeRepositories ? { repositories: worktreeRepositories } : {}),
                     },
                     runSetupScript: true,
                   },

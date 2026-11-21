@@ -267,6 +267,86 @@ System Settings when macOS asks. Reloading the renderer cannot repair an
 incorrect app identity or permission grant; stop and start the exact candidate
 after changing either one.
 
+## One Identity For Every Dev App
+
+Every candidate dev app on a Mac starts signed in as its owner. One dev app, the
+**identity home**, keeps the owner's Accounts & secrets, custom models, provider
+settings, connectors, Overleaf token and website sign-ins in
+`~/.scient-next/dev-identity`. Each candidate copies that identity when
+`pnpm dev:app:start` launches it, before Electron or the server start. The copy
+goes one way: the home is the only writer, and candidates never read its
+Keychain items.
+
+Set it up once, from an up-to-date checkout:
+
+```sh
+pnpm dev:identity setup     # options: --checkout <folder>/scient-desktop-identity, --ref <commit>
+pnpm dev:identity seed      # optional, once: copy from the installed Scient app
+cd ~/scient-desktop-identity && pnpm install && pnpm dev:app:start
+```
+
+- `setup` creates a detached worktree at `origin/main` (`--ref` picks another commit
+  that has `scripts/dev-identity.mjs`), named so the app shows as
+  `Scient (Dev) · identity`. Its `.scient-next` is a link to
+  `~/.scient-next/dev-identity`, so removing or recreating that checkout keeps
+  the home. To update it, stop the home app, check out a newer `origin/main`
+  there and start it again; `seed` refuses a home checkout older than its own
+  dev identity version.
+  Only that registered checkout may run on the home: any other checkout whose
+  app data, or the state folder inside it, leads into the home is refused by
+  `pnpm dev:app:*` before it touches anything, and by `pnpm dev:desktop` and
+  `pnpm dev:server`. Started during a seed, any of them exits and asks you to
+  start it again when the seed finishes; one that finds a stopped seed finishes
+  it first. A seed refuses to start while a home runner lives or any process
+  still has the home's databases open. `setup` will not move the home to
+  another checkout while the home app runs, and never gives the home a new key
+  over records its old key sealed.
+- `seed` fills a stopped home from the installed app, which it only reads.
+  macOS asks once for each of two Keychain items: the installed app's accounts
+  key and its website-cookie key. Allow both. Without the first, the seed copies
+  nothing and the home stays as it was; without the second, it skips website
+  sign-ins and says so. The home app does not start while a seed runs. The
+  home's accounts are kept under a key in its own `secrets/` folder, the only
+  kind another dev app can open without the Keychain. `seed --force` repeats it
+  and replaces the home's accounts, keeping the home's own key.
+- Add or change accounts in the identity app. A candidate replaces its copy of
+  Accounts, custom models, provider settings and connectors with the home's on
+  every start. On its first start it also takes the home's other settings,
+  keybindings, themes, personal skills and website sign-ins. A browser profile
+  that already exists in a candidate keeps its own website sign-ins.
+- Website sign-ins travel as cookies. A site that keeps its sign-in in local
+  storage asks again in a new dev app.
+- Not copied: Scient account sign-in (dev builds carry no Clerk key), the
+  Scient-managed Codex sign-in (it refreshes in place; Cursor's fixed key is
+  copied), signing keys, cloud links, databases, threads, projects and the
+  environment id. A dev app keeps its own accounts key, saved secret-request
+  answers, Accounts senders, per-thread profile choices, profile sharing and the
+  browser profiles only it has. An account whose changed password still waits
+  to be copied to a password store stays the dev app's, password included,
+  until that copy is written. The home's records are re-encrypted under the dev
+  app's key. A dev app whose accounts
+  data has no file key to open it (a Keychain key, or a missing key) is left as
+  it is; move its `.scient-next` aside to start it with the identity. Connector folders
+  inside the home are copied with the connector; a folder elsewhere is used in
+  place and never deleted by a dev app.
+- Website sign-ins are read and decrypted only in a private
+  `dev-identity-staging` folder inside the receiving app's own data, removed
+  when the copy ends and on the next start if a copy stopped.
+- The home may keep running: its files are read as one snapshot, read again if
+  it saves partway through. A seed that starts, finishes or stops in the home
+  while a candidate reads it voids that copy, and a seed that stopped partway
+  blocks copies until the home app or a new seed finishes it. A candidate
+  changes nothing until every replacement file is ready; if the home never
+  settles, the candidate starts with the identity it already had and says so.
+  The copy records its steps before it publishes them, so a copy cut off partway
+  is finished on the next start; if it cannot be finished, or a candidate's data
+  folder links into the home or the installed app, the candidate does not start.
+- A connector whose sign-in renews itself can be renewed by any app holding the
+  copy. If a candidate renews it, the home may need to sign in to that connector
+  again; candidates started afterwards copy the new sign-in.
+- `SCIENT_DEV_IDENTITY=off pnpm dev:app:start` starts a candidate with only its
+  own accounts. `pnpm dev:identity status` shows the home.
+
 ## State And Project Safety
 
 - Never point `SCIENT_NEXT_HOME`, `--home-dir`, or `--base-dir` at `.t3`, the
@@ -277,17 +357,22 @@ after changing either one.
   always use their own isolated state roots.
 - Do not copy data into a stable profile by hand.
 - Never seed the dev app from live T3 or current-Scient data. Use synthetic or
-  deliberately created candidate state.
+  deliberately created candidate state. The one exception is the owner's own
+  `pnpm dev:identity seed`, which reads the installed app and writes only the
+  identity home.
 - A project folder may be opened by the dev app, but app sessions, settings,
   browser partitions, credentials, and databases remain in the owning dev
-  state root.
+  state root, except for the identity a candidate copies from the identity home.
 - Provider CLI authentication remains external-provider state. Do not copy
-  production credentials into the repository or dev state.
+  production credentials into the repository or dev state; the identity home's
+  `seed` is the only path that brings the owner's installed-app accounts into dev
+  state, and only on the owner's request.
 - One folder is shared by every development app on the machine:
   `~/.scient-next/dev-shared/`. It holds only public, checksum-verified
   downloads and one preference (the voice helper, voice models, and the voice
   model last chosen), so a new candidate does not set voice up again. It never
-  holds sessions, settings, credentials, or databases. See
+  holds sessions, settings, credentials, or databases; the owner's identity lives
+  in `~/.scient-next/dev-identity` instead. See
   [`scient-voice.md`](../internals/scient-voice.md).
 
 ## Status, Recovery, And Removal

@@ -23,6 +23,7 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as McpAppRequests from "../mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "../mcpApps/McpSignIn.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -74,6 +75,8 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 // SCIENT-FORK:START — Scient Accounts: one-time answers are encrypted at rest.
 import { secretRequestStoreLayer } from "../scient/accounts/AccountsSecretStore.ts";
 // SCIENT-FORK:END
@@ -83,7 +86,12 @@ export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationCommandReceipts.layer,
 );
 
+const layerWorkspaceFoldersProvided = WorkspaceFolders.layer.pipe(
+  Layer.provide(Layer.merge(ProjectStore.layer, TaskFolderStore.layer)),
+);
+
 const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provide(layerWorkspaceFoldersProvided),
   Layer.provide(ProjectStore.layer),
 );
 
@@ -148,7 +156,7 @@ export const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pi
 );
 
 const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-  Layer.provide(IdAllocator.layer),
+  Layer.provide(Layer.merge(IdAllocator.layer, layerWorkspaceFoldersProvided)),
 );
 const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
   Layer.provide(Layer.merge(IdAllocator.layer, contextHandoffSettings)),
@@ -292,6 +300,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerContextHandoffServiceProvided,
       IdAllocator.layer,
       ProjectStore.layer,
+      TaskFolderStore.layer,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       // Reuse the continuation worker's layer reference so memoization shares one request queue.
       ProviderContinuationRequests.layer,
@@ -462,6 +471,10 @@ const layerMcpAppRequestsProvided = McpAppRequests.layer.pipe(
   ),
 );
 
+const layerMcpSignInProvided = McpSignIn.layer.pipe(
+  Layer.provide(Layer.merge(layerThreadManagementProvided, layerProviderSessionManagerProvided)),
+);
+
 export const layer = Layer.mergeAll(
   layerAttachmentReconciliationProvided,
   layerConversationForkProvided,
@@ -471,6 +484,7 @@ export const layer = Layer.mergeAll(
   layerCommandOutputHubProvided,
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
+  layerMcpSignInProvided,
   layerThreadManagementProvided,
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,

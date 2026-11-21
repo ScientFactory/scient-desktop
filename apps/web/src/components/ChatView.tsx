@@ -88,12 +88,12 @@ import {
 } from "~/scient/compute/chatComputeFigureFollower";
 
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
-import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import { useUsageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   isThreadEnvironmentLocked,
   resolveDraftHeroState,
+  resolveThreadErrorBanner,
   resolveUsageLimitContinueWith,
-  threadErrorIsServerRuntime,
 } from "./ChatView.logic";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
@@ -141,6 +141,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { resolveWorktreeRepositorySelection } from "@t3tools/client-runtime/state/thread-repositories";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -158,7 +159,6 @@ import {
   AuthTerminalOperateScope,
   type AssistantCitation,
   type ChatFileAttachment,
-  isProviderNativeSubagentThread,
   type EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -330,6 +330,8 @@ import {
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
+import { useRememberedWorktreeRepositories } from "../worktreeRepositoryChoiceStore";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -376,6 +378,7 @@ import {
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
   useQuietThreadVisibleTurnItems,
+  useThreadError,
   useThreadStatus,
   useThreadHistory,
   useQuietThreadShell,
@@ -407,6 +410,8 @@ import {
   useCiteInSideChat,
   type CitationDestination,
 } from "../scient/chat/sideChatCitation";
+import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
+import { useOpenSurfaceInMainView } from "../hooks/useOpenSurfaceInMainView";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -599,6 +604,7 @@ function ChatViewContent(props: ChatViewProps) {
     embedded: parentPanel,
   } = props;
   const embedded = parentPanel !== undefined;
+  const panelHostShell = useQuietThreadShell(parentPanel?.hostRef ?? null);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
@@ -690,10 +696,12 @@ function ChatViewContent(props: ChatViewProps) {
     ? deriveReportedModelSelection(serverProjection)
     : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
+  const threadSyncError = useThreadError(routeThreadDetailRef);
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
     shellExists: serverThread !== null,
     status: threadStatus,
+    hasError: threadSyncError !== null,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
   // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
@@ -1025,8 +1033,9 @@ function ChatViewContent(props: ChatViewProps) {
     serverProjection === null ? null : deriveRunlessWorkStartedAt(serverProjection);
   const providerSubagentStatus =
     serverProjection === null ? null : deriveProviderSubagentStatus(serverProjection);
+  const sideThreadKind = serverThread === null ? null : sideThreadKindOf(serverThread.source);
   const isProviderSubagent =
-    activeServerThread !== null && isProviderNativeSubagentThread(activeServerThread.source);
+    sideThreadKind !== null && sideThreadComposer(sideThreadKind) === "read-only";
   const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
   // SCIENT-FORK:START — an archived route's detail stands in for its missing shell.
   const activeLatestRun = serverLatestRun ?? activeThread?.latestRun ?? null;
@@ -1112,8 +1121,16 @@ function ChatViewContent(props: ChatViewProps) {
       };
     }
     if (parentSubagentThreadRef !== null) {
+      const title = parentSubagentThread?.title ?? gt("Parent thread");
+      // Embedded in its parent's panel, the parent is the view around it.
+      if (
+        parentPanel !== undefined &&
+        scopedThreadKey(parentPanel.hostRef) === scopedThreadKey(parentSubagentThreadRef)
+      ) {
+        return { title };
+      }
       return {
-        title: parentSubagentThread?.title ?? gt("Parent thread"),
+        title,
         open: (): void => {
           void navigate({
             to: "/$environmentId/$threadId",
@@ -1165,20 +1182,21 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const { isForkingThread, setForkCommandTarget } = forkCommand;
   // SCIENT-FORK:END
-  const threadError = isServerThread
-    ? (localServerError ?? serverRuntime?.lastError ?? null)
-    : localDraftError;
-  const threadErrorBannerKey = getThreadErrorBannerKey(
-    routeThreadKey,
-    threadError,
-    threadErrorIsServerRuntime({
-      isServerThread,
-      localServerError,
-      runtimeError: serverRuntime?.lastError ?? null,
-    })
-      ? (serverRuntime?.lastErrorSource ?? null)
-      : null,
-  );
+  const { threadError, sessionDismissal: threadErrorSessionDismissal } = resolveThreadErrorBanner({
+    isServerThread,
+    localServerError,
+    localDraftError,
+    runtimeError: serverRuntime?.lastError ?? null,
+    runtimeErrorSource: serverRuntime?.lastErrorSource ?? null,
+  });
+  const threadErrorBannerKey =
+    threadErrorSessionDismissal === null
+      ? null
+      : getThreadErrorBannerKey(
+          routeThreadKey,
+          threadErrorSessionDismissal.error,
+          threadErrorSessionDismissal.source,
+        );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,
@@ -1725,6 +1743,11 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const activeUsageModel =
+    [
+      composerModelSelectionApplies ? composerSelectedModelSelection : null,
+      activeThread?.modelSelection,
+    ].find((selection) => selection?.instanceId === activeProviderInstanceId)?.model ?? null;
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
@@ -1822,6 +1845,7 @@ function ChatViewContent(props: ChatViewProps) {
     threadKey: routeThreadKey,
     panelKey: usageLimitsKey,
     providerInstanceId: activeProviderInstanceId,
+    model: activeUsageModel,
     providerDriver: activeProviderStatus?.driver ?? null,
     providers: providerStatuses,
     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
@@ -2106,8 +2130,7 @@ function ChatViewContent(props: ChatViewProps) {
   const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection ?? null);
   // A paged history window cannot identify the first loaded run as the thread start.
   const threadStartCheckpointAvailable =
-    !serverThreadHistory.hasMoreHistory &&
-    findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
+    !serverThreadHistory.hasMoreHistory && findRevertCheckpoint(serverProjection, 0) !== undefined;
 
   const workspaceMutationId = deriveWorkspaceMutationId(
     serverVisibleTurnItems,
@@ -2256,8 +2279,16 @@ function ChatViewContent(props: ChatViewProps) {
   const isGitRepo = gitUnavailable
     ? false
     : (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
-  const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
   // SCIENT-FORK:END
+  // A plain folder holding tracked repositories has turn diffs without being a Git repository.
+  const diffAvailable =
+    // SCIENT-FORK:START — diffs need a project and a server thread.
+    hasProjectWorkspace &&
+    isServerThread &&
+    // SCIENT-FORK:END
+    (isGitRepo ||
+      (activeProject?.trackedFolders?.length ?? 0) > 0 ||
+      turnDiffSummaries.some((summary) => summary.repositories !== undefined));
   // SCIENT-FORK:START — fork baseline and new-worktree availability.
   const {
     hasForkBaseline,
@@ -2966,10 +2997,20 @@ function ChatViewContent(props: ChatViewProps) {
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
+  const worktreeRepositoryChoices = useWorktreeRepositoryChoices(activeProject);
+  const rememberedWorktreeRepositories = useRememberedWorktreeRepositories(activeProject ?? null);
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
+    tracksGitRepositories: worktreeRepositoryChoices.tracksGitRepositories,
   });
+  // Only a new thread's draft holds a choice; anything else leaves it to the server's default.
+  const worktreeRepositories = resolveWorktreeRepositorySelection({
+    choices: worktreeRepositoryChoices.choices,
+    chosen: isLocalDraftThread
+      ? (draftThread?.worktreeRepositories ?? rememberedWorktreeRepositories)
+      : undefined,
+  }).strategyRepositories;
   const localCheckoutBranchMismatch = isServerThread
     ? resolveLocalCheckoutBranchMismatch({
         effectiveEnvMode: envMode,
@@ -3334,40 +3375,39 @@ function ChatViewContent(props: ChatViewProps) {
         })
       : undefined;
   // SCIENT-FORK:END
-  const limitRecoveryBanner =
+  const limitRecoveryBanner = useUsageLimitRecoveryBannerItem(
     limitRecoveryRun !== null && activeThreadShell !== null
-      ? usageLimitRecoveryBannerItem(
-          {
-            runId: limitRecoveryRun.runId,
-            errorCode: serverRuntime?.lastErrorCode ?? null,
-            resetAt: serverRuntime?.usageLimitResetAt ?? null,
-            stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
-            settled: activeThreadShell.settledOverride === "settled",
-            requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
-            recovery: activeThreadShell.limitRecovery ?? null,
-            snoozedUntil: activeThreadShell.snoozedUntil,
-            timestampFormat,
-            // SCIENT-FORK:START — continue at once with another signed-in model.
-            ...(continueWith
-              ? {
-                  continueWith: {
-                    modelName: continueWith.modelName,
-                    onContinue: () => void onResumeWith(continueWith.selection),
-                  },
-                }
-              : {}),
-            // SCIENT-FORK:END
-            onChange: async (limitRecovery) => {
-              const result = await updateThreadMetadata({
-                environmentId,
-                input: { threadId: activeThreadShell.id, limitRecovery },
-              });
-              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            },
+      ? {
+          runId: limitRecoveryRun.runId,
+          errorCode: serverRuntime?.lastErrorCode ?? null,
+          resetAt: serverRuntime?.usageLimitResetAt ?? null,
+          stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
+          settled: activeThreadShell.settledOverride === "settled",
+          requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
+          recovery: activeThreadShell.limitRecovery ?? null,
+          snoozedUntil: activeThreadShell.snoozedUntil,
+          timestampFormat,
+          // SCIENT-FORK:START — continue at once with another signed-in model.
+          ...(continueWith
+            ? {
+                continueWith: {
+                  modelName: continueWith.modelName,
+                  onContinue: () => void onResumeWith(continueWith.selection),
+                },
+              }
+            : {}),
+          // SCIENT-FORK:END
+          onChange: async (limitRecovery) => {
+            const result = await updateThreadMetadata({
+              environmentId,
+              input: { threadId: activeThreadShell.id, limitRecovery },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
           },
-          messages,
-        )
-      : null;
+        }
+      : null,
+    messages,
+  );
   // SCIENT-FORK:START — an imported thread says where it came from until its
   // first provider session starts.
   const cloudThread = useCloudThreadBanner(activeServerThread);
@@ -3518,6 +3558,12 @@ function ChatViewContent(props: ChatViewProps) {
       isInSideChatPane(document.activeElement) === embedded,
     draftThreadRoute: routeKind === "draft",
     turnRunning: phase === "running" || phase === "connecting",
+    // A queued-message edit or a question's answer owns the composer even when its text is empty.
+    composerEmpty:
+      !queuedRunEdit.isEditing &&
+      pendingUserInputs.length === 0 &&
+      !composerHasNonPromptContent &&
+      promptRef.current.trim().length === 0,
     composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, promptRef.current),
     isWeb: !isElectron,
     isDesktop: isElectron,
@@ -3658,6 +3704,9 @@ function ChatViewContent(props: ChatViewProps) {
     },
   });
   const citeInSideChat = useCiteInSideChat(activeThreadRef, sideChat.open);
+  // An embedded thread's commands run in its host's terminal, which is the host's checkout.
+  const runsOutsideHostCheckout =
+    embedded && (activeThread?.worktreePath ?? null) !== (panelHostShell?.worktreePath ?? null);
   // A maximized panel covers the terminal drawer the command runs in.
   const runSideChatShellCommandStable = useStableCallback((command: string) => {
     if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
@@ -3698,6 +3747,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
   );
   // SCIENT-FORK:END
+  const openSurfaceInMainView = useOpenSurfaceInMainView(activeThreadRef);
   const sendSideChatStable = useStableCallback(sideChat.open);
   const { onConfirmRevertStable, onRevertTimelineTurnStable } = useTimelineRewind({
     hasProjectWorkspace,
@@ -3718,6 +3768,9 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
     composerDraftTarget,
     setThreadError,
+    // SCIENT-FORK:START
+    projectTracksFolders: (activeProject?.trackedFolders?.length ?? 0) > 0,
+    // SCIENT-FORK:END
   });
   const onCompactContext = () => {
     if (compactDisabled) return;
@@ -3773,6 +3826,7 @@ function ChatViewContent(props: ChatViewProps) {
     isGitRepo,
     phase,
     sendEnvMode,
+    worktreeRepositories,
     startFromOrigin,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
@@ -4061,6 +4115,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // Above the early return, where React Compiler can cache it for the side chat pane.
   const sideChatParentPanel = {
+    hostRef: scopeThreadRef(environmentId, threadId),
     openToolDiff: onOpenToolDiffStable,
     runShellCommand: runSideChatShellCommandStable,
   };
@@ -4371,7 +4426,7 @@ function ChatViewContent(props: ChatViewProps) {
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
                   onReplyToResponse={replyToResponseStable}
-                  {...(activeProject
+                  {...(activeProject && !runsOutsideHostCheckout
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
                     : {})}
                   // SCIENT-FORK:START — the working row waits for the sent prompt and its run's start.
@@ -4831,7 +4886,10 @@ function ChatViewContent(props: ChatViewProps) {
                                   projectId={activeThread.projectId}
                                   worktreePath={activeThread.worktreePath}
                                   isServerThread={isServerThread}
-                                  showGitControls={isGitRepo}
+                                  showGitControls={
+                                    isGitRepo || worktreeRepositoryChoices.tracksGitRepositories
+                                  }
+                                  showBranchControls={isGitRepo}
                                   {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                   onEnvModeChange={onEnvModeChangeStable}
                                   startFromOrigin={startFromOrigin}
@@ -4998,6 +5056,7 @@ function ChatViewContent(props: ChatViewProps) {
                   onDeleteProjectScript={deleteProjectScriptStable}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
+                    model: activeUsageModel,
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
@@ -5065,6 +5124,7 @@ function ChatViewContent(props: ChatViewProps) {
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurfaceStable}
           onCloseSurface={closeRightPanelSurfaceStable}
+          onOpenInMainView={openSurfaceInMainView}
           onRenameDevice={(surfaceId, title) => {
             if (activeThreadRef)
               useRightPanelStore.getState().renameDevice(activeThreadRef, surfaceId, title);
@@ -5132,7 +5192,9 @@ function ChatViewContent(props: ChatViewProps) {
 
       <RevertConfirmHost
         threadKey={routeThreadKey}
-        checkpoints={serverProjection?.checkpoints}
+        environmentId={environmentId}
+        taskFolderPath={activeThreadWorktreePath}
+        projection={serverProjection}
         worktreePath={activeThread?.worktreePath ?? null}
         onConfirm={onConfirmRevertStable}
         // SCIENT-FORK:START — the dialog stays open while rewinding, says why files stay, and
@@ -5169,6 +5231,7 @@ function ChatViewContent(props: ChatViewProps) {
       threadRef={activeThreadRef}
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
+      checkpointScopes={serverProjection?.checkpointScopes}
     >
       {/* SCIENT-FORK:START — an embedded side chat offers none, so it clears the parent's. */}
       <SideChatCitationContext value={sideChatCitation}>{content}</SideChatCitationContext>

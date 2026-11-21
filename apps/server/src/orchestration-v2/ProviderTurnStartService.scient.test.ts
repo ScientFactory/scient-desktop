@@ -48,6 +48,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -305,6 +306,7 @@ const makeStartFixture = Effect.fnUntraced(function* () {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoTaskFolders,
         Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({

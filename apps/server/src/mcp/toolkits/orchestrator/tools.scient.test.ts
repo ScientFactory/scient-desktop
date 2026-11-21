@@ -10,9 +10,9 @@ import { OrchestratorToolkit } from "./tools.ts";
 const client = { protocolVersion: "2025-06-18", capabilities: {} };
 
 it.effect.each([
-  ["a provider with background waits", { backgroundWait: true }, true],
-  ["a provider without them", {}, false],
-] as const)("lists the background wait for %s: %s", ([, caller, shown]) =>
+  ["a provider with background waits", ["orchestration", "background-wait"], true],
+  ["a provider without them", ["orchestration"], false],
+] as const)("lists the background wait for %s", ([, grants, shown]) =>
   Effect.gen(function* () {
     const enabled = Context.getOrUndefined(
       OrchestratorToolkit.tools.scient_background_wait.annotations,
@@ -26,10 +26,9 @@ it.effect.each([
         threadId: ThreadId.make("thread-background-wait"),
         providerSessionId: "session",
         providerInstanceId: ProviderInstanceId.make("codex"),
-        ...caller,
       },
       client: undefined,
-      capabilities: new Set(["orchestration"]),
+      capabilities: new Set<McpInvocationContext.McpCapability>(grants),
       issuedAt: 1,
     };
     const listed = yield* Effect.sync(() => enabled(client)).pipe(

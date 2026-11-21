@@ -2,6 +2,7 @@ import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { readWorktreeBaseBranch } from "../../worktreeRepositoryChoiceStore";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import { MessageId } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -239,6 +240,8 @@ export interface ComposerSendInput {
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
   readonly sendEnvMode: DraftThreadEnvMode;
+  /** Tracked repositories a new worktree takes; undefined leaves the choice to the server. */
+  readonly worktreeRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly startFromOrigin: boolean;
   readonly localCheckoutBranchMismatch: {
     readonly threadBranch: string;
@@ -335,6 +338,7 @@ export function useComposerSend(input: ComposerSendInput) {
     isGitRepo,
     phase,
     sendEnvMode,
+    worktreeRepositories,
     startFromOrigin,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
@@ -414,6 +418,7 @@ export function useComposerSend(input: ComposerSendInput) {
     composerRef,
     promptRef,
     startFromOrigin,
+    worktreeRepositories,
     resetLocalDispatch,
     setThreadError,
   });
@@ -1229,6 +1234,12 @@ export function useComposerSend(input: ComposerSendInput) {
               sendEnvMode,
               worktreePath: activeThread.worktreePath,
               activeThreadBranch,
+              projectIsGitRepo: isGitRepo,
+              // SCIENT-FORK:START — the guard above admits a draft without a project.
+              plainProjectBaseBranch: activeProject
+                ? readWorktreeBaseBranch(activeProject)
+                : undefined,
+              // SCIENT-FORK:END
               isScratchProject: activeProjectIsScratch,
               // Scient owns eligibility; the shared planner owns worktree and dispatch mechanics.
               resumeCompactionTokens: compactBeforeSend ? resumeCompactionTokens : null,
@@ -1818,6 +1829,9 @@ export function useComposerSend(input: ComposerSendInput) {
                               branch: buildTemporaryWorktreeBranchName(randomHex),
                               // SCIENT-FORK:END
                               ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                              ...(worktreeRepositories
+                                ? { repositories: worktreeRepositories }
+                                : {}),
                             },
                             runSetupScript: true,
                           }
