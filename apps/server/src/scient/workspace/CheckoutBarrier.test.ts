@@ -772,6 +772,7 @@ describe("CheckoutBarrier consumers", () => {
           Layer.succeed(CheckoutBarrier, barrier),
           Layer.mock(CheckpointStore.CheckpointStore)({
             hasCheckpointRef: () => Effect.succeed(true),
+            captureCheckpoint: () => Effect.void,
             deleteCheckpointRefs: () => Effect.void,
             restoreCheckpoint: (input) =>
               Effect.sync(() => {

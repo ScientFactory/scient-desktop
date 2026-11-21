@@ -613,10 +613,15 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
     assert.strictEqual(result._tag, "Failure");
     assert.deepEqual(deleted, [{ cwd: "/repo/second", ref: preRewindRefs.get("/repo/second")! }]);
 
-    // A retry starts from a half-restored folder; the kept snapshot is not taken again.
+    // SCIENT-FORK:START rewind-recovery-snapshot — a retry snapshots each folder as it is now, under
+    // a ref of its own; the one the failed rewind kept is neither replaced nor deleted.
+    const kept = preRewindRefs.get("/repo/first")!;
     yield* Effect.result(
       checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
     );
-    assert.deepEqual(captured, ["/repo/first", "/repo/second", "/repo/second"]);
+    assert.deepEqual(captured, ["/repo/first", "/repo/second", "/repo/first", "/repo/second"]);
+    assert.notEqual(preRewindRefs.get("/repo/first"), kept);
+    assert.isTrue(existing.has(kept));
+    // SCIENT-FORK:END rewind-recovery-snapshot
   }).pipe(Effect.provide(layerTest));
 });

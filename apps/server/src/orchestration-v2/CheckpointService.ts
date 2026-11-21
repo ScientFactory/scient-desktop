@@ -895,20 +895,19 @@ export const layer: Layer.Layer<
                   cwd: target.scope.cwd,
                   ...(excludePaths === undefined ? {} : { excludePaths }),
                 };
-                const preRewindRef = yield* scopeRef(target.scope.id, "pre-rewind").pipe(
-                  Effect.provideService(Digest.Digest, crypto),
-                );
-                // One an earlier failed rewind left is still the only copy of how the folder was.
-                const kept = yield* checkpointStore.hasCheckpointRef({
-                  cwd: target.scope.cwd,
+                // SCIENT-FORK:START rewind-recovery-snapshot — upstream-generic fix. Each attempt
+                // snapshots the folder as it is now under a ref of its own, so putting it back never
+                // replays an older attempt's snapshot over edits made since. A snapshot an earlier
+                // failed rewind kept is left alone: it is still the only copy of how the folder was.
+                const preRewindRef = yield* scopeRef(
+                  target.scope.id,
+                  `pre-rewind-${NodeCrypto.randomUUID()}`,
+                ).pipe(Effect.provideService(Digest.Digest, crypto));
+                yield* checkpointStore.captureCheckpoint({
+                  ...folder,
                   checkpointRef: preRewindRef,
                 });
-                if (!kept) {
-                  yield* checkpointStore.captureCheckpoint({
-                    ...folder,
-                    checkpointRef: preRewindRef,
-                  });
-                }
+                // SCIENT-FORK:END rewind-recovery-snapshot
                 snapshots.push({ ...folder, checkpointRef: preRewindRef });
                 // What this process knew of the folder no longer holds.
                 repositoryStates.delete(target.scope.id);
