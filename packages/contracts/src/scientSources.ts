@@ -185,6 +185,26 @@ export const ScientSourceDetailResult = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * What this project's saved details held before a merge Undo replaced them with the record,
+   * field by field beside the record's value now; also for a key or review since removed.
+   */
+  keptCopies: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        holder: Schema.Literals(["citation-key", "review"]),
+        /** The citation key, or the review's ID. */
+        heldBy: Schema.String,
+        /** A review's title, while the review is in the project. */
+        holderName: Schema.optionalKey(Schema.String),
+        holderPresent: Schema.Boolean,
+        undoneAt: Schema.String,
+        fields: Schema.Array(
+          Schema.Struct({ field: Schema.String, earlier: Schema.Unknown, current: Schema.Unknown }),
+        ),
+      }),
+    ),
+  ),
 });
 export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
 

@@ -52,6 +52,7 @@ import {
   readScientReviewVersions,
   resolveScientReviewConflict,
 } from "@scientfactory/scient-sources/library-review-conflicts";
+import { readScientDisplacedCopiesInProject } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   changeScientLibraryReview,
   listScientLibraryReviewIds,
@@ -582,10 +583,13 @@ export async function librarySourceDetail(
     });
     if (!entry?.record) throw new Error("The source was not found in this review.");
     const match = (await libraryReviewRecordMatches(store, [entry])).get(input.sourceId);
+    const libraryId = await libraryIdOf(store, input.sourceId);
+    const current = store.exists ? await readScientSourceRecord(store.library, libraryId) : null;
     return {
       ...normalizeSourceRecordForRead(routeRecord(entry.record, undefined)),
       ...(entry.from === "snapshot" ? { label: SNAPSHOT_LABEL } : {}),
       ...(match ? { libraryMatch: match } : {}),
+      ...(await keptCopiesOf(store, libraryId, current)),
     };
   }
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -601,6 +605,7 @@ export async function librarySourceDetail(
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
       ...(detail.pinned ? await noteHistoryOf(store, input.citationKey ?? detail.citationKey) : {}),
+      ...(await keptCopiesOf(store, sourceId, record)),
     };
   }
   const snapshot = (
@@ -781,6 +786,47 @@ export async function repairLibraryPin(
       });
     }
   }
+}
+
+/**
+ * What this project's saved details held before a merge Undo replaced them, beside the record's
+ * values now; copies whose citation key or review has since gone are included.
+ */
+async function keptCopiesOf(store: Store, sourceId: string, record: Readonly<object> | null) {
+  const copies = (await readScientDisplacedCopiesInProject(store.root)).copies.filter(
+    (copy) => copy.sourceId === sourceId,
+  );
+  if (copies.length === 0) return {};
+  const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
+  const keys = new Set(group ? [group.pin.citationKey, ...group.alsoCitedAs] : []);
+  const reviews = copies.some((copy) => copy.holder === "review")
+    ? new Map(
+        (
+          await listScientLibraryReviews({ ...reviewAccess(store), projectRoot: store.root })
+        ).reviews.map((review) => [review.reviewId, review.title]),
+      )
+    : new Map<string, string>();
+  const valueOf = (from: unknown, field: string) =>
+    typeof from === "object" && from !== null
+      ? ((from as Record<string, unknown>)[field] ?? null)
+      : null;
+  return {
+    keptCopies: copies.map((copy) => {
+      const title = copy.holder === "review" ? reviews.get(copy.heldBy) : undefined;
+      return {
+        holder: copy.holder,
+        heldBy: copy.heldBy,
+        ...(title ? { holderName: title } : {}),
+        holderPresent: copy.holder === "review" ? title !== undefined : keys.has(copy.heldBy),
+        undoneAt: copy.undoneAt,
+        fields: copy.differs.map((field) => ({
+          field,
+          earlier: valueOf(copy.work, field),
+          current: valueOf(record, field),
+        })),
+      };
+    }),
+  };
 }
 
 async function noteHistoryOf(store: Store, citationKey: string | null | undefined) {

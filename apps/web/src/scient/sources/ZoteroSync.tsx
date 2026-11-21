@@ -31,27 +31,7 @@ import {
   notBroughtName,
 } from "./notBroughtLabels";
 import { settleAfter } from "./settleAfter";
-
-const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
-  type: msg("Type", { $context: "a source field" }),
-  customType: msg("Type", { $context: "a source field" }),
-  title: msg("Title", { $context: "a source field" }),
-  creators: msg("Creators", { $context: "a source field" }),
-  issuedRaw: msg("Date", { $context: "a source field" }),
-  issuedYear: msg("Year", { $context: "a source field" }),
-  identifiers: msg("Identifiers", { $context: "a source field" }),
-  abstract: msg("Abstract", { $context: "a source field" }),
-  containerTitle: msg("Journal or publication", { $context: "a source field" }),
-  more: msg("More details", { $context: "a source field" }),
-  publisher: msg("Publisher", { $context: "a source field" }),
-  volume: msg("Volume", { $context: "a source field" }),
-  issue: msg("Issue", { $context: "a source field" }),
-  pages: msg("Pages", { $context: "a source field" }),
-  language: msg("Language", { $context: "a source field" }),
-  url: "URL",
-  tags: msg("Tags", { $context: "a source field" }),
-  note: msg("Note", { $context: "a source field" }),
-};
+import { SOURCE_FIELD_LABELS } from "./sourceLabels";
 
 type RefreshState =
   | { readonly phase: "running"; readonly checked?: number; readonly total?: number }
@@ -343,7 +323,8 @@ export function ZoteroRefreshDialog(props: {
                     return (
                       <div key={key} className="grid gap-1 border-t border-border pt-3">
                         <div className="truncate font-medium">
-                          {item.title ?? gt("Untitled source")} · {m(FIELD_LABELS[conflict.field])}
+                          {item.title ?? gt("Untitled source")} ·{" "}
+                          {m(SOURCE_FIELD_LABELS[conflict.field])}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           <div className="line-clamp-2">

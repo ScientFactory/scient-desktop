@@ -18,7 +18,7 @@ const CAPTURE_FIELDS = new Set(["capturedAt", "capturedRevision"]);
  * A copy of a source's details that this project (a citation key, or a review) held and that was
  * replaced by the Library's record whole after a merge was undone. It is kept because it differs
  * from that record: it may hold the other paper's values, or this paper's that the record lacks.
- * Nothing reads these back on its own; they are for a person or an agent who wants one.
+ * Nothing puts them back on its own; source details show them, for a person to copy a value from.
  */
 const ScientDisplacedCopy = Schema.Struct({
   at: Schema.String,
@@ -72,6 +72,46 @@ export async function readScientDisplacedCopies(
   const filePath = displacedPath(root, holder);
   if ((await snapshot(filePath)) !== "file") return [];
   return (await readBoundedJson(filePath, MAX_DISPLACED_BYTES, DisplacedFile)).copies;
+}
+
+export interface ScientDisplacedCopiesInProject {
+  /** `holder` says whether `heldBy` is a citation key or a review's ID. */
+  readonly copies: ReadonlyArray<
+    ScientDisplacedCopy & { readonly holder: "citation-key" | "review" }
+  >;
+  /** Files of kept copies that could not be read, including ones already set aside as such. */
+  readonly unreadable: number;
+}
+
+/** Every kept copy in the project, whoever held it and whether or not that holder remains. */
+export async function readScientDisplacedCopiesInProject(
+  root: string,
+): Promise<ScientDisplacedCopiesInProject> {
+  const directory = NodePath.join(root, ...DISPLACED_DIRECTORY);
+  const reviews = NodePath.join(directory, "reviews");
+  const names = async (folder: string) =>
+    (await NodeFSP.readdir(folder).catch(() => [] as string[])).toSorted();
+  const files = [
+    ...(await names(directory)).map((name) => ({ path: NodePath.join(directory, name), name })),
+    ...(await names(reviews)).map((name) => ({ path: NodePath.join(reviews, name), name })),
+  ];
+  const copies: Array<ScientDisplacedCopiesInProject["copies"][number]> = [];
+  let unreadable = 0;
+  for (const file of files) {
+    if (file.name.includes(".unreadable-")) {
+      unreadable += 1;
+      continue;
+    }
+    if (!file.name.endsWith(".json") || (await snapshot(file.path)) !== "file") continue;
+    const holder = file.path.startsWith(reviews) ? "review" : "citation-key";
+    try {
+      const read = await readBoundedJson(file.path, MAX_DISPLACED_BYTES, DisplacedFile);
+      copies.push(...read.copies.map((copy) => ({ ...copy, holder }) as const));
+    } catch {
+      unreadable += 1;
+    }
+  }
+  return { copies, unreadable };
 }
 
 /**

@@ -10,6 +10,7 @@ import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-
 import { mergeScientLibrarySources } from "@scientfactory/scient-sources/library-merge";
 import { recordScientLibraryNoticeCheck } from "@scientfactory/scient-sources/library-notice-watch";
 import { changeScientLibraryReview } from "@scientfactory/scient-sources/library-reviews";
+import { keepScientDisplacedCopies } from "@scientfactory/scient-sources/project-displaced-copies";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
@@ -30,6 +31,7 @@ import {
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import {
+  ScientSourceDetailResult,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateResult,
   ScientSourcesDuplicatesResult,
@@ -122,6 +124,7 @@ const storeFor = (fixture: Fixture, access: ScientSourcesAccess, root = fixture.
 // What a client receives: the HTTP contract keeps only the fields it names.
 const encodeEditAnswer = Schema.encodeSync(ScientSourceMetadataUpdateResult);
 const encodeNoteAnswer = Schema.encodeSync(ScientSourceNoteUpdateResult);
+const encodeDetail = Schema.encodeSync(ScientSourceDetailResult);
 const encodeDuplicates = Schema.encodeSync(ScientSourcesDuplicatesResult);
 
 async function libraryRecord(
@@ -860,6 +863,64 @@ describe("Library routes on the library backend", () => {
         ),
       ).toMatchObject({ outcome: "stale", record: { personalNote: "  Personal observation  " } });
     }),
+  );
+
+  it.effect(
+    "shows values kept after a merge Undo beside the record's, also for a key now gone",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const record = yield* Effect.promise(() =>
+          libraryRecord(fixture, "kept", { title: "Vasopressin timing", abstract: null }),
+        );
+        const pinned = yield* Effect.promise(() => pin(fixture, record.sourceId));
+        const copy = (heldBy: string) => ({
+          sourceId: record.sourceId,
+          heldBy,
+          undoneAt: "2026-11-01T00:00:00.000Z",
+          differs: ["abstract"],
+          work: { title: "Vasopressin timing", abstract: "Imported by the review" },
+        });
+        yield* Effect.promise(async () => {
+          await keepScientDisplacedCopies(fixture.root, { kind: "project" }, [
+            copy(pinned.citationKey),
+            copy("RemovedKey2020"),
+          ]);
+          await keepScientDisplacedCopies(
+            fixture.root,
+            { kind: "review", reviewId: "review_gone" },
+            [copy("review_gone")],
+          );
+        });
+        const store = yield* storeFor(fixture, "read");
+        const detail = yield* Effect.promise(() =>
+          librarySourceDetail(store, { sourceId: record.sourceId }),
+        );
+        const field = { field: "abstract", earlier: "Imported by the review", current: null };
+        expect(encodeDetail(detail).keptCopies).toEqual([
+          {
+            holder: "citation-key",
+            heldBy: pinned.citationKey,
+            holderPresent: true,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [field],
+          },
+          {
+            holder: "citation-key",
+            heldBy: "RemovedKey2020",
+            holderPresent: false,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [field],
+          },
+          {
+            holder: "review",
+            heldBy: "review_gone",
+            holderPresent: false,
+            undoneAt: "2026-11-01T00:00:00.000Z",
+            fields: [field],
+          },
+        ]);
+      }),
   );
 
   it.effect("answers two stale panels with the note saved first and its history", () =>

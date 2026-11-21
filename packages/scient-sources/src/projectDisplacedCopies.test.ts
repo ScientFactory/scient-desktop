@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   keepScientDisplacedCopies,
   readScientDisplacedCopies,
+  readScientDisplacedCopiesInProject,
   scientValuesChangedBy,
 } from "./projectDisplacedCopies.ts";
 
@@ -74,6 +75,15 @@ describe("copies a project held and a merge Undo replaced", () => {
     );
     expect(aside).toHaveLength(1);
     expect(await NodeFSP.readFile(NodePath.join(folder, aside[0]!), "utf8")).toBe("{ not json");
+
+    // Read across the project: each copy with its kind of holder, and the files it could not read.
+    await NodeFSP.writeFile(NodePath.join(folder, "reviews", "review_2.json"), "[");
+    const all = await readScientDisplacedCopiesInProject(root);
+    expect(all.copies.map((entry) => [entry.holder, entry.heldBy, entry.work])).toEqual([
+      ["citation-key", "key0", { title: "After damage" }],
+      ["review", "review_1", { title: "In a review" }],
+    ]);
+    expect(all.unreadable).toBe(2);
   });
 
   it("names the fields a replacement changes or drops, not how the copy was captured", () => {
