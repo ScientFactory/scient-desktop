@@ -47,7 +47,6 @@ describe("Scient skill management", () => {
           "scient-skill-authoring",
           "connector-authoring",
           "pdf-authoring",
-          "html-pdf-authoring",
           "latex-authoring",
           "overleaf-sync",
           "references",
@@ -59,7 +58,6 @@ describe("Scient skill management", () => {
           "Workspace readiness",
           "Skill creation",
           "Connector creation",
-          "Document creation",
           "Document creation",
           "Document creation",
           "Document creation",
@@ -82,15 +80,11 @@ describe("Scient skill management", () => {
         expect(initial.supportedProviders).toContain("antigravity");
         expect(initial.supportedProviders).toContain("cursor");
 
-        const htmlPdf = initial.skills.find((skill) => skill.name === "html-pdf-authoring")!;
-        const document = yield* management.readDocument(htmlPdf.releaseKey);
-        expect(document).toMatchObject({
-          releaseKey: htmlPdf.releaseKey,
-          name: "html-pdf-authoring",
-          description:
-            "Create or revise HTML when it is the editable source for a PDF requested in Scient. Do not use for ordinary webpage work.",
-        });
-        expect(document.instructions).toContain("# HTML-to-PDF Authoring");
+        const pdf = initial.skills.find((skill) => skill.name === "pdf-authoring")!;
+        const document = yield* management.readDocument(pdf.releaseKey);
+        expect(document).toMatchObject({ releaseKey: pdf.releaseKey, name: "pdf-authoring" });
+        expect(document.description).toContain("PDF");
+        expect(document.instructions).toContain("# PDF authoring");
 
         const selected = initial.skills.find((skill) => skill.name === "scient-skill-authoring")!;
         const updated = yield* management.setUserActivation({
@@ -195,7 +189,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(11);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(10);
         yield* Effect.promise(() =>
           NodeFSP.appendFile(
             NodePath.join(projectRoot, ".scient", "skills", "project-method", "SKILL.md"),

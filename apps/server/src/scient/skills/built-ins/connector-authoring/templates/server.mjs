@@ -13,7 +13,7 @@ const manifest = JSON.parse(fs.readFileSync(new URL("./manifest.json", import.me
 const API = "https://api.openalex.org";
 const API_KEY = process.env.OPENALEX_API_KEY?.trim() ?? ""; // Optional: a free key raises the budget.
 
-// OpenAlex allows 10 requests a second without a key; stay well under it.
+// Conservative pacing; check current OpenAlex quota and authentication requirements.
 const http = createHttp({
   userAgent: `${manifest.name}/${manifest.version} (Scient connector)`,
   minGapMs: 150,
@@ -63,7 +63,7 @@ const searchWorks = {
   description:
     "Search OpenAlex for papers, books and datasets by words in the title, abstract or full " +
     "text. Returns short records (title, authors, year, venue, DOI, citations, free full-text " +
-    "link). Use get_work for the abstract and all authors. Results come in pages: pass " +
+    "link). Use get_work for the abstract and up to 25 authors. Check more_authors for omissions. Results come in pages: pass " +
     "next_page back as page for more.",
   inputSchema: {
     type: "object",
@@ -95,6 +95,11 @@ const searchWorks = {
       page: { type: "integer" },
       has_more: { type: "boolean" },
       next_page: { type: "integer" },
+      truncated: {
+        type: "boolean",
+        description: "More matches exist beyond this tool's paging cap.",
+      },
+      truncation_reason: { type: "string" },
       results: {
         type: "array",
         items: {
@@ -150,11 +155,16 @@ const searchWorks = {
       signal,
     );
     const total = data.meta?.count ?? 0;
-    const hasMore = page * limit < Math.min(total, 10_000);
+    const hasMore = page * limit < total && (page + 1) * limit <= 10_000;
+    const truncated = page * limit < total && !hasMore;
     return compact({
       total,
       page,
       has_more: hasMore,
+      truncated,
+      truncation_reason: truncated
+        ? "Offset paging stops at 10,000; narrow the query or implement cursor paging for complete coverage."
+        : undefined,
       next_page: hasMore ? page + 1 : undefined,
       results: (data.results ?? []).map((work) =>
         compact({
@@ -189,8 +199,8 @@ const getWork = {
   name: "get_work",
   title: "Read one work",
   description:
-    "Get one work from OpenAlex by OpenAlex id (W…) or DOI: title, all authors with their " +
-    "institutions, year, venue, abstract, topic, citation counts and free full-text link.",
+    "Get one work from OpenAlex by OpenAlex id (W…) or DOI: title, authors with their " +
+    "institutions (up to 25 authors; more_authors counts omitted names), year, venue, abstract, topic, citation counts and free full-text link.",
   inputSchema: {
     type: "object",
     properties: {

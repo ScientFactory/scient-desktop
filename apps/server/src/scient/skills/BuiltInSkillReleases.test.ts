@@ -19,11 +19,10 @@ describe("Scient built-in skill releases", () => {
       "scient.skill-authoring": true,
       "scient.connector-authoring": true,
       "scient.pdf-authoring": true,
-      "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,
       "scient.overleaf-sync": true,
-      "scient.systematic-review": true,
       "scient.references": true,
+      "scient.systematic-review": true,
       "scient.compare-sources": true,
     });
   });

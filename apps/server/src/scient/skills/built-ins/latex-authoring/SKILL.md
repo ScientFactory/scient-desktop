@@ -1,32 +1,26 @@
 ---
 name: latex-authoring
-description: Create or modify LaTeX documents in Scient. Use when the user asks for LaTeX or a `.tex` file, when working in an existing LaTeX project, or when LaTeX is selected for PDF authoring.
+description: LaTeX and .tex files. Write or edit LaTeX; compile my paper; fix LaTeX errors, missing citations, equations or figures. Use overleaf-sync for transferring or resolving synced files, and pdf-authoring for other PDF formats. An Overleaf mention alone is not a sync request.
 ---
 
-# LaTeX Authoring
+# LaTeX authoring
 
-The goal is to produce maintainable LaTeX that meets the user's requirements, respects an existing project's conventions, and accurately reports what was built and verified.
+Deliver source that still builds and stays maintainable and, when compiling was asked for or is needed to verify a fix, a built PDF you have looked at. For source-only work, say whether you compiled.
 
-## Author the LaTeX
+Keep the document's class, engine, bibliography system and file structure, and work from its real root file. When a package or font is missing, report what is missing and keep the engine and journal class as they are.
 
-Preserve an existing project's document class, engine, bibliography system, structure, and naming unless the user asks to change them.
+## Citations and content
 
-Follow the project's existing engine declarations, magic comments, and preamble choices. Do not assume that a particular engine or package is available. If the document requires one that the available build path cannot support, report that requirement instead of silently changing the document's format or design. In a multi-file project, add a `% !TEX root` comment to a subordinate file only when Scient needs it to identify the compiled root, and make its path relative to that file.
+Cite only with keys from the project's bibliography or from verified source records; every BibTeX entry you add is copied from a record, never written from memory. For new citations in a Library-managed bibliography, add the source to the Library and cite it from there; for a hand-maintained `.bib`, copy the details from the registry or publisher record into that file, keeping it hand-maintained. A key that compiles is not evidence for its sentence; load `references` to check support.
 
-Before reporting the source ready, make sure the document's commands, environments, and required characters are supported by its preamble and selected engine.
+When you change equations, symbols, units, numbers or labels, compare them with what the researcher gave you, and keep the argument as it was. Check figure paths (exact case and extension) from the root, and that every command you add has its package loaded.
 
-Preserve an existing project's hyperlink configuration. When the document uses a table of contents, citations, cross-references, or URLs, verify the intended navigation after compilation.
+## Build and look
 
-Keep `.tex` source files and required assets in the project. A clickable `.tex` link opens Scient's LaTeX Source, Split, and PDF surface and starts local compilation; a successful build displays the PDF.
+Compile with `scient_latex_build` from the real root. Fix undefined citations and references and missing files even when a PDF was produced, look at overfull boxes, especially in two-column layouts, and confirm the PDF is where the result says.
 
-## Build and Verify the PDF
+Then render the pages to images and look at them: `pdftoppm` if it is installed, otherwise `pdf-authoring`'s `scripts/render_pdf.py` and `references/visual-check.md` (read them with `scient_skill_read_resource`). Look at every page of a short document; for a long one, the changed pages, page breaks and each distinct layout, and say which you skipped. Check figures, tables, equations, glyphs and cross-references, and rebuild and look again after fixes. A clean log doesn't show the page; if you couldn't look, say "visual inspection not performed" and why.
 
-This skill grants no tools or authority.
+For a journal or arXiv submission, check that venue's current instructions (engine, bibliography output, packages, file layout).
 
-When the user asks for a PDF and `scient_latex_build` is available, call it with the project-relative `.tex` source path and intended project-relative `.pdf` output path. If it returns `in-progress`, wait at least `retryAfterMs` and call it again with the same paths; do not start a parallel build. Use the completed result's paths, page count, diagnostics, and warnings as the build evidence.
-
-If direct build access is unavailable, provide a clickable Markdown link to the `.tex` source and state that PDF compilation was not verified. The user can open the source in Scient to use its built-in compiler. Creating or opening the source is not evidence that compilation succeeded.
-
-A completed build proves that a structurally valid PDF was produced and published; it does not prove visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Review the parts that matter for the document, such as equations, citations and references, pagination, figures, tables, and required characters. Fix material defects, rebuild when appropriate, and verify the updated PDF. If visual inspection is unavailable, say so.
-
-When reporting completion in Scient chat, provide clickable Markdown links to the exact `sourcePath` and `outputPath` returned by the completed build. If `rootSourcePath` differs, also link it and identify it as the compiled root. Wrap destinations containing spaces in angle brackets. Report the actual `pageCount`, material diagnostics or warnings, and anything that remains unverified. Automatic opening in Scient does not replace these links.
+Reply with links to the PDF and each edited source, the page count from the latest build, the pages you inspected, the remaining warnings and anything unfinished. If the toolchain is blocked, name the missing engine, package or font.

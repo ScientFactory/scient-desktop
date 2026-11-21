@@ -259,8 +259,7 @@ describe("Scient skill session planning", () => {
       expect(initial.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
         ["compare-sources", "automatic"],
         ["connector-authoring", "automatic"],
-        ["html-pdf-authoring", "automatic"],
-        ["improve-workspace-readiness", "explicit"],
+        ["improve-workspace-readiness", "automatic"],
         ["latex-authoring", "automatic"],
         ["overleaf-sync", "automatic"],
         ["pdf-authoring", "automatic"],
@@ -292,7 +291,6 @@ describe("Scient skill session planning", () => {
       expect(disabled.skills.map((skill) => skill.name)).toEqual([
         "compare-sources",
         "connector-authoring",
-        "html-pdf-authoring",
         "improve-workspace-readiness",
         "latex-authoring",
         "overleaf-sync",
