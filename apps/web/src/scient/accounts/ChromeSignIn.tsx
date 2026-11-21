@@ -167,10 +167,13 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     readonly canQuit: boolean;
     readonly into: string;
     readonly purpose: WindowEvent["purpose"];
-    readonly ending: boolean;
+    /** After Done, Cancel still stops a browser that doesn't quit; after Cancel, nothing does. */
+    readonly phase: "signing-in" | "finishing" | "cancelling";
   } | null>(null);
   const end = (keep: boolean) => {
-    setOpen((current) => (current ? { ...current, ending: true } : current));
+    setOpen((current) =>
+      current ? { ...current, phase: keep ? "finishing" : "cancelling" } : current,
+    );
     void accounts?.endChromeSignIn?.(keep).catch(() => undefined);
   };
   const start = async (
@@ -193,7 +196,7 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
       canQuit: browser.canQuit,
       into: profile.name,
       purpose,
-      ending: false,
+      phase: "signing-in",
     });
     const result: DesktopChromeSignInResult = await (
       profile.id === DEFAULT_BROWSER_PROFILE_ID
@@ -218,7 +221,7 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     <Dialog
       open
       onOpenChange={(next) => {
-        if (!next && !open.ending) end(false);
+        if (!next && open.phase !== "cancelling") end(false);
       }}
     >
       <DialogPopup data-accounts-dialog>
@@ -258,6 +261,9 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
               </>
             ) : null}
             <li>
+              <T>If the page stays blank, reload it in the window.</T>
+            </li>
+            <li>
               <T>
                 The window uses its own temporary profile, apart from your <Var>{open.browser}</Var>{" "}
                 profiles, and it's deleted afterwards.
@@ -266,12 +272,18 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
           </ul>
         </DialogPanel>
         <DialogFooter>
-          <Button variant="outline" disabled={open.ending} onClick={() => end(false)}>
+          <Button
+            variant="outline"
+            disabled={open.phase === "cancelling"}
+            onClick={() => end(false)}
+          >
             <T>Cancel</T>
           </Button>
           {open.canQuit ? (
-            <Button disabled={open.ending} onClick={() => end(true)}>
-              {open.ending ? gt("Bringing it into {into}…", { into: open.into }) : gt("Done")}
+            <Button disabled={open.phase !== "signing-in"} onClick={() => end(true)}>
+              {open.phase === "finishing"
+                ? gt("Bringing it into {into}…", { into: open.into })
+                : gt("Done")}
             </Button>
           ) : null}
         </DialogFooter>

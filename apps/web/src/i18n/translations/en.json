@@ -13325,6 +13325,7 @@
     "asks for a passkey you don't have, cancel it, then choose Try another way on Google's page."
   ],
   "db3411dc0ec653b4": "You don't need to install an authenticator app for this window.",
+  "3ca2267176503a7d": "If the page stays blank, reload it in the window.",
   "5e2aa1c5cf190952": [
     "The window uses its own temporary profile, apart from your ",
     {

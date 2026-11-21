@@ -59,6 +59,7 @@ function setup() {
   state.intoMain.mockReset();
   const result = Promise.withResolvers<DesktopChromeSignInResult>();
   const chromeSignIn = vi.fn(() => result.promise);
+  const endChromeSignIn = vi.fn(async (_keep: boolean) => true);
   state.intoMain.mockImplementation(() => result.promise);
   const bridge = stubGlobal("desktopBridge", {
     getLocalEnvironmentBootstraps: () => [],
@@ -66,10 +67,15 @@ function setup() {
     accounts: {
       chromeSignIn,
       chromeSignInBrowser: async () => ({ name: "Edge", canQuit: true }),
-      endChromeSignIn: async () => true,
+      endChromeSignIn,
     },
   });
-  return { result, chromeSignIn, [Symbol.dispose]: () => bridge[Symbol.dispose]() };
+  return {
+    result,
+    chromeSignIn,
+    endChromeSignIn,
+    [Symbol.dispose]: () => bridge[Symbol.dispose](),
+  };
 }
 
 /** Runs one window to its result; what the person was told and the run's one observation. */
@@ -91,6 +97,9 @@ it("names the browser and helps with Windows passkey prompts while the window is
   await expect.element(page.getByRole("heading", { name: "Sign in in Edge" })).toBeVisible();
   await expect.element(page.getByText(/If Windows Security asks for a passkey/)).toBeVisible();
   await expect.element(page.getByText(/temporary profile/)).toBeVisible();
+  await expect
+    .element(page.getByText("If the page stays blank, reload it in the window."))
+    .toBeVisible();
   await expect.element(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
   const { observed } = await finish(f, { outcome: "cancelled", browser: "Microsoft Edge" });
   expect(observed).toEqual({
@@ -99,6 +108,22 @@ it("names the browser and helps with Windows passkey prompts while the window is
     purpose: "google",
     google: "none",
   });
+});
+
+it("still cancels after Done, for a browser that doesn't quit", async () => {
+  using f = setup();
+  await using _screen = await render(<Harness profile={work} />);
+  await page.getByRole("button", { name: "Start" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect.element(page.getByRole("button", { name: "Bringing it into Work…" })).toBeDisabled();
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  await expect.element(cancel).toBeEnabled();
+  await cancel.click();
+  expect(f.endChromeSignIn.mock.calls).toEqual([[true], [false]]);
+  // Cancel is sent once; the dialog stays until the sign-in reports its end.
+  await expect.element(cancel).toBeDisabled();
+  const { observed } = await finish(f, { outcome: "cancelled", browser: "Edge" });
+  expect(observed).toMatchObject({ variant: "cancelled" });
 });
 
 it("never reports a copy Google refused or couldn't be asked about as a success", async () => {
