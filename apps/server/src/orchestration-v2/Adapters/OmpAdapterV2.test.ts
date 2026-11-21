@@ -97,6 +97,14 @@ const harness = Effect.fnUntraced(function* (
     readonly homePath?: string;
     readonly profile?: string;
     readonly cwd?: string;
+    readonly workspace?: {
+      readonly folders: ReadonlyArray<{
+        readonly name: string;
+        readonly path: string;
+        readonly isGitRepository: boolean;
+      }>;
+      readonly extraRoots: ReadonlyArray<string>;
+    };
     readonly prepareOpen?: (
       input: Parameters<Effect.Success<ReturnType<typeof makeOmpAdapterV2>>["openSession"]>[0],
       adapter: Effect.Success<ReturnType<typeof makeOmpAdapterV2>>,
@@ -147,6 +155,7 @@ const harness = Effect.fnUntraced(function* (
     cwd: behavior?.cwd ?? config.stateDir,
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
+    ...(behavior?.workspace === undefined ? {} : { workspace: behavior.workspace }),
   };
   const adapter = yield* makeOmpAdapterV2({
     ...(behavior?.onAccountSignedOut ? { onAccountSignedOut: behavior.onAccountSignedOut } : {}),
@@ -3003,6 +3012,52 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
         // A session without connectors keeps the bootstrap's original shape.
         assert.isUndefined(bootstrap.value.connectors);
+      }),
+    ),
+  );
+
+  it.effect("lists the thread's folders in OMP's prompt and refreshes them on a later turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        let workspacePath: string | undefined;
+        const api = { name: "api", path: "/repos/api", isGitRepository: true };
+        const h = yield* harness(false, {
+          workspace: { folders: [api], extraRoots: [api.path] },
+          makeProcess: (options) =>
+            Effect.gen(function* () {
+              const args = options.extraArgs ?? [];
+              const source = NodeFS.readFileSync(args[args.indexOf("--extension") + 1]!, "utf8");
+              const embedded = /\bSCIENT_WORKSPACE_PATH = ("(?:[^"\\]|\\.)*");/u.exec(source)?.[1];
+              if (!embedded) return yield* Effect.die("Missing the folder list's path");
+              workspacePath = decodeImagePath(embedded);
+              return yield* peer.makeProcess(options);
+            }),
+        });
+        if (!workspacePath) return yield* Effect.die("The extension was not observed");
+        const opened = NodeFS.readFileSync(workspacePath, "utf8");
+        assert.equal(NodeFS.statSync(workspacePath).mode & 0o777, 0o600);
+        assert.include(opened, "<workspace_folders>");
+        assert.include(opened, `- Your working directory: ${h.input.runtimePolicy.cwd}`);
+        assert.include(opened, "- api (Git repository): /repos/api");
+
+        // A folder added to the thread reaches the next turn's prompt.
+        const web = { name: "web", path: "/repos/web", isGitRepository: false };
+        yield* h.runtime.startTurn({
+          ...h.input,
+          runtimePolicy: {
+            ...h.input.runtimePolicy,
+            workspace: { folders: [api, web], extraRoots: [api.path, web.path] },
+          },
+        });
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const refreshed = NodeFS.readFileSync(workspacePath, "utf8");
+        assert.include(refreshed, "- api (Git repository): /repos/api");
+        assert.include(refreshed, "- web (folder): /repos/web");
       }),
     ),
   );
