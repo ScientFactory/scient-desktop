@@ -38,6 +38,8 @@ import {
   restoreScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  readScientSourceZoteroSync,
+  writeScientSourceZoteroSync,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import {
@@ -169,6 +171,21 @@ async function seed(root: string, records: ReadonlyArray<ScientSourceRecord>) {
       `${JSON.stringify(entry, null, 2)}\n`,
     );
   }
+}
+
+/** What an import from Zotero keeps for a source, its note included. */
+function zoteroBase(sourceId: string, attachmentKeys: ReadonlyArray<string> = []) {
+  return {
+    formatVersion: 1 as const,
+    sourceId,
+    libraryId: "475425",
+    itemKey: "ABCD2345",
+    itemVersion: 3,
+    syncedAt: "2026-11-21T08:00:00.000Z",
+    metadata: editableMetadataFromRecord(record(sourceId)),
+    note: "Zotero's note",
+    attachmentKeys: [...attachmentKeys],
+  };
 }
 
 const liveIds = async (library: ReturnType<typeof scientLibraryLocation>) =>
@@ -1609,6 +1626,9 @@ describe("library merge engine", () => {
       record("source_copy", doi),
       record("source_other", { title: "Another paper" }),
     ]);
+    for (const sourceId of ["source_keep", "source_copy", "source_other"]) {
+      await writeScientSourceZoteroSync(library, zoteroBase(sourceId));
+    }
     const merged = await mergeScientLibrarySources({
       library,
       sourceIds: ["source_keep", "source_copy"],
@@ -1651,5 +1671,9 @@ describe("library merge engine", () => {
     });
     expect(deleted).toMatchObject({ outcome: "deleted" });
     expect(await readScientSourceTrashEntries(library)).toEqual([]);
+    // Nothing of a deleted paper's Zotero note stays behind for a backup to carry.
+    for (const sourceId of ["source_keep", "source_copy", "source_other"]) {
+      expect(await readScientSourceZoteroSync(library, sourceId)).toBeNull();
+    }
   });
 });

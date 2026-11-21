@@ -1291,6 +1291,8 @@ async function deleteTrashEntries(
         MAX_TRASH_ENTRY_BYTES,
       );
     }
+    // Before the trash entry, which a retry needs to find this source again.
+    await NodeFSP.rm(zoteroSyncPath(paths, entry.sourceId), { force: true });
     await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
     await NodeFSP.rm(NodePath.dirname(sourceHistoryPath(paths, entry.sourceId, 1)), {
       recursive: true,
