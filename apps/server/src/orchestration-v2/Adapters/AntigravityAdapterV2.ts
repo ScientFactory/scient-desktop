@@ -60,6 +60,7 @@ import { scientAntigravityBridge } from "./ScientAcpApplicationBridge.ts";
 // SCIENT-FORK:END Scient ACP application bridge
 // SCIENT-FORK:START — plugin sign-in challenges from tool results.
 import { makeAntigravityPluginSignIns } from "../../scient/antigravity/pluginSignIn.ts";
+import { verifyPluginSignIn } from "../../scient/antigravity/pluginAuthManifest.ts";
 // SCIENT-FORK:END
 import {
   AcpProviderCapabilitiesV2,
@@ -116,6 +117,10 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  // SCIENT-FORK:START — where `agy` installs plugins; their manifests vouch for sign-ins.
+  /** Defaults to `~/.gemini/config/plugins`; without plugins no sign-in notice is offered. */
+  readonly pluginsDirectory?: string;
+  // SCIENT-FORK:END
 }
 
 /**
@@ -158,7 +163,7 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  const { profileDirectory } = options;
+  const { profileDirectory, pluginsDirectory } = options;
   // SCIENT-FORK:START — daemon commands tracked as background work. A later update can carry only
   // the tool ID and status, so a tracked daemon is known by its ID until it ends.
   const daemonToolCallIds = new Set<string>();
@@ -263,18 +268,27 @@ export function makeAntigravityAcpAdapterFlavor(
             updates.withPermit(
               // SCIENT-FORK:START — challenges are kept and scrubbed before anything projects them.
               Effect.gen(function* () {
-                const repaired = reads.repair(notification);
-                const toolUpdate =
-                  repaired.update.sessionUpdate === "tool_call" ||
-                  repaired.update.sessionUpdate === "tool_call_update";
-                const attemptId = toolUpdate ? yield* options.random.uuidV4() : "";
-                const projected = pluginSignIns.observe({
+                const { notifications, candidate } = pluginSignIns.observe({
                   generation,
-                  notification: repaired,
-                  now: yield* Clock.currentTimeMillis,
-                  newId: () => attemptId,
+                  notification: reads.repair(notification),
                 });
-                yield* Effect.forEach(projected, handler, { discard: true });
+                // Only the installed plugin's own CLI and OAuth client earn a sign-in notice.
+                const verified =
+                  candidate === undefined || pluginsDirectory === undefined
+                    ? undefined
+                    : yield* verifyPluginSignIn({ pluginsDirectory, candidate }).pipe(
+                        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+                        Effect.provideService(Path.Path, options.path),
+                      );
+                if (candidate !== undefined && verified !== undefined) {
+                  pluginSignIns.admit(candidate, {
+                    attemptId: yield* options.random.uuidV4(),
+                    displayName: verified.displayName,
+                    programs: verified.programs,
+                    now: yield* Clock.currentTimeMillis,
+                  });
+                }
+                yield* Effect.forEach(notifications, handler, { discard: true });
               }),
               // SCIENT-FORK:END
             ),
@@ -470,9 +484,14 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
   };
+  // SCIENT-FORK:START — the agy CLI loads plugins from the OS user's home, not GEMINI_HOME.
+  const pluginsDirectory =
+    options.pluginsDirectory ??
+    services.path.join(yield* HostProcess.HomeDirectory, ".gemini", "config", "plugins");
+  // SCIENT-FORK:END
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
+    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services, pluginsDirectory }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined

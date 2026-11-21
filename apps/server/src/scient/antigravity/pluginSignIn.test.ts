@@ -8,6 +8,8 @@ import {
   LINK_REMOVED,
   makeAntigravityPluginSignIns,
   makeStreamRedactor,
+  plainCommandProgram,
+  type PluginSignInCandidate,
 } from "./pluginSignIn.ts";
 
 const STATE = "synthetic-state-0123456789";
@@ -43,11 +45,15 @@ const challengeText = (url = URL_OK, cardText = card()) =>
   ].join("\n");
 
 describe("extractPluginSignInChallenge", () => {
-  it("reads the card and the loopback sign-in page", () => {
+  it("reads the card, the loopback sign-in page and its OAuth client", () => {
     const challenge = extractPluginSignInChallenge(challengeText());
-    expect(challenge?.plugin).toBe("gmail");
-    expect(challenge?.authorizationUrl).toBe(URL_OK);
-    expect(challenge?.secrets).toEqual([URL_OK, STATE, CHALLENGE_CODE]);
+    expect(challenge).toMatchObject({
+      plugin: "gmail",
+      authorizationUrl: URL_OK,
+      endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+      clientId: "synthetic-client.example",
+      secrets: [URL_OK, STATE, CHALLENGE_CODE],
+    });
   });
 
   it.each([
@@ -61,7 +67,6 @@ describe("extractPluginSignInChallenge", () => {
     ["an oversized slug", challengeText(URL_OK, card("g".repeat(65)))],
     ["two URLs", `${challengeText()} see https://example.com/help`],
     ["a non-https page", challengeText(URL_OK.replace("https://", "http://"))],
-    ["an unknown endpoint", challengeText(signInUrl({}, "https://evil.example/o/oauth2/v2/auth"))],
     [
       "a remote redirect",
       challengeText(signInUrl({ redirect_uri: "http://10.0.0.5:57512/callback" })),
@@ -83,6 +88,7 @@ describe("extractPluginSignInChallenge", () => {
       challengeText(signInUrl({ redirect_uri: "http://127.0.0.1:57512/other" })),
     ],
     ["no state", challengeText(URL_OK.replace(`&state=${STATE}`, ""))],
+    ["no client", challengeText(URL_OK.replace("client_id=synthetic-client.example&", ""))],
     ["two states", challengeText(`${URL_OK}&state=second`)],
     [
       "two redirects",
@@ -94,14 +100,6 @@ describe("extractPluginSignInChallenge", () => {
   ])("refuses %s", (_label, text) => {
     expect(extractPluginSignInChallenge(text)).toBeUndefined();
   });
-
-  it("accepts [::1] and localhost loopback redirects", () => {
-    for (const redirect_uri of ["http://[::1]:4000/callback", "http://localhost:4000/callback"]) {
-      expect(
-        extractPluginSignInChallenge(challengeText(signInUrl({ redirect_uri }))),
-      ).toBeDefined();
-    }
-  });
 });
 
 describe("extractToolCallChallenge", () => {
@@ -109,10 +107,11 @@ describe("extractToolCallChallenge", () => {
   it("reads a tool result whose fields repeat the same text", () => {
     expect(
       extractToolCallChallenge({
-        title: "gmail readonly search",
-        rawInput: { CommandLine: "gmail readonly search" },
-        rawOutput: { output, exit_code: 1 },
-        content: [{ type: "content", content: { type: "text", text: output } }],
+        inputs: ["gmail readonly search", { CommandLine: "gmail readonly search" }],
+        outputs: [
+          { output, exit_code: 1 },
+          [{ type: "content", content: { type: "text", text: output } }],
+        ],
       })?.plugin,
     ).toBe("gmail");
   });
@@ -120,9 +119,8 @@ describe("extractToolCallChallenge", () => {
   it("refuses a challenge the call's own input wrote", () => {
     expect(
       extractToolCallChallenge({
-        title: "echo",
-        rawInput: { CommandLine: `echo '${output}'` },
-        rawOutput: { output },
+        inputs: ["echo", { CommandLine: `echo '${output}'` }],
+        outputs: [{ output }],
       }),
     ).toBeUndefined();
   });
@@ -130,29 +128,47 @@ describe("extractToolCallChallenge", () => {
   it("refuses fields that disagree on the page", () => {
     expect(
       extractToolCallChallenge({
-        rawOutput: { output },
-        content: [
-          {
-            type: "content",
-            content: { type: "text", text: challengeText(signInUrl({ state: "other-state" })) },
-          },
-        ],
+        inputs: [],
+        outputs: [{ output }, challengeText(signInUrl({ state: "other-state" }))],
       }),
     ).toBeUndefined();
   });
 });
 
+describe("plainCommandProgram", () => {
+  it("names the program of a plain command and nothing that shell syntax could feed", () => {
+    expect(plainCommandProgram(`gmail readonly search "" --max 3`)).toBe("gmail");
+    for (const command of [
+      "cat notes.txt; gmail search",
+      "gmail search | cat",
+      "gmail search && echo done",
+      "gmail $(cat x)",
+      "gmail search > out.txt",
+    ]) {
+      expect(plainCommandProgram(command)).toBeUndefined();
+    }
+  });
+});
+
 describe("makeStreamRedactor", () => {
-  it("scrubs a pattern split across chunks and keeps the other text", () => {
-    const redactor = makeStreamRedactor(() => [{ text: URL_OK, replacement: LINK_REMOVED }]);
+  const none = () => ({ secrets: [], cards: [] });
+
+  it("scrubs a sign-in URL split across chunks without knowing it first", () => {
+    const redactor = makeStreamRedactor(none);
     const text = `Open ${URL_OK} now.`;
     const chunks = [text.slice(0, 9), text.slice(9, 60), text.slice(60, 200), text.slice(200)];
     const emitted = chunks.map((chunk) => redactor.push(chunk)).join("") + redactor.flush();
     expect(emitted).toBe(`Open ${LINK_REMOVED} now.`);
   });
 
+  it("keeps an ordinary link", () => {
+    const redactor = makeStreamRedactor(none);
+    const emitted = redactor.push("see https://example.com/docs ") + redactor.flush();
+    expect(emitted).toBe("see https://example.com/docs ");
+  });
+
   it("drops a standalone card and keeps an inline one", () => {
-    const patterns = () => [{ text: card(), replacement: "", standalone: true }];
+    const patterns = () => ({ secrets: [], cards: [card()] });
     const standalone = makeStreamRedactor(patterns);
     const out =
       standalone.push("Sign in below:\n\n<plugin-card catalog-id") +
@@ -168,32 +184,51 @@ const owner = {
   threadId: ThreadId.make("thread-1"),
   providerThreadId: ProviderThreadId.make("provider-thread-1"),
 };
+type ToolUpdate = Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "tool_call_update" }>;
 const toolUpdate = (
   toolCallId: string,
-  fields: Partial<Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "tool_call_update" }>>,
+  fields: Partial<ToolUpdate>,
   sessionId = "session-1",
 ): EffectAcpSchema.SessionNotification => ({
   sessionId,
   update: { sessionUpdate: "tool_call_update", toolCallId, ...fields },
 });
+const toolChunk = (toolCallId: string, text: string): EffectAcpSchema.SessionNotification => ({
+  sessionId: "session-1",
+  update: {
+    sessionUpdate: "tool_call_content_chunk",
+    toolCallId,
+    content: { type: "content", content: { type: "text", text } },
+  },
+});
 const textChunk = (text: string, sessionId = "session-1"): EffectAcpSchema.SessionNotification => ({
   sessionId,
   update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
 });
-const challengeUpdate = () =>
+const usage: EffectAcpSchema.SessionNotification = {
+  sessionId: "session-1",
+  update: { sessionUpdate: "usage_update", used: 1, size: 2 },
+};
+const gmailRun = { CommandLine: "gmail readonly search" };
+const challengeUpdate = (fields: Partial<ToolUpdate> = {}) =>
   toolUpdate("call-1", {
     status: "completed",
     kind: "execute",
-    rawInput: { CommandLine: "gmail readonly search" },
+    rawInput: gmailRun,
     rawOutput: { output: challengeText(), exit_code: 1 },
     content: [{ type: "content", content: { type: "text", text: challengeText() } }],
+    ...fields,
   });
 const textOf = (notifications: ReadonlyArray<EffectAcpSchema.SessionNotification>) =>
   notifications
     .map((entry) =>
       entry.update.sessionUpdate === "agent_message_chunk" && entry.update.content.type === "text"
         ? entry.update.content.text
-        : "",
+        : entry.update.sessionUpdate === "tool_call_content_chunk" &&
+            entry.update.content.type === "content" &&
+            entry.update.content.content.type === "text"
+          ? entry.update.content.content.text
+          : "",
     )
     .join("");
 
@@ -202,18 +237,28 @@ describe("makeAntigravityPluginSignIns", () => {
     const signIns = makeAntigravityPluginSignIns(options);
     const generation = signIns.openGeneration();
     let ids = 0;
-    const observe = (notification: EffectAcpSchema.SessionNotification, now = 0) =>
-      signIns.observe({ generation, notification, now, newId: () => `attempt-${++ids}` });
-    return { signIns, generation, observe };
+    const observe = (notification: EffectAcpSchema.SessionNotification) =>
+      signIns.observe({ generation, notification });
+    const admit = (candidate: PluginSignInCandidate | undefined, now = 0) => {
+      expect(candidate).toBeDefined();
+      signIns.admit(candidate!, {
+        attemptId: `attempt-${++ids}`,
+        displayName: "Gmail",
+        programs: ["gmail"],
+        now,
+      });
+    };
+    return { signIns, generation, observe, admit };
   };
 
-  it("scrubs the page from the projected tool call and offers it to its thread", () => {
-    const { signIns, observe } = setup();
-    const projected = observe(challengeUpdate());
-    expect(JSON.stringify(projected)).not.toContain(STATE);
-    expect(JSON.stringify(projected)).toContain(LINK_REMOVED);
-    const notice = signIns.takeToolNotice("call-1", owner);
-    expect(notice?.pluginSignIn).toEqual({
+  it("scrubs the page from the projected tool call and offers it once admitted", () => {
+    const { signIns, observe, admit } = setup();
+    const { notifications, candidate } = observe(challengeUpdate());
+    expect(JSON.stringify(notifications)).not.toContain(STATE);
+    expect(JSON.stringify(notifications)).toContain(LINK_REMOVED);
+    expect(candidate).toMatchObject({ program: "gmail", toolCallId: "call-1" });
+    admit(candidate);
+    expect(signIns.takeToolNotice("call-1", owner)?.pluginSignIn).toEqual({
       attemptId: "attempt-1",
       plugin: "gmail",
       displayName: "Gmail",
@@ -224,9 +269,40 @@ describe("makeAntigravityPluginSignIns", () => {
     ).toEqual({ url: URL_OK });
   });
 
-  it("never opens the page for another thread or session", () => {
+  // regression: a stream-only challenge used to reach the projector before it was recognized.
+  it("never projects the first streamed chunk of a page, and admits a stream-only challenge", () => {
+    const { observe } = setup();
+    observe(toolUpdate("call-s", { status: "in_progress", kind: "execute", rawInput: gmailRun }));
+    const text = challengeText();
+    const projected = [70, 260, 400, text.length].flatMap(
+      (end, index, ends) =>
+        observe(toolChunk("call-s", text.slice(index === 0 ? 0 : ends[index - 1], end)))
+          .notifications,
+    );
+    const ending = observe(toolUpdate("call-s", { status: "failed" }));
+    const all = [...projected, ...ending.notifications];
+    expect(JSON.stringify(all)).not.toContain(STATE);
+    expect(JSON.stringify(all)).not.toContain(CHALLENGE_CODE);
+    expect(textOf(all)).toContain(LINK_REMOVED);
+    expect(ending.candidate?.challenge.authorizationUrl).toBe(URL_OK);
+  });
+
+  it("scrubs a page from a tool that earns no notice", () => {
     const { signIns, observe } = setup();
-    observe(challengeUpdate());
+    for (const fields of [
+      { kind: "other" as const, rawInput: { url: "https://example.com" } },
+      { rawInput: { CommandLine: "cat notes.txt; gmail readonly search" } },
+    ]) {
+      const { notifications, candidate } = observe(challengeUpdate(fields));
+      expect(candidate).toBeUndefined();
+      expect(JSON.stringify(notifications)).not.toContain(STATE);
+    }
+    expect(signIns.takeToolNotice("call-1", owner)).toBeUndefined();
+  });
+
+  it("never opens the page for another thread or session", () => {
+    const { signIns, observe, admit } = setup();
+    admit(observe(challengeUpdate()).candidate);
     signIns.takeToolNotice("call-1", owner);
     const other = { ...owner, threadId: ThreadId.make("thread-2") };
     expect(
@@ -243,8 +319,8 @@ describe("makeAntigravityPluginSignIns", () => {
   });
 
   it("expires attempts and retires them with their agent process", () => {
-    const { signIns, generation, observe } = setup({ ttlMs: 1_000 });
-    observe(challengeUpdate());
+    const { signIns, generation, observe, admit } = setup({ ttlMs: 1_000 });
+    admit(observe(challengeUpdate()).candidate);
     signIns.takeToolNotice("call-1", owner);
     const redeem = (now: number) =>
       signIns.redeem({ attemptId: "attempt-1", owner, nativeSessionId: "session-1", now });
@@ -256,40 +332,41 @@ describe("makeAntigravityPluginSignIns", () => {
 
   it("ignores model text that writes a card or a page", () => {
     const { signIns, observe } = setup();
-    const projected = observe(textChunk(challengeText()));
-    expect(textOf(projected)).toBe(challengeText());
+    const { candidate } = observe(textChunk(challengeText()));
+    expect(candidate).toBeUndefined();
     expect(signIns.takeToolNotice("call-1", owner)).toBeUndefined();
   });
 
   it("scrubs a repeated page across chunks and hides the repeated card", () => {
-    const { signIns, generation, observe } = setup();
-    observe(challengeUpdate());
+    const { signIns, generation, observe, admit } = setup();
+    admit(observe(challengeUpdate()).candidate);
     const reply = `Sign in here: ${URL_OK}\n\n${card()}`;
     const projected = [
-      ...observe(textChunk(reply.slice(0, 30))),
-      ...observe(textChunk(reply.slice(30, 300))),
-      ...observe(textChunk(reply.slice(300))),
+      ...observe(textChunk(reply.slice(0, 30))).notifications,
+      ...observe(textChunk(reply.slice(30, 300))).notifications,
+      ...observe(textChunk(reply.slice(300))).notifications,
       ...signIns.flush(generation),
     ];
     expect(textOf(projected)).toBe(`Sign in here: ${LINK_REMOVED}\n\n`);
   });
 
-  it("releases held text before the next update", () => {
-    const { observe } = setup();
-    observe(challengeUpdate());
-    const held = observe(textChunk("ends with h"));
-    expect(textOf(held)).toBe("ends with ");
-    const next = observe({
-      sessionId: "session-1",
-      update: { sessionUpdate: "usage_update", used: 1, size: 2 },
-    });
-    expect(textOf(next)).toBe("h");
-    expect(next.at(-1)?.update.sessionUpdate).toBe("usage_update");
+  // regression: an interleaved update used to release half of a split page.
+  it("holds a split page across interleaved updates until its stream ends", () => {
+    const { signIns, generation, observe } = setup();
+    const reply = `Open ${URL_OK} please`;
+    const projected = [
+      ...observe(textChunk(reply.slice(0, 120))).notifications,
+      ...observe(usage).notifications,
+      ...observe(textChunk(reply.slice(120))).notifications,
+      ...signIns.flush(generation),
+    ];
+    expect(JSON.stringify(projected)).not.toContain(STATE);
+    expect(textOf(projected)).toBe(`Open ${LINK_REMOVED} please`);
   });
 
   it("reports the plugin's next successful call as signed in", () => {
-    const { signIns, observe } = setup();
-    observe(challengeUpdate());
+    const { signIns, observe, admit } = setup();
+    admit(observe(challengeUpdate()).candidate);
     signIns.takeToolNotice("call-1", owner);
     observe(
       toolUpdate("call-2", {
@@ -311,11 +388,20 @@ describe("makeAntigravityPluginSignIns", () => {
   });
 
   it("replaces an older attempt for the same plugin", () => {
-    const { signIns, observe } = setup();
-    observe(challengeUpdate());
+    const { signIns, observe, admit } = setup();
+    admit(observe(challengeUpdate()).candidate);
     signIns.takeToolNotice("call-1", owner);
     const second = challengeText(signInUrl({ state: "second-state" }));
-    observe(toolUpdate("call-3", { status: "completed", rawOutput: { output: second } }));
+    admit(
+      observe(
+        toolUpdate("call-3", {
+          status: "completed",
+          kind: "execute",
+          rawInput: gmailRun,
+          rawOutput: { output: second },
+        }),
+      ).candidate,
+    );
     signIns.takeToolNotice("call-3", owner);
     expect(
       signIns.redeem({ attemptId: "attempt-1", owner, nativeSessionId: "session-1", now: 1 }),

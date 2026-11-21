@@ -10,17 +10,17 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 const CARD_PATTERN = /<plugin-card catalog-id="([a-z0-9][a-z0-9_-]{0,63})"><\/plugin-card>/u;
 const SCHEME_PATTERN = /[a-z][a-z0-9+.-]*:\/\//giu;
 const URL_TOKEN_PATTERN = /^[^\s<>"'`]+/u;
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'`]+/giu;
+const URL_STARTS = ["https://", "http://"];
+const AUTHORIZATION_PARAMS = /[?&](?:redirect_uri|state|code_challenge)=/iu;
 const MAX_TEXT_LENGTH = 32_000;
 const MAX_URL_LENGTH = 4_096;
+const MAX_HOLD = 8_192;
 const MAX_STATE_LENGTH = 512;
 const URL_SAFE_VALUE = /^[A-Za-z0-9._~-]+$/u;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
-
-/**
- * Where a plugin may send the user to sign in, as `host/path`. Only Google's own plugins are
- * captured so far; a partner's endpoint joins once its challenge is recorded.
- */
-const AUTHORIZATION_ENDPOINTS = new Set(["accounts.google.com/o/oauth2/v2/auth"]);
+// Unquoted shell syntax that would let a command print text the plugin's CLI did not.
+const SHELL_CONTROL = /[;&|<>`$(){}\\\n\r]/u;
 
 const DISPLAY_NAMES: Readonly<Record<string, string>> = {
   gmail: "Gmail",
@@ -37,6 +37,9 @@ const VALUE_REMOVED = "[removed]";
 export interface PluginSignInChallenge {
   readonly plugin: string;
   readonly authorizationUrl: string;
+  /** The page's origin and path, which the plugin's installed manifest must declare. */
+  readonly endpoint: string;
+  readonly clientId: string;
   /** Text to scrub wherever the agent repeats it. */
   readonly secrets: ReadonlyArray<string>;
 }
@@ -46,44 +49,51 @@ const single = (params: URLSearchParams, name: string) => {
   return values.length === 1 ? values[0] : undefined;
 };
 
-/** The sign-in page, when it is a known endpoint that redirects to a local agy listener. */
-function validatePluginAuthorizationUrl(raw: string): URL | undefined {
-  if (raw.length > MAX_URL_LENGTH || raw.includes("#")) return undefined;
-  let url: URL;
+const parseUrl = (value: string) => {
   try {
-    url = new URL(raw);
+    return new URL(value);
   } catch {
     return undefined;
   }
+};
+
+const isLoopbackRedirect = (value: string) => {
+  const redirect = parseUrl(value);
+  return redirect !== undefined && LOOPBACK_HOSTS.has(redirect.hostname);
+};
+
+/** An HTTPS page with one client, one state and one loopback `/callback` redirect. */
+function validatePluginAuthorizationUrl(raw: string): URL | undefined {
+  if (raw.length > MAX_URL_LENGTH || raw.includes("#")) return undefined;
+  const url = parseUrl(raw);
   if (
+    url === undefined ||
     url.protocol !== "https:" ||
     url.username !== "" ||
     url.password !== "" ||
-    url.port !== "" ||
-    !AUTHORIZATION_ENDPOINTS.has(`${url.hostname}${url.pathname}`)
+    url.port !== ""
   ) {
     return undefined;
   }
   const state = single(url.searchParams, "state");
   const redirectUri = single(url.searchParams, "redirect_uri");
+  const clientId = single(url.searchParams, "client_id");
   if (
     state === undefined ||
     state.length === 0 ||
     state.length > MAX_STATE_LENGTH ||
     !URL_SAFE_VALUE.test(state) ||
+    clientId === undefined ||
+    clientId.length === 0 ||
     redirectUri === undefined ||
     url.searchParams.getAll("code_challenge").length > 1
   ) {
     return undefined;
   }
-  let redirect: URL;
-  try {
-    redirect = new URL(redirectUri);
-  } catch {
-    return undefined;
-  }
-  const port = Number(redirect.port);
+  const redirect = parseUrl(redirectUri);
+  const port = Number(redirect?.port);
   if (
+    redirect === undefined ||
     redirect.protocol !== "http:" ||
     !LOOPBACK_HOSTS.has(redirect.hostname) ||
     !/^\d+$/u.test(redirect.port) ||
@@ -108,8 +118,7 @@ function validatePluginAuthorizationUrl(raw: string): URL | undefined {
 export function extractPluginSignInChallenge(text: string): PluginSignInChallenge | undefined {
   if (text.length > MAX_TEXT_LENGTH) return undefined;
   if (text.split("plugin-card").length !== 3) return undefined;
-  const card = CARD_PATTERN.exec(text);
-  const plugin = card?.[1];
+  const plugin = CARD_PATTERN.exec(text)?.[1];
   if (plugin === undefined) return undefined;
   const schemes = [...text.matchAll(SCHEME_PATTERN)];
   if (schemes.length !== 1) return undefined;
@@ -121,12 +130,32 @@ export function extractPluginSignInChallenge(text: string): PluginSignInChalleng
   return {
     plugin,
     authorizationUrl: token,
+    endpoint: `${url.origin}${url.pathname}`,
+    clientId: url.searchParams.get("client_id")!,
     secrets: secrets.filter((value): value is string => Predicate.isString(value) && value !== ""),
   };
 }
 
 function pluginDisplayName(plugin: string): string | undefined {
   return DISPLAY_NAMES[plugin];
+}
+
+/** A URL that sends a sign-in back to this computer; an unfinished one counts once it looks like one. */
+function isSignInUrl(token: string, unfinished: boolean): boolean {
+  const url = parseUrl(token);
+  if (url?.searchParams.getAll("redirect_uri").some(isLoopbackRedirect) === true) return true;
+  return unfinished && AUTHORIZATION_PARAMS.test(token);
+}
+
+/** Text with every sign-in URL and known secret replaced. */
+function scrubSignInText(text: string, secrets: ReadonlyArray<string>, openEnd = false): string {
+  let result = text.replace(URL_IN_TEXT, (token, offset: number) =>
+    isSignInUrl(token, openEnd && offset + token.length === text.length) ? LINK_REMOVED : token,
+  );
+  for (const secret of secrets) {
+    if (result.includes(secret)) result = result.split(secret).join(VALUE_REMOVED);
+  }
+  return result;
 }
 
 function collectStrings(value: unknown, into: Array<string>, depth = 0): void {
@@ -140,21 +169,11 @@ function collectStrings(value: unknown, into: Array<string>, depth = 0): void {
   }
 }
 
-const replaceSecrets = (text: string, secrets: ReadonlyArray<string>) => {
-  let result = text;
-  for (const [index, secret] of secrets.entries()) {
-    if (result.includes(secret)) {
-      result = result.split(secret).join(index === 0 ? LINK_REMOVED : VALUE_REMOVED);
-    }
-  }
-  return result;
-};
-
-/** A copy of `value` with every secret replaced, in any string at any depth. */
-function redactPluginSignInSecrets<A>(value: A, secrets: ReadonlyArray<string>): A {
+/** A copy of `value` with every string scrubbed, at any depth. */
+function scrubPayload<A>(value: A, secrets: ReadonlyArray<string>): A {
   const visit = (entry: unknown, depth: number): unknown => {
     if (depth > 16) return entry;
-    if (Predicate.isString(entry)) return replaceSecrets(entry, secrets);
+    if (Predicate.isString(entry)) return scrubSignInText(entry, secrets);
     if (Array.isArray(entry)) return entry.map((item) => visit(item, depth + 1));
     if (Predicate.isObject(entry)) {
       return Object.fromEntries(
@@ -166,18 +185,19 @@ function redactPluginSignInSecrets<A>(value: A, secrets: ReadonlyArray<string>):
   return visit(value, 0) as A;
 }
 
-/** The one challenge the tool's result carries; text the call was given never counts. */
+/**
+ * The one challenge a tool's result carries: its outputs must agree, and the call's own input
+ * never contains the card or the state.
+ */
 export function extractToolCallChallenge(update: {
-  readonly title?: string | null;
-  readonly rawInput?: unknown;
-  readonly rawOutput?: unknown;
-  readonly content?: unknown;
+  readonly inputs: ReadonlyArray<unknown>;
+  readonly outputs: ReadonlyArray<unknown>;
 }): PluginSignInChallenge | undefined {
   const inputs: Array<string> = [];
-  collectStrings([update.title, update.rawInput], inputs);
+  collectStrings(update.inputs, inputs);
   if (inputs.some((text) => text.includes("plugin-card"))) return undefined;
   const outputs: Array<string> = [];
-  collectStrings([update.rawOutput, update.content], outputs);
+  collectStrings(update.outputs, outputs);
   let found: PluginSignInChallenge | undefined;
   for (const text of outputs) {
     if (!text.includes("plugin-card")) continue;
@@ -194,21 +214,24 @@ export function extractToolCallChallenge(update: {
   return found;
 }
 
-interface StreamPattern {
-  readonly text: string;
-  readonly replacement: string;
-  /** Removed only on a line of its own. */
-  readonly standalone?: boolean;
+/** The program a plain shell command runs, or undefined when shell syntax could add output. */
+export function plainCommandProgram(command: string): string | undefined {
+  const trimmed = command.trim();
+  if (trimmed.length === 0 || trimmed.length > 4_096 || SHELL_CONTROL.test(trimmed)) {
+    return undefined;
+  }
+  return /^[A-Za-z0-9._-]+(?=\s|$)/u.exec(trimmed)?.[0];
 }
 
-/** The earliest index whose rest of `buffer` begins some pattern without completing it. */
-function partialStart(buffer: string, patterns: ReadonlyArray<StreamPattern>): number {
+/** The earliest index whose rest of `buffer` begins some text without completing it. */
+function partialStart(buffer: string, texts: ReadonlyArray<string>): number {
   let earliest = -1;
-  for (const pattern of patterns) {
-    const from = Math.max(0, buffer.length - pattern.text.length + 1);
+  const lower = buffer.toLowerCase();
+  for (const text of texts) {
+    const from = Math.max(0, buffer.length - text.length + 1);
     for (let index = from; index < buffer.length; index++) {
       if (earliest !== -1 && index >= earliest) break;
-      if (pattern.text.startsWith(buffer.slice(index))) {
+      if (text.startsWith(text === text.toLowerCase() ? lower.slice(index) : buffer.slice(index))) {
         earliest = index;
         break;
       }
@@ -218,54 +241,66 @@ function partialStart(buffer: string, patterns: ReadonlyArray<StreamPattern>): n
 }
 
 /**
- * Scrubs patterns from text that arrives in chunks. It holds back a tail that could begin a
- * pattern until the next chunk or `flush` decides it.
+ * Scrubs text that arrives in chunks. A tail that could begin a sign-in URL, a known secret or a
+ * card is held, bounded, until a later chunk completes it or the stream ends (`flush`).
  */
-export function makeStreamRedactor(patterns: () => ReadonlyArray<StreamPattern>) {
+export function makeStreamRedactor(
+  patterns: () => {
+    readonly secrets: ReadonlyArray<string>;
+    readonly cards: ReadonlyArray<string>;
+  },
+) {
   let carry = "";
   let previous = "\n";
-  const emit = (text: string) => {
-    if (text.length > 0) previous = text.at(-1)!;
-    return text;
-  };
-  const process = (input: string, final: boolean) => {
-    const active = patterns();
-    let buffer = input;
-    let out = "";
-    while (buffer.length > 0) {
-      let match: { index: number; pattern: StreamPattern } | undefined;
-      // A longer pattern still arriving holds its start, so a shorter one inside it waits.
-      const partial = final ? -1 : partialStart(buffer, active);
-      for (const pattern of active) {
-        const index = buffer.indexOf(pattern.text);
-        if (index !== -1 && (match === undefined || index < match.index)) {
-          match = { index, pattern };
-        }
+  const holdPoint = (
+    buffer: string,
+    secrets: ReadonlyArray<string>,
+    cards: ReadonlyArray<string>,
+  ) => {
+    let hold = buffer.length;
+    for (const match of buffer.matchAll(URL_IN_TEXT)) {
+      if (
+        match.index + match[0].length === buffer.length &&
+        buffer.length - match.index <= MAX_HOLD
+      ) {
+        hold = Math.min(hold, match.index);
       }
-      if (match === undefined || (partial !== -1 && partial <= match.index)) break;
-      const { index, pattern } = match;
-      const before = buffer.slice(0, index);
-      const end = index + pattern.text.length;
-      if (pattern.standalone === true) {
-        const lineStart = (before.length > 0 ? before.at(-1) : (out.at(-1) ?? previous)) === "\n";
-        if (end === buffer.length && !final) {
-          out += before;
-          carry = buffer.slice(index);
-          return emit(out);
-        }
-        const next = buffer[end];
-        const lineEnd = next === undefined || next === "\n" || next === "\r";
-        out += before + (lineStart && lineEnd ? pattern.replacement : pattern.text);
-      } else {
-        out += before + pattern.replacement;
-      }
-      buffer = buffer.slice(end);
     }
-    const start = final ? -1 : partialStart(buffer, active);
-    const hold = start === -1 ? 0 : buffer.length - start;
-    out += buffer.slice(0, buffer.length - hold);
-    carry = buffer.slice(buffer.length - hold);
-    return emit(out);
+    const partial = partialStart(buffer, [...URL_STARTS, ...secrets, ...cards]);
+    if (partial !== -1) hold = Math.min(hold, partial);
+    for (const card of cards) {
+      if (buffer.endsWith(card)) hold = Math.min(hold, buffer.length - card.length);
+    }
+    return hold;
+  };
+  const dropStandaloneCards = (text: string, cards: ReadonlyArray<string>, next: string) => {
+    let result = text;
+    for (const card of cards) {
+      let from = 0;
+      for (;;) {
+        const index = result.indexOf(card, from);
+        if (index === -1) break;
+        const before = index === 0 ? previous : result[index - 1];
+        const after = result[index + card.length] ?? next;
+        if (before === "\n" && (after === "\n" || after === "\r" || after === "")) {
+          result = result.slice(0, index) + result.slice(index + card.length);
+          from = index;
+        } else {
+          from = index + card.length;
+        }
+      }
+    }
+    return result;
+  };
+  const process = (buffer: string, final: boolean) => {
+    const { secrets, cards } = patterns();
+    const hold = final ? buffer.length : holdPoint(buffer, secrets, cards);
+    const region = buffer.slice(0, hold);
+    carry = buffer.slice(hold);
+    const scrubbed = scrubSignInText(region, secrets, hold === buffer.length);
+    const out = dropStandaloneCards(scrubbed, cards, final ? "" : (carry[0] ?? "\u0000"));
+    if (out.length > 0) previous = out.at(-1)!;
+    return out;
   };
   return {
     push: (chunk: string) => process(carry + chunk, false),
@@ -273,9 +308,6 @@ export function makeStreamRedactor(patterns: () => ReadonlyArray<StreamPattern>)
       const held = carry;
       carry = "";
       return held.length === 0 ? "" : process(held, true);
-    },
-    get holding() {
-      return carry.length > 0;
     },
   };
 }
@@ -285,17 +317,35 @@ export interface PluginSignInOwner {
   readonly providerThreadId: ProviderThreadId;
 }
 
+/** A challenge seen in a plain run of a CLI; it offers a sign-in only once the plugin vouches for it. */
+export interface PluginSignInCandidate {
+  readonly sessionId: string;
+  readonly toolCallId: string;
+  readonly generation: number;
+  /** The program the command ran. */
+  readonly program: string;
+  readonly challenge: PluginSignInChallenge;
+}
+
 interface Attempt {
   readonly id: string;
   readonly plugin: string;
+  readonly displayName: string | undefined;
+  readonly programs: ReadonlyArray<string>;
   readonly url: string;
-  readonly secrets: ReadonlyArray<string>;
   readonly sessionId: string;
   readonly generation: number;
   readonly expiresAt: number;
   owner: PluginSignInOwner | undefined;
   live: boolean;
   signedIn: boolean;
+}
+
+interface TrackedTool {
+  kind?: string | null | undefined;
+  title?: string | null | undefined;
+  rawInput?: unknown;
+  streamed: string;
 }
 
 export type PluginSignInRedeemFailure = "expired" | "not-found";
@@ -313,9 +363,6 @@ type ChunkUpdate = Extract<
   { readonly sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" }
 >;
 
-const commandRunsPlugin = (command: string, plugin: string) =>
-  new RegExp(`(?:^|[;&|]\\s*)${plugin}(?:\\s|$)`, "u").test(command.trim());
-
 const exitCodeOf = (rawOutput: unknown) => {
   if (!Predicate.isObject(rawOutput)) return undefined;
   const code = rawOutput.exit_code ?? rawOutput.exitCode;
@@ -329,9 +376,13 @@ const commandOf = (rawInput: unknown) => {
   return Predicate.isString(command) ? command : undefined;
 };
 
+const isTerminal = (status: string | null | undefined) =>
+  status === "completed" || status === "failed";
+
 /**
- * Challenges a live Antigravity adapter has seen. Attempts belong to one agent process
- * generation and expire; the notice names an attempt, and only its thread can open it.
+ * Challenges a live Antigravity adapter has seen. Every sign-in URL is scrubbed before
+ * projection; an attempt exists only for a candidate the caller admitted, belongs to one agent
+ * process generation and expires, and only the thread that showed it can open it.
  */
 export function makeAntigravityPluginSignIns(
   options: {
@@ -350,39 +401,33 @@ export function makeAntigravityPluginSignIns(
     string,
     { readonly redactor: ReturnType<typeof makeStreamRedactor>; template: Notification }
   >();
+  const tools = new Map<string, TrackedTool>();
+  // Secrets of every challenge a session printed, admitted or not.
+  const secretsBySession = new Map<string, Array<string>>();
   // Each session's latest agent process, so a prompt's end releases only its own held text.
   const sessionGenerations = new Map<string, number>();
   let nextGeneration = 0;
 
-  const sessionPatterns = (sessionId: string) => (): ReadonlyArray<StreamPattern> => {
-    const patterns: Array<StreamPattern> = [];
-    for (const attempt of attempts.values()) {
-      if (attempt.sessionId !== sessionId) continue;
-      for (const [index, secret] of attempt.secrets.entries()) {
-        patterns.push({ text: secret, replacement: index === 0 ? LINK_REMOVED : VALUE_REMOVED });
-      }
-      if (attempt.live) {
-        patterns.push({
-          text: `<plugin-card catalog-id="${attempt.plugin}"></plugin-card>`,
-          replacement: "",
-          standalone: true,
-        });
-      }
-    }
-    return patterns;
-  };
-  const sessionHasAttempts = (sessionId: string) =>
-    [...attempts.values()].some((attempt) => attempt.sessionId === sessionId);
-  const sessionSecrets = (sessionId: string) =>
-    [...attempts.values()]
-      .filter((attempt) => attempt.sessionId === sessionId)
-      .flatMap((attempt) => attempt.secrets);
+  const sessionPatterns = (sessionId: string) => () => ({
+    secrets: secretsBySession.get(sessionId) ?? [],
+    cards: [...attempts.values()]
+      .filter((attempt) => attempt.sessionId === sessionId && attempt.live)
+      .map((attempt) => `<plugin-card catalog-id="${attempt.plugin}"></plugin-card>`),
+  });
 
-  /** Releases the held text of a session's channels other than `keep`. */
-  const flushSession = (sessionId: string, keep?: string): ReadonlyArray<Notification> => {
+  const rememberSecrets = (sessionId: string, secrets: ReadonlyArray<string>) => {
+    const known = secretsBySession.get(sessionId) ?? [];
+    for (const secret of secrets) if (!known.includes(secret)) known.push(secret);
+    secretsBySession.set(sessionId, known.slice(-32));
+  };
+
+  /** Ends the session's streams that `ends` selects, releasing what they held, in order. */
+  const flushStreams = (sessionId: string, ends: (channel: string) => boolean) => {
     const flushed: Array<Notification> = [];
+    const prefix = `${sessionId}\u0000`;
     for (const [key, entry] of redactors) {
-      if (key === keep || !key.startsWith(`${sessionId}\u0000`)) continue;
+      if (!key.startsWith(prefix) || !ends(key.slice(prefix.length))) continue;
+      redactors.delete(key);
       const text = entry.redactor.flush();
       if (text.length === 0) continue;
       const update = entry.template.update;
@@ -395,14 +440,6 @@ export function makeAntigravityPluginSignIns(
       });
     }
     return flushed;
-  };
-
-  const evict = () => {
-    while (attempts.size > maxAttempts) {
-      const oldest = attempts.keys().next().value;
-      if (oldest === undefined) break;
-      attempts.delete(oldest);
-    }
   };
 
   const streamChunk = (
@@ -421,9 +458,31 @@ export function makeAntigravityPluginSignIns(
       redactors.set(key, entry);
     }
     entry.template = notification;
-    const others = flushSession(notification.sessionId, key);
     const emitted = entry.redactor.push(text);
-    return emitted.length === 0 ? others : [...others, rebuild(emitted)];
+    return emitted.length === 0 ? [] : [rebuild(emitted)];
+  };
+
+  const trackTool = (sessionId: string, toolCallId: string) => {
+    const key = `${sessionId}\u0000${toolCallId}`;
+    let tool = tools.get(key);
+    if (tool === undefined) {
+      tool = { streamed: "" };
+      tools.set(key, tool);
+      while (tools.size > 512) {
+        const oldest = tools.keys().next().value;
+        if (oldest === undefined) break;
+        tools.delete(oldest);
+      }
+    }
+    return { key, tool };
+  };
+
+  const evict = () => {
+    while (attempts.size > maxAttempts) {
+      const oldest = attempts.keys().next().value;
+      if (oldest === undefined) break;
+      attempts.delete(oldest);
+    }
   };
 
   return {
@@ -435,15 +494,16 @@ export function makeAntigravityPluginSignIns(
       }
     },
     /**
-     * The notifications to project in place of `notification`: challenge URLs scrubbed, text
-     * held back while it could begin one, and held text released before other updates.
+     * The notifications to project in place of `notification`, with every sign-in URL and known
+     * secret scrubbed, and the challenge a plain CLI run printed, for the caller to verify.
      */
     observe: (input: {
       readonly generation: number;
       readonly notification: Notification;
-      readonly now: number;
-      readonly newId: () => string;
-    }): ReadonlyArray<Notification> => {
+    }): {
+      readonly notifications: ReadonlyArray<Notification>;
+      readonly candidate: PluginSignInCandidate | undefined;
+    } => {
       const { notification } = input;
       const update = notification.update;
       const sessionId = notification.sessionId;
@@ -453,25 +513,28 @@ export function makeAntigravityPluginSignIns(
           update.sessionUpdate === "agent_thought_chunk") &&
         update.content.type === "text"
       ) {
-        if (
-          !sessionHasAttempts(sessionId) &&
-          !redactors.has(`${sessionId}\u0000${update.sessionUpdate}`)
-        ) {
-          return [notification];
-        }
-        return streamChunk(notification, update.sessionUpdate, update.content.text, (text) => ({
-          ...notification,
-          update: { ...update, content: { ...update.content, text } },
-        }));
+        return {
+          notifications: streamChunk(
+            notification,
+            update.sessionUpdate,
+            update.content.text,
+            (text) => ({
+              ...notification,
+              update: { ...update, content: { ...update.content, text } },
+            }),
+          ),
+          candidate: undefined,
+        };
       }
       if (update.sessionUpdate === "tool_call_content_chunk") {
         const content = update.content;
-        if (
-          content.type === "content" &&
-          content.content.type === "text" &&
-          sessionHasAttempts(sessionId)
-        ) {
-          return streamChunk(
+        if (content.type !== "content" || content.content.type !== "text") {
+          return { notifications: [notification], candidate: undefined };
+        }
+        const { tool } = trackTool(sessionId, update.toolCallId);
+        tool.streamed = (tool.streamed + content.content.text).slice(-MAX_TEXT_LENGTH);
+        return {
+          notifications: streamChunk(
             notification,
             `tool:${update.toolCallId}`,
             content.content.text,
@@ -479,52 +542,52 @@ export function makeAntigravityPluginSignIns(
               ...notification,
               update: { ...update, content: { ...content, content: { ...content.content, text } } },
             }),
-          );
-        }
-        return [...flushSession(sessionId), notification];
+          ),
+          candidate: undefined,
+        };
       }
-      const flushed = flushSession(sessionId);
       if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
-        return [...flushed, notification];
+        return { notifications: [notification], candidate: undefined };
       }
-      const challenge = extractToolCallChallenge(update);
+      // A tool call ends the reply streams; its own output stream ends with the call.
+      const terminal = isTerminal(update.status);
+      const flushed = flushStreams(
+        sessionId,
+        (channel) =>
+          !channel.startsWith("tool:") || (terminal && channel === `tool:${update.toolCallId}`),
+      );
+      const { key, tool } = trackTool(sessionId, update.toolCallId);
+      if (update.kind !== undefined) tool.kind = update.kind;
+      if (update.title !== undefined) tool.title = update.title;
+      if (update.rawInput !== undefined) tool.rawInput = update.rawInput;
+      const challenge = extractToolCallChallenge({
+        inputs: [tool.title, tool.rawInput],
+        outputs: [update.rawOutput, update.content, terminal ? tool.streamed : undefined],
+      });
+      const command = commandOf(tool.rawInput);
+      let candidate: PluginSignInCandidate | undefined;
       if (challenge !== undefined) {
-        let attempt = [...attempts.values()].find(
-          (candidate) =>
-            candidate.sessionId === sessionId && candidate.url === challenge.authorizationUrl,
-        );
-        if (attempt === undefined) {
-          for (const previous of attempts.values()) {
-            if (previous.sessionId === sessionId && previous.plugin === challenge.plugin) {
-              previous.live = false;
-            }
-          }
-          attempt = {
-            id: input.newId(),
-            plugin: challenge.plugin,
-            url: challenge.authorizationUrl,
-            secrets: challenge.secrets,
+        rememberSecrets(sessionId, challenge.secrets);
+        const program = command === undefined ? undefined : plainCommandProgram(command);
+        if (tool.kind === "execute" && program !== undefined) {
+          candidate = {
             sessionId,
+            toolCallId: update.toolCallId,
             generation: input.generation,
-            expiresAt: input.now + ttlMs,
-            owner: undefined,
-            live: true,
-            signedIn: false,
+            program,
+            challenge,
           };
-          attempts.set(attempt.id, attempt);
-          evict();
         }
-        pendingNotices.set(update.toolCallId, { attemptId: attempt.id, signedIn: false });
       } else if (update.status === "completed" && exitCodeOf(update.rawOutput) === 0) {
-        const command = commandOf(update.rawInput);
+        const program = command === undefined ? undefined : plainCommandProgram(command);
         const waiting = [...attempts.values()]
           .toReversed()
           .find(
             (attempt) =>
               attempt.sessionId === sessionId &&
               !attempt.signedIn &&
-              command !== undefined &&
-              commandRunsPlugin(command, attempt.plugin),
+              program !== undefined &&
+              attempt.programs.includes(program),
           );
         if (waiting !== undefined) {
           waiting.signedIn = true;
@@ -532,18 +595,57 @@ export function makeAntigravityPluginSignIns(
           pendingNotices.set(update.toolCallId, { attemptId: waiting.id, signedIn: true });
         }
       }
-      const secrets = sessionSecrets(sessionId);
-      const scrubbed =
-        secrets.length === 0
-          ? notification
-          : { ...notification, update: redactPluginSignInSecrets(update, secrets) };
-      return [...flushed, scrubbed];
+      if (terminal) tools.delete(key);
+      const scrubbed = {
+        ...notification,
+        update: scrubPayload(update, secretsBySession.get(sessionId) ?? []),
+      };
+      return { notifications: [...flushed, scrubbed], candidate };
     },
-    /** Held text of an agent process's sessions, released when its prompt ends. */
+    /** Offers the sign-in a verified candidate printed, replacing the plugin's older attempt. */
+    admit: (
+      candidate: PluginSignInCandidate,
+      verified: {
+        readonly attemptId: string;
+        readonly displayName: string | undefined;
+        readonly programs: ReadonlyArray<string>;
+        readonly now: number;
+      },
+    ) => {
+      const { challenge, sessionId } = candidate;
+      let attempt = [...attempts.values()].find(
+        (existing) =>
+          existing.sessionId === sessionId && existing.url === challenge.authorizationUrl,
+      );
+      if (attempt === undefined) {
+        for (const previous of attempts.values()) {
+          if (previous.sessionId === sessionId && previous.plugin === challenge.plugin) {
+            previous.live = false;
+          }
+        }
+        attempt = {
+          id: verified.attemptId,
+          plugin: challenge.plugin,
+          displayName: verified.displayName ?? pluginDisplayName(challenge.plugin),
+          programs: verified.programs,
+          url: challenge.authorizationUrl,
+          sessionId,
+          generation: candidate.generation,
+          expiresAt: verified.now + ttlMs,
+          owner: undefined,
+          live: true,
+          signedIn: false,
+        };
+        attempts.set(attempt.id, attempt);
+        evict();
+      }
+      pendingNotices.set(candidate.toolCallId, { attemptId: attempt.id, signedIn: false });
+    },
+    /** Ends every stream of an agent process's sessions when its prompt ends. */
     flush: (generation: number) =>
       [...sessionGenerations]
         .filter(([, owner]) => owner === generation)
-        .flatMap(([sessionId]) => flushSession(sessionId)),
+        .flatMap(([sessionId]) => flushStreams(sessionId, () => true)),
     /** The notice a tool call raised, once; it binds the attempt to the thread that shows it. */
     takeToolNotice: (
       toolCallId: string,
@@ -555,12 +657,11 @@ export function makeAntigravityPluginSignIns(
       const attempt = attempts.get(pending.attemptId);
       if (attempt === undefined) return undefined;
       attempt.owner ??= owner;
-      const displayName = pluginDisplayName(attempt.plugin);
-      const name = displayName ?? attempt.plugin;
+      const name = attempt.displayName ?? attempt.plugin;
       const pluginSignIn = {
         attemptId: attempt.id,
         plugin: attempt.plugin,
-        ...(displayName === undefined ? {} : { displayName }),
+        ...(attempt.displayName === undefined ? {} : { displayName: attempt.displayName }),
         ...(pending.signedIn ? { signedIn: true } : {}),
       };
       return pending.signedIn
