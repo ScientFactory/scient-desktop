@@ -27,7 +27,8 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { AddYourOwn } from "./AddYourOwn";
-import { ProviderStoreShelves, StoreInstall } from "./ProviderStorePages";
+import { ProviderStoreShelves } from "./ProviderStorePages";
+import { StoreInstall } from "./StoreInstall";
 import { ConnectorItem, EntryItem, PluginItem } from "./ExtensionItems";
 import {
   BackLink,

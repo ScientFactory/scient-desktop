@@ -26,7 +26,7 @@ import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import { actOnProviderPlugin, extensionsProviderStoreEntry } from "./extensionsState";
 import { needsAntigravityConnectionSignIn } from "./ProviderStorePages";
 import { openAuthorizationPage } from "./openAuthorizationPage";
-import { StoreInstall, useStoreInstall } from "./ProviderStorePages";
+import { StoreInstall, useStoreInstall } from "./StoreInstall";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 function CardRow({ children }: { readonly children: ReactNode }) {
