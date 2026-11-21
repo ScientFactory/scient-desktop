@@ -138,6 +138,11 @@
       "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance; resolve account capabilities before the cached Extensions account probe."
     },
     {
+      "path": "apps/server/src/provider/Drivers/AntigravityDriver.ts",
+      "anchor": "makeAntigravityInstancePlugins",
+      "purpose": "Attach the Antigravity Marketplace store and native plugin actions to the exact instance, run through the agy CLI it resolves."
+    },
+    {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
       "anchor": "makeCodexNativeInventory",
       "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance; its store retains one scoped lease and caches plugin details across page, icon and skill reads."
