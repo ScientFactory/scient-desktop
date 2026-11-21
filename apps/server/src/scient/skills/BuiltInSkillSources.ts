@@ -406,6 +406,149 @@ The comparison is done when every cell has content or one of the three empty lab
 When the user asks, write a cited paragraph or methods justification from the comparison into the document they name, at the place they say. Use the comparison's citations and claims only, in the document's citation style: \`scient_sources_cite\` with \`format\` \`markdown\` or \`latex\`; for other formats, the document's own citation mechanism, or clearly marked references and a note on what you couldn't insert. Change only that passage (plus the bibliography updates \`scient_sources_cite\` makes), reread every inserted sentence against the table, and show the user what you inserted.
 `;
 
+const statisticsReview = `---
+name: statistics-review
+description: Check the statistics in my results, table or analysis before I send it; are the tests, uncertainty and conclusions right? Use check-reported-numbers to match draft numbers to outputs, ml-evaluation-audit for model evaluation, and reporting-guideline-check for a journal checklist.
+---
+
+# Statistics review
+
+The goal is a review the researcher can act on: every reported test checked, each problem located and explained, with a concrete fix. It is a review, so leave the draft and the analysis as they are unless asked to change them, and finish it in this turn. Questions for the researcher go at the end, after the finished review.
+
+## Read
+
+Read the results and whatever explains them: methods, table notes, the analysis plan or preregistration, and linked outputs or notebooks (\`scient_notebook_read\` shows saved outputs without rerunning anything). Work out the question, the design, the outcome, the comparison and the analysed population. Note what is missing instead of guessing it.
+
+## Check
+
+Keep a ledger of every reported test and estimate: where it is, the estimate with its uncertainty, n, the test statistic, df where the test has them, and the p-value. Then look for the problems that matter in practice:
+
+- **Wrong test for the design.** Check that each test fits how the data were collected and what they look like. Identify the independent sampling or assignment unit (participant, animal, cluster) and check that the analysis handles clustering and repeated measurements; check each n against its stated unit, and df against the model and test.
+- **Incomplete or inconsistent reporting.** An effect without its size or interval, spread and precision confused (SD, IQR vs SEM, CI), p-values printed as \`.000\` (should be \`p < .001\`), or a p-value that cannot follow from its statistic and df. Recompute what you can from the reported values. Call a mismatch only when the reported details (df, sidedness, corrections) determine the calculation and the result falls outside rounding; if a missing detail could explain the difference, say which detail is needed and mark the value unverified. Use Scient Compute for the arithmetic.
+- **Multiplicity and selection.** Many outcomes, subgroups or analyses with no plan or correction, outcomes that differ from the plan, or selection that reuses the data being tested.
+- **Conclusions the numbers don't support.** A difference claimed from one significant and one non-significant result without a test of the difference; non-significance read as no effect; causal claims without a design and stated assumptions that support them; statistical significance read as importance; post-hoc power used to explain a null.
+
+Say also what is done well, so the researcher knows what to keep. Every number in the review comes from the draft, the outputs or your own recomputation. Done when every ledger row has a status (checked, problem, or not checkable and why).
+
+## Report
+
+For a project draft, save \`<draft-stem>.statistics-review.md\` next to it, without overwriting an existing file. Put the most consequential problems first, each with location, what is wrong, why it matters and the fix. Then give the ledger and what you couldn't check. Reply with a short summary and a link to the report. For a short passage pasted into chat, answer in chat.
+`;
+
+const checkReportedNumbers = `---
+name: check-reported-numbers
+description: Check every number in my abstract, text, tables and figure captions against the project's CSVs, notebook outputs, logs or analysis tables; find mismatches and numbers with no source. Use statistics-review for methods and conclusions, references for other papers' numbers, and workspace-readiness-review for project reproducibility.
+---
+
+# Check reported numbers
+
+The goal is to know, for every number in the draft, whether the analysis outputs support it, and to say honestly how many were checked. Propose corrections in the report and edit the draft only when asked. Finish in this turn and put questions at the end.
+
+## Inventory first
+
+Go through the draft section by section (abstract, text, tables, captions, supplements in scope) and list every reported number, counting repeats separately: counts, percentages, means and spreads, estimates and intervals, p-values, durations, units. Count them before matching anything, so the coverage you report is a count, not an impression. The inventory is done when every section in scope has been read and every number in it has a row. Numbers that aren't results (citation years, section numbers, external facts) can be grouped and counted rather than traced.
+
+## Trace each number
+
+Find where each number comes from: a file and row or cell, a notebook output (\`scient_notebook_read\` shows saved outputs without rerunning), a log line. If the project uses Scient linked results, \`scient_results_check\` reports values that are out of date or edited. Match by meaning, not by resemblance: the same measure, population, time point and adjustment. When several outputs could be the source, prefer the one the methods describe and the run record supports; if they disagree and nothing says which is final, report a source conflict rather than picking the closest value. A file being newer or named "final" is a hint, not proof.
+
+Recompute what is derived: percentages from their numerators and denominators, totals, differences, unit conversions. Use full-precision source values where they exist and round the result to the draft's precision; when only rounded inputs exist, carry their rounding bounds through and call a mismatch only when the draft value falls outside them. No blanket tolerance. Use Scient Compute for the arithmetic. Check against the outputs as they stand: a number that appears only after refitting a model or changing a filter has no source.
+
+Give each number a status: matches, mismatch, source conflict, no source found, source stale or unreadable, or not checked (with the reason). A number without a source is unsupported, not necessarily wrong. Tracing is done when every inventory row has a status.
+
+## Report
+
+Before reporting, check that the ledger has a row for every number in the inventory; fix it if not. For a project draft, save \`<draft-stem>.numbers-check.md\` next to it, under a new name if that file already exists. Put the mismatches that change a result or conclusion first, each with location, draft value, source value and location, and the proposed correction. Then give the coverage (numbers found, checked, matched, unresolved, excluded) and the full ledger. Reply with a short summary and a link to the report.
+`;
+
+const reviewerResponse = `---
+name: reviewer-response
+description: Draft my point-by-point response or rebuttal to journal reviewers, or check my existing response, against the revised manuscript and our actual decisions. Use references for citation support, statistics-review for analyses, and reporting-guideline-check for checklist compliance. Not for an independent peer review of someone else's paper.
+---
+
+# Reviewer response
+
+The goal is a response the authors can send after filling in only what genuinely needs them: every comment answered, every claimed change really in the manuscript, and nothing promised or invented. The authors own the decisions; the response carries them out. Finish the drafts in this turn and put open questions for the authors at the end.
+
+## Read
+
+Read the decision letter, every review, the authors' notes or decisions, the original and revised manuscripts, supplements and any outputs the responses rely on. Follow the journal's required format if it gives one.
+
+## Ledger
+
+Split the reviews into answerable points in reviewer order, with identifiers such as R1.2 (assign them if the reviewers didn't number their points), keeping each point's original wording. Include minor and editorial requests. For each point record what the authors decided: done, decided but not yet done, declined (with their reason), or needs an author decision. The ledger is done when every point in every review has a row and one of these statuses.
+
+## Check every claimed change
+
+For each change the authors say they made, find it in the revised manuscript or supplement and note where it is (section and a short quote, or page and line from the version you read). If you can't find a claimed change in the revision you were given, treat it as unverified, not done, and say which version you checked. Check that numbers quoted in the response match the outputs and the revised text. This step is done when every claimed change has a location or is marked unverified. If you applied LaTeX or bibliography changes, build and check references as far as is in scope, and say what you couldn't check.
+
+## Write the response
+
+For each point, answer directly first, then give the reason and where the change is. Keep reviewer text, response and quoted manuscript text visually distinct. Be courteous; where the authors disagree, or the reviewer is mistaken, say so politely with the evidence rather than conceding. Where reviewers ask for opposite things, explain to each how the authors resolved it.
+
+Claim only what the manuscript shows. Answer work that is decided but not yet done conditionally ("we will revise …") or with a clearly marked placeholder for the authors. Analyses, results, citations, approvals and agreements come from the authors or the files; where one is missing, leave a marked placeholder for the authors to supply, never an invented one. Before finishing, reread the whole response, including the opening and closing paragraphs, for completion claims the manuscript doesn't support.
+
+## Deliver
+
+If the user asked you to check an existing response rather than draft one, report your findings and write files only if asked. Otherwise save \`reviewer-response.md\` beside the manuscript, and \`manuscript-changes.md\` with the ledger, the evidence for each change, proposed edits not yet applied (before and after) and the decisions still needed. Use the journal's template or a file the user named when given, and pick a new name rather than replacing an existing file. Edit the manuscript only if asked. Reply with a short summary, what still blocks submission, and links to the files.
+`;
+
+const mlEvaluationAudit = `---
+name: ml-evaluation-audit
+description: "Audit whether I can trust this machine-learning score before submission: train/test splits, leakage, tuning, baselines, metrics and variation across runs. Use check-reported-numbers for score transcription, statistics-review for general inference, reporting-guideline-check for a checklist, and workspace-readiness-review for reproducibility."
+---
+
+# ML evaluation audit
+
+The goal is an honest answer to "would this score hold up on new data like the intended use?", with every problem located and, where the data allow, measured. It is an audit: leave code, data, splits and project notes as they are and propose fixes instead of retraining, unless asked. Finish in this turn and put questions at the end.
+
+## Read
+
+Read the claim, the methods, the pipeline code and configuration, split files, predictions and run logs. Work out the intended use, the unit that must be independent between training and test (patient, subject, site, document, time period), when predictions would be made in practice, and which inputs exist at that moment. Mark unknowns instead of guessing them.
+
+## Check
+
+- **Leakage across the split.** Where identifiers allow, compute how many test units also appear in training (count, denominator and percentage) rather than saying leakage is possible. Check duplicates and near-duplicates. Trace every fitted step (imputation, scaling, feature selection, resampling, encoding, learned representations) and confirm it was fitted on training data only, within each fold. Look for features that encode the label or would not be available at prediction time.
+- **Tuning and selection.** Hyperparameters, features, thresholds, checkpoints and calibration chosen without touching the final test set; repeated test access or best-of-many runs reported as one.
+- **Baselines and metrics.** Methods compared on the same cases and splits, with simple baselines. Metrics that suit the task and the claim: for a rare outcome, judge results against the prevalence and a trivial baseline, and report discrimination, precision-recall and calibration rather than accuracy alone (the chance level for precision-recall is the prevalence, for ROC AUC 0.5); for multiclass or regression, the averaging and the naive baseline.
+- **Uncertainty.** Variation from training (seeds, splits) is different from sampling uncertainty on the evaluation population (an interval or resampling at the independent unit, keeping pairs when models share test cases). Say which of these the available runs and predictions can show; a single run reported without either is a finding.
+- **Claims.** Generalisation, superiority and readiness for use, each against the evidence actually shown.
+
+Do counts and metric checks in Scient Compute on the project's data, writing nothing to project files. Read saved notebook outputs with \`scient_notebook_read\` and rerun notebooks only when asked. If Scient recorded the evaluation runs, \`scient_results_list\` shows them, and \`scient_results_check\` checks values linked into the manuscript. Every run, count and interval in the audit comes from the project or your own computation. Done when each area above has a located problem, a finding of sound with its evidence, or the reason it couldn't be checked.
+
+## Report
+
+For a project audit, save \`<draft-stem>.ml-evaluation-audit.md\` beside the manuscript (or \`ml-evaluation-audit.md\` beside the evaluation code), without overwriting an existing file. Lead with the problems that most change the trust in the score, each with location, evidence (including the numbers you computed), impact and the proposed fix. Then list what was checked and found sound, and what couldn't be checked. Reply with a short summary and a link to the report.
+`;
+
+const reportingGuidelineCheck = `---
+name: reporting-guideline-check
+description: Which reporting guideline fits my manuscript? Check my paper against the current CONSORT, STROBE, PRISMA, TRIPOD+AI, STARD, ARRIVE, CARE, SPIRIT or another checklist, item by item with manuscript locations. Use systematic-review to conduct a review, statistics-review or ml-evaluation-audit for methods, and references for citation support.
+---
+
+# Reporting guideline check
+
+The goal is to name the right reporting guideline for the study actually done, with its current edition confirmed, and to show item by item what the manuscript already reports and what is missing. Complete reporting is not the same as good methods; say so where it matters. Leave the manuscript unchanged and finish in this turn, with questions at the end.
+
+## Choose the guideline
+
+Read the title, abstract, methods and any protocol, registration or journal instructions. Choose by what the study did, not what it calls itself: a trial report or protocol, an observational study, a systematic review, a prediction model, a diagnostic accuracy study, an animal experiment, a case report, or something else. Check whether an extension applies, such as for AI, cluster designs, non-inferiority or scoping reviews, and whether the field has its own standard (for example COBIDAS for neuroimaging or REFORMS for ML-based science). For health research, start with the EQUATOR Network directory (equator-network.org); for other fields, with the venue and the issuing group. Follow the issuing group's instructions on how an extension relates to its base: some add items to the base checklist, some are complete checklists of their own, and some replace an earlier version. Record which items you audited and which edition they came from.
+
+Take the current edition and its items from the official source, since guidelines are updated, and record the edition, link and date you checked. If the journal requires an older edition, audit against that one and note the difference. If the official checklist can't be opened, still finish: give a clearly labelled provisional review of the main reporting areas and say that item-level compliance couldn't be confirmed.
+
+If the user only asked which guideline fits, answer that in chat with the reasons and the confirmed edition.
+
+## Audit
+
+Go item by item. For each, give a short description in your own words (link the checklist rather than copying its text), where the manuscript reports it (section and quote, or page; say whether a page is printed or PDF), and a status: reported, partly reported, not reported, not applicable (with the reason), or not checked. Read the relevant sections and supplements before calling something missing; a heading is not the content. Credit what is there before listing gaps. Suggested wording states only facts the manuscript gives; mark what the authors must supply.
+
+Before reporting, check that every official item has a row and that your summary counts match the table.
+
+## Report
+
+For a manuscript audit, save \`<draft-stem>.reporting-guideline-check.md\` next to it without overwriting an existing file: the choice and its reasons, the confirmed source, the most important gaps first, then the full item table. Reply with a short summary and a link.
+`;
+
 /**
  * Bundle-safe mirrors of the reviewed built-in release files.
  * BuiltInSkillReleases.test.ts prevents these bytes from drifting from the
@@ -2193,6 +2336,111 @@ A record with \`libraryMatch\` disagrees with a Library copy. Link it (\`scient_
   "category": "Research",
   "categoryDescription": "Check, find and cite the literature.",
   "displayOrder": 100,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "statistics-review",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": statisticsReview,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.statistics-review",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 110,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "check-reported-numbers",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": checkReportedNumbers,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.check-reported-numbers",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 120,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "reviewer-response",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": reviewerResponse,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.reviewer-response",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 130,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "ml-evaluation-audit",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": mlEvaluationAudit,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.ml-evaluation-audit",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 140,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "reporting-guideline-check",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": reportingGuidelineCheck,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.reporting-guideline-check",
+  "version": "0.1.0",
+  "category": "Analysis",
+  "categoryDescription": "Check research methods, results and manuscript reporting.",
+  "displayOrder": 150,
   "supportedScopes": ["user"],
   "defaultInvocationPolicy": "automatic",
   "origin": {

@@ -32,6 +32,10 @@ const CATEGORY_COPY: Readonly<
     title: msg("Research", { $context: "category of skills" }),
     description: msg("Check, find and cite the literature."),
   },
+  Analysis: {
+    title: msg("Analysis", { $context: "category of skills" }),
+    description: msg("Check research methods, results and manuscript reporting."),
+  },
 };
 
 /** A skill category's name and description in the app's language. */
