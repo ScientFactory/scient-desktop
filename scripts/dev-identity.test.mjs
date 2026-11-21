@@ -1198,7 +1198,8 @@ describe("code review guards", () => {
     try {
       result = await importDevIdentity({ targetStateDir: target, home });
     } finally {
-      process.env.TMPDIR = tmp;
+      if (tmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = tmp;
     }
     assert.equal(result.websiteProfiles, 1);
     assert.equal(NodeFS.existsSync(NodePath.join(target, "dev-identity-staging")), false);
