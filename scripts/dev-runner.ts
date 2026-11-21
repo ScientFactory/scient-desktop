@@ -843,19 +843,20 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   // checkout may open it, never during a seed, a seed that stopped is finished first, and the
   // home stays claimed against seeding until this runner and its children are gone.
   const checkoutRoot = worktreePath ?? (yield* HostProcess.WorkingDirectory);
-  yield* Effect.tryPromise({
+  const homeClaim = yield* Effect.tryPromise({
     try: async () => {
       const identity = (await import(IDENTITY_MODULE)) as {
         assertHomeCheckout: (input: { checkoutRoot: string; stateRoot: string }) => void;
         claimHomeStart: (input: { checkoutRoot: string; stateRoot: string }) => {
           status: string;
           release: () => void;
+          holdGroup: (group: number) => void;
         };
       };
       // A dry run only resolves: it checks ownership but changes nothing in the home.
       if (input.dryRun) {
         identity.assertHomeCheckout({ checkoutRoot, stateRoot: baseDir });
-        return;
+        return undefined;
       }
       const claim = identity.claimHomeStart({ checkoutRoot, stateRoot: baseDir });
       if (claim.status === "seeding") {
@@ -864,6 +865,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         );
       }
       process.once("exit", claim.release);
+      return claim;
     },
     catch: (cause) => new DevRunnerIdentityHomeError({ cause }),
   });
@@ -1006,6 +1008,9 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         }),
     ),
   );
+  // SCIENT-FORK:START — the home stays claimed while the detached group lives, runner or not.
+  if ((yield* HostProcess.Platform) !== "win32") homeClaim?.holdGroup(child.pid);
+  // SCIENT-FORK:END
 
   const memoryLimitBytes =
     input.memoryLimitGb === undefined

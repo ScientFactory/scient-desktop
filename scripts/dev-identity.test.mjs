@@ -1462,6 +1462,64 @@ describe("code review guards", () => {
     }
   });
 
+  it("keeps the home claimed while the runner's children outlive it", () => {
+    const root = scratch();
+    const { home } = makeFileVaultHome(NodePath.join(root, "home"));
+    const checkout = linkHomeCheckout(root, home);
+    const installed = { stateDir: NodePath.join(root, "installed", "userdata") };
+    const claim = claimHomeStart({
+      checkoutRoot: checkout,
+      stateRoot: NodePath.join(checkout, ".scient-next"),
+      home,
+      installed,
+      pid: 900_001,
+    });
+    claim.holdGroup(77);
+    // The runner (900001) is gone; a process of the group it started is not.
+    assert.equal(
+      homeAppIsRunning(home, (pid) => pid === -77, Date.now, noOpenFiles),
+      true,
+    );
+    assert.equal(
+      homeAppIsRunning(home, () => false, Date.now, noOpenFiles),
+      false,
+    );
+    claim.release();
+    assert.equal(
+      homeAppIsRunning(home, (pid) => pid === -77, Date.now, noOpenFiles),
+      false,
+    );
+  });
+
+  it("finishes a candidate's stopped copy before a direct start opens it", () => {
+    const root = scratch();
+    const home = homeAt(NodePath.join(root, "home"));
+    const checkout = NodePath.join(root, "candidate");
+    const secrets = NodePath.join(checkout, ".scient-next", "scient-next-dev", "secrets");
+    write(NodePath.join(secrets, "accounts-state.bin"), "old");
+    write(NodePath.join(secrets, "accounts-state.bin.dev-identity-staged"), "new");
+    write(
+      NodePath.join(checkout, ".scient-next", "scient-next-dev", "dev-identity-journal.json"),
+      JSON.stringify({
+        writes: [
+          {
+            staged: NodePath.join(secrets, "accounts-state.bin.dev-identity-staged"),
+            path: NodePath.join(secrets, "accounts-state.bin"),
+          },
+        ],
+        removals: [],
+      }),
+    );
+    const claim = claimHomeStart({
+      checkoutRoot: checkout,
+      stateRoot: NodePath.join(checkout, ".scient-next"),
+      home,
+      installed: { stateDir: NodePath.join(root, "installed", "userdata") },
+    });
+    assert.equal(claim.status, "not-home");
+    assert.equal(NodeFS.readFileSync(NodePath.join(secrets, "accounts-state.bin"), "utf8"), "new");
+  });
+
   it("frees the seed lock the moment its process dies, and never hands it to two", async () => {
     const root = scratch();
     const home = homeAt(NodePath.join(root, "home"));

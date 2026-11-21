@@ -1179,10 +1179,9 @@ const RUNNERS_DIR = "dev-identity-runners";
 const RUNNER_START_GRACE_MS = 5_000;
 
 /**
- * Claims the home for one app runner until `release`. The runner records itself before it checks
- * the seed lock, and a seed takes that lock before it checks for runners, so one of the two always
- * sees the other. A process the runner started that outlives it still holds the home's databases
- * open, which a seed also checks.
+ * Claims the state a runner opens. Another app: finish its stopped copy first. The home: record the
+ * runner before checking the seed lock (a seed locks before checking runners), held while the runner
+ * or any `holdGroup` group lives, until `release`.
  */
 export function claimHomeStart({
   checkoutRoot,
@@ -1192,9 +1191,18 @@ export function claimHomeStart({
   pid = process.pid,
 }) {
   assertHomeCheckout({ checkoutRoot, stateRoot, home });
-  if (!sameFile(stateRoot, home.root)) return { status: "not-home", release: () => {} };
+  if (!sameFile(stateRoot, home.root)) {
+    const stateDir = NodePath.join(stateRoot, STATE_SUBDIR);
+    if (!isProtectedTarget(stateDir, home, installed)) {
+      recoverInterruptedCopy(stateDir);
+      clearStaging(stateDir);
+    }
+    return { status: "not-home", release: () => {}, holdGroup: () => {} };
+  }
   const receipt = NodePath.join(home.root, RUNNERS_DIR, `${String(pid)}.json`);
-  writeFileAtomic(receipt, jsonBytes({ pid }));
+  const groups = [];
+  const record = () => writeFileAtomic(receipt, jsonBytes({ pid, processGroups: groups }));
+  record();
   const release = () => NodeFS.rmSync(receipt, { force: true });
   let readiness;
   try {
@@ -1205,9 +1213,14 @@ export function claimHomeStart({
   }
   if (readiness === "seeding") {
     release();
-    return { status: "seeding", release: () => {} };
+    return { status: "seeding", release: () => {}, holdGroup: () => {} };
   }
-  return { status: "ready", release };
+  const holdGroup = (group) => {
+    if (!Number.isInteger(group) || group <= 1) return;
+    groups.push(group);
+    record();
+  };
+  return { status: "ready", release, holdGroup };
 }
 
 /**
@@ -1502,6 +1515,9 @@ export function homeAppIsRunning(
     const receipt = readJsonObject(NodePath.join(runners, name));
     if (receipt === undefined) return true;
     if (Number.isInteger(receipt.pid) && receipt.pid > 0 && isAlive(receipt.pid)) return true;
+    for (const group of Array.isArray(receipt.processGroups) ? receipt.processGroups : []) {
+      if (Number.isInteger(group) && group > 1 && isAlive(-group)) return true;
+    }
   }
   if (usingHome(home).length > 0) return true;
   const runnerDir = NodePath.join(home.root, "local-dev-app-runner");
