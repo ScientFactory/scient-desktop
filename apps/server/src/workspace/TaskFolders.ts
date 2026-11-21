@@ -185,6 +185,10 @@ export class TaskFolders extends Context.Service<
       readonly branch: string;
       readonly recreate: (checkout: TaskFolderCheckout) => Effect.Effect<void, E>;
     }) => Effect.Effect<void, TaskFolderError | E>;
+    // SCIENT-FORK:START task-folder-rewind
+    /** Whether the folder is a worktree of the repository, registered at that path: what `restore` keeps. */
+    readonly isLinkedCheckout: (checkout: TaskFolderCheckout) => Effect.Effect<boolean>;
+    // SCIENT-FORK:END task-folder-rewind
   }
 >()("t3/workspace/TaskFolders") {}
 
@@ -1445,6 +1449,13 @@ const make = Effect.gen(function* () {
     removeIfTaskFolder,
     renameBranch,
     restore,
+    // SCIENT-FORK:START task-folder-rewind
+    isLinkedCheckout: Effect.fn("TaskFolders.isLinkedCheckout")(function* (
+      checkout: TaskFolderCheckout,
+    ) {
+      return (yield* linkedGitDir(checkout)) !== null;
+    }),
+    // SCIENT-FORK:END task-folder-rewind
   });
 });
 

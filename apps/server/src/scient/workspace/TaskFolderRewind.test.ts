@@ -20,6 +20,8 @@ const prepare = Effect.fnUntraced(function* (input: {
   readonly present: boolean;
   /** Whether restoring puts that folder back before a sibling fails. */
   readonly restoresIt: boolean;
+  /** Whether the project folder is a checkout; undefined for a plain project folder. */
+  readonly linked?: boolean;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -27,6 +29,7 @@ const prepare = Effect.fnUntraced(function* (input: {
   const workingDirectory = path.join(root, "project");
   if (input.present) yield* fileSystem.makeDirectory(workingDirectory);
   let restored = 0;
+  const checked: Array<string> = [];
   const result = yield* Effect.result(
     prepareTaskFolderForRewind({
       restore: Effect.gen(function* () {
@@ -38,12 +41,22 @@ const prepare = Effect.fnUntraced(function* (input: {
       }),
       restoreFiles: input.restoreFiles,
       workingDirectory,
+      taskFolder: {
+        projectIsWorktree: input.linked !== undefined,
+        projectPath: workingDirectory,
+        projectRoot: path.join(root, "repository"),
+      },
+      isLinkedCheckout: (checkout) =>
+        Effect.sync(() => {
+          checked.push(path.relative(root, checkout.worktreePath));
+          return input.linked === true;
+        }),
       isolated: Effect.succeed(input.isolated),
       shared: () => new Shared(),
       fileSystem,
     }),
   );
-  return { failure: result._tag === "Failure" ? result.failure._tag : null, restored };
+  return { failure: result._tag === "Failure" ? result.failure._tag : null, restored, checked };
 });
 
 it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
@@ -74,21 +87,6 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
   );
 
   it.effect(
-    "a conversation-only rewind leaves the folder alone while its provider's is there",
-    () =>
-      Effect.gen(function* () {
-        const { failure, restored } = yield* prepare({
-          restoreFiles: false,
-          isolated: false,
-          present: true,
-          restoresIt: false,
-        });
-        assert.equal(failure, null);
-        assert.equal(restored, 0);
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect(
     "a conversation-only rewind that rebuilds its provider's folder stops on any failure",
     () =>
       Effect.gen(function* () {
@@ -114,5 +112,26 @@ it.layer(NodeServices.layer)("prepareTaskFolderForRewind", (it) => {
       assert.equal(failure, "SiblingUnrestorable");
       assert.equal(restored, 1);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    { label: "a plain project folder", linked: undefined, restores: false },
+    { label: "the thread's worktree", linked: true, restores: false },
+    { label: "another checkout", linked: false, restores: true },
+  ] as const)(
+    "a conversation-only rewind restores a present provider folder only when it is not the thread's: $label",
+    ({ linked, restores }) =>
+      Effect.gen(function* () {
+        const { failure, restored, checked } = yield* prepare({
+          restoreFiles: false,
+          isolated: false,
+          present: true,
+          restoresIt: false,
+          ...(linked === undefined ? {} : { linked }),
+        });
+        assert.equal(failure, restores ? "SiblingUnrestorable" : null);
+        assert.equal(restored, restores ? 1 : 0);
+        assert.deepEqual(checked, linked === undefined ? [] : ["project"]);
+      }).pipe(Effect.scoped),
   );
 });

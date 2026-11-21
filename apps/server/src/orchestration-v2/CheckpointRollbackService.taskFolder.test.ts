@@ -47,6 +47,18 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+// SCIENT-FORK:START task-folder-rewind
+import * as Exit from "effect/Exit";
+import type * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+// SCIENT-FORK:END task-folder-rewind
 
 const threadId = ThreadId.make("thread:task-folder-rewind");
 const providerThreadId = ProviderThreadId.make("provider-thread:task-folder-rewind");
@@ -54,6 +66,10 @@ const providerInstanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "test" };
 const branch = "feature/rewind";
+// SCIENT-FORK:START task-folder-rewind
+/** Calls to the provider's conversation rollback; a test that counts them resets it first. */
+const providerRollbacks = { count: 0 };
+// SCIENT-FORK:END task-folder-rewind
 
 interface Options {
   /** The project folder is a repository, so the task folder checks it out; otherwise it is linked. */
@@ -182,7 +198,12 @@ const layerFor = (state: State, options: Options) => {
             open: () =>
               Effect.succeed({
                 rollbackThread: (input: { readonly providerThread: unknown }) =>
-                  Effect.succeed({ providerThread: input.providerThread }),
+                  // SCIENT-FORK:START task-folder-rewind
+                  Effect.sync(() => {
+                    providerRollbacks.count += 1;
+                    return { providerThread: input.providerThread };
+                  }),
+                // SCIENT-FORK:END task-folder-rewind
               } as never),
           }),
           Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
@@ -867,6 +888,95 @@ it.live(
           ]),
           ["other\n", null],
         );
+      }),
+    ),
+);
+
+it.live(
+  "never rewinds the conversation over a foreign checkout a failed rebuild left, on any attempt",
+  () =>
+    withThread({ projectIsRepository: true }, (thread) =>
+      Effect.gen(function* () {
+        const { path, folders, read, taskFolder, fileSystem } = thread;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        yield* thread.turn(1, Effect.void);
+        yield* thread.turn(2, Effect.void);
+        // The provider's folder is gone, and the project's layout puts a standalone clone there.
+        yield* fileSystem.remove(folders.shop, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(taskFolder.projectRoot, "t3.json"),
+          JSON.stringify({
+            worktreeLayout: {
+              create: 'git clone -q "$T3_PROJECT_ROOT" "$T3_WORKTREE_PROJECT_PATH"',
+            },
+          }),
+        );
+        const { checkpointScopes } = yield* thread.records;
+        const rootScope = checkpointScopes.find((scope) => scope.label === undefined)!;
+        const checkpointId = yield* ids.allocate
+          .checkpoint({ checkpointScopeId: rootScope.id, name: "1" })
+          .pipe(Effect.orDie);
+        const now = DateTime.formatIso(yield* DateTime.now);
+        const rollback: EffectOutbox.OrchestrationEffectV2 = {
+          id: "effect:rewind:foreign-primary",
+          commandId: CommandId.make("command:rewind:foreign-primary"),
+          threadId,
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId,
+            checkpointId,
+            scopeId: rootScope.id,
+            restoreFiles: false,
+          },
+          status: "running",
+          attemptCount: 1,
+          availableAt: now,
+          leaseOwner: "test-worker",
+          createdAt: now,
+          updatedAt: now,
+          completedAt: null,
+          lastError: null,
+        };
+        const dispatched: Array<string> = [];
+        const layerExecutor = EffectWorker.layerExecutor.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+              Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+              Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+              Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+              Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+              Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({
+                dispatch: (command) =>
+                  Effect.sync(() => {
+                    dispatched.push(command.type);
+                    return { sequence: 1, storedEvents: [] };
+                  }),
+              }),
+              Layer.mock(ConversationForkService)({}),
+              ServerSettings.layerTest(),
+            ),
+          ),
+        );
+        providerRollbacks.count = 0;
+
+        const attempts = yield* Effect.gen(function* () {
+          const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+          return [
+            yield* Effect.exit(executor.execute(rollback, { willRetry: true })),
+            yield* Effect.exit(
+              executor.execute({ ...rollback, attemptCount: 2 }, { willRetry: false }),
+            ),
+          ];
+        }).pipe(Effect.provide(layerExecutor));
+
+        assert.deepEqual(attempts.map(Exit.isFailure), [true, true]);
+        assert.equal(providerRollbacks.count, 0);
+        assert.deepEqual(dispatched, ["checkpoint.rollback.fail"]);
+        assert.deepEqual((yield* thread.recorded).runs, ["completed", "completed"]);
+        // The clone is left for the user to move away.
+        assert.equal(yield* read(path.join(folders.shop, "AGENTS.md")), "rules\n");
       }),
     ),
 );

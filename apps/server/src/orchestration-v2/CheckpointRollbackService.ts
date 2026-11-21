@@ -284,6 +284,8 @@ export const layer: Layer.Layer<
                 restore,
                 restoreFiles,
                 workingDirectory: worktreePath,
+                taskFolder,
+                isLinkedCheckout: taskFolders.isLinkedCheckout,
                 isolated,
                 shared: sharedWorkspace,
                 fileSystem,
