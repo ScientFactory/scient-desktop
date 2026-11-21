@@ -292,8 +292,14 @@ async function checkedBytes(
   path: string,
 ): Promise<Buffer | null> {
   const bytes = await fileBytes(path);
-  if (!bytes || !listed) return bytes;
+  if (!listed) return bytes;
   const relative = NodePath.relative(otherRoot, path).split(NodePath.sep).join("/");
+  if (!bytes) {
+    if (listed.has(relative)) {
+      throw new Error(`The backup's file ${relative} is missing.`);
+    }
+    return null;
+  }
   if (listed.get(relative) !== hashOfBytes(bytes)) {
     throw new Error(`The backup's file ${relative} is not the one the backup lists.`);
   }
@@ -924,8 +930,17 @@ async function addSource(input: {
   if (!bytes) throw new Error("The other Library no longer has it.");
   decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
   const history = NodePath.join(otherRoot, "history", id);
+  const historyNames = new Set(await NodeFSP.readdir(history).catch(() => [] as string[]));
+  if (input.listed) {
+    const prefix = `history/${id}/`;
+    for (const relative of input.listed.keys()) {
+      if (!relative.startsWith(prefix)) continue;
+      const name = relative.slice(prefix.length);
+      if (!name.includes("/")) historyNames.add(name);
+    }
+  }
   const versions: Array<{ readonly name: string; readonly bytes: Buffer }> = [];
-  for (const name of await NodeFSP.readdir(history).catch(() => [] as string[])) {
+  for (const name of historyNames) {
     if (!/^\d+\.json$/u.test(name)) continue;
     const version = await theirBytes(NodePath.join(history, name));
     if (version) versions.push({ name, bytes: version });

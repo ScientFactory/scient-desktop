@@ -1411,8 +1411,14 @@ describe("what differs between the two Libraries, and taking one thing at a time
   });
 
   it("adds nothing separately when a file of the backup is not the one the backup lists", async () => {
-    for (const damaged of ["an earlier version", "the collections"] as const) {
-      // The other Library's paper has an earlier version: its note was written after it came.
+    for (const damaged of [
+      "an earlier version",
+      "a missing earlier version",
+      "a tampered Zotero base",
+      "a missing Zotero base",
+      "the collections",
+    ] as const) {
+      // The other Library's paper has an earlier version and a valid Zotero sync base.
       const { ours, alike, list, addSeparately, backup } = await alikeLeftBehind(
         async (theirs, sourceId) => {
           const record = (await readScientSourceRecord(theirs, sourceId))!;
@@ -1424,23 +1430,46 @@ describe("what differs between the two Libraries, and taking one thing at a time
             note: "Written before the backup.",
             actor: "user",
           });
+          await writeScientSourceZoteroSync(theirs, {
+            formatVersion: 1,
+            sourceId,
+            libraryId: "475425",
+            itemKey: "JOIN2345",
+            itemVersion: 2,
+            syncedAt: "2026-11-21T08:00:00.000Z",
+            metadata: editableMetadataFromRecord((await readScientSourceRecord(theirs, sourceId))!),
+            note: null,
+            attachmentKeys: ["LEFT2345"],
+          });
         },
       );
       const [shown] = (await list()).rows;
       const before = await inventory(ours.scenario.libraryRoot);
       const payload = NodePath.join(backup, "library");
-      if (damaged === "an earlier version") {
+      if (damaged === "an earlier version" || damaged === "a missing earlier version") {
         const history = NodePath.join(payload, "history", alike.sourceId);
         const [version] = await NodeFSP.readdir(history);
-        await NodeFSP.appendFile(NodePath.join(history, version!), " ");
+        const versionPath = NodePath.join(history, version!);
+        if (damaged === "an earlier version") {
+          await NodeFSP.appendFile(versionPath, " ");
+        } else {
+          await NodeFSP.rm(versionPath);
+        }
+      } else if (damaged === "a tampered Zotero base" || damaged === "a missing Zotero base") {
+        const zoteroPath = NodePath.join(payload, "zotero", `${alike.sourceId}.json`);
+        if (damaged === "a tampered Zotero base") {
+          await NodeFSP.appendFile(zoteroPath, " ");
+        } else {
+          await NodeFSP.rm(zoteroPath);
+        }
       } else {
         await NodeFSP.appendFile(NodePath.join(payload, "library.json"), " ");
       }
 
-      expect(await addSeparately(shown!, `op_${damaged.length}`), damaged).toEqual({
+      expect(await addSeparately(shown!, `op_${damaged.replaceAll(" ", "_")}`), damaged).toEqual({
         outcome: "unavailable",
       });
-      // Nothing of the paper is here: no record, no version, no decision about it.
+      // Nothing of the paper is here: no record, no version, no Zotero base, no decision about it.
       expect(await readScientSourceRecord(ours.library, alike.sourceId)).toBeNull();
       expect(changedSince(before, await inventory(ours.scenario.libraryRoot))).toEqual([]);
       expect(await readScientLibraryDistinctPairs(ours.scenario.libraryRoot)).toEqual([]);
