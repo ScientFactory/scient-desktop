@@ -902,7 +902,8 @@ like: what is already here is skipped.
 **Undo** is in **Recent changes**. It moves the sources that were added to the
 Trash, but only those you have not used since. A source you edited, read or
 starred, one a project now cites, one you put in a collection, or one whose
-PDF you highlighted stays.
+PDF you highlighted stays. A collection the addition made goes only when it is
+empty again and you have not renamed or moved it.
 
 Do not use **Restore from a backup…** to make one computer equal to the other
 after you have worked on both: the restore replaces that Library, and a note
@@ -1341,7 +1342,8 @@ who made each one (you or an agent) and what can be done about it now:
   that was changed since. The line then reads "Undone; _N_ changed since and
   were left". Collections keep no record of when each paper joined, so Undo of
   a collection change puts back the members the bulk change added or removed
-  wherever they still are. When only the later parts of an old, large change
+  wherever they still are. A collection the bulk change made is removed only
+  when it is empty again and you have not renamed or moved it. When only the later parts of an old, large change
   are still on record, the line says so and Undo covers those.
 - **A merge:** the two papers, with **Undo**, or why it can no longer be
   undone. A pair that was merged, undone and merged again is listed once.

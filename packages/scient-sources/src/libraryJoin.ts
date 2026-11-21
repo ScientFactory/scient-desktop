@@ -47,7 +47,13 @@ import {
   type ScientLibraryJoinSide,
   type ScientSourceCandidate,
   type ScientSourceRecord,
+  ScientSourceZoteroSync,
 } from "./model.ts";
+import {
+  ScientSourceCollectionMadeAs,
+  scientSourceCollectionChangedSince,
+  scientSourceCollectionMadeAs,
+} from "./organize.ts";
 import { readScientProjectPins } from "./projectPins.ts";
 import { SCIENT_SOURCE_MORE_FIELDS } from "./sourceMore.ts";
 import {
@@ -151,6 +157,7 @@ const JoinHeader = Schema.Struct({
       collectionId: Schema.NullOr(Schema.String),
       /** Made by this join; Undo deletes it once nothing here is in it. */
       created: Schema.Boolean,
+      madeAs: Schema.optionalKey(ScientSourceCollectionMadeAs),
       why: Schema.optionalKey(Schema.String),
     }),
   ),
@@ -303,6 +310,8 @@ async function checkedBytes(
   }
   return bytes;
 }
+
+const decodeZoteroSync = Schema.decodeUnknownSync(ScientSourceZoteroSync);
 
 /** The big folders that hold one file or more per source; what else a backup lists is small. */
 const PER_SOURCE = /^(records|history|files|annotations|trash|deleted|zotero)\//u;
@@ -819,7 +828,11 @@ async function ensureCollections(input: {
     name: names.get(otherId) ?? "",
     ...(result.collection === null
       ? { collectionId: null, created: false, why: result.why }
-      : { collectionId: result.collection.collectionId, created: result.created }),
+      : {
+          collectionId: result.collection.collectionId,
+          created: result.created,
+          ...(result.created ? { madeAs: scientSourceCollectionMadeAs(result.collection) } : {}),
+        }),
   }));
 }
 
@@ -919,6 +932,13 @@ async function addSource(input: {
     const version = await theirBytes(NodePath.join(history, name));
     if (version) versions.push({ name, bytes: version });
   }
+  // The Zotero base names the files this source already took or left; without it a refresh
+  // would bring back a PDF removed here.
+  const zotero = await theirBytes(NodePath.join(otherRoot, "zotero", `${id}.json`));
+  const zoteroBase =
+    zotero && decodeZoteroSync(JSON.parse(zotero.toString("utf8"))).sourceId === id
+      ? zotero
+      : null;
   const theirHighlights = new Map<string, Buffer | null>();
   for (const attachment of record.attachments) {
     theirHighlights.set(
@@ -967,6 +987,9 @@ async function addSource(input: {
   }
   // The record is written last, as the other Library keeps it; the decisions come before
   // it exists, so no automatic merge ever sees it without them.
+  if (zoteroBase) {
+    await createUnderLock(NodePath.join(libraryRoot, "zotero", `${id}.json`), zoteroBase);
+  }
   await input.beforeRecord();
   if (!(await createUnderLock(recordPath, bytes))) return "it is here now";
   return { sourceId: id, highlights, missingPdfs, highlightsKept };
@@ -1468,9 +1491,10 @@ export async function undoScientLibraryJoin(input: {
         }
       });
     }
-    // Children first; a collection goes only when nothing here is in it and nothing is under it.
+    // Children first; a collection goes only when nothing here is in it, nothing is under it
+    // and the person has not renamed or moved it.
     const created = header.collections.filter((entry) => entry.created).toReversed();
-    for (const { collectionId } of created) {
+    for (const { collectionId, madeAs } of created) {
       if (!collectionId) continue;
       await withScientLibraryLock(libraryRoot, async () => {
         const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
@@ -1485,6 +1509,7 @@ export async function undoScientLibraryJoin(input: {
         if (!collection) return;
         await input.faults?.afterCollectionRead?.();
         const inUse =
+          scientSourceCollectionChangedSince(collection, madeAs) ||
           collection.sourceIds.some((sourceId) => present.has(sourceId)) ||
           organization.collections.some((entry) => entry.parentCollectionId === collectionId);
         if (inUse) left += 1;

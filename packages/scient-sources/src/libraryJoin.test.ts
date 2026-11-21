@@ -12,6 +12,7 @@ import {
   createScientSourceCollection,
   placeScientSourceCollections,
   readScientSourcesOrganization,
+  renameScientSourceCollection,
 } from "./collections.ts";
 import { backUpScientLibrary, scientLibraryBackupLeavesOut } from "./libraryBackup.ts";
 import {
@@ -41,6 +42,7 @@ import {
   setScientLibraryReadingState,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  writeScientSourceZoteroSync,
 } from "./store.ts";
 import {
   applyStep,
@@ -178,6 +180,18 @@ describe("adding what another Library holds", () => {
     const highlights = NodePath.join(theirs.scenario.libraryRoot, "annotations", "v1");
     await NodeFSP.mkdir(highlights, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(highlights, `${pdf}.json`), '{"highlights":1}\n');
+    // What n1 took from Zotero and left, as an import from Zotero keeps it.
+    await writeScientSourceZoteroSync(theirs.library, {
+      formatVersion: 1,
+      sourceId: n1,
+      libraryId: "475425",
+      itemKey: "ABCD2345",
+      itemVersion: 3,
+      syncedAt: "2026-11-21T08:00:00.000Z",
+      metadata: editableMetadataFromRecord((await readScientSourceRecord(theirs.library, n1))!),
+      note: null,
+      attachmentKeys: ["PDFA2345", "LEFT2345"],
+    });
     const backup = await backUp(theirs.scenario);
 
     const ours = await built([
@@ -204,12 +218,13 @@ describe("adding what another Library holds", () => {
         `records/${n1}.json`,
         `records/${n2}.json`,
         `history/${n1}/1.json`,
+        `zotero/${n1}.json`,
         `annotations/v1/${pdf}.json`,
         `files/sha256/${pdf.slice(0, 2)}/${pdf}.pdf`,
       ]),
     );
     // The source is as the other Library has it: the record file itself, byte for byte.
-    for (const path of [`records/${n1}.json`, `history/${n1}/1.json`]) {
+    for (const path of [`records/${n1}.json`, `history/${n1}/1.json`, `zotero/${n1}.json`]) {
       expect(await NodeFSP.readFile(NodePath.join(ours.scenario.libraryRoot, path))).toEqual(
         await NodeFSP.readFile(NodePath.join(theirs.scenario.libraryRoot, path)),
       );
@@ -424,6 +439,25 @@ describe("adding what another Library holds", () => {
       ]);
     },
   );
+
+  it("keeps on Undo a collection the join made and the person renamed since", async () => {
+    const { library, joinId, collectionId } = await joinedCollection();
+    await renameScientSourceCollection({
+      root: library,
+      collectionId,
+      name: "Methods",
+      actor: "user",
+    });
+
+    expect(await undoScientLibraryJoin({ library, joinId, actor: "user" })).toEqual({
+      outcome: "undone",
+      trashed: 1,
+      left: 1,
+    });
+    expect((await readScientSourcesOrganization(library)).collections).toMatchObject([
+      { collectionId, name: "Methods" },
+    ]);
+  });
 
   it("counts a created collection left when its deletion fails after Undo reads it", async () => {
     const { scenario, library, joinId, collectionId } = await joinedCollection();

@@ -24,6 +24,8 @@ import {
   SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT,
   SCIENT_SOURCE_NAME_LIMIT,
   SCIENT_SOURCE_SAVED_SEARCH_LIMIT,
+  scientSourceCollectionChangedSince,
+  scientSourceCollectionMadeAs,
   type ScientSourceCollectionSummary,
   type ScientSourceFilter,
   type ScientSourcesBulkFields,
@@ -1654,6 +1656,7 @@ export async function bulkUpdateScientSources(input: {
               removedSourceIds: [],
               updatedAt: planned.collection.updatedAt,
               created: true,
+              madeAs: scientSourceCollectionMadeAs(planned.collection),
               pending: true,
             };
             await writeAhead(
@@ -2060,9 +2063,11 @@ async function undoBulkUpdate(input: {
       if (delta.created) {
         // Runs after the entries that filled it, as entries are undone newest first.
         const live = existing !== undefined && existing.deletedAt === undefined;
+        const changedSince = live && scientSourceCollectionChangedSince(existing, delta.madeAs);
         const inUse =
           live &&
-          (existing.sourceIds.length > 0 ||
+          (changedSince ||
+            existing.sourceIds.length > 0 ||
             document!.collections.some(
               (collection) =>
                 collection.deletedAt === undefined &&
@@ -2086,7 +2091,9 @@ async function undoBulkUpdate(input: {
         if (inUse) {
           conflicts.push({
             collectionId,
-            message: "Sources or collections were added to it since, so it was kept.",
+            message: changedSince
+              ? "It was renamed or moved since, so it was kept."
+              : "Sources or collections were added to it since, so it was kept.",
           });
         }
         const unrecorded = await markDone(done);

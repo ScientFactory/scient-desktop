@@ -3025,7 +3025,8 @@ the join did not put it in; and the highlights file of each of its PDFs is as
 it was when the source arrived (for a part settled after a stop that state is
 not known, and any highlights file keeps the source). Anything else leaves it
 and counts it. A collection the join made is deleted once nothing here is in
-it and nothing is under it. In the Trash the sources are "removed here", so a
+it, nothing is under it and its name and parent are still those it was made
+with (`madeAs` in the join's header, also on a bulk edit's created collection). In the Trash the sources are "removed here", so a
 later join skips them. Not seen by Undo: a systematic review that screened
 the source (the review keeps its own copy), and a pin written in the same
 instant as the Undo (the source then goes to the Trash; the project still

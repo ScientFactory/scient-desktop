@@ -693,6 +693,66 @@ describe("Scient source collections", () => {
     });
     expect(await scientBulkEditChangedType(root, tagsOnly.undo?.batchId ?? "")).toBe(false);
   });
+  it("keeps on Undo a collection the edit made and the person renamed or moved since", async () => {
+    const { root, sourceIds } = await project(["First", "Second", "Third"]);
+    const [first, second, third] = sourceIds as [string, string, string];
+    const sorted = await bulkUpdateScientSources({
+      root,
+      change: {
+        themes: [
+          { name: "Trials", parent: "Sepsis", sourceIds: [first] },
+          { name: "Cohorts", parent: "Sepsis", sourceIds: [second] },
+          { name: "Reviews", sourceIds: [third] },
+        ],
+      },
+      actor: "user",
+    });
+    const made = new Map(sorted.collections.map((entry) => [entry.name, entry.collectionId]));
+    await renameScientSourceCollection({
+      root,
+      collectionId: made.get("Trials")!,
+      name: "Sepsis trials",
+      actor: "user",
+    });
+    await organizeScientSources({
+      root,
+      change: {
+        action: "move-collection",
+        collectionId: made.get("Cohorts")!,
+        parentCollectionId: null,
+      },
+      actor: "user",
+    });
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: sorted.undo!.batchId },
+      actor: "user",
+    });
+    expect(
+      (await readScientSourcesOrganization(root)).collections.map((entry) => [
+        entry.name,
+        entry.sourceIds,
+      ]),
+    ).toEqual([
+      ["Sepsis", []],
+      ["Sepsis trials", []],
+      ["Cohorts", []],
+    ]);
+    expect(undone.conflicts).toEqual(
+      expect.arrayContaining([
+        {
+          collectionId: made.get("Trials"),
+          message: "It was renamed or moved since, so it was kept.",
+        },
+        {
+          collectionId: made.get("Cohorts"),
+          message: "It was renamed or moved since, so it was kept.",
+        },
+      ]),
+    );
+  });
+
   it("lists past bulk edits: one sent in parts as one, and what a partial Undo left", async () => {
     const { root, sourceIds } = await project(["First", "Second", "Third"]);
     const [first, second, third] = sourceIds as [string, string, string];
