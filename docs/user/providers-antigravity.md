@@ -97,12 +97,21 @@ On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
 variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
 path; keep `localharness_external.exe` beside that executable.
 
+On those targets Scient installs Google's Antigravity CLI (`agy`), which serves
+ACP itself and runs the plugins you added to Antigravity in your Scient chats.
+If Scient cannot reach its release list before the first install, it installs
+the older paired ACP runtime instead, which offers only your plugins' skills.
+
 Scient's update catalog treats official ACP and legacy `agy` as separate
 release families. When a newer ACP release has passed download, archive,
 native-startup, activation, and removal qualification on its supported target,
 **Update Antigravity** appears for managed ACP installations. An update keeps
 the previous generation available while active sessions finish. It never
 mutates a system or custom installation.
+
+A managed installation of the paired runtime is offered the CLI as its update.
+The CLI keeps its own sign-in, so with a Google account you sign in to Google
+once more after updating.
 
 **Repair Antigravity** stages and validates a complete replacement before it
 touches a damaged managed generation. A failed download or verification leaves

@@ -1789,10 +1789,12 @@ generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
 replacement qualification, not merely an available Google archive. T3 now installs Google's
-native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
-floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
-native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
-qualification first.
+native CLI and dropped its pinned ACP release. Scient installs the CLI too, but from its own
+catalog's `antigravity` key (1.5.12 and later, through T3's CLI install path), and keeps the
+paired release as the floor where no qualified CLI is listed
+(`scient/providerLifecycle/antigravityAcpCatalog.ts`); T3's own CLI channel runs only where no
+catalog is supplied. `startRelease` treats the CLI as newer than any paired release, and
+`prepareAntigravityProfile` takes `nativePlugins` so a CLI launch skips Scient's projection.
 T3 also removed harness support and rates Antigravity below 1.5 broken; Scient's manifest keeps
 1.4.5 supported, and the driver, prompt and permission seams keep the harness path (its own
 `yolo`/`auto_edit` modes, video linking, runtime-policy approvals when no native Auto is
