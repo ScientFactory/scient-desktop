@@ -3698,15 +3698,6 @@
   "328fba0afb99764c": "Choisir un espace de travail",
   "074db680e148e829": "Ajouter un projet",
   "a0e0e2640219f1b0": "Choisir un projet",
-  "1bbfd30a652f7e0f": "ou commencer sans projet",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " pour commencer"
-  ],
   "99c183d2407cd36d": "Ajoutez un projet pour commencer",
   "06b6bb85f2e34802": "Que devons-nous construire dans {project} ?",
   "5a405f15d9985bd6": "Que construit-on ?",
@@ -21248,5 +21239,15 @@
   "af96d13065c3b2ce": "{days} j restants",
   "e5efdfa2c982cace": "Impossible de joindre le serveur. Réessayez.",
   "3cf2e2fa75b5e1c7": "Créez un code d’appairage sur {environment}, dans ses Paramètres → Partage et accès ou avec `scient auth pairing create`, puis saisissez-le ici.",
-  "c84ba778237d165e": "{label}, sur votre compte Scient Connect, non ajoutée à cette app. {status}"
+  "c84ba778237d165e": "{label}, sur votre compte Scient Connect, non ajoutée à cette app. {status}",
+  "cbdac942e1af4858": "Réessayer Scient Connect",
+  "134c375d1d819cba": "Colonne d’icônes de la barre latérale",
+  "4fea432f523e6058": "bêta barre latérale colonne icônes accueil bibliothèque tâches planifiées extensions revue de code",
+  "479381a0da261d9d": "Revue de code",
+  "5e493e0df23815a8": "La Bibliothèque n’est pas encore disponible",
+  "647910684fc1a923": "Elle s’ouvrira une fois le serveur de cet ordinateur connecté.",
+  "2a342c9ca8b0bbf6": "Impossible d’ouvrir la Bibliothèque",
+  "9d9b8c9f5c29ab89": "Impossible de configurer la Bibliothèque",
+  "25f2a2eb5096cc07": "Destinations de la barre latérale",
+  "dab3050c171b5e7c": "Affiche une colonne d’icônes au bord de la barre latérale : Accueil, Bibliothèque, Tâches planifiées, Extensions et revue de code en haut ; Réglages et autres outils en bas."
 }

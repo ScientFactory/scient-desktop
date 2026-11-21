@@ -3698,15 +3698,6 @@
   "328fba0afb99764c": "Escolha um workspace",
   "074db680e148e829": "Adicione um projeto",
   "a0e0e2640219f1b0": "Escolha um projeto",
-  "1bbfd30a652f7e0f": "ou comece sem projeto",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para começar"
-  ],
   "99c183d2407cd36d": "Adicione um projeto para começar",
   "06b6bb85f2e34802": "O que vamos construir em {project}?",
   "5a405f15d9985bd6": "O que vamos construir?",
@@ -21245,5 +21236,15 @@
   "af96d13065c3b2ce": "{days} d restantes",
   "e5efdfa2c982cace": "Não foi possível alcançar o servidor. Tente novamente.",
   "3cf2e2fa75b5e1c7": "Crie um código de pareamento em {environment}, em Configurações → Compartilhamento e acesso ou com `scient auth pairing create`, e insira-o aqui.",
-  "c84ba778237d165e": "{label}, na sua conta do Scient Connect, não adicionada a este app. {status}"
+  "c84ba778237d165e": "{label}, na sua conta do Scient Connect, não adicionada a este app. {status}",
+  "cbdac942e1af4858": "Tentar Scient Connect novamente",
+  "134c375d1d819cba": "Coluna de ícones da barra lateral",
+  "4fea432f523e6058": "beta barra lateral coluna ícones início biblioteca tarefas agendadas extensões revisão de código",
+  "479381a0da261d9d": "Revisão de código",
+  "5e493e0df23815a8": "A Biblioteca ainda não está disponível",
+  "647910684fc1a923": "Ela abre quando o servidor deste computador estiver conectado.",
+  "2a342c9ca8b0bbf6": "Não foi possível abrir a Biblioteca",
+  "9d9b8c9f5c29ab89": "Não foi possível configurar a Biblioteca",
+  "25f2a2eb5096cc07": "Destinos da barra lateral",
+  "dab3050c171b5e7c": "Mostra uma coluna de ícones na borda da barra lateral: Início, Biblioteca, Tarefas agendadas, Extensões e revisão de código no topo; Configurações e outras ferramentas embaixo."
 }

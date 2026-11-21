@@ -3698,15 +3698,6 @@
   "328fba0afb99764c": "Choose a workspace",
   "074db680e148e829": "Add a project",
   "a0e0e2640219f1b0": "Choose a project",
-  "1bbfd30a652f7e0f": "or start without a project",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " to start"
-  ],
   "99c183d2407cd36d": "Add a project to start",
   "06b6bb85f2e34802": "What should we build in {project}?",
   "5a405f15d9985bd6": "What should we build?",
@@ -21260,5 +21251,15 @@
   "af96d13065c3b2ce": "{days}d left",
   "e5efdfa2c982cace": "Could not reach the server. Try again.",
   "3cf2e2fa75b5e1c7": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `scient auth pairing create`, and enter it here.",
-  "c84ba778237d165e": "{label}, on your Scient Connect account, not added to this app. {status}"
+  "c84ba778237d165e": "{label}, on your Scient Connect account, not added to this app. {status}",
+  "cbdac942e1af4858": "Retry Scient Connect",
+  "134c375d1d819cba": "Sidebar icon rail",
+  "4fea432f523e6058": "beta sidebar rail icons home library scheduled tasks extensions code review",
+  "479381a0da261d9d": "Code review",
+  "5e493e0df23815a8": "The Library is not available yet",
+  "647910684fc1a923": "It opens once this computer's server is connected.",
+  "2a342c9ca8b0bbf6": "Could not open the Library",
+  "9d9b8c9f5c29ab89": "Could not set up the Library",
+  "25f2a2eb5096cc07": "Sidebar destinations",
+  "dab3050c171b5e7c": "Show a column of icons along the sidebar's edge: Home, Library, Scheduled tasks, Extensions and code review at the top; Settings and other tools at the bottom."
 }
