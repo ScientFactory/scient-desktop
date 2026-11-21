@@ -17,6 +17,24 @@
 }
 
 /*
+ * Collapsed sidebar: below the titlebar, the rail's fill and border fade in from the titlebar's
+ * colour, so no edge shows where the sidebar colour starts.
+ */
+[data-sidebar-nav-rail-collapsed] > nav {
+  background: linear-gradient(to bottom, var(--color-background), var(--color-sidebar) 2.5rem);
+}
+
+[data-sidebar-nav-rail-collapsed] > nav::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--color-sidebar-border) 2.5rem);
+  pointer-events: none;
+}
+
+/*
  * Collapsed sidebar: the rail stands at the window's edge, so the main area's titlebar starts 3rem
  * further right and leaves only what the window controls and sidebar toggle still overlap.
  */

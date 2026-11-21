@@ -179,7 +179,7 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
       aria-label={gt("Sidebar destinations")}
       className={
         collapsed
-          ? "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 flex w-12 flex-col items-center justify-between border-e border-sidebar-border bg-sidebar py-2"
+          ? "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 flex w-12 flex-col items-center justify-between py-2"
           : "absolute start-0 top-[var(--workspace-topbar-height)] bottom-0 z-[2] flex w-12 flex-col items-center justify-between border-e border-sidebar-border py-2"
       }
       data-sidebar-nav-rail={collapsed ? undefined : ""}
