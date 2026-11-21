@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
@@ -440,6 +441,25 @@ describe("project pins", () => {
       "instance-map",
       "instance-map",
     ]);
+
+    // Another change holds the Library lock; sources all in the map are answered without it.
+    let release = () => {};
+    let held = () => {};
+    const holding = new Promise<void>((resolve) => (held = resolve));
+    const holder = withScientLibraryLock(root, async () => {
+      held();
+      await new Promise<void>((resolve) => (release = resolve));
+    });
+    await holding;
+    const whileHeld = await resolveScientProjectSources({
+      library,
+      projectRoot,
+      mode: "write",
+      sources: sources.slice(1, 3).map(({ projectSourceId }) => ({ projectSourceId, work: null })),
+    });
+    release();
+    await holder;
+    expect(whileHeld).toEqual(fromMap);
   });
 
   it("hydrates unmatched report pins once, preserving their full citation without a Library", async () => {

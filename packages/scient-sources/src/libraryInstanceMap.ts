@@ -669,6 +669,12 @@ export async function resolveScientProjectSources(
 ): Promise<ReadonlyArray<ScientProjectSourceResolution>> {
   const root = await NodeFSP.realpath(input.library.root);
   if (input.mode === "read") return resolveAt(root, input);
+  // A source found in the map writes nothing, so when every one is, the lock other changes wait
+  // on is not taken. Anything else (a new mapping, hydration, a first registration) takes it.
+  const unlocked = await resolveAt(root, { ...input, mode: "read" });
+  if (unlocked.every((result) => result.kind === "resolved" && result.by === "instance-map")) {
+    return unlocked;
+  }
   return withScientLibraryLock(root, () => resolveAt(root, input));
 }
 
