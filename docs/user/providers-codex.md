@@ -147,12 +147,13 @@ contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 ## Sign in to an MCP server
 
 When an MCP server you added to Codex needs you to sign in, the thread shows a notice with
-**Sign in**; on mobile, tap the notice. Approve access on the page it opens. Your browser then goes
-to a page that may not load, especially when Codex runs on another machine: copy that page's
-address, paste it into Scient, and choose **Finish sign-in**. Codex reconnects the server in that
-thread and keeps the sign-in for other threads on the same Codex instance; an instance with its own
-home, such as a second account, may need to sign in separately. Signing in needs permission to
-manage providers.
+**Sign in**; on mobile, tap the notice. Approve access on the page it opens. When your browser runs
+on the computer that runs Codex, Codex receives the approval itself and the dialog closes with
+**Signed in**. Otherwise your browser goes to a page that may not load: copy that page's address,
+paste it into Scient, and choose **Finish sign-in**. Codex reconnects the server in that thread and
+keeps the sign-in for other threads on the same Codex instance, and **Extensions** shows the server
+signed in. An instance with its own home, such as a second account, may need to sign in separately.
+Signing in needs permission to manage providers.
 
 ## Use the OpenAI Chrome extension
 

@@ -2609,6 +2609,23 @@ predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWo
 T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
 equal change, use its version and delete the blocks, modules and tests.
 
+## MCP sign-in from a chat notice
+
+T3's #39921 signs an agent's MCP server in from its notice and finishes only with a pasted callback
+address. Scient makes `ProviderMcpSignInCompleteInput.callbackUrl` optional: without it, Codex's
+`complete` waits up to five minutes for `mcpServer/oauthLogin/completed`, Claude's succeeds only
+when the server is already connected, and `McpSignInAction` starts that wait when it opens the
+page. `McpSignIn` refreshes the provider instance after a sign-in so Extensions updates. All edits
+carry SCIENT-FORK markers; tests are `CodexAdapterV2.mcpSignIn.scient.test.ts`,
+`McpSignIn.scient.test.ts` and `McpSignInAction.scient.browser.test.tsx`. The same change suits T3
+and can be offered upstream; when T3 finishes local sign-ins itself, take its version and delete
+the blocks and tests.
+
+Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` field on
+`system_notice`, Scient's `scient.pluginSignIn.open` RPC, the ACP flavor hooks `scientToolNotice`
+and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
+section of `docs/internals/scient-extensions.md`.
+
 ## Security policy
 
 `.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on

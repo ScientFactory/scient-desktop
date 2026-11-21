@@ -834,6 +834,42 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   ChatGPT** opens `chatgpt.com/apps`. When the same service is also a delivered
   Scient connector, the agent currently receives both.
 
+### Sign-in from a chat notice
+
+- **MCP servers (Codex, Claude)**: upstream's notice sign-in (`provider.mcpSignIn.*`).
+  `complete` without a callback address waits up to five minutes for Codex's
+  `mcpServer/oauthLogin/completed`, which Codex sends when a browser on its
+  computer reached its own callback page; the dialog starts that wait when it
+  opens the page and keeps the paste field for remote setups. Claude reports no
+  finished sign-in, so without an address it succeeds only when the server
+  already shows as connected. A finished or already-valid sign-in refreshes the
+  provider instance, so this section stops showing needs-sign-in.
+- **Codex homes**: chat and this inventory start app-servers of the same
+  instance with the same `CODEX_HOME`, the instance's effective (shadow) home, so
+  a chat sign-in is visible here. Read from Scient's code; Codex's own storage was
+  not checked against its source. Codex keeps MCP OAuth credentials in the OS
+  keyring by default, which does not depend on the home; with file storage they
+  live in `CODEX_HOME/.credentials.json`, which a shadow home links to the shared
+  home only if the file existed when the shadow home was built. Two instances
+  sharing a home can then disagree until each signs in.
+- **Antigravity plugins** (`scient/antigravity/pluginSignIn.ts`): a plugin's
+  failed tool call prints a `<plugin-card catalog-id="…">` and a sign-in link
+  whose loopback redirect the running agy process serves. The adapter accepts a
+  challenge only from a tool result with exactly one well-formed card and one
+  URL, never from the call's own input or model text. The URL must be HTTPS at a
+  listed authorization endpoint (Google's today; a partner's joins once its
+  challenge is captured), without userinfo or fragment, with one `state` and one
+  `redirect_uri` that is HTTP loopback with a port of 1024 or above and path
+  `/callback`. The page stays server-side for ten minutes, bound to the session,
+  the agent process (an exit or replacement retires it) and the thread that
+  showed the notice; a newer challenge for the plugin replaces it. Tool output and
+  streamed text are scrubbed of the URL, `state` and `code_challenge` before
+  anything projects them, holding back text that could begin one until the next
+  update or the prompt's end. A model-repeated card on its own line is dropped
+  while the attempt is live. `scient.pluginSignIn.open` (providers-manage grant)
+  returns the page only on a click from the agent's own computer; the next
+  successful call of the plugin's command raises a signed-in notice.
+
 ### Shared plugins source
 
 Scient Agent always uses Claude Code's plugins; there is no desktop switch. The

@@ -201,6 +201,19 @@ visible. Google does not expose individual child status, names, models, usage,
 or reply ownership through ACP. A batch is not a separate controllable thread,
 and its launch description is not a child result.
 
+## Sign in to a plugin
+
+When an Antigravity plugin such as Gmail needs you to sign in, its failed call adds a notice with
+**Sign in to Gmail**. Choose it to open Google's sign-in page in your browser and approve access;
+the running agent receives the approval itself. Then ask the agent to try again. The notice shows
+**Signed in** once the plugin's next call works, or after you choose **I've signed in**.
+
+The sign-in page works only while the agent that asked for it is still running, for up to ten
+minutes, and only in a browser on the computer that runs the agent. If the notice says to ask the
+agent to try again, send a message so the plugin asks for a new sign-in. Scient keeps the sign-in
+link out of the conversation, and never reads or stores the plugin's credentials. Signing in needs
+permission to manage providers.
+
 ## Run a native goal
 
 When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
