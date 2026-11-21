@@ -211,7 +211,16 @@ function AntigravityServiceRow({
             <T>Off in Antigravity</T>
           </span>
         )
-      ) : state === "added" ? null : (
+      ) : state === "added" ? null : entry.data?.disabledReason ? (
+        // The line above says why it can't be added; offer where to act, never a dead button.
+        <Button
+          variant="ghost-muted"
+          size="sm"
+          render={<Link to="/settings/extensions/installed" />}
+        >
+          <T>Open Installed</T>
+        </Button>
+      ) : (
         <span className="flex shrink-0 flex-col items-end gap-1">
           <StoreInstall
             provider={provider}

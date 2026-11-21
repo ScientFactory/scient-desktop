@@ -52,6 +52,7 @@ const FeedPlugin = Schema.Struct({
   logo: Schema.optional(Schema.Unknown),
   author: Schema.optional(Schema.Unknown),
   homepage: Schema.optional(Schema.Unknown),
+  repository: Schema.optional(Schema.Unknown),
   category: Schema.optional(Schema.Unknown),
   keywords: Schema.optional(Schema.Unknown),
   skills: Schema.optional(Schema.Unknown),
@@ -84,6 +85,14 @@ export interface AntigravityCatalogPlugin {
   readonly mcpServers: ReadonlyArray<string>;
   /** Absent when the catalog's download is not a checksummed gstatic archive. */
   readonly archive?: { readonly url: string; readonly sha256: string } | undefined;
+  /** The manifest fields an installed copy shares with this entry, as the feed states them. */
+  readonly identity: AntigravityPluginIdentity;
+}
+
+export interface AntigravityPluginIdentity {
+  readonly repository?: string | undefined;
+  readonly author?: string | undefined;
+  readonly description?: string | undefined;
 }
 
 export interface AntigravityCatalogRead {
@@ -318,6 +327,11 @@ function catalogPlugin(
     skills,
     mcpServers,
     archive,
+    identity: {
+      repository: nonBlank(plugin.repository),
+      author,
+      description: nonBlank(plugin.description),
+    },
   };
 }
 

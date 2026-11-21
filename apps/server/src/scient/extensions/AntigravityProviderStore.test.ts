@@ -50,7 +50,13 @@ interface Fixture {
   readonly stagedScriptModes: number[];
   listOutput?: string;
   unavailable?: string;
+  /** Whether agy itself is signed in, which its own marketplace install needs. */
+  nativeSignedIn?: boolean;
 }
+
+const GMAIL_DESCRIPTION = "Search, read, draft, and send emails in Gmail.";
+const isArchiveInstall = (call: ReadonlyArray<string>) =>
+  call[1] === "install" && !call[2]!.includes("@");
 
 const officialFeed = (gmail: Buffer, overrides: Record<string, unknown> = {}) => ({
   name: OFFICIAL.name,
@@ -59,7 +65,7 @@ const officialFeed = (gmail: Buffer, overrides: Record<string, unknown> = {}) =>
       name: "gmail",
       displayName: "Gmail",
       version: "0.0.7",
-      description: "Search, read, draft, and send emails in Gmail.",
+      description: GMAIL_DESCRIPTION,
       logo: "https://www.gstatic.com/images/gmail.svg",
       source: { type: "archive", url: GMAIL_ZIP, sha256: sha256(gmail) },
       ...overrides,
@@ -142,6 +148,23 @@ const setup = (configure?: (fixture: Fixture, zips: { gmail: Buffer; canva: Buff
               path: plugin.path,
             })),
           );
+        }
+        if (command === "install" && target!.includes("@")) {
+          // agy's own marketplace install: it records the marketplace as the plugin's source.
+          if (!fixture.nativeSignedIn) return yield* Effect.fail("unknown marketplace");
+          const [name, marketplace] = target!.split("@") as [string, string];
+          yield* fs.makeDirectory(pluginPath(name), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(pluginPath(name), "plugin.json"),
+            encode({ name, version: "0.0.7", description: GMAIL_DESCRIPTION }),
+          );
+          fixture.installed.set(name, {
+            enabled: true,
+            version: "0.0.7",
+            path: pluginPath(name),
+            source: marketplace,
+          });
+          return "";
         }
         if (command === "install") {
           const manifest = yield* fs.readFileString(path.join(target!, "plugin.json"));
@@ -271,7 +294,7 @@ describe("AntigravityProviderStore", () => {
       Effect.gen(function* () {
         const { store, actions, fixture, stateDir, pluginPath, fs, path } = yield* setup();
         yield* store.install("gmail@antigravity-plugins-official");
-        const install = fixture.calls.find((call) => call[1] === "install")!;
+        const install = fixture.calls.find(isArchiveInstall)!;
         expect(install.slice(0, 2)).toEqual(["plugin", "install"]);
         expect(path.basename(install[2]!)).toBe("gmail");
         expect(yield* fs.exists(install[2]!)).toBe(false);
@@ -315,7 +338,7 @@ describe("AntigravityProviderStore", () => {
         );
         const error = yield* store.install("gmail@antigravity-plugins-official").pipe(Effect.flip);
         expect(error.message).toMatch(/checksum/);
-        expect(fixture.calls.some((call) => call[1] === "install")).toBe(false);
+        expect(fixture.calls.some(isArchiveInstall)).toBe(false);
         const staging = path.join(stateDir, "antigravity-plugins", "staging");
         if (yield* fs.exists(staging)) expect(yield* fs.readDirectory(staging)).toEqual([]);
       }),
@@ -339,7 +362,7 @@ describe("AntigravityProviderStore", () => {
         });
         const error = yield* store.install("gmail@antigravity-plugins-official").pipe(Effect.flip);
         expect(error.message).toMatch(/archive/);
-        expect(fixture.calls.some((call) => call[1] === "install")).toBe(false);
+        expect(fixture.calls.some(isArchiveInstall)).toBe(false);
         expect(
           yield* fs.readDirectory(path.join(stateDir, "antigravity-plugins", "staging")),
         ).toEqual([]);
@@ -359,10 +382,10 @@ describe("AntigravityProviderStore", () => {
         });
         const entry = yield* store.entry("gmail@antigravity-plugins-official");
         expect(entry.installed).toBe(false);
-        expect(entry.disabledReason).toMatch(/another source/);
+        expect(entry.disabledReason).toMatch(/different plugin named gmail/);
         expect(
           (yield* store.install("gmail@antigravity-plugins-official").pipe(Effect.flip)).message,
-        ).toMatch(/another source/);
+        ).toMatch(/different plugin named gmail/);
         expect(fixture.calls.some((call) => call[1] === "install")).toBe(false);
         expect(
           (yield* actions
@@ -396,7 +419,7 @@ describe("AntigravityProviderStore", () => {
         const installedMeanwhile = fixture.installed;
         const error = yield* store.install("gmail@antigravity-plugins-official").pipe(Effect.flip);
         expect(error.message).toMatch(/while Scient was preparing/);
-        expect(fixture.calls.some((call) => call[1] === "install")).toBe(false);
+        expect(fixture.calls.some(isArchiveInstall)).toBe(false);
         expect(installedMeanwhile.get("gmail")?.version).toBe("1.0.0");
         expect(yield* fs.exists(pluginPath("gmail"))).toBe(false);
         expect(
@@ -445,6 +468,83 @@ describe("AntigravityProviderStore", () => {
         expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe("antigravity:gmail");
         fixture.installed.set("gmail", gmail);
         expect((yield* actions.listPlugins({})).plugins[0]!.id).toBe(id);
+      }),
+    ),
+  );
+
+  it.effect("adds through agy's own marketplace install when agy is signed in", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, actions, fixture, stateDir, fs, path } = yield* setup((fixture) => {
+          fixture.nativeSignedIn = true;
+        });
+        const id = "gmail@antigravity-plugins-official";
+        yield* store.install(id);
+        expect(fixture.calls).toContainEqual(["plugin", "install", id]);
+        expect(fixture.calls.some(isArchiveInstall)).toBe(false);
+        expect(fixture.fetched).not.toContain(GMAIL_ZIP);
+        expect((yield* store.entry(id)).installed).toBe(true);
+        expect((yield* actions.listPlugins({})).plugins[0]).toMatchObject({
+          id,
+          sourceLabel: "Antigravity Marketplace",
+        });
+        const receipts = path.join(stateDir, "antigravity-plugins", "receipts.json");
+        if (yield* fs.exists(receipts))
+          expect(yield* fs.readFileString(receipts)).not.toContain('"gmail"');
+      }),
+    ),
+  );
+
+  it.effect("recognises a plugin agy installed from its marketplace outside Scient", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, actions, fixture, pluginPath } = yield* setup();
+        const id = "gmail@antigravity-plugins-official";
+        fixture.installed.set("gmail", {
+          enabled: true,
+          version: "0.0.7",
+          path: pluginPath("gmail"),
+          source: "antigravity-plugins-official",
+        });
+        const entry = yield* store.entry(id);
+        expect(entry.installed).toBe(true);
+        expect(entry.disabledReason).toBeUndefined();
+        expect((yield* actions.listPlugins({})).plugins[0]).toMatchObject({
+          id,
+          displayName: "Gmail",
+        });
+        yield* actions.uninstall({ pluginId: id });
+        expect(fixture.calls).toContainEqual(["plugin", "uninstall", "gmail"]);
+      }),
+    ),
+  );
+
+  it.effect("recognises a copy installed before agy recorded origins by its manifest", () =>
+    provide(
+      Effect.gen(function* () {
+        const { store, fixture, pluginPath, fs, path } = yield* setup();
+        const id = "gmail@antigravity-plugins-official";
+        const older = (description: string) =>
+          Effect.gen(function* () {
+            yield* fs.makeDirectory(pluginPath("gmail"), { recursive: true });
+            yield* fs.writeFileString(
+              path.join(pluginPath("gmail"), "plugin.json"),
+              encode({ name: "gmail", version: "0.0.5", description }),
+            );
+            fixture.installed.set("gmail", {
+              enabled: true,
+              version: "0.0.5",
+              path: pluginPath("gmail"),
+              source: null,
+            });
+          });
+        yield* older(GMAIL_DESCRIPTION);
+        expect((yield* store.entry(id)).installed).toBe(true);
+        // Same name, nothing else in common: someone else's plugin, never claimed.
+        yield* older("My own mail helper");
+        const entry = yield* store.entry(id);
+        expect(entry.installed).toBe(false);
+        expect(entry.disabledReason).toMatch(/different plugin named gmail/);
       }),
     ),
   );

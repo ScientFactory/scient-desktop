@@ -1,8 +1,8 @@
 /**
- * The Antigravity Marketplace in Scient: Google's two catalogs, added through `agy plugin install`
- * of a checked archive into the OS user's Antigravity plugins (shared with their Antigravity app),
- * removed with `agy plugin uninstall`. A small receipt per Add records which catalog entry an
- * installed folder came from, since agy's own listing does not.
+ * The Antigravity Marketplace in Scient: Google's two catalogs, added to the OS user's Antigravity
+ * plugins (shared with their Antigravity app) by agy's own marketplace install, or, when agy is not
+ * signed in, by installing the catalog's checked archive. A receipt records an archive Add's origin,
+ * which agy lists only for its own marketplace installs.
  */
 import type {
   ExtensionPluginContents,
@@ -38,6 +38,7 @@ import {
   makeAntigravityPluginCatalog,
   type AntigravityCatalogPlugin,
   type AntigravityMarketplace,
+  type AntigravityPluginIdentity,
 } from "./AntigravityPluginCatalog.ts";
 import {
   ARCHIVE_LIMITS,
@@ -156,10 +157,86 @@ const receiptFor = Effect.fn("AntigravityProviderStore.receiptFor")(function* (
   return Option.getOrUndefined(identity) === candidate.installation ? candidate : undefined;
 });
 
+const MARKETPLACE_NAMES: ReadonlySet<string> = new Set(
+  ANTIGRAVITY_MARKETPLACES.map((item) => item.name),
+);
+const InstalledManifest = Schema.Struct({
+  name: Schema.optional(Schema.Unknown),
+  repository: Schema.optional(Schema.Unknown),
+  author: Schema.optional(Schema.Unknown),
+  description: Schema.optional(Schema.Unknown),
+});
+const decodeInstalledManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(InstalledManifest),
+);
+const text = (value: unknown) =>
+  typeof value === "string" && value.trim() ? value.trim() : undefined;
+const comparableRepository = (value: string | undefined) =>
+  value
+    ?.toLowerCase()
+    .replace(/\.git$/u, "")
+    .replace(/\/+$/u, "");
+
+/**
+ * Whether a copy installed without a recorded origin is this catalog plugin: same name in its
+ * plugin.json, and the same repository, author or description the catalog states for it.
+ */
+const manifestMatches = Effect.fn("AntigravityProviderStore.manifestMatches")(function* (
+  folder: string,
+  name: string,
+  identity: AntigravityPluginIdentity,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = path.join(folder, "plugin.json");
+  const info = yield* fs.stat(file);
+  if (info.type !== "File" || Number(info.size) > ARCHIVE_LIMITS.manifestBytes) return false;
+  const manifest = yield* decodeInstalledManifest(yield* fs.readFileString(file));
+  if (text(manifest.name) !== name) return false;
+  const author =
+    typeof manifest.author === "object" && manifest.author !== null && "name" in manifest.author
+      ? text(manifest.author.name)
+      : text(manifest.author);
+  const repository = comparableRepository(text(manifest.repository));
+  return (
+    (repository !== undefined && repository === comparableRepository(identity.repository)) ||
+    (author !== undefined && author.toLowerCase() === identity.author?.toLowerCase()) ||
+    (text(manifest.description) !== undefined &&
+      text(manifest.description) === identity.description)
+  );
+});
+
+/**
+ * The marketplace an installed copy came from: agy's own record first, then Scient's receipt for
+ * an archive Add, then, for a copy installed before agy recorded origins, its manifest.
+ */
+const installedMarketplace = Effect.fn("AntigravityProviderStore.installedMarketplace")(function* (
+  plugin: {
+    readonly name: string;
+    readonly path: string;
+    readonly version?: string | undefined;
+    readonly source?: string | undefined;
+  },
+  receipts: ReadonlyArray<Receipt>,
+  catalog: ReadonlyMap<string, AntigravityCatalogPlugin> | undefined,
+) {
+  if (plugin.source !== undefined && MARKETPLACE_NAMES.has(plugin.source))
+    return { marketplace: plugin.source, receipt: undefined };
+  const receipt = yield* receiptFor(receipts, plugin);
+  if (receipt) return { marketplace: receipt.marketplace, receipt };
+  const entry = catalog?.get(plugin.name);
+  if (!entry || (plugin.source !== undefined && plugin.source !== "antigravity")) return undefined;
+  const matches = yield* manifestMatches(plugin.path, plugin.name, entry.identity).pipe(
+    Effect.orElseSucceed(() => false),
+  );
+  return matches ? { marketplace: entry.marketplace, receipt: undefined } : undefined;
+});
+
 /** `agy plugin list --json` as provider plugins; any malformed listing fails as a whole. */
 const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList")(function* (
   output: string,
   receipts: ReadonlyArray<Receipt>,
+  catalog?: ReadonlyMap<string, AntigravityCatalogPlugin> | undefined,
 ) {
   const path = yield* Path.Path;
   const listed = yield* decodeListed(output.trim());
@@ -171,23 +248,26 @@ const parseAntigravityPluginList = Effect.fn("AntigravityProviderStore.parseList
     names.add(item.name);
     const version = item.version?.trim() || undefined;
     const source = item.source?.trim() || undefined;
-    const receipt = yield* receiptFor(receipts, {
-      name: item.name,
-      path: item.path,
-      version,
-      source,
-    });
+    const origin = yield* installedMarketplace(
+      { name: item.name, path: item.path, version, source },
+      receipts,
+      catalog,
+    );
+    const marketplace = origin?.marketplace;
+    const listedName =
+      (marketplace ? catalog?.get(item.name)?.displayName : undefined) ??
+      origin?.receipt?.displayName?.trim();
     plugins.push({
-      id: receipt ? entryId(item.name, receipt.marketplace) : `antigravity:${item.name}`,
+      id: marketplace ? entryId(item.name, marketplace) : `antigravity:${item.name}`,
       name: item.name,
-      displayName: receipt?.displayName?.trim() || sharedPluginDisplayName(item.name),
+      displayName: listedName || sharedPluginDisplayName(item.name),
       ...(version ? { version } : {}),
-      ...(receipt ? { marketplace: receipt.marketplace } : {}),
+      ...(marketplace ? { marketplace } : {}),
       source: "local",
       enabled: item.enabled,
       canUninstall: true,
       canSetEnabled: true,
-      sourceLabel: receipt ? "Antigravity Marketplace" : "Antigravity's plugins",
+      sourceLabel: marketplace ? "Antigravity Marketplace" : "Antigravity's plugins",
       scope: "user",
       path: item.path,
       ...(source ? { nativeSource: source } : {}),
@@ -284,7 +364,16 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     function* () {
       const sequence = yield* nextInventoryReadSequence;
       const output = yield* options.run(["plugin", "list", "--json"]);
-      const plugins = yield* parseAntigravityPluginList(output, yield* readReceipts);
+      // The cached catalog, when it reads, names plugins installed before agy recorded origins.
+      const known = yield* catalog.read(false).pipe(
+        Effect.map((read) => new Map(read.plugins.map((plugin) => [plugin.name, plugin]))),
+        Effect.option,
+      );
+      const plugins = yield* parseAntigravityPluginList(
+        output,
+        yield* readReceipts,
+        Option.getOrUndefined(known),
+      );
       return { plugins, sequence };
     },
     Effect.provideService(Path.Path, path),
@@ -312,7 +401,7 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
         : added
           ? undefined
           : native
-            ? `Antigravity already has a plugin named ${plugin.name} from another source. Remove it first to add this one.`
+            ? `Antigravity already has a different plugin named ${plugin.name}. Remove that one from Installed to add this one.`
             : plugin.archive === undefined
               ? "This plugin's download is not on Google's plugin host, so Scient can't add it."
               : undefined);
@@ -432,6 +521,18 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
     const item = yield* find(id);
     if (item.entry.disabledReason) return yield* fail(item.entry.disabledReason);
     if (item.entry.installed) return;
+    // agy's own marketplace install records the origin and keeps the plugin updated. It needs
+    // agy's own sign-in; without one, Scient adds the catalog's checked archive instead.
+    const nativeAdd = yield* options.run(["plugin", "install", id]).pipe(Effect.option);
+    if (nativeAdd._tag === "Some") {
+      const listed = (yield* list()).plugins.find((plugin) => plugin.name === item.plugin.name);
+      if (listed?.id !== id)
+        return yield* fail("Antigravity did not list the plugin after adding it.");
+      yield* writeReceipts((receipts) =>
+        receipts.filter((receipt) => receipt.name !== listed.name),
+      ).pipe(Effect.ignore);
+      return;
+    }
     const archive = item.plugin.archive;
     if (!archive) return yield* fail("This plugin cannot be added from Scient.");
     yield* Effect.scoped(

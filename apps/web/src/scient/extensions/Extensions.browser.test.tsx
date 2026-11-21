@@ -2662,6 +2662,15 @@ describe("Antigravity Marketplace", () => {
       }),
     );
 
+    // A different plugin of the same name: the reason and where to act, never a dead Add.
+    const clash = "Antigravity already has a different plugin named gmail.";
+    agents = await show({ plugins: [] }, { ...gmail, disabledReason: clash });
+    await vi.waitFor(() => expect(agents.textContent).toContain(clash));
+    expect(buttonIn(agents, "Add to Antigravity")).toBeNull();
+    expect(linkIn(agents, "Open Installed")?.getAttribute("href")).toBe(
+      "/settings/extensions/installed",
+    );
+
     agents = await show({ plugins: [] }, { ...gmail, installationStateKnown: false });
     await vi.waitFor(() => expect(agents.textContent).toContain("Checking…"));
 
