@@ -284,6 +284,7 @@ export const AntigravityDriver: ScientProviderDriver<
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
+        nativePlugins: executable.harnessPath === null, // SCIENT-FORK: the agy CLI loads plugins.
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
