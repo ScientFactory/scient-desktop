@@ -721,6 +721,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       const decoded = decodeThreadSurface(surface);
                       return decoded === null ? [] : [decoded];
                     }
+                    // SCIENT-FORK: Agents opens fresh; a saved tab is not restored.
+                    if (kind === "agents") return [];
                     // Also drops kinds this build does not know, such as one a newer build saved.
                     if (!(RIGHT_PANEL_KINDS as ReadonlyArray<unknown>).includes(kind)) return [];
                     if (surface.kind === "linked-thread") {

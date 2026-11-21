@@ -19,11 +19,12 @@ describe("webhookAddress", () => {
     expect(result.note).toBeNull();
   });
 
-  it("is not copyable and points at T3 Connect when no base URL exists", () => {
+  it("is not copyable and says how to reach it when no base URL exists", () => {
     const result = webhookAddress(endpoint, null);
     expect(result.address).toBe("/hooks/abc");
     expect(result.copyable).toBe(false);
-    expect(result.note).toContain("T3 Connect");
+    // SCIENT-FORK: Scient's note names reachable routes, not a hosted relay.
+    expect(result.note).toContain("Tailscale or your own proxy");
   });
 
   it("warns that loopback addresses only work on this computer", () => {

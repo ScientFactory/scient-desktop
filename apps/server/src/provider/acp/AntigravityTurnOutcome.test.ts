@@ -173,6 +173,8 @@ describe("watchAntigravityPromptOutcome", () => {
               message: "Requested entity was not found.",
               code: "NOT_FOUND",
               retryable: true,
+              // SCIENT-FORK: the Google API error's HTTP status.
+              httpStatus: 404,
             }),
             resumeWith: "continue",
           },

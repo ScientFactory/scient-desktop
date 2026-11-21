@@ -543,7 +543,7 @@ it.effect("show gives the latest run's last error only when that run did not com
       nextPosition: null,
       hasMore: false,
     };
-    const { tools, calls } = scriptedTools({ t3_thread_read: [page] });
+    const { tools, calls } = scriptedTools({ scient_thread_inspect: [page] });
 
     assert.strictEqual(
       yield* latestRunError(tools, { threadId, status: "failed", latestRunId: runId }),
