@@ -554,7 +554,10 @@ Zotero. Every detail goes to the field Zotero has for it in that kind of item
 (a legal case's name, court and reporter; a book's edition and place; a
 program's version); a detail that kind of item has no field for goes to
 Zotero's **Extra**, where Zotero reads it. If the item was changed in Zotero after Scient last read it, nothing is
-overwritten: refresh from Zotero first, then send again. This needs the Zotero
+overwritten: refresh from Zotero first, then send again. A change someone makes
+in Zotero while you send is kept the same way, for the next refresh to bring,
+and so is a note changed in Zotero, since a send never changes notes there.
+This needs the Zotero
 key in Accounts with write access. Changes are not sent automatically; there is
 no two-way sync. At most 500 sources are sent at a time; with more selected,
 Scient says so and sends nothing.
@@ -1105,7 +1108,8 @@ project**, which keeps the paper in your Library. Choose
 **Undo** in the message that appears to put it straight back, or choose
 **Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 your Library while it is in the trash. **Empty trash** deletes the sources in
-it for good, with their saved versions and any PDF no other source uses.
+it for good, with their saved versions, what Scient kept of their Zotero items
+(Zotero's notes among it) and any PDF no other source uses.
 When the last retained reference to a collected PDF is gone, Scient also removes
 its extracted text and highlights. This is not secure erasure: an interrupted
 cleanup or an unreadable file can leave orphaned material, and existing backups,

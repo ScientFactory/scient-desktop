@@ -437,7 +437,8 @@ pairs and what is left as possible duplicates. One merge:
   under `From <label>:`, where the label is the caller's (the project name at
   the move), else the citation key.
 - Library collection membership moves to the survivor. When the survivor
-  gains a Zotero link it lacked, the loser's Zotero base is copied to it.
+  gains a Zotero link it lacked, the loser's Zotero base is copied to it
+  (`withGainedZoteroBase`); recovery of a stopped merge repeats that step.
 - The loser goes to the trash with `mergedInto` (survivor and merge ID). A
   plain restore refuses it; only the merge's Undo brings it back. Such an
   entry is Undo material, not something a person removed: the Trash list, its
@@ -794,7 +795,8 @@ trash. A record deleted for good (Empty trash, `deletePermanently`, the agent's
 `permanent` removal) first leaves a tombstone, `deleted/<sourceId>.json` in the
 Library: its trash entry with the record cut to what identifies the work (no
 abstract, note, PDFs or history), written before the trash entry is erased and
-under the same lock. The resolver treats tombstones as it treats the trash (by
+under the same lock. The source's Zotero base, which holds Zotero's note text,
+is removed before the trash entry too. The resolver treats tombstones as it treats the trash (by
 ID, alias, hydration identity, or a corroborated match of the pin's `work`, a
 merged-away copy only while its survivor is gone), so such a pin stays
 `removed` and its snapshot serves it; a `removed` resolution names the removed
@@ -1370,8 +1372,9 @@ duplicates. K kept different values: Review." for 5e to show.
 organize route and `scient_sources_organize` take `move-back`): finishes a
 pending cleanup, then builds the v1 store in a staging folder,
 `.scient/library/.restoring/sources`: every run's backup, each pinned record's
-later library state as a new v1 revision under the pin's key and project note,
-its PDFs, and the current reviews and bibliography copies over the backup's.
+later library state as a new v1 revision under the pin's key and project note
+with the Library's Zotero base for it under the pin's key, its PDFs, and the
+current reviews and bibliography copies over the backup's.
 One rename publishes the folder as `.scient/sources`. After that it restores
 highlight files that are not there, backs up and removes `pins.json`, and sets
 the journal to `moved-back`. Library records stay. It refuses while
@@ -2251,8 +2254,9 @@ User-Agent. No other host receives it, and an empty or malformed value sends
 nothing. Adapters that pass the address another way (Unpaywall's `email`)
 read `registryContactEmail()`; none keeps its own setting.
 
-All metadata responses are HTTPS-only, time- and size-bounded, and
-schema-decoded. Only the exact identifier leaves the project environment; the
+All metadata responses are HTTPS-only, size-bounded, and schema-decoded, and
+each request has an idle timer and one 30 s budget across its redirects (the
+citation-style catalogue 2 minutes). Only the exact identifier leaves the project environment; the
 PDF never does. Resolution failure is a normal offline fallback, not an import
 failure. No visible-PDF abstract extraction, OCR, fuzzy bibliographic search,
 or model inference is part of this slice because those paths need separate
@@ -2999,8 +3003,9 @@ added, in an order that survives a kill at any point: for each PDF that is not
 here, its highlights file and then the PDF (checked by hash, flushed); a PDF
 already here keeps this Library's highlights, and the source is recorded as
 differing if the other's differ; its earlier versions, and the PDFs only they
-name while the other Library still has them; the "keep apart" decisions; last
-the record. Files are created from the other Library's own bytes by renaming a
+name while the other Library still has them; its Zotero base (only one that
+names the source), which keeps a Zotero PDF removed there from coming back on
+Refresh; the "keep apart" decisions; last the record. Files are created from the other Library's own bytes by renaming a
 flushed temporary file into place, only where no file has the name; the lock,
 which every writer of those files holds, makes that exclusive. The "keep
 apart" decisions are the other Library's as its own rule reads them ("not
@@ -3732,7 +3737,12 @@ fixed loopback endpoint `127.0.0.1:23119`, plus Better BibTeX's local JSON-RPC
 `item.citationkey` for keys an item does not carry itself. The web transport
 (`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library, or a
 group library, at `api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
-Responses are time- and size-bounded and decoded through explicit schemas;
+Responses are size-bounded and decoded through explicit schemas. Besides the
+socket's idle timer, each request has one wall-clock budget from before it
+connects through every redirect to its last byte (`withRequestDeadline` in
+`nodeHttpResponse.ts`): 60 s for zotero.org, 10 minutes for a zotero.org file,
+30 s for Zotero on this computer. Past it the request and the file stream are
+aborted, the temporary copy is removed and the item fails, ready to retry;
 mapping lives in `ZoteroItems.ts`.
 
 The zotero.org key comes from Accounts (`ZoteroAccountKey.ts`): the newest
@@ -4055,7 +4065,10 @@ the user takes Zotero's value (`useZotero`) or keeps theirs (`keepLocal`).
 Empty Zotero values never clear a field; tags merge as additions and removals;
 new PDFs (by attachment key) are
 attached; the record's Zotero item version is updated; an item gone from Zotero
-is reported and left alone. Without a sync file (sources imported before this
+is reported and left alone. The note is written against the note the merge
+read, so an edit elsewhere in the source does not refuse it; when the note
+changed here meanwhile the source is reported stale and no base is written.
+Without a sync file (sources imported before this
 existed), every difference counts as a Zotero change. The citation key is never
 changed by a refresh.
 
@@ -4079,6 +4092,12 @@ the source note as a child note, and the source is linked to the new item. A
 linked source is patched with only the fields that differ, using the item's
 own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
 since Scient last read it, nothing is sent and the user is asked to refresh.
+The base then moves only by what the Send wrote: to Zotero's item as read back
+when it is still at the version the write left it at (else the earlier base
+stays and the link keeps that version, so Zotero's change is seen by the next
+Send and brought by Refresh), keeping the earlier base's notes for an item that
+was only patched. The link is written against the record as it is then, so an
+edit made during the Send keeps both.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
 the citation key and identifiers without a Zotero field.
 
