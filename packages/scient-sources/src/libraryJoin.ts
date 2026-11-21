@@ -356,6 +356,8 @@ export type ScientLibraryJoinSource =
       readonly other: typeof Other.Type;
       /** A backup's own list of its files and their checksums; null for a kept Library. */
       readonly listed: ReadonlyMap<string, string> | null;
+      /** Listed history filenames indexed by source ID; null for a kept Library. */
+      readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>> | null;
     }
   /** Not a finished backup, and not a Library this Library's own restore moved aside. */
   | { readonly outcome: "not-a-library" }
@@ -370,6 +372,34 @@ export type ScientLibraryJoinSource =
  * Reads only. `check: "as-read"` skips hashing every file of a backup: the caller compares
  * each file it reads with `listed` instead (the list of differences, one thing taken).
  */
+/** Indexes a backup manifest once: file checksums and each source's listed history filenames. */
+function indexBackupFiles(
+  files: ReadonlyArray<{ readonly path: string; readonly sha256: string }>,
+): {
+  readonly listed: ReadonlyMap<string, string>;
+  readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>>;
+} {
+  const listed = new Map<string, string>();
+  const listedHistory = new Map<string, Array<string>>();
+  for (const file of files) {
+    listed.set(file.path, file.sha256);
+    if (!file.path.startsWith("history/")) continue;
+    const rest = file.path.slice("history/".length);
+    const slash = rest.indexOf("/");
+    if (slash <= 0) continue;
+    const sourceId = rest.slice(0, slash);
+    const name = rest.slice(slash + 1);
+    if (!name || name.includes("/")) continue;
+    const names = listedHistory.get(sourceId);
+    if (names) {
+      names.push(name);
+    } else {
+      listedHistory.set(sourceId, [name]);
+    }
+  }
+  return { listed, listedHistory };
+}
+
 export async function openScientLibraryJoinSource(
   library: ScientLibraryLocation,
   folder: string,
@@ -394,10 +424,12 @@ export async function openScientLibraryJoinSource(
       ScientLibraryBackupManifest,
     ).catch(() => null);
     if (!manifest) return { outcome: "not-a-library" };
+    const { listed, listedHistory } = indexBackupFiles(manifest.files);
     return {
       outcome: "ready",
       root: NodePath.join(chosen, SCIENT_LIBRARY_BACKUP_PAYLOAD),
-      listed: new Map(manifest.files.map((file) => [file.path, file.sha256])),
+      listed,
+      listedHistory,
       other: {
         libraryId: manifest.library.libraryId,
         kind: "backup",
@@ -418,6 +450,7 @@ export async function openScientLibraryJoinSource(
     outcome: "ready",
     root: chosen,
     listed: null,
+    listedHistory: null,
     other: { libraryId: manifest.libraryId, kind: "replaced", folder: chosen },
   };
 }
@@ -906,6 +939,8 @@ async function addSource(input: {
   readonly otherRoot: string;
   /** A backup's own checksums: every file read from it must be the one its list names. */
   readonly listed: ReadonlyMap<string, string> | null;
+  /** Listed history filenames indexed by source ID; null for a kept Library. */
+  readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>> | null;
   readonly record: ScientSourceRecord;
   readonly beforeRecord: () => Promise<void>;
   readonly afterFiles?: (() => void) | undefined;
@@ -931,13 +966,8 @@ async function addSource(input: {
   decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
   const history = NodePath.join(otherRoot, "history", id);
   const historyNames = new Set(await NodeFSP.readdir(history).catch(() => [] as string[]));
-  if (input.listed) {
-    const prefix = `history/${id}/`;
-    for (const relative of input.listed.keys()) {
-      if (!relative.startsWith(prefix)) continue;
-      const name = relative.slice(prefix.length);
-      if (!name.includes("/")) historyNames.add(name);
-    }
+  for (const name of input.listedHistory?.get(id) ?? []) {
+    historyNames.add(name);
   }
   const versions: Array<{ readonly name: string; readonly bytes: Buffer }> = [];
   for (const name of historyNames) {
@@ -1327,6 +1357,7 @@ export async function joinScientLibrary(input: {
                   libraryRoot,
                   otherRoot: source.root,
                   listed: source.listed,
+                  listedHistory: source.listedHistory,
                   record,
                   beforeRecord: () =>
                     keepApart({ library, sourceId: id, decisions, present, actor: input.actor }),
@@ -1710,6 +1741,8 @@ interface OtherFolder {
   readonly root: string;
   /** A backup's own checksums by path; null for a Library a restore kept. */
   readonly listed: ReadonlyMap<string, string> | null;
+  /** Listed history filenames indexed by source ID; null for a kept Library. */
+  readonly listedHistory: ReadonlyMap<string, ReadonlyArray<string>> | null;
 }
 
 /**
@@ -1729,7 +1762,7 @@ async function sameSnapshot(
   if (header.other.backupId !== undefined && source.other.backupId !== header.other.backupId) {
     return null;
   }
-  return { root: source.root, listed: source.listed };
+  return { root: source.root, listed: source.listed, listedHistory: source.listedHistory };
 }
 
 async function otherRecord(
@@ -1984,6 +2017,7 @@ export async function takeFromScientLibraryJoin(input: {
         libraryRoot,
         otherRoot,
         listed: otherFolder.listed,
+        listedHistory: otherFolder.listedHistory,
         record: theirs,
         // Kept apart from every paper it resembled before it exists, so nothing merges them.
         beforeRecord: async () => {
