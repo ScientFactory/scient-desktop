@@ -486,9 +486,21 @@ const afterLibraryChange = (store: ScientSourcesStore, sourceIds: ReadonlyArray<
       )
     : Effect.void;
 
-/** False for a read-only library call: it reads PDF text without storing it in the shared library. */
+/** An outside client approved for Read only leaves no file behind, not even a cache. */
+const writesDerivedFiles = Effect.map(
+  ScientSourcesOutsideCall,
+  (outside) => outside === null || outside.capabilities.has("sources:write"),
+);
+
+/**
+ * False for a read-only library call and for any call from an outside client approved for Read
+ * only, which may reach a project's own store: PDF text is read without being stored.
+ */
 const storesFullText = (store: ScientSourcesStore) =>
-  !(store.kind === "library" && store.access === "read");
+  Effect.map(
+    writesDerivedFiles,
+    (writes) => writes && !(store.kind === "library" && store.access === "read"),
+  );
 
 /** Intake from a project pins what it added, so the person sees it here. */
 const pinAdded = (store: ScientSourcesStore, sourceIds: ReadonlyArray<string | null>) =>
@@ -526,12 +538,15 @@ const doiValue = (record: Pick<ListedRecord, "identifiers">) =>
   record.identifiers.find((identifier) => identifier.scheme.toLowerCase() === "doi")?.value ?? null;
 
 /** Without the server's state folder (tests), the style catalogue is kept in memory only. */
-const citationStyleDependencies = Effect.map(
-  Effect.serviceOption(ServerConfig.ServerConfig),
-  (config) => ({
-    cacheRoot: Option.isSome(config) ? citationStyleCacheRoot(config.value.stateDir) : null,
-  }),
-);
+const citationStyleDependencies = Effect.gen(function* () {
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  return {
+    cacheRoot:
+      Option.isSome(config) && (yield* writesDerivedFiles)
+        ? citationStyleCacheRoot(config.value.stateDir)
+        : null,
+  };
+});
 
 /** At most this many pairs and merges per page of a list call with duplicates. */
 const AGENT_DUPLICATE_PAIRS = 25;
@@ -2174,13 +2189,14 @@ export const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
     const sourceIds = input.sourceIds
       ? yield* Effect.forEach(input.sourceIds, (sourceId) => sourceIdIn(store, sourceId))
       : undefined;
+    const persist = yield* storesFullText(store);
     const { hits, status } = yield* attempt(() =>
       searchSourceFullText({
         root: store.store,
         query: input.query,
         limit: Math.min(25, Math.max(1, input.limit ?? 10)),
         ...(sourceIds ? { sourceIds } : {}),
-        persist: storesFullText(store),
+        persist,
       }),
     );
     const pins =
@@ -2218,6 +2234,7 @@ export const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit
     const store = yield* resolveScientSourcesStore();
     if (store.kind === "library" && !store.exists) return { outcome: "source-not-found" as const };
     const sourceId = yield* sourceIdIn(store, input.sourceId);
+    const persist = yield* storesFullText(store);
     return yield* attempt(() =>
       readSourceText({
         root: store.store,
@@ -2225,7 +2242,7 @@ export const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit
         ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
         fromPage: Math.max(1, input.fromPage ?? 1),
         maxCharacters: Math.min(30_000, Math.max(1_000, input.maxCharacters ?? 12_000)),
-        persist: storesFullText(store),
+        persist,
       }),
     );
   },
@@ -2248,9 +2265,8 @@ export const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesTool
             Effect.map((resolved) => ({ quote, sourceId: resolved })),
           ),
     );
-    const results = yield* attempt(() =>
-      checkSourceQuotes({ root: store.store, quotes, persist: storesFullText(store) }),
-    );
+    const persist = yield* storesFullText(store);
+    const results = yield* attempt(() => checkSourceQuotes({ root: store.store, quotes, persist }));
     return { results };
   },
 );

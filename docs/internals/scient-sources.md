@@ -1024,7 +1024,10 @@ environment authority for people and agents.
   `project-required` without it. Without a project only whole-Library calls
   run (`resolveWholeLibrary`): list `scope: "library"`, `recentChanges` and
   `libraryCopies`, and the organize backup, restore and join actions; their
-  rows carry no checkout's keys, notes or `pinned`.
+  rows carry no checkout's keys, notes or `pinned`. A Read only client writes
+  no file, also when its project still has its own store: PDF text is read
+  without being stored and no indexing pass starts (`storesFullText`), and
+  the style catalogue stays in memory (`writesDerivedFiles`).
 - `scient_sources_list` lists this project's pins under their project keys
   (`fromSnapshot` marks a pin this library lacks); `scope: "library"` lists the
   whole library with `pinned` per record. `scient_sources_search` searches the
