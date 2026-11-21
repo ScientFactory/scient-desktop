@@ -124,4 +124,18 @@ Unchanged.
 Local: macOS arm64, Node 26.13.1, pnpm 12.14.0, isolated synthetic state, none of the agent
 shell's live-profile variables.
 
-- **Static checks:** recorded below once the gate finishes.
+- **Static checks:** format, lint, knip, root typecheck, the three generate checks, i18n, brand,
+  documentation links, the seam check and the provenance check pass; build and desktop smoke pass.
+- **Test gate** (`pnpm alignment:gates --only test`, server six files at a time): failures in files
+  this alignment touched were fitted (T3 tests that use T3's service and tool names, the
+  background-wait grant, the context budget, a disabled text-generation provider, the macOS
+  package's new resource). Saved Agents tabs are again dropped on restore, as before.
+- **Same on owned main on this Mac:** PortScanner's agent stop, the setup-script runner,
+  `ClaudeSkills`, the real LaTeX engine and the two `ChatMarkdown.permissions` keyboard-menu cases.
+  `EnvironmentFileOpen` failed under load and passed alone. `readerScrolling`'s "fresh open
+  settles" case also fails one run in two on owned main.
+- **Web:** the whole unit project passes (12,097 tests). The local browser run hung twice on a
+  closed browser connection, so the browser tests of every area this range touches ran on their
+  own (437 tests); the full browser suite runs in hosted CI.
+- **Codex review** (gpt-6.1-sol, high), read independently of this record: no findings.
+- **Hosted CI and live review:** recorded in the PR.
