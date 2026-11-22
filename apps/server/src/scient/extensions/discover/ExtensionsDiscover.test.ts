@@ -722,7 +722,7 @@ describe("curated Discover catalog", () => {
     }
   });
 
-  it.effect("leads each section with its picks, independently of catalog order", () =>
+  it.effect("leads Most used and every picked section with its picks, in any catalog order", () =>
     Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
       const catalog = yield* discover.catalog();
