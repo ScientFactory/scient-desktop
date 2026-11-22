@@ -607,7 +607,8 @@ describe("managed runtime catalog resolution", () => {
         activeArtifact: { ...managedRuntimeArtifactReceipt(installed), size },
       });
     assert.strictEqual(repair(578 * 1024 * 1024)?.version, "1.4.24-R9131.1");
-    assert.strictEqual(repair(1024 * 1024 * 1024 + 1)?.version, bundledArtifact.version);
+    // Too large to fetch again, and nothing as new on offer: no repair, rather than a downgrade.
+    assert.isUndefined(repair(1024 * 1024 * 1024 + 1));
   });
 
   it("protects revision 1 through 4 clients while accepting the new Codex contract", () => {

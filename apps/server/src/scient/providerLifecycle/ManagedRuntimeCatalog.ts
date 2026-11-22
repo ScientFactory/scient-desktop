@@ -497,7 +497,11 @@ export function resolveManagedRuntimeCatalogCandidate(input: {
     : bundledArtifact;
 }
 
-/** Latest known qualified repair target, including a newer durable installation receipt offline. */
+/**
+ * Latest known qualified repair target, including a newer durable installation receipt offline.
+ * Repair never goes back: with an installed release newer than any this build can download (a
+ * receipt names no zstd copy, so an installation too large to fetch raw is one), there is none.
+ */
 export function resolveManagedRuntimeRepairArtifact(input: {
   readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
   readonly artifactPolicy?: ManagedRuntimeArtifactPolicy | undefined;
@@ -510,10 +514,9 @@ export function resolveManagedRuntimeRepairArtifact(input: {
     policy && input.activeArtifact
       ? hydrateManagedRuntimeArtifact(policy, input.activeArtifact)
       : undefined;
-  // A receipt names no zstd copy: an installed runtime too large to download raw is repaired from
-  // the best release this build can download.
-  if (!installed || !fitsManagedRuntimeDownloadLimit(installed)) return candidate;
-  if (!candidate) return installed;
+  if (!installed) return candidate;
+  const downloadable = fitsManagedRuntimeDownloadLimit(installed) ? installed : undefined;
+  if (!candidate) return downloadable;
   const comparison = compareManagedRuntimeReleases({
     provider: installed.provider,
     current: candidate,
@@ -523,7 +526,7 @@ export function resolveManagedRuntimeRepairArtifact(input: {
     (installed.provider === "cursor" &&
       comparison === "unknown" &&
       isSameCursorReleaseDate(installed.version, candidate.version))
-    ? installed
+    ? downloadable
     : candidate;
 }
 
