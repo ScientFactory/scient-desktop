@@ -840,8 +840,11 @@ describe("Discover", () => {
       "Google Drive",
       "Outlook Email",
       "Outlook Calendar",
+      "Microsoft Teams",
       "iMessage",
       "Telegram",
+      "Figma",
+      "Zotero",
       "Linear",
       "Notion",
       "Local tool",
@@ -1210,7 +1213,7 @@ describe("Discover", () => {
     const plugin = (name: string): ProviderStoreEntry => ({
       id: name,
       name,
-      displayName: name === "scite" ? "Scite" : "Zotero",
+      displayName: name === "scite" ? "Scite" : "Mendeley",
       marketplace: "test",
       description: "Reference library",
       kind: "codex",
@@ -1218,29 +1221,29 @@ describe("Discover", () => {
       includes: [],
       apps: [],
     });
-    state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
+    state.storePages[codex] = { entries: [plugin("scite"), plugin("mendeley")], total: 2 };
     state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<CategoryPage category="papers" />);
-    // Readwise is Scient's own service in Papers; the store plugins follow it.
-    expect(fixture.rowNames()).toEqual(["Readwise", "Scite", "Zotero"]);
+    // Scient's own services in Papers lead; the store plugins follow them.
+    expect(fixture.rowNames()).toEqual(["Zotero", "Readwise", "LaTeX", "Scite", "Mendeley"]);
     // The store versions are on the item's own page, not under its row.
     expect(fixture.container.textContent).not.toContain("Also add from");
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     // Each store has its own section, which says the agent once; the rows just say Add.
     expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
-    expect(fixture.row("Zotero").textContent).not.toContain("Codex only");
-    await userEvent.click(buttonIn(fixture.row("Zotero"), "Add")!);
+    expect(fixture.row("Mendeley").textContent).not.toContain("Codex only");
+    await userEvent.click(buttonIn(fixture.row("Mendeley"), "Add")!);
     expect(state.commands.providerAct).toHaveBeenCalledWith(
       expect.objectContaining({
         environmentId: "local",
-        input: { instanceId: codex, action: { type: "install", entryId: "zotero" } },
+        input: { instanceId: codex, action: { type: "install", entryId: "mendeley" } },
       }),
     );
     const search = fixture.container.querySelector<HTMLInputElement>(
       'input[aria-label="Search this category"]',
     )!;
-    await userEvent.fill(search, "Zotero");
-    expect(fixture.rowNames()).toEqual(["Zotero"]);
+    await userEvent.fill(search, "Mendeley");
+    expect(fixture.rowNames()).toEqual(["Mendeley"]);
     expect(fixture.container.textContent).toContain("No picks match this search.");
   });
 
@@ -1338,8 +1341,11 @@ describe("Discover", () => {
       "Google Drive",
       "Outlook Email",
       "Outlook Calendar",
+      "Microsoft Teams",
       "iMessage",
       "Telegram",
+      "Figma",
+      "Zotero",
       "Notion",
     ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");

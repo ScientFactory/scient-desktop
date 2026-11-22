@@ -23,6 +23,7 @@ import {
 import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
+  CATEGORY_HOME_PICKS,
   CURATED_SERVERS,
   curatedServerForUrl,
   curatedDiscoverEntry,
@@ -489,7 +490,7 @@ const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
     tagline: "Search papers and citations",
     icon: ICON_URIS.semantic,
   }),
-  curated("kaggle", ["data", "papers"]),
+  curated("warehouse", ["data", "papers"]),
   ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["papers"])),
   curated("hub", ["most-used", "data"], {
     url: "https://hub.example/mcp/",
@@ -532,7 +533,7 @@ describe("curated Discover catalog", () => {
       // A most used member leads its field.
       expect(catalog.sections[2]!.entries.map((entry) => entry.title)).toEqual([
         "hub",
-        "kaggle",
+        "warehouse",
         "lab",
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
@@ -721,15 +722,22 @@ describe("curated Discover catalog", () => {
     }
   });
 
-  it.effect("ranks Most used independently of catalog order", () =>
+  it.effect("leads each section with its picks, independently of catalog order", () =>
     Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
       const catalog = yield* discover.catalog();
+      const names = (ids: ReadonlyArray<string>) =>
+        ids.map((id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName);
       expect(catalog.sections[0]?.entries.map((entry) => entry.title)).toEqual(
-        MOST_USED_SERVER_IDS.map(
-          (id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName,
-        ),
+        names(MOST_USED_SERVER_IDS),
       );
+      for (const [category, picks] of Object.entries(CATEGORY_HOME_PICKS)) {
+        const section = catalog.sections.find((candidate) => candidate.category === category);
+        expect(
+          section?.entries.slice(0, picks.length).map((entry) => entry.title),
+          category,
+        ).toEqual(names(picks));
+      }
     }).pipe(
       Effect.provide(
         harness(

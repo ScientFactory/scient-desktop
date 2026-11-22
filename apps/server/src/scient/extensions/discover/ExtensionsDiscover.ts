@@ -35,6 +35,7 @@ import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CATALOG_SECTIONS,
+  CATEGORY_HOME_PICKS,
   MOST_USED_SERVER_IDS,
   CURATED_NAME_PREFIX,
   CURATED_SERVERS,
@@ -439,16 +440,20 @@ const registryQueries = (query: string, terms: ReadonlyArray<string>) =>
         ]),
       ];
 
-/** Entries whose primary category is `category` first (most used leading), then the rest. */
+/**
+ * A section's servers: its picks in their order, then those whose primary category it is (most used
+ * leading), then the rest.
+ */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
   const members = servers.filter((server) => server.categories.includes(category));
-  if (category === "most-used") {
+  const ranked = (picks: ReadonlyArray<string>, list: ReadonlyArray<CuratedServer>) => {
     const rank = (id: string) => {
-      const index = MOST_USED_SERVER_IDS.findIndex((candidate) => candidate === id);
-      return index < 0 ? MOST_USED_SERVER_IDS.length : index;
+      const index = picks.indexOf(id);
+      return index < 0 ? picks.length : index;
     };
-    return members.toSorted((a, b) => rank(a.id) - rank(b.id));
-  }
+    return list.toSorted((a, b) => rank(a.id) - rank(b.id));
+  };
+  if (category === "most-used") return ranked(MOST_USED_SERVER_IDS, members);
   const primary = (server: CuratedServer) =>
     server.categories.find((candidate) => candidate !== "most-used") === category;
   // Within a field, the most used lead: GitHub before the rest of Code, Slack in chat.
@@ -456,10 +461,10 @@ const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCat
     ...list.filter((server) => server.categories.includes("most-used")),
     ...list.filter((server) => !server.categories.includes("most-used")),
   ];
-  return [
+  return ranked(CATEGORY_HOME_PICKS[category] ?? [], [
     ...mostUsedFirst(members.filter(primary)),
     ...members.filter((server) => !primary(server)),
-  ];
+  ]);
 };
 
 export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
