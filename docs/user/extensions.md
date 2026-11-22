@@ -10,9 +10,10 @@ which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
-  (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, iMessage,
-  Telegram, GitHub, Slack, Notion, PubMed, Semantic Scholar, Exa, Playwright,
-  Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
+  (Gmail, Google Calendar, Google Drive, Outlook Email, Outlook Calendar, Microsoft Teams,
+  iMessage, Telegram, Figma, Zotero, GitHub, Slack, Notion, Dropbox, Linear, PubMed,
+  Semantic Scholar, Hugging Face, Exa, Canva, Playwright, Vercel and Cloudflare), then one
+  section per kind of work, such as Papers &
   literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
   each agent's store in its own section (**From Claude's store**, **From Codex's store**, **From Antigravity's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Sections and categories list
