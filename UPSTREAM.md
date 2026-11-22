@@ -724,6 +724,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`15d945faef4c14099ba3d82bcdb84e91b5a3c3cd` is recorded in
+[the 2026-11-22 c1464d6774 receipt](docs/internals/t3-upstream-sync-20261122-c1464d6774.md).
+Literal merge `c9d735b520b813fbdf3b8da35d8bcaae769a1649` has owned base
+`f1bfa5622ea6f2d08c6b203cb04ca7304acab19a` and the frozen official target as parents, retaining
+the 87 official commits after `c1464d6774`. The range is fixes and speed-ups: slash commands wait
+during a turn, dictation after a thread switch reaches its thread, cleaner office text, fewer Git
+reads, and one `T3CODE_FEATURE_FLAGS` list. Scient for GitHub stays the default app sign-in and
+Secrets stays hidden. Release remains separate.
+
+The previous committed alignment through
 `c1464d6774cf4c690aba3fb20b8094a35396d130` is recorded in
 [the 2026-11-21 c5514042ad receipt](docs/internals/t3-upstream-sync-20261121-c5514042ad.md).
 Literal merge `7682072b3125ea5850eb816349a405d801e8c0a8` has owned base
@@ -734,7 +744,7 @@ HTML for chat tables and Duplicate and Reload for browser tabs, and moves to Eff
 folders go through Scient's guarded cleanup and rewind; New thread keeps Scient's project picker.
 The alignment is Scient PR #1051. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `c5514042adfb2cb2323c75b449ffd5e950c6a40b` is recorded in
 [the 2026-11-21 f2d4df0367 receipt](docs/internals/t3-upstream-sync-20261121-f2d4df0367.md).
 Literal merge `649f43e495936493337c6091b430a807ba01e7e1` has owned base

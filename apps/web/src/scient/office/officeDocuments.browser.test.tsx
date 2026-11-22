@@ -61,8 +61,11 @@ function setup() {
   documentCache.clear();
   sessions.length = 0;
   failing.engine = null;
-  const fetch = vi.fn(async () => new Response(await docx("Outlook")));
-  return { fetch, stub: stubGlobal("fetch", fetch) };
+  const fetch = vi.fn(async (_input: RequestInfo | URL) => new Response(await docx("Outlook")));
+  // Only file reads count: the table preview's settings also reach the environment.
+  const fileReads = () =>
+    fetch.mock.calls.filter(([input]) => String(input).startsWith("https://files.test/")).length;
+  return { fetch, fileReads, stub: stubGlobal("fetch", fetch) };
 }
 
 const preview = (identity: string | null, src: string) => (
@@ -74,7 +77,7 @@ const preview = (identity: string | null, src: string) => (
 // regression: leaving a Word file and coming back fetched, prepared and laid it out again.
 describe("kept Office documents", () => {
   it("shows a Word file left recently without reading or opening it again", async () => {
-    const { fetch, stub } = setup();
+    const { fileReads, stub } = setup();
     using _fetch = stub;
     await using screen = await render(preview("outlook@r1", "https://files.test/a"));
     await vi.waitFor(() => expect(screen.container.textContent).toContain("Outlook"));
@@ -82,22 +85,22 @@ describe("kept Office documents", () => {
     await screen.rerender(null);
     await screen.rerender(preview("outlook@r1", "https://files.test/a-renewed"));
     await vi.waitFor(() => expect(screen.container.textContent).toContain("Outlook"));
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(fileReads()).toBe(1);
     expect(sessions.at(-1)).toBe(sessions[0]);
     // A new revision of the file is read afresh.
     await screen.rerender(null);
     await screen.rerender(preview("outlook@r2", "https://files.test/a-changed"));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fileReads()).toBe(2));
   });
 
   it("reads a file of unknown revision afresh each time", async () => {
-    const { fetch, stub } = setup();
+    const { fileReads, stub } = setup();
     using _fetch = stub;
     await using screen = await render(preview(null, "https://files.test/a"));
     await vi.waitFor(() => expect(screen.container.textContent).toContain("Outlook"));
     await screen.rerender(null);
     await screen.rerender(preview(null, "https://files.test/a"));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fileReads()).toBe(2));
     expect(documentCache.idleKeys()).toEqual([]);
   });
 

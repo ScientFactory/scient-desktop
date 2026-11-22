@@ -12,6 +12,7 @@ import {
   type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerFeatureFlags,
   type ServerLifecycleWelcomePayload,
   type ServerLifecycleStreamReadyEvent,
   ServerSelfUpdateError,
@@ -828,6 +829,14 @@ function serverWelcomeStateChanges(environmentId: EnvironmentId) {
       ),
     ),
   );
+}
+
+/** Whether an environment's server turned on a feature flag; unset flags and unloaded configs are off. */
+export function hasFeatureFlag(
+  config: Pick<ServerConfig, "featureFlags"> | null | undefined,
+  flag: keyof ServerFeatureFlags,
+): boolean {
+  return config?.featureFlags?.[flag] === true;
 }
 
 export function resolveServerConfigValue(

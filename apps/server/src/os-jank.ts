@@ -38,6 +38,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "__MISE_DIFF",
   "JAVA_HOME",
+  "T3CODE_FEATURE_FLAGS",
   // SCIENT-FORK:START - Compute looks where the person's shell setup says their tools are.
   ...DISCOVERY_VARIABLES,
   // SCIENT-FORK:END
@@ -72,6 +73,10 @@ function applyLoginShellEnvironment(
   // is only reachable through the JAVA_HOME the shell profile sets.
   if (!env.JAVA_HOME && shellEnvironment.JAVA_HOME) {
     env.JAVA_HOME = shellEnvironment.JAVA_HOME;
+  }
+  // A headless server (systemd, launchd) reads no profile, yet flags belong where users export them.
+  if (env.T3CODE_FEATURE_FLAGS === undefined && shellEnvironment.T3CODE_FEATURE_FLAGS) {
+    env.T3CODE_FEATURE_FLAGS = shellEnvironment.T3CODE_FEATURE_FLAGS;
   }
   // SCIENT-FORK:START
   for (const name of DISCOVERY_VARIABLES) {

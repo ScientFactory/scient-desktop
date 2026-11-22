@@ -222,6 +222,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2 change evidence",
                 Layer.mergeAll(
                   IdAllocator.layer,
                   Layer.mock(CheckpointService.CheckpointServiceV2)({
+                    capturesSoFar: () => Effect.succeed(0),
                     repositoryScopesIfReadable: ({ rootScope }) =>
                       Effect.succeed(
                         repositories === "none"

@@ -114,6 +114,8 @@ export interface GitLocalStatusOptions {
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
   readonly refreshMissingPullRequest?: boolean;
+  /** Details the caller just read without fetching; used instead of reading them again. */
+  readonly statusDetails?: GitVcsDriver.GitRemoteStatusDetails;
 }
 
 export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
@@ -221,6 +223,8 @@ const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+// Turn end looks up the PR ~0.5 s after local status; older reads are read again.
+const LOCAL_STATUS_GIT_READS_HANDOFF_TTL = Duration.seconds(5);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 // Shared by every background caller (backfill, settlement, cleanup), so startup discovery
 // cannot fill the git and forge process slots that foreground work also needs.
@@ -1293,7 +1297,7 @@ export const make = Effect.gen(function* () {
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
     const hostingProvider = details.hasOriginRemote
-      ? yield* resolveHostingProvider(cwd, details.branch)
+      ? yield* resolveHostingProviderForLocalStatus(cwd, details.branch)
       : null;
 
     return {
@@ -1337,7 +1341,30 @@ export const make = Effect.gen(function* () {
     cwd: string,
   ): shared is SharedPrLookupGitReads =>
     shared !== null && shared.open && shared.cwd === cwd && prLookupEpoch(cwd) === shared.epoch;
-  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+  // Branch remote and remote URLs that local status just read, reused by the PR lookups that
+  // follow it (turn end runs the status lookup and the thread's PR backfill) instead of reading again.
+  const localStatusGitReads = new Map<
+    string,
+    Pick<SharedPrLookupGitReads, "epoch" | "configValues" | "remoteUrls">
+  >();
+  const recentLocalStatusGitReads = (cwd: string) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.map((now) => {
+        const handoff = localStatusGitReads.get(cwd);
+        if (handoff === undefined || handoff.epoch !== prLookupEpoch(cwd)) return undefined;
+        const isFresh = (entry: RememberedPrLookupValue) =>
+          now - entry.readAtMs < Duration.toMillis(LOCAL_STATUS_GIT_READS_HANDOFF_TTL);
+        return {
+          configValues: new Map([...handoff.configValues].filter(([, entry]) => isFresh(entry))),
+          remoteUrls: new Map([...handoff.remoteUrls].filter(([, entry]) => isFresh(entry))),
+        };
+      }),
+    );
+  const openPrLookupGitReads = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    cwd: string,
+    handoff: Pick<SharedPrLookupGitReads, "configValues" | "remoteUrls"> | undefined,
+  ) =>
     Effect.suspend(() => {
       const shared: SharedPrLookupGitReads = {
         open: true,
@@ -1345,8 +1372,8 @@ export const make = Effect.gen(function* () {
         cwd,
         epoch: prLookupEpoch(cwd),
         remotes: undefined,
-        configValues: new Map(),
-        remoteUrls: new Map(),
+        configValues: handoff?.configValues ?? new Map(),
+        remoteUrls: handoff?.remoteUrls ?? new Map(),
       };
       return effect.pipe(
         Effect.provideService(prLookupGitReads, shared),
@@ -1361,9 +1388,15 @@ export const make = Effect.gen(function* () {
         ),
       );
     });
+  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+    openPrLookupGitReads(effect, cwd, undefined);
+  const withRecentLocalStatusGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+    Effect.flatMap(recentLocalStatusGitReads(cwd), (handoff) =>
+      openPrLookupGitReads(effect, cwd, handoff),
+    );
   const withActivePrLookupGitReads = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     Effect.flatMap(prLookupGitReads, (shared) =>
-      isActivePrLookupGitReads(shared, cwd) ? effect : withPrLookupGitReads(effect, cwd),
+      isActivePrLookupGitReads(shared, cwd) ? effect : withRecentLocalStatusGitReads(effect, cwd),
     );
   const prLookupCacheKey = (
     cwd: string,
@@ -1609,9 +1642,11 @@ export const make = Effect.gen(function* () {
     cwd: string,
     options?: GitRemoteStatusOptions,
   ) {
-    const details = yield* gitCore
-      .statusDetailsRemote(cwd, options)
-      .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
+    const details =
+      options?.statusDetails ??
+      (yield* gitCore
+        .statusDetailsRemote(cwd, options)
+        .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null))));
     if (details === null || !details.isRepo) {
       return null;
     }
@@ -1783,6 +1818,32 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => null));
     return handle?.context?.provider ?? provider;
   });
+  const resolveHostingProviderForLocalStatus = (cwd: string, branch: string | null) =>
+    Effect.suspend(() => {
+      const reads: SharedPrLookupGitReads = {
+        open: true,
+        queriedProvider: false,
+        cwd,
+        epoch: prLookupEpoch(cwd),
+        remotes: undefined,
+        configValues: new Map(),
+        remoteUrls: new Map(),
+      };
+      return resolveHostingProvider(cwd, branch).pipe(
+        Effect.provideService(prLookupGitReads, reads),
+        Effect.ensuring(
+          Effect.sync(() => {
+            reads.open = false;
+            localStatusGitReads.delete(cwd);
+            if (localStatusGitReads.size >= STATUS_RESULT_CACHE_CAPACITY) {
+              const oldestCwd = localStatusGitReads.keys().next().value;
+              if (oldestCwd !== undefined) localStatusGitReads.delete(oldestCwd);
+            }
+            localStatusGitReads.set(cwd, reads);
+          }),
+        ),
+      );
+    });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
     cwd: string,
@@ -2262,7 +2323,9 @@ export const make = Effect.gen(function* () {
     const finalStatus =
       result.action === "commit"
         ? null
-        : yield* gitCore.statusDetails(cwd).pipe(Effect.orElseSucceed(() => null));
+        : yield* gitCore
+            .statusDetailsRemote(cwd, { refreshUpstream: false, includeAheadOfDefault: false })
+            .pipe(Effect.orElseSucceed(() => null));
     if (finalStatus?.branch) {
       finalBranchContext = {
         branch: finalStatus.branch,
@@ -2500,7 +2563,13 @@ export const make = Effect.gen(function* () {
           } as GitActionProgressEvent)
         : Effect.void;
 
-    let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
+    const customCommit = parseCustomCommitMessage(commitMessage ?? "");
+    let suggestion: CommitAndBranchSuggestion | null | undefined =
+      preResolvedSuggestion ??
+      (customCommit && {
+        ...customCommit,
+        commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+      });
     if (!suggestion) {
       const needsGeneration = !commitMessage?.trim();
       if (needsGeneration) {
@@ -2572,11 +2641,20 @@ export const make = Effect.gen(function* () {
             },
           }
         : null;
-    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
-      stage: filePaths ? { filePaths } : {},
-      ...(commitProgress ? { progress: commitProgress } : {}),
-    });
+    const committed = yield* gitCore
+      .commit(cwd, suggestion.subject, suggestion.body, {
+        timeoutMs: COMMIT_TIMEOUT_MS,
+        stage: {
+          ...(filePaths ? { filePaths } : {}),
+          ...(!preResolvedSuggestion && customCommit ? { unverified: true } : {}),
+        },
+        ...(commitProgress ? { progress: commitProgress } : {}),
+      })
+      .pipe(Effect.catchTags({ GitNothingToCommitError: () => Effect.succeed(null) }));
+    if (!committed) {
+      return { status: "skipped_no_changes" as const };
+    }
+    const { commitSha } = committed;
     if (currentHookName !== null) {
       yield* emit({
         kind: "hook_finished",
@@ -3078,6 +3156,16 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     ).pipe(Effect.map((parts) => parts.join("\u0000")));
+  // A fresh identity check, which confirms terminal results, must read git itself.
+  const withBranchPullRequestGitReads = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    cacheCwd: string,
+    _branch: string,
+    options: { readonly freshGitState: boolean },
+  ) =>
+    options.freshGitState
+      ? withPrLookupGitReads(effect, cacheCwd)
+      : withRecentLocalStatusGitReads(effect, cacheCwd);
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
@@ -3246,7 +3334,7 @@ export const make = Effect.gen(function* () {
       // Hosting CLIs may target upstream; the PR URL identifies its actual repository.
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
-  }, withPrLookupGitReads);
+  }, withBranchPullRequestGitReads);
 
   const checkedOutPullRequestKey = (branch: string) => `branch.${branch}.t3-pull-request`;
 

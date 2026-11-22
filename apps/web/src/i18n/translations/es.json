@@ -9097,7 +9097,6 @@
   "58e0e226493150e7": "No se pudieron cargar los gestores de issues",
   "77cfcbde543df32d": "Mostrar u ocultar detalles de {tracker}",
   "0083f65885c60156": "Desconectar {tracker}",
-  "295392927d5c8a84": "Elige uno o más {scope}s de {tracker} para cada proyecto. Sus issues aparecen junto a las del repositorio, y los agentes crean issues nuevas en el primero.",
   "19c2d5e81ff8f89a": "{scope} de {tracker} para {project}",
   "68e061510b765772": "Sin vincular",
   "a2d95d39d3398bda": "Credencial rechazada",
@@ -21366,5 +21365,8 @@
   "b62d0f87e5795776": "Puede usar el agente",
   "4e953cff0756d467": "Caducado",
   "af96d13065c3b2ce": "Quedan {days} d",
-  "e5efdfa2c982cace": "No se pudo acceder al servidor. Vuelve a intentarlo."
+  "e5efdfa2c982cace": "No se pudo acceder al servidor. Vuelve a intentarlo.",
+  "ed83b25c71c98a20": "Elige uno o más {scope}s de {tracker} para cada proyecto. Sus issues aparecen junto a las del repositorio, y los agentes crean issues nuevas en el primero, salvo que se les pida otro.",
+  "d8aaf932f90429c4": "Mover este comando al principio de la cola ({shortcut})",
+  "425ab15036aec8a4": "Mover este comando al principio de la cola"
 }

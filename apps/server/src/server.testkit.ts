@@ -11,6 +11,7 @@ import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
@@ -814,6 +815,7 @@ export const buildAppUnderTest = (options?: {
       listLocalBranchNames: () => Effect.succeed([]),
       // Status refreshes read refs first; no snapshot always rereads local status.
       readRefSnapshot: () => Effect.succeed(null),
+      readLocalStatusRefSnapshot: () => Effect.succeed(null),
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
@@ -1310,6 +1312,7 @@ export const buildAppUnderTest = (options?: {
         Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
         // SCIENT-FORK:END
         Layer.provide(ManagedPolicy.layerTest()),
+        Layer.provide(FeatureFlags.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
         Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
       )
