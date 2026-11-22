@@ -36,6 +36,22 @@ function select(view: ReturnType<typeof open>["view"], from: number, to = from) 
   view.focus();
 }
 
+/** Mod+Shift on a physical key, as the browser reports it: on a Mac, `key` stays unshifted. */
+function pressSizeShortcut(target: HTMLElement, code: string, key: string) {
+  const mac = isMacKeyboard();
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key,
+      code,
+      metaKey: mac,
+      ctrlKey: !mac,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 const draft = (controller: ScientMarkdownEditorView) => controller.session.session.draftSource;
 const refused = (controller: ScientMarkdownEditorView) =>
   controller.session.pendingWriteback !== null;
@@ -211,16 +227,17 @@ describe("font gestures in a real browser", () => {
     expect(draft(controller)).toBe(`# <span style="font-size:${drawn + 1}pt">Title</span>\n`);
   });
 
-  it("Mod+Shift+> and Mod+Shift+< step the size of the selection", async () => {
+  it("Mod+Shift+. and Mod+Shift+, step the size of the selection, by key position", () => {
     using editor = open("alpha beta\n");
     const { controller, view } = editor;
     select(view, 0, 5);
     controller.execute("font-size-14");
-    const mod = isMacKeyboard() ? "Meta" : "Control";
-    await userEvent.keyboard(`{${mod}>}{Shift>}>{/Shift}{/${mod}}`);
-    await userEvent.keyboard(`{${mod}>}{Shift>}>{/Shift}{/${mod}}`);
+    // macOS reports the unshifted character while Cmd and Shift are held; a French keyboard
+    // has ":" and ";" on those two keys.
+    pressSizeShortcut(view.dom, "Period", ".");
+    pressSizeShortcut(view.dom, "Period", ":");
     expect(draft(controller)).toBe(`<span style="font-size:16pt">alpha</span> beta\n`);
-    await userEvent.keyboard(`{${mod}>}{Shift>}<{/Shift}{/${mod}}`);
+    pressSizeShortcut(view.dom, "Comma", ",");
     expect(draft(controller)).toBe(`<span style="font-size:15pt">alpha</span> beta\n`);
   });
 });

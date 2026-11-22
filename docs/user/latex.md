@@ -229,8 +229,8 @@ points from 1 to 100 (field, minus and plus buttons) and a font from a
 searchable list. At a caret the change applies to the word under it. Enter in the
 size field closes the panel; a selection that mixes sizes or fonts leaves the
 field empty, and the buttons move each word by 1 pt. A click in the size field
-lists common sizes; **Cmd+Shift+>** and **Cmd+Shift+<** (Ctrl on Windows and Linux)
-step the size as the buttons do. Unlike Markdown,
+lists common sizes; **Cmd+Shift+.** and **Cmd+Shift+,** (Ctrl on Windows and Linux,
+keys named by their position on a US keyboard) step the size as the buttons do. Unlike Markdown,
 LaTeX Visual has no floating selection toolbar, so the panel is reached through
 **Text** only. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
 (the baseline is 1.2 times the size). Existing `\large`-style commands stay as

@@ -385,8 +385,9 @@ field or stepped with the minus and plus buttons (1 pt; 0.5 pt with Alt; 10 pt
 with Shift). The field shows the current size, and is empty when the selection
 mixes several sizes; the buttons then move each word by 1 pt, so the words keep
 their differences, as in Word. A click in the field lists common sizes (8 to 72).
-**Cmd+Shift+>** and **Cmd+Shift+<** (Ctrl on Windows and Linux) do the same as the
-plus and minus buttons. Sizes are absolute, as in Word: 12 means 12 pt whatever the
+**Cmd+Shift+.** and **Cmd+Shift+,** (Ctrl on Windows and Linux) do the same as the
+plus and minus buttons. They name the key's position on a US keyboard, as Scient's other
+shortcuts do: on a French keyboard, use the `:` and `;` keys. Sizes are absolute, as in Word: 12 means 12 pt whatever the
 surrounding text.
 
 Press Enter in the size field, or choose a font, and the panel closes with the

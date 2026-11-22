@@ -11,6 +11,7 @@ import {
   saveKeyboardPreferences,
   subscribeKeyboardPreferences,
 } from "./preferences";
+import { EVENT_CODE_SHORTCUT_KEYS } from "@t3tools/shared/keybindingMatching";
 import { eventStroke, isMacKeyboard, normalizeKeys } from "./keys";
 import { ShortcutSequence } from "./sequence";
 import { attachShortcutHost } from "./host";
@@ -133,7 +134,13 @@ describe("sequence matching and ownership", () => {
         for (const [index, stroke] of strokes.entries()) {
           const parts = stroke.split("+");
           const value = parts.pop()!;
+          // A real key always carries its physical position, which digit and punctuation
+          // shortcuts are matched by.
+          const code =
+            Object.entries(EVENT_CODE_SHORTCUT_KEYS).find(([, symbol]) => symbol === value)?.[0] ??
+            "";
           const event = key(value === "plus" ? "+" : value === "space" ? " " : value, {
+            code,
             ctrlKey: parts.includes("ctrl"),
             metaKey: parts.includes("meta"),
             altKey: parts.includes("alt"),

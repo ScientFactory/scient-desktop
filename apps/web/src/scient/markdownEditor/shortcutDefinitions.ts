@@ -145,9 +145,9 @@ export const SHORTCUTS = {
   bulletList: { bindings: [mod("8", { shiftKey: true })] },
   taskList: { bindings: [mod("9", { shiftKey: true })] },
   clearFormatting: { bindings: [mod("\\")] },
-  // Word's Cmd+Shift+> and Cmd+Shift+<. Strokes name the typed character, so Shift is implied.
-  fontSizeLarger: { bindings: [mod(">")] },
-  fontSizeSmaller: { bindings: [mod("<")] },
+  // Word's Cmd+Shift+> and Cmd+Shift+<, named by key position as the app's other shortcuts.
+  fontSizeLarger: { bindings: [mod(".", { shiftKey: true })] },
+  fontSizeSmaller: { bindings: [mod(",", { shiftKey: true })] },
   hardBreak: { bindings: [shortcut("enter", { shiftKey: true }), mod("enter")] },
   moveBlockUp: { bindings: [shortcut("arrowup", { altKey: true })] },
   moveBlockDown: { bindings: [shortcut("arrowdown", { altKey: true })] },

@@ -1,3 +1,5 @@
+import { EVENT_CODE_SHORTCUT_KEYS } from "@t3tools/shared/keybindingMatching";
+
 /** Platform-independent persisted notation; resolve Mod only when matching. */
 export function isMacKeyboard(
   platform = typeof navigator === "undefined" ? "" : navigator.platform,
@@ -86,14 +88,18 @@ export function eventStroke(
     (inSequence || event.altKey || event.ctrlKey || event.metaKey)
   )
     key = physical.toLowerCase();
-  // Digit shortcuts retain their physical digit when Shift produces punctuation.
-  const digit = /^Digit([0-9])$/u.exec(event.code)?.[1];
-  if (digit && (event.ctrlKey || event.metaKey || event.altKey)) key = digit;
+  // Digit and punctuation shortcuts name the physical key when Shift produces another character
+  // (macOS reports the unshifted one while Cmd and Shift are held), as app shortcuts do.
+  const modified = event.ctrlKey || event.metaKey || event.altKey;
+  const physicalSymbol = modified ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
+  if (physicalSymbol) key = physicalSymbol;
   return [
     ...(event.ctrlKey ? ["ctrl"] : []),
     ...(event.metaKey ? ["meta"] : []),
     ...(event.altKey ? ["alt"] : []),
-    ...(event.shiftKey && (/^[a-z0-9]$/u.test(key) || event.key.length > 1) ? ["shift"] : []),
+    ...(event.shiftKey && (/^[a-z0-9]$/u.test(key) || event.key.length > 1 || physicalSymbol)
+      ? ["shift"]
+      : []),
     key,
   ].join("+");
 }

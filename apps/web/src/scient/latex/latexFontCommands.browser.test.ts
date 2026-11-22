@@ -3,7 +3,6 @@
 import { Editor, Mark } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
 import { attachShortcutHost } from "../keyboard/host";
 import { isMacKeyboard } from "../keyboard/keys";
 import { drawnPointsAt } from "../writing/fontChoices";
@@ -134,7 +133,7 @@ describe("LaTeX font commands in a real editor", () => {
     ]);
   });
 
-  it("Mod+Shift+> and Mod+Shift+< reach the LaTeX size commands", async () => {
+  it("Mod+Shift+. and Mod+Shift+, reach the LaTeX size commands", () => {
     using fixture = open("alpha beta");
     const { editor } = fixture;
     const run: string[] = [];
@@ -147,9 +146,24 @@ describe("LaTeX font commands in a real editor", () => {
     });
     editor.commands.focus();
     select(editor, 0, 5);
-    const mod = isMacKeyboard() ? "Meta" : "Control";
-    await userEvent.keyboard(`{${mod}>}{Shift>}>{/Shift}{/${mod}}`);
-    await userEvent.keyboard(`{${mod}>}{Shift>}<{/Shift}{/${mod}}`);
+    // macOS reports the unshifted character while Cmd and Shift are held.
+    const mac = isMacKeyboard();
+    for (const [code, key] of [
+      ["Period", "."],
+      ["Comma", ","],
+    ] as const) {
+      editor.view.dom.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          code,
+          metaKey: mac,
+          ctrlKey: !mac,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
     detach();
     expect(run).toEqual(["latex.fontSizeLarger", "latex.fontSizeSmaller"]);
   });
