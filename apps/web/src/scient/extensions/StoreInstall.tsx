@@ -61,6 +61,27 @@ export function ThirdPartyNotice({ entry }: { readonly entry: ProviderStoreEntry
 }
 
 /**
+ * agy loads a plugin's MCP servers only once they are signed in through its own plugin manager,
+ * which Scient can't drive; its chats here get the skills until then. Said before Add too, so
+ * nobody adds it expecting the connection.
+ */
+export function needsAntigravityConnectionSignIn(entry: ProviderStoreEntry) {
+  return entry.kind === "antigravity" && entry.includes.includes("MCP servers");
+}
+
+export function AntigravityConnectionSignIn({ entry }: { readonly entry: ProviderStoreEntry }) {
+  return (
+    <MutedLine>
+      <T>
+        Its connection to <Var>{entry.displayName}</Var> signs in only in Antigravity’s own plugin
+        manager (run <code>agy</code>, open <code>/plugin</code>), which Scient can’t open yet, so
+        Scient chats use its skills.
+      </T>
+    </MutedLine>
+  );
+}
+
+/**
  * Installs a store entry into the agent that keeps it: a Claude plugin for Scient Agent goes into
  * a Claude instance, whose plugins Scient Agent loads. Every Add, from a list, a plugin page or a
  * service page, shows a third-party plugin's notice first.

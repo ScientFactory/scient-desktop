@@ -39,28 +39,14 @@ import { isAccountServiceStoreEntry, storeEntryAudience } from "./accountService
 import { StoreEntryAgents } from "./ServiceAgents";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
-import { isThirdPartyPlugin, StoreInstall, storeProviders, ThirdPartyNotice } from "./StoreInstall";
-
-/**
- * agy loads a plugin's MCP servers only once they are signed in through its own plugin manager,
- * which Scient can't drive; its chats here get the skills until then. Said before Add too, so
- * nobody adds it expecting the connection.
- */
-export function needsAntigravityConnectionSignIn(entry: ProviderStoreEntry) {
-  return entry.kind === "antigravity" && entry.includes.includes("MCP servers");
-}
-
-function AntigravityConnectionSignIn({ entry }: { readonly entry: ProviderStoreEntry }) {
-  return (
-    <MutedLine>
-      <T>
-        Its connection to <Var>{entry.displayName}</Var> signs in only in Antigravity’s own plugin
-        manager (run <code>agy</code>, open <code>/plugin</code>), which Scient can’t open yet, so
-        Scient chats use its skills.
-      </T>
-    </MutedLine>
-  );
-}
+import {
+  AntigravityConnectionSignIn,
+  isThirdPartyPlugin,
+  needsAntigravityConnectionSignIn,
+  StoreInstall,
+  storeProviders,
+  ThirdPartyNotice,
+} from "./StoreInstall";
 
 /** One page of one agent's store; the store page refreshes the same first page. */
 const storePageInput = (

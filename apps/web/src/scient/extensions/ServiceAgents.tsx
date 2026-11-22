@@ -32,9 +32,13 @@ import {
   extensionsProviderStorePage,
 } from "./extensionsState";
 import { areStoreTwins } from "./extensionsView";
-import { needsAntigravityConnectionSignIn } from "./ProviderStorePages";
 import { openAuthorizationPage } from "./openAuthorizationPage";
-import { StoreInstall, storeProviders, useStoreInstall } from "./StoreInstall";
+import {
+  needsAntigravityConnectionSignIn,
+  StoreInstall,
+  storeProviders,
+  useStoreInstall,
+} from "./StoreInstall";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 function CardRow({ children }: { readonly children: ReactNode }) {
