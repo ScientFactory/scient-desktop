@@ -9,6 +9,64 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.33",
+    publishedAt: "2026-11-22",
+    format: "paragraphs",
+    headline: "A new sidebar rail, multi-repository projects, journal covers and Antigravity.",
+    highlights: [
+      {
+        id: "icon-rail-0633",
+        title: "Open common pages from the new icon rail",
+        description:
+          "The sidebar’s new icon rail opens Home, Library, Scheduled tasks, Extensions and Code review. Settings, Usage and Scient Connect sit at the bottom. Library opens My Library over the whole window, no project needed. New threads pick their project in a chip above the message box. Turn the rail off in Settings → Labs → Sidebar icon rail.",
+      },
+      {
+        id: "multi-repo-0633",
+        title: "Work across several repositories in one project",
+        description:
+          "A folder of repositories, or a repository with others it depends on, is now one project. Manage them in Settings → Projects → Repositories. Each turn groups changes by repository, and the Diff pane lets you switch between them. Commit, push or open a pull request in each from thread details. New worktree checks out the repositories you select. In a plain folder, files outside the repositories are shared by worktree threads.",
+      },
+      {
+        id: "library-covers-0633",
+        title: "See publishers and journal covers in your Library",
+        description:
+          "Library rows and cards show publisher and journal icons when Scient can identify them. Cards show the current journal cover when available, including covers from some Elsevier, Wiley and Springer Nature journals, Science, PNAS and NEJM Evidence. Covers are saved for offline use.",
+      },
+      {
+        id: "side-threads-0633",
+        title: "Keep subagents and side chats beside your thread",
+        description:
+          "Click a subagent or side chat to open it in the right panel. ⌘-click, or Ctrl-click on Windows and Linux, opens it in the main view. Swap these in Settings → Chat → Open subagents and side chats in. After sending a message in a side chat, choose Add to chat or type @ and part of its title in your thread’s composer, even while the thread is busy.",
+      },
+      {
+        id: "remote-0633",
+        title: "Forward ports and see your machines on a map",
+        description:
+          "In the desktop app, use a thread’s Servers list or Forwarded ports in the command palette to reach a connected computer’s port at localhost. Turn off Settings → Sharing & access → Preview tunnel on that computer to disable forwarding and stream its browser tabs. On a wide window, Settings → Environments offers Map and List views. With Linked environments on in Labs, link several machines at once and read their threads.",
+      },
+      {
+        id: "agents-0633",
+        title: "Sign in to MCP servers and spot custom endpoints",
+        description:
+          "When an MCP server you added to Claude or Codex needs access, choose Sign in in the thread and follow the prompts. If ANTHROPIC_BASE_URL sends Claude elsewhere, Settings → Providers shows the server and how it was configured. Request errors can name it too. Antigravity follows your global AGENTS.md and GEMINI.md; use its own provider, not Scient Agent.",
+      },
+      {
+        id: "antigravity-0633",
+        title: "Add Antigravity plugins and sign in from chat",
+        description:
+          "Extensions now has an Antigravity Marketplace with Google’s official and partner plugins, Add and Remove. Partner plugins show a third-party notice before Add. Supported plugins offer sign-in from chat. Choose Update Antigravity to move an existing managed install to Google’s agy CLI. You’ll need to sign in to Google again once after the switch. Each instance keeps its own sign-in. Antigravity usage also recognizes more Gemini model variants.",
+      },
+      {
+        id: "reading-0633",
+        title: "Clearer chat text and quicker everyday actions",
+        description:
+          "The default themes use new text colors. Chat follows your Interface font size, with tighter line spacing in agent replies. Copy tables as Markdown, CSV or HTML, and use Copy contents in a text file’s preview. Edit from here skips its dialog when the thread uses only the project folder and Scient confirms later turns changed no files. Duplicate browser tabs with their pages, and search actions in Settings → Shortcuts.",
+      },
+    ],
+    alsoIncluded:
+      "Empty old thread databases no longer trigger a restoration warning. The composer shows the provider’s icon when a model name won’t fit. Browser sign-in suggests reloading a blank page; on macOS and Windows, Cancel stays after Done. With the icon rail on, a ready update shows Update at the top of the sidebar. Issues can hide projects and show several Linear teams.",
+  },
+  {
     version: "0.6.32",
     publishedAt: "2026-11-21",
     format: "paragraphs",
