@@ -1,6 +1,7 @@
 import {
   AccountsError,
   DEFAULT_BROWSER_PROFILE_ID,
+  type AccountId,
   ProviderInstanceId,
   ThreadId,
   type AccountSignInState,
@@ -10,6 +11,7 @@ import {
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -50,6 +52,11 @@ const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const CHECK_THREAD = ThreadId.make("scient-accounts-check");
 
 const run = Semaphore.makeUnsafe(1);
+
+/** A glance trusts a look this recent. An unchanged look writes nothing, so `signIn.at` can't tell. */
+const GLANCE_FRESH_MS = 2 * 60 * 1000;
+/** When this server last finished a look at each account. */
+const lookedAt = new Map<AccountId, number>();
 
 /** The browser identity of something the user asked for, which is no agent's run. */
 export const userRunInvocation = (threadId: ThreadId, environmentId: EnvironmentId) => ({
@@ -164,7 +171,11 @@ const askOpenAthens = Effect.fn("AccountsCheck.openAthens")(function* (
   return "unknown" as const;
 });
 
-const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummary, url: string) {
+const lookOnce = Effect.fn("AccountsCheck.one")(function* (
+  listed: AccountSummary,
+  url: string,
+  observeOnly: boolean,
+) {
   const accounts = yield* AccountsService;
   // A run can take minutes, and an agent's result since then decides whether to sign in.
   const account =
@@ -238,7 +249,7 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
       : yield* readPage;
     if (keepsLastSeen(account, state)) return;
     // Check is the user's own press: a signed-out sign-in with a saved password gets one attempt.
-    if (state !== "signed-out" || account.secrets.password === undefined) {
+    if (state !== "signed-out" || account.secrets.password === undefined || observeOnly) {
       return yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "signed-in" && identity ? { username: identity } : {}),
@@ -274,6 +285,31 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
         discard: true,
       }),
     ),
+  );
+});
+
+const checkOne = (account: AccountSummary, url: string, observeOnly = false) =>
+  lookOnce(account, url, observeOnly).pipe(
+    Effect.tap(() =>
+      Clock.currentTimeMillis.pipe(Effect.map((now) => void lookedAt.set(account.accountId, now))),
+    ),
+  );
+
+/**
+ * Opening a university's menu: reads its page and never signs in. A university this server looked
+ * at in the last two minutes is skipped, whichever window asked; a failed look earns no skip.
+ */
+const runGlance = Effect.fn("AccountsCheck.glance")(function* (accountId: AccountId) {
+  const accounts = yield* AccountsService;
+  const account = (yield* accounts.snapshot).accounts.find((item) => item.accountId === accountId);
+  const url = account && universityDetails(account.details) ? checkAddress(account) : undefined;
+  if (!account || url === undefined) return 0;
+  const now = yield* Clock.currentTimeMillis;
+  const last = lookedAt.get(accountId);
+  if (last !== undefined && now - last < GLANCE_FRESH_MS) return 0;
+  return yield* checkOne(account, url, true).pipe(
+    Effect.as(1),
+    Effect.orElseSucceed(() => 0),
   );
 });
 
@@ -330,11 +366,19 @@ export const checkAccountNow = (account: AccountSummary, environmentId: Environm
 /**
  * Opens each browser sign-in in its own profile, one at a time, and keeps what it found on the
  * account. A signed-out account with a saved password gets one unattended sign-in; one the site
- * already rejected gets none. Runs only when the user asks.
+ * already rejected gets none. Runs only when the user asks; a glance only looks.
  */
-export const checkAccounts = (input: AccountsCheckInput, environmentId: EnvironmentId) =>
-  runCheck(input).pipe(
-    Effect.provideService(AgentInvocationContext, userRunInvocation(CHECK_THREAD, environmentId)),
+export const checkAccounts = (input: AccountsCheckInput, environmentId: EnvironmentId) => {
+  const invocation = userRunInvocation(CHECK_THREAD, environmentId);
+  // A glance waits its turn, so every university gets one; its freshness is read once it runs.
+  if (input.glance && input.accountId !== undefined)
+    return runGlance(input.accountId).pipe(
+      Effect.provideService(AgentInvocationContext, invocation),
+      run.withPermits(1),
+      Effect.map((checked): { checked: number; alreadyRunning?: boolean } => ({ checked })),
+    );
+  return runCheck(input).pipe(
+    Effect.provideService(AgentInvocationContext, invocation),
     run.withPermitsIfAvailable(1),
     Effect.map(
       Option.match({
@@ -343,3 +387,4 @@ export const checkAccounts = (input: AccountsCheckInput, environmentId: Environm
       }),
     ),
   );
+};

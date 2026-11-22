@@ -550,7 +550,9 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
     check: (input: AccountsCheckInput) =>
       run((environmentId) =>
         checkAccounts(input, environmentId).pipe(
-          Effect.tap(() => continueWaitingPapers(environmentId)),
+          Effect.tap(({ checked }) =>
+            checked > 0 ? continueWaitingPapers(environmentId) : Effect.void,
+          ),
         ),
       ),
     paperForSource: (input: AccountPaperForSourceInput) =>

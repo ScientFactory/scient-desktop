@@ -1,6 +1,7 @@
 import {
   AccountId,
   EnvironmentId,
+  type AccountsCheckInput,
   type AccountSummary,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -135,6 +136,7 @@ const run = (
   accounts: ReadonlyArray<AccountSummary>,
   signInPage = true,
   shown: Partial<ProfileDetection> = {},
+  input: AccountsCheckInput = {},
 ) => {
   const operations: string[] = [];
   let submitted = false;
@@ -174,7 +176,7 @@ const run = (
       }),
   });
   const fake = fakeAccounts({ accounts, values: { password: "synthetic-password" } });
-  return checkAccounts({}, EnvironmentId.make("env-fixture")).pipe(
+  return checkAccounts(input, EnvironmentId.make("env-fixture")).pipe(
     Effect.provideService(AccountsService, {
       ...fake.service,
       snapshot: Effect.succeed({ accounts } as never),
@@ -249,6 +251,35 @@ it.effect("names who the page says is signed in, least recently seen rows first"
       { accountId: "acc_olderrow", state: "signed-in", username: "octo" },
       { accountId: "acc_newerrow", state: "signed-in", username: "octo" },
     ]);
+  }),
+);
+
+it.effect("a glance at a university only looks, at most every two minutes", () =>
+  Effect.gen(function* () {
+    // A university sign-in Scient may type into, seen signed out on its sign-in page.
+    const typed: AccountSummary = {
+      ...shibboleth,
+      accountId: AccountId.make("acc_glanced1"),
+      controls: { ...account.controls, access: "allowed" },
+    };
+    const glance = { accountId: typed.accountId, glance: true };
+    const first = yield* run(
+      [typed],
+      true,
+      { finalUrl: "https://idp.cc.huji.ac.il/login" },
+      glance,
+    );
+    expect(first.checked).toEqual({ checked: 1 });
+    expect(first.uses).toEqual([]);
+    expect(first.checks).toEqual([{ accountId: typed.accountId, state: "signed-out" }]);
+    const soon = yield* run([typed], true, {}, glance);
+    expect(soon).toMatchObject({ checked: { checked: 0 }, operations: [] });
+    // Check is the user's own press: it still looks, and tries the sign-in, within the two minutes.
+    const pressed = yield* run([typed], true, {}, { accountId: typed.accountId });
+    expect(pressed.uses).toHaveLength(1);
+    yield* TestClock.adjust("2 minutes");
+    const later = yield* run([typed], true, {}, glance);
+    expect(later.checked).toEqual({ checked: 1 });
   }),
 );
 
