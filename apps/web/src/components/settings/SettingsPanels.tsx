@@ -97,6 +97,7 @@ import { AppBadgeSettings } from "../../scient/answerAttention/AppBadgeSettings"
 import { EmptySectionCleanupSettings } from "../../scient/sections/EmptySectionCleanupSettings";
 // SCIENT-FORK: Restart installs directly, sharing the sidebar's install path.
 import { installDesktopUpdateNow } from "../../scient/desktopUpdate/updateReadyNotice";
+// SCIENT-FORK: About → Release history opens the What's new version list.
 import { requestReleaseHistory } from "../../scient/releaseNotes/releaseHistoryRequests";
 // SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "../ui/toast";

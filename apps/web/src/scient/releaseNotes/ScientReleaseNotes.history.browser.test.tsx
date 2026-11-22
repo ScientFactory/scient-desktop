@@ -1,6 +1,7 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { act, render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
+import { useEffect } from "react";
 import { expect, it } from "vite-plus/test";
 import { page } from "vitest/browser";
 
@@ -12,6 +13,7 @@ import {
   ScientReleaseNotesDialogHost,
   ScientReleaseNotesProvider,
 } from "./ScientReleaseNotes";
+import { useScientReleaseNotes, type ScientReleaseNotesController } from "./useScientReleaseNotes";
 
 // Mounts the pieces the way the app does: the card in the sidebar, the dialog at app level.
 function ScientReleaseNotes() {
@@ -147,5 +149,55 @@ it("shows the top of the version list again after a release was opened", async (
   } finally {
     await root?.unmount();
     host.remove();
+  }
+});
+
+// The upgrade card counts as seen only once its own dialog closes; reading the list from About must
+// leave it waiting.
+it("keeps the upgrade card pending when the list opened from About closes", async () => {
+  const storageKey = "scient:release-notes:v1";
+  const [newest, previous] = SCIENT_RELEASE_NOTES;
+  localStorage.setItem(storageKey, JSON.stringify({ lastHandledVersion: previous!.version }));
+  let controller: ScientReleaseNotesController | undefined;
+  function Probe({
+    onRender,
+  }: {
+    readonly onRender: (next: ScientReleaseNotesController) => void;
+  }) {
+    const next = useScientReleaseNotes({ currentVersion: newest!.version });
+    useEffect(() => onRender(next));
+    return null;
+  }
+  const stack = new AsyncDisposableStack();
+  const host = document.createElement("div");
+  document.body.append(host);
+  let root: Screen | undefined;
+  try {
+    root = stack.use(await _fixtureRender(null, { container: host, router: false }));
+    await root.rerender(
+      <Probe
+        onRender={(next) => {
+          controller = next;
+        }}
+      />,
+    );
+    expect(controller!.isCardVisible).toBe(true);
+
+    await act(() => controller!.openHistory());
+    await act(() => controller!.setDialogOpen(false));
+    expect(controller!.isCardVisible).toBe(true);
+    expect(JSON.parse(localStorage.getItem(storageKey)!).lastHandledVersion).toBe(
+      previous!.version,
+    );
+
+    // The card's own dialog still marks the release as seen, even after a visit to the list.
+    await act(() => controller!.openDialog());
+    await act(() => controller!.setDialogOpen(false));
+    expect(controller!.isCardVisible).toBe(false);
+    expect(JSON.parse(localStorage.getItem(storageKey)!).lastHandledVersion).toBe(newest!.version);
+  } finally {
+    await root?.unmount();
+    host.remove();
+    localStorage.removeItem(storageKey);
   }
 });
