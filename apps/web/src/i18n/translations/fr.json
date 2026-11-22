@@ -15250,6 +15250,27 @@
   "8f9c5620edf0a5dd": "Vérification",
   "9dc4d06a2faa74dc": "Examiné par Anthropic",
   "baae13041db7565a": "Examiné par un partenaire",
+  "69bbad6aa5aa9457": [
+    "Sa connexion à ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ne se connecte que dans le gestionnaire de plugins d’Antigravity (lancez ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "agy"
+    },
+    ", ouvrez ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": "/plugin"
+    },
+    "), que Scient ne peut pas encore ouvrir ; les chats Scient utilisent donc ses skills."
+  ],
   "533719cc42a36c38": "Supprimez ce plugin dans le gestionnaire de plugins de l’agent.",
   "011876a86e46cc56": [
     "Supprimez ce plugin dans le gestionnaire de plugins de ",
@@ -15308,6 +15329,7 @@
   "c7b2fa0c1eb4415f": "Se connecter avec ChatGPT",
   "ab533b1faa64155e": "Ajouter ChatGPT",
   "44b26795fc644218": "Activation…",
+  "b2a91f20f10e5115": "Ajouté · sa connexion ne se connecte que dans le gestionnaire de plugins d’Antigravity",
   "e077c767f4195050": "Ajouté · se connecte la première fois qu’un chat l’utilise",
   "b15c63066ebf4e6c": "Via son plugin de l’Antigravity Marketplace",
   "1adafa7bf3950e49": "Via son compte ChatGPT",

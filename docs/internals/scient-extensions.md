@@ -990,6 +990,14 @@ enable/disable and Remove use `agy plugin list --json`, `enable|disable` and
 `uninstall`. A catalog outage keeps Installed and Remove; an unreadable listing
 pauses Add and Remove. A paired-harness instance lists the catalogs with Add disabled and says why.
 
+Live check (agy 1.5.12, 2026-11-22): a plugin MCP server that needs a sign-in
+(Canva's) does not load in `agy acp` or `agy -p`, which log "Not reloading plugin
+MCP servers: cannot get the signed-in user"; agy signs those in only in its
+interactive `/plugin` manager, which Scient cannot drive. Skills and CLI plugins
+that sign in through `auth.json` (Google's) work in Scient chats. An installed
+plugin listing MCP servers therefore says where its connection signs in, and its
+service row does not claim the connection works.
+
 `providerPlugins.act` accepts `install` (entry id, with an optional source
 instance for shared stores), `add-official-store`, and the existing lifecycle
 operations. Codex installation calls `plugin/install { pluginName,

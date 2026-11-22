@@ -21,7 +21,7 @@ import { useProviderPluginActions } from "./extensionActions";
 import { ActionFeedback } from "./ExtensionItems";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import { actOnProviderPlugin, extensionsProviderStoreEntry } from "./extensionsState";
-import { StoreInstall } from "./ProviderStorePages";
+import { needsAntigravityConnectionSignIn, StoreInstall } from "./ProviderStorePages";
 import { openAuthorizationPage } from "./openAuthorizationPage";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
@@ -205,7 +205,9 @@ function AntigravityServiceRow({
         <span className="block truncate text-sm font-medium">{route.label}</span>
         <span className="block truncate text-xs text-muted-foreground">
           {state === "added"
-            ? gt("Added · signs in the first time a chat uses it")
+            ? entry.data && needsAntigravityConnectionSignIn(entry.data)
+              ? gt("Added · its connection signs in only in Antigravity’s own plugin manager")
+              : gt("Added · signs in the first time a chat uses it")
             : state === "add" && entry.data?.disabledReason
               ? entry.data.disabledReason
               : gt("Through its Antigravity Marketplace plugin")}

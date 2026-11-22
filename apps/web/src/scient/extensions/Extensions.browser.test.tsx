@@ -2649,6 +2649,17 @@ describe("Antigravity Marketplace", () => {
     );
     expect(agents.textContent).not.toContain("Connected");
 
+    // A plugin whose MCP server agy signs in only in its own plugin manager says so.
+    agents = await show(
+      { plugins: [added(true)] },
+      { ...gmail, installed: true, includes: ["Skills", "MCP servers"] },
+    );
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain(
+        "Added · its connection signs in only in Antigravity’s own plugin manager",
+      ),
+    );
+
     agents = await show({ plugins: [added(false)] });
     await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
     await userEvent.click(buttonIn(agents, "Turn on")!);

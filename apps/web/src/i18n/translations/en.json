@@ -15263,6 +15263,27 @@
   "8f9c5620edf0a5dd": "Review",
   "9dc4d06a2faa74dc": "Reviewed by Anthropic",
   "baae13041db7565a": "Reviewed by a partner",
+  "69bbad6aa5aa9457": [
+    "Its connection to ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " signs in only in Antigravity’s own plugin manager (run ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "agy"
+    },
+    ", open ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": "/plugin"
+    },
+    "), which Scient can’t open yet, so Scient chats use its skills."
+  ],
   "533719cc42a36c38": "Remove this plugin in the agent’s plugin manager.",
   "011876a86e46cc56": [
     "Remove this plugin in ",
@@ -15321,6 +15342,7 @@
   "c7b2fa0c1eb4415f": "Sign in with ChatGPT",
   "ab533b1faa64155e": "Add ChatGPT",
   "44b26795fc644218": "Turning on…",
+  "b2a91f20f10e5115": "Added · its connection signs in only in Antigravity’s own plugin manager",
   "e077c767f4195050": "Added · signs in the first time a chat uses it",
   "b15c63066ebf4e6c": "Through its Antigravity Marketplace plugin",
   "1adafa7bf3950e49": "Through its ChatGPT account",

@@ -15249,6 +15249,27 @@
   "8f9c5620edf0a5dd": "Revisar",
   "9dc4d06a2faa74dc": "Revisado pela Anthropic",
   "baae13041db7565a": "Revisado por um parceiro",
+  "69bbad6aa5aa9457": [
+    "A conexão com ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " só faz login no gerenciador de plugins do Antigravity (execute ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "agy"
+    },
+    ", abra ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": "/plugin"
+    },
+    "), que o Scient ainda não consegue abrir; por isso os chats do Scient usam as skills dele."
+  ],
   "533719cc42a36c38": "Remova este plugin no gerenciador de plugins do agente.",
   "011876a86e46cc56": [
     "Remova este plugin no gerenciador de plugins de ",
@@ -15307,6 +15328,7 @@
   "c7b2fa0c1eb4415f": "Entrar com o ChatGPT",
   "ab533b1faa64155e": "Adicionar o ChatGPT",
   "44b26795fc644218": "Ativando…",
+  "b2a91f20f10e5115": "Adicionado · a conexão só faz login no gerenciador de plugins do Antigravity",
   "e077c767f4195050": "Adicionado · entra na primeira vez que um chat o usa",
   "b15c63066ebf4e6c": "Pelo plugin do Antigravity Marketplace",
   "1adafa7bf3950e49": "Pela conta do ChatGPT dele",

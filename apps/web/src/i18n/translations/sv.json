@@ -15259,6 +15259,27 @@
   "8f9c5620edf0a5dd": "Granska",
   "9dc4d06a2faa74dc": "Granskat av Anthropic",
   "baae13041db7565a": "Granskat av en partner",
+  "69bbad6aa5aa9457": [
+    "Dess anslutning till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " loggar bara in i Antigravitys egen pluginhanterare (kör ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "agy"
+    },
+    ", öppna ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": "/plugin"
+    },
+    "), som Scient inte kan öppna än, så Scient-chattar använder dess skills."
+  ],
   "533719cc42a36c38": "Ta bort det här tillägget i agentens tilläggshanterare.",
   "011876a86e46cc56": [
     "Ta bort det här tillägget i tilläggshanteraren för ",
@@ -15317,6 +15338,7 @@
   "c7b2fa0c1eb4415f": "Logga in med ChatGPT",
   "ab533b1faa64155e": "Lägg till ChatGPT",
   "44b26795fc644218": "Slår på…",
+  "b2a91f20f10e5115": "Tillagd · anslutningen loggar bara in i Antigravitys pluginhanterare",
   "e077c767f4195050": "Tillagd · loggar in första gången en chatt använder den",
   "b15c63066ebf4e6c": "Via sitt plugin från Antigravity Marketplace",
   "1adafa7bf3950e49": "Via sitt ChatGPT-konto",

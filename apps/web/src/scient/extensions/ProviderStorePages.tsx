@@ -61,6 +61,26 @@ function ThirdPartyNotice({ entry }: { readonly entry: ProviderStoreEntry }) {
   return <MutedLine>{useThirdPartyNoticeText(entry)}</MutedLine>;
 }
 
+/**
+ * agy loads a plugin's MCP servers only once they are signed in through its own plugin manager,
+ * which Scient can't drive; its chats here get the skills until then.
+ */
+export function needsAntigravityConnectionSignIn(entry: ProviderStoreEntry) {
+  return entry.kind === "antigravity" && entry.installed && entry.includes.includes("MCP servers");
+}
+
+function AntigravityConnectionSignIn({ entry }: { readonly entry: ProviderStoreEntry }) {
+  return (
+    <MutedLine>
+      <T>
+        Its connection to <Var>{entry.displayName}</Var> signs in only in Antigravity’s own plugin
+        manager (run <code>agy</code>, open <code>/plugin</code>), which Scient can’t open yet, so
+        Scient chats use its skills.
+      </T>
+    </MutedLine>
+  );
+}
+
 export function StoreInstall({
   provider,
   entry,
@@ -578,6 +598,9 @@ function StoreDetail({
     >
       {entry.disabledReason ? <MutedLine>{entry.disabledReason}</MutedLine> : null}
       {isThirdPartyPlugin(entry) && !entry.installed ? <ThirdPartyNotice entry={entry} /> : null}
+      {needsAntigravityConnectionSignIn(entry) ? (
+        <AntigravityConnectionSignIn entry={entry} />
+      ) : null}
       <PluginContents
         key={JSON.stringify([provider.instanceId, entry.id])}
         provider={provider}
