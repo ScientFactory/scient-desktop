@@ -635,11 +635,13 @@ export class ScientMarkdownEditorView {
     return handled;
   }
 
-  /** Moves every run of the selection by `steps` size steps, each keeping its own size. */
+  /**
+   * Moves every run of the selection by `steps` size steps, each keeping its own size. Focus
+   * stays where it is, so the size panel stays open for the next click.
+   */
   stepFontSize(steps: number): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
-    view.focus();
     return runScientMarkdownFontStep(
       steps,
       (position) => drawnPointsAt(view, position),
