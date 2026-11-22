@@ -36,9 +36,11 @@ breaks its paragraph, as TeX does; a one-line display formula that Words underli
 heading stays a block, followed by its rule; inside code, `pre`, `script`, `style`, `textarea` or
 `title` a formula stays source; a single-dollar formula whose TeX is a shell variable or path
 (`$PATH$`, `$HOME/$USER`, the same rule the editor uses) and TeX over 1,000 characters show their
-source; a ` ```math ` fence Words did not read as math (unclosed while streaming) stays code; and
-an image's alt text keeps a formula's delimiters. The composer, its skill chips and the skills
-chosen on send find formulas with Words' `markdownMathRanges`, so they agree with chat.
+source; a ` ```math ` fence without its closing fence stays code, even when the end of its quote
+or list item lets Words read it as math; and an image's alt text keeps a formula's delimiters. The
+composer, its skill chips and the skills chosen on send find formulas with Words'
+`markdownMathRanges` through `scientFormulaRanges.ts`, which returns them in source order and
+includes footnotes Words leaves unrendered, so they agree with chat.
 
 Nothing chat renders imports remark. `ScientMathFindSource.tsx`, which segments a formula's source
 as the shared Find index does (`@t3tools/shared/threadFindText`, remark), loads lazily once Find

@@ -1,6 +1,6 @@
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 
-import { markdownMathRanges } from "~/markdown/wordsHast";
+import { scientFormulaRanges } from "~/scient/math/scientFormulaRanges";
 
 /**
  * The Scient skills a composer message names with `$skill`, as its chips show them: a token
@@ -10,7 +10,7 @@ import { markdownMathRanges } from "~/markdown/wordsHast";
 export function collectSelectedScientSkillNames(composerText: string): ReadonlyArray<string> {
   return [
     ...new Set(
-      collectComposerInlineTokens(`${composerText}\n`, { findMath: markdownMathRanges }).flatMap(
+      collectComposerInlineTokens(`${composerText}\n`, { findMath: scientFormulaRanges }).flatMap(
         (token) => (token.type === "skill" && token.value.length <= 64 ? [token.value] : []),
       ),
     ),

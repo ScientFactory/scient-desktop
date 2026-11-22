@@ -7,7 +7,9 @@ import {
   composerMathRanges,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
-import { markdownMathRanges } from "~/markdown/wordsHast";
+// SCIENT-FORK:START — chips skip formulas as the skills chosen on send do, footnotes included.
+import { scientFormulaRanges as markdownMathRanges } from "~/scient/math/scientFormulaRanges";
+// SCIENT-FORK:END
 
 export type ComposerPromptSegment =
   | {

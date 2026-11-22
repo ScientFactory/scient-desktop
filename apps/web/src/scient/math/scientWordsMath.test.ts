@@ -156,6 +156,39 @@ describe("Scient math on Words", () => {
     expect(crlf).not.toContain("<h2");
   });
 
+  it("keeps an unfinished math fence code when its quote or list item ends", () => {
+    for (const markdown of ["> ```math\n> x\n\nafter", "- ```math\n  x\n\nnext"]) {
+      const tree = chatHast(markdown);
+      expect(formulas(tree)).toEqual([]);
+      expect(toHtml(tree)).toMatch(/<pre><code>x\n?<\/code><\/pre>/);
+    }
+    expect(formulas(chatHast("> ```math\n> x\n> ```\n\nafter"))).toEqual([
+      expect.objectContaining({ kind: "display", tex: "x" }),
+    ]);
+  });
+
+  it("keeps a closed math fence whole inside an insight callout", () => {
+    const tree = chatHast("`★ Insight ─────`\n```math\n───\nx\n```\n`─────`", {}, true);
+    expect(formulas(tree)).toEqual([
+      { kind: "display", tex: "───\nx", source: "```math\n───\nx\n```" },
+    ]);
+    expect(toHtml(tree)).not.toContain("─────");
+  });
+
+  it("keeps prose, a display formula and its rule when the rule follows them", () => {
+    for (const markdown of ["before\n$$x$$\n---\nafter", "before\r\n$$x$$\r\n---\r\nafter"]) {
+      const tree = chatHast(markdown);
+      expect(formulas(tree)).toEqual([expect.objectContaining({ kind: "display", tex: "x" })]);
+      expect(
+        tree.children.flatMap((child) => (child.type === "element" ? [child.tagName] : [])),
+      ).toEqual(["p", "pre", "hr", "p"]);
+    }
+    expect(formulas(chatHast("with $y$\n$$x$$\n---")).map((formula) => formula.kind)).toEqual([
+      "inline",
+      "display",
+    ]);
+  });
+
   it("keeps a heading the author wrote", () => {
     const html = toHtml(chatHast("# Title $x$\n\n$$\ny\n$$"));
     expect(html).toMatch(/<h1[^>]*>Title /);
@@ -173,6 +206,7 @@ describe("Scient math on Words", () => {
   it("restores a formula's source wherever it cannot be math", () => {
     const html = toHtml(chatHast("![a $x$ b](img.png) and [see](https://x.dev/$y$)"));
     expect(html).toContain('alt="a $x$ b"');
+    expect(toHtml(chatHast("[img]: img.png\n\n![$x$][img]"))).toContain('alt="$x$"');
     expect(html).not.toMatch(/[\uFDD0\uFDD1]/u);
   });
 });

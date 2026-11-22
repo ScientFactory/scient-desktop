@@ -19,6 +19,12 @@ describe("selected Scient skill names", () => {
     expect(collectSelectedScientSkillNames(`$${"x".repeat(65)} $pdf`)).toEqual(["pdf"]);
   });
 
+  it("leaves a token inside a formula in an unused footnote as formula source", () => {
+    expect(
+      collectSelectedScientSkillNames("Explain this example.\n\n[^a]: $$\\text{a $deploy b}$$"),
+    ).toEqual([]);
+  });
+
   it("leaves a token inside a formula chat reads as formula source", () => {
     expect(collectSelectedScientSkillNames("Solve \\(\\text{$pdf} + x\\) with $latex")).toEqual([
       "latex",

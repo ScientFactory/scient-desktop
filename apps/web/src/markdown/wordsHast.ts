@@ -908,7 +908,8 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   const findCode = (node: Root | Element) => {
     for (const child of node.children) {
       if (child.type !== "element") continue;
-      if (child.tagName === "pre" && child.position) {
+      // SCIENT-FORK: Words draws a closed math block as `svg`; its lines are opaque too.
+      if ((child.tagName === "pre" || child.tagName === "svg") && child.position) {
         code.push([child.position.start.offset!, child.position.end.offset!]);
       } else findCode(child);
     }

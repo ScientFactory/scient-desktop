@@ -175,6 +175,12 @@ describe("editable math source", () => {
     const doc = schema.nodeFromJSON(buildDocJson(source, known));
     expect(skillChipReplacements(doc, known)).toEqual([]);
     expect(serializeEditorDoc(doc).value).toBe(source);
+  });
+
+  it("round-trips a draft whose footnote holds a formula before the body's", () => {
+    const source = "[^a]: $z$\n\n$a$ hi [^a] $b$";
+    const known = (name: string) => ({ label: name, description: null });
+    expect(serializeEditorDoc(schema.nodeFromJSON(buildDocJson(source, known))).value).toBe(source);
     // SCIENT-FORK:END
   });
 });

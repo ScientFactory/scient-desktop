@@ -53,7 +53,9 @@ import {
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
-import { markdownMathRanges } from "~/markdown/wordsHast";
+// SCIENT-FORK:START — formulas in source order, footnotes included (scient/math).
+import { scientFormulaRanges } from "~/scient/math/scientFormulaRanges";
+// SCIENT-FORK:END
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -935,7 +937,8 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = composerMathRanges(remainder, markdownMathRanges);
+  // SCIENT-FORK: formulas in source order, so the editable text never rewinds.
+  const formulas = composerMathRanges(remainder, scientFormulaRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1830,7 +1833,7 @@ export function skillChipReplacements(
   });
   const map = serializeEditorDoc(doc);
   // SCIENT-FORK:START — a token inside a formula stays formula source, as chat reads it.
-  const formulas = composerMathRanges(map.value, markdownMathRanges);
+  const formulas = composerMathRanges(map.value, scientFormulaRanges);
   // SCIENT-FORK:END
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {

@@ -53,7 +53,8 @@ Scient's behaviour sits in Scient modules mounted at marked seams in `wordsHast.
   over 1,000 characters shows its source. An image's alt text keeps a formula's delimiters.
   Words' SVG costs about 0.05 ms per 5 KB message; dropping the remark grammar took a math-heavy
   5 KB message from about 3.4 ms to 1.1 ms in `wordsHast`. The composer, its skill chips and the
-  skills chosen on send read formulas with Words' `markdownMathRanges`, as chat does. Accepted
+  skills chosen on send read formulas with Words' `markdownMathRanges`, as chat does, in source order
+  and including unused footnotes (`scient/math/scientFormulaRanges.ts`). Accepted
   differences from Scient's old grammar: `$b* c$`, `$a$$b$`, `$\frac{$` and single-dollar
   formulas of 300–1,000 characters are math, and `$x | y$` in a table cell is one formula. T3
   deleted the KaTeX `%` repair Scient still uses; it now lives in `scient/math/katexPercentRepair.ts`

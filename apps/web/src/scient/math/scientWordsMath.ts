@@ -42,6 +42,21 @@ const LINE_SUFFIX = /^[ \t]*(?:\r?\n|\r|$)/;
 // The next line, when it underlines a one-line formula into a setext heading.
 const SETEXT_UNDERLINE = /^[ \t]*(?:\r?\n|\r)[ \t>]*(-+|=+)[ \t]*(?:\r?\n|\r|$)/;
 
+const FENCE_OPENING = /^(`{3,}|~{3,})/;
+const FENCE_CLOSING = /^[ \t>]*(`{3,}|~{3,})[ \t]*$/;
+
+/**
+ * Whether a fenced formula has its closing fence. Words also reads a fence the end of its quote or
+ * list item cuts off as math; it is code until the author closes it.
+ */
+function fenceClosed(authored: string): boolean {
+  const opening = FENCE_OPENING.exec(authored)?.[1];
+  if (!opening) return true;
+  const lines = authored.split(/\r?\n|\r/);
+  const closing = lines.length > 1 ? FENCE_CLOSING.exec(lines.at(-1)!)?.[1] : undefined;
+  return closing !== undefined && closing[0] === opening[0] && closing.length >= opening.length;
+}
+
 // Shell variables and paths (`$PATH$`, `$HOME/$USER`) pair up as formulas; numeric subscripts
 // (`$A_1$`) and up to three capitals (`$Q$`, `$NPV$`) are symbols.
 const SHELL_VARIABLE = /^[A-Z][A-Z0-9_]*$/;
@@ -60,6 +75,8 @@ interface Formula {
   readonly display: boolean;
   /** Shown as its source: oversized TeX, or a shell variable between two dollars. */
   readonly literal: boolean;
+  /** A math fence without its closing fence, shown as code. */
+  readonly unclosed: boolean;
   /** The line that made a display formula a setext heading: a rule or a paragraph after it. */
   readonly underline: string | undefined;
   readonly tex: string;
@@ -105,6 +122,7 @@ export function scientWordsFormula(svg: Element, source: string): Element {
   };
   formulas.set(formula, {
     display,
+    unclosed: !fenceClosed(authored),
     literal:
       tex.length > MAX_SCIENT_TEX_LENGTH ||
       (!doubleDollar && authored.startsWith("$") && isScientShellVariableTex(tex)),
@@ -159,6 +177,23 @@ export function restoreScientWordsMath(
         ? written(code)
         : String(code.properties.dataScientMathSource);
     if (!mathAllowed) return text(authored);
+    if (formula.unclosed) {
+      return BLOCK_PARENTS.has(parentTag)
+        ? {
+            type: "element",
+            tagName: "pre",
+            properties: {},
+            children: [
+              {
+                type: "element",
+                tagName: "code",
+                properties: {},
+                children: [text(`${formula.tex}\n`)],
+              },
+            ],
+          }
+        : text(authored);
+    }
     if (formula.display && !options.preview && BLOCK_PARENTS.has(parentTag)) {
       const element: Element = {
         type: "element",
@@ -192,23 +227,40 @@ export function restoreScientWordsMath(
     };
   };
 
-  // Words writes a formula in alt text as its TeX; read without math, it keeps its delimiters.
+  // Words writes a formula in alt text as its TeX; the source read without math, reference
+  // definitions included, keeps its delimiters. Images match by position.
+  let altWithoutMath: Map<string, unknown> | undefined;
   const keepAltSource = (image: Element) => {
-    if (!altMayHoldMath || !image.position || !image.properties.alt) return;
-    const markdown = written(image);
-    if (!/[$\\]/.test(markdown)) return;
-    const alt = findImage(options.withoutMath(markdown))?.properties.alt;
+    const { position } = image;
+    if (!altMayHoldMath || !position || !image.properties.alt) return;
+    if (!altWithoutMath) {
+      altWithoutMath = new Map();
+      for (const found of images(options.withoutMath(source))) {
+        if (found.position) {
+          altWithoutMath.set(
+            `${found.position.start.offset}-${found.position.end.offset}`,
+            found.properties.alt,
+          );
+        }
+      }
+    }
+    const alt = altWithoutMath.get(`${position.start.offset}-${position.end.offset}`);
     if (typeof alt === "string") image.properties.alt = alt;
   };
 
-  /** A setext heading that is only an underlined display formula, with its underline. */
-  const underlinedFormula = (heading: Element): [Element, string] | undefined => {
-    const content = heading.children.filter((child) => !isBlank(child));
-    const only = content.length === 1 ? content[0] : undefined;
-    const id = only?.type === "element" ? only.properties.id : undefined;
+  /**
+   * A setext heading whose last line is an underlined display formula: the prose before it, the
+   * formula and its underline.
+   */
+  const underlinedFormula = (heading: Element): [ElementContent[], Element, string] | undefined => {
+    const content = heading.children as ElementContent[];
+    let last = content.length - 1;
+    while (last >= 0 && isBlank(content[last])) last--;
+    const final = content[last];
+    const id = final?.type === "element" ? final.properties.id : undefined;
     const code = typeof id === "string" ? placed.get(id.replace(/^user-content-/, "")) : undefined;
     const underline = code ? formulas.get(code)?.underline : undefined;
-    return code && underline ? [code, underline] : undefined;
+    return code && underline ? [content.slice(0, last), code, underline] : undefined;
   };
 
   const visit = (node: Root | Element, mathAllowed: boolean) => {
@@ -226,13 +278,23 @@ export function restoreScientWordsMath(
       }
       const underlined = /^h[12]$/.test(child.tagName) ? underlinedFormula(child) : undefined;
       if (underlined && mathAllowed && !options.preview && BLOCK_PARENTS.has(parentTag)) {
-        // A one-line display formula stays a block; its underline is a rule or a paragraph.
-        const [code, underline] = underlined;
+        // A one-line display formula stays a block after its paragraph; its underline is a rule
+        // or a paragraph.
+        const [prose, code, underline] = underlined;
+        const paragraph: Element = { type: "element", tagName: "p", properties: {}, children: [] };
+        const before = paragraphFromRun(paragraph, prose);
         const after: Element = underline.startsWith("-")
           ? { type: "element", tagName: "hr", properties: {}, children: [] }
-          : { type: "element", tagName: "p", properties: {}, children: [text(underline)] };
-        children.splice(index, 1, mathElement(code, "div", true), text("\n"), after);
-        index += 2;
+          : { ...paragraph, children: [text(underline)] };
+        const blocks: ElementContent[] = [
+          ...(before ? [before, text("\n")] : []),
+          mathElement(code, "div", true),
+          text("\n"),
+          after,
+        ];
+        children.splice(index, 1, ...blocks);
+        // The new blocks are visited in turn, so formulas in the prose are placed too.
+        index--;
         continue;
       }
       if (child.tagName === "img") keepAltSource(child);
@@ -250,13 +312,10 @@ export function restoreScientWordsMath(
   visit(tree, true);
 }
 
-function findImage(node: Root | Element): Element | undefined {
-  for (const child of node.children) {
-    if (child.type !== "element") continue;
-    const image = child.tagName === "img" ? child : findImage(child);
-    if (image) return image;
-  }
-  return undefined;
+function images(node: Root | Element): Element[] {
+  return node.children.flatMap((child) =>
+    child.type !== "element" ? [] : child.tagName === "img" ? [child] : images(child),
+  );
 }
 
 /**
