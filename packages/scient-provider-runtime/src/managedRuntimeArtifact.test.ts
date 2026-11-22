@@ -88,7 +88,7 @@ describe("managed runtime artifact hydration", () => {
     });
   });
 
-  it("judges a raw-only release by its family's download limit, but not one with a zstd copy", () => {
+  it("judges a release by its family's download limit, on the copy it would download", () => {
     const receipt = managedRuntimeArtifactReceipt(policy);
     const mib = 1024 * 1024;
     expect(hydrateManagedRuntimeArtifact(policy, { ...receipt, size: 512 * mib })).toBeDefined();
@@ -97,10 +97,30 @@ describe("managed runtime artifact hydration", () => {
     ).toBeUndefined();
     const larger = { ...policy, maxDownloadBytes: 1024 * mib };
     expect(hydrateManagedRuntimeArtifact(larger, { ...receipt, size: 578 * mib })).toBeDefined();
-    const compressedOnly = { ...policy, compressedArtifactName: "codex.tar.gz.zst" };
+    const withCopy = {
+      ...policy,
+      compressedArtifactName: "codex.tar.gz.zst",
+      releaseUrlPrefix: "https://github.com/example/",
+    };
+    // The policy's release URLs: version, then artifact.
+    const atRelease = { ...receipt, url: "https://github.com/example/1.0.0/codex.tar.gz" };
+    const copy = (size: number) =>
+      ({
+        format: "zstd",
+        size,
+        checksum: { algorithm: "sha256", digest: "a".repeat(64) },
+      }) as const;
+    // The release's zstd copy is what gets downloaded, so it is the one judged.
     expect(
-      hydrateManagedRuntimeArtifact(compressedOnly, { ...receipt, size: 600 * mib }),
+      hydrateManagedRuntimeArtifact(withCopy, { ...atRelease, size: 600 * mib }, copy(300 * mib)),
     ).toBeDefined();
+    expect(
+      hydrateManagedRuntimeArtifact(withCopy, { ...atRelease, size: 600 * mib }, copy(513 * mib)),
+    ).toBeUndefined();
+    // An installation receipt names no copy: repairing from it would download the raw binary.
+    expect(
+      hydrateManagedRuntimeArtifact(withCopy, { ...receipt, size: 600 * mib }),
+    ).toBeUndefined();
   });
 
   it("cannot widen provider, target, source path, or checksum policy", () => {

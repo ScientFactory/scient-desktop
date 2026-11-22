@@ -276,15 +276,18 @@ export function hydrateManagedRuntimeArtifact(
   if (
     receipt.size <= 0 ||
     !Number.isSafeInteger(receipt.size) ||
-    // A family with a zstd copy may download that instead; each transfer keeps the limit.
-    (policy.compressedArtifactName === undefined &&
-      receipt.size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)) ||
     receipt.checksum.digest.length !== expectedDigestLength ||
     !/^[0-9a-f]+$/u.test(receipt.checksum.digest)
   ) {
     return undefined;
   }
   const compressed = hydrateCompressedArtifact(policy, receipt.version, compressedRelease);
+  // The download takes the zstd copy when one comes with the release, else the raw binary; either
+  // keeps the family's limit. An installation receipt names no copy, so it is judged by the raw.
+  if (
+    (compressed ?? receipt).size > (policy.maxDownloadBytes ?? MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES)
+  )
+    return undefined;
   return {
     ...policy,
     ...(policy.auxiliaryExecutableRules !== undefined
