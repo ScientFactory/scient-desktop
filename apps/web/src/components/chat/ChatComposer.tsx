@@ -538,6 +538,21 @@ export interface ChatComposerProps {
     options?: { steer?: boolean; directPrompt?: string },
     // SCIENT-FORK:END
   ) => void;
+  captureDetachedSend?: () => (
+    e?: { preventDefault: () => void },
+    dispatchMode?: ComposerDispatchMode,
+    submissionIntent?: ComposerSubmissionIntent,
+    directAnnotation?: {
+      annotation: PreviewAnnotationPayload;
+      image: ComposerImageAttachment | null;
+    },
+    detachedOverride?: {
+      readonly prompt: string;
+      readonly sendContext: ReturnType<ChatComposerHandle["getSendContext"]>;
+    },
+    // SCIENT-FORK: a held steer keeps its request.
+    options?: { steer?: boolean },
+  ) => void;
   onResume: () => void;
   onInterrupt: () => void;
   // SCIENT-FORK:START
@@ -651,6 +666,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onCompactContext,
     onSend,
+    captureDetachedSend,
     onResume,
     onInterrupt,
     // SCIENT-FORK:START
@@ -2467,7 +2483,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       dispatchMode?: ComposerDispatchMode,
       submissionIntent?: ComposerSubmissionIntent,
       // SCIENT-FORK:START — a held send keeps its steer request.
-      options?: { steer?: boolean },
+      options?: { steer?: boolean; readonly afterDictation?: boolean },
       // SCIENT-FORK:END
     ) => void
   >(() => {});
@@ -2477,14 +2493,83 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submissionIntent?: ComposerSubmissionIntent,
     // SCIENT-FORK:START — steer submissions bypass the Scient thread queue;
     // ChatView owns the queue-vs-send disposition.
-    options?: { steer?: boolean },
+    options?: { steer?: boolean; readonly afterDictation?: boolean },
     // SCIENT-FORK:END
   ) => {
-    if (voiceInputActive) {
+    if (voiceInputActive && !options?.afterDictation) {
       event?.preventDefault();
-      submitAfterDictation(() =>
-        submitComposerRef.current(dispatchMode, submissionIntent, options),
-      );
+      const queuedOwnerKey = attachmentTargetKey;
+      const capturedDraftTarget = composerDraftTarget;
+      const resolvedDispatchMode =
+        dispatchMode ??
+        resolveComposerDispatchMode({
+          running: phase === "running" || phase === "connecting",
+          alternateModifier: false,
+          activeTurnDefault: followUpBehavior,
+          canSteer,
+        });
+      const capturedDetachedSend =
+        questionAttachmentTarget === null ? (captureDetachedSend?.() ?? null) : null;
+      const capturedSendContext =
+        capturedDetachedSend !== null ? (composerRef.current?.getSendContext() ?? null) : null;
+      const capturedSubmissionTarget = submissionTarget;
+      submitAfterDictation((transcribedText) => {
+        const stillLive =
+          composerMountedRef.current && attachmentTargetKeyRef.current === queuedOwnerKey;
+        if (stillLive) {
+          submitComposerRef.current(dispatchMode, submissionIntent, {
+            ...options,
+            afterDictation: true,
+          });
+          return;
+        }
+        if (
+          !capturedDetachedSend ||
+          !capturedSendContext ||
+          pendingDraftWork.has(queuedOwnerKey) ||
+          countPreparingComposerImages(queuedOwnerKey) > 0
+        ) {
+          return;
+        }
+        const liveTarget = resolveLiveComposerDraftTarget(capturedDraftTarget);
+        const latestDraft =
+          liveTarget !== null
+            ? useComposerDraftStore.getState().getComposerDraft(liveTarget)
+            : null;
+        submitComposerDraft({
+          prompt: transcribedText,
+          submissionTarget: capturedSubmissionTarget,
+          event: undefined,
+          onSend: (sendEvent) => {
+            capturedDetachedSend(
+              sendEvent,
+              resolvedDispatchMode,
+              submissionIntent,
+              undefined,
+              {
+                prompt: transcribedText,
+                sendContext: {
+                  ...capturedSendContext,
+                  ...(latestDraft
+                    ? {
+                        images: latestDraft.images,
+                        files: latestDraft.files,
+                        terminalContexts: latestDraft.terminalContexts,
+                        previewAnnotations: latestDraft.previewAnnotations,
+                        reviewComments: latestDraft.reviewComments,
+                        threadContexts: latestDraft.threadContexts,
+                        environmentContexts: latestDraft.environmentContexts,
+                      }
+                    : {}),
+                  prompt: transcribedText,
+                },
+              },
+              options,
+            );
+            return true;
+          },
+        });
+      });
       return false;
     }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
@@ -2511,7 +2596,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return false;
     }
     // An empty draft has nothing to send; Enter does what the Resume thread button does.
-    if (showResumeAction && !activePendingProgress) {
+    if (showResumeAction && !activePendingProgress && promptRef.current.trim().length === 0) {
       event?.preventDefault();
       if (isSendBusy || environmentUnavailable !== null) return false;
       onResume();

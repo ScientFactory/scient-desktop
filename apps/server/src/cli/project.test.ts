@@ -28,6 +28,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as NetService from "@t3tools/shared/Net";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -76,6 +77,7 @@ const layerCliAuthority = Layer.mergeAll(
     ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(FeatureFlags.layerTest()),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
     Layer.provide(

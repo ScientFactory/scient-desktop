@@ -150,9 +150,11 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         },
         m,
       );
-      promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState();
+      }
       clearedDraft = true;
       const clearedDraftSnapshot = useComposerDraftStore
         .getState()

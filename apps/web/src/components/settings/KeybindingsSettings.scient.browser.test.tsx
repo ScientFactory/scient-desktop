@@ -5,7 +5,6 @@ import { act, render } from "../../../test/render";
 
 vi.mock(import("../../env"), () => ({
   isElectron: true,
-  isSecretsFeatureEnabled: false,
 }));
 
 vi.mock(import("../../state/session"), async (original) => ({

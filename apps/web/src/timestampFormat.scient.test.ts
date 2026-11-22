@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatDateTimeTimestamp } from "./timestampFormat";
+import { formatReceiptDateTime } from "./timestampFormat";
 
 describe("receipt date and time", () => {
   // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
@@ -17,11 +17,11 @@ describe("receipt date and time", () => {
         second: "2-digit",
         ...(preference === "locale" ? {} : { hour12: preference === "12-hour" }),
       }).format(date);
-      expect(formatDateTimeTimestamp(date.toISOString(), preference)).toBe(expected);
+      expect(formatReceiptDateTime(date.toISOString(), preference)).toBe(expected);
     },
   );
   // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
   it("omits invalid dates", () => {
-    expect(formatDateTimeTimestamp("not-a-date", "24-hour")).toBe("");
+    expect(formatReceiptDateTime("not-a-date", "24-hour")).toBe("");
   });
 });

@@ -20,7 +20,7 @@ import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useEnvironmentQuery } from "~/state/query";
-import { formatDateTimeTimestamp } from "~/timestampFormat";
+import { formatReceiptDateTime } from "~/timestampFormat";
 
 import type { ComputeContextId } from "./computeContextStore";
 import { ComputeOutputView } from "./ComputeOutputView";
@@ -182,7 +182,7 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
       ? () => props.onRevealSource?.(source)
       : null;
   const duration = computeRunDurationLabel(execution.result);
-  const when = [formatDateTimeTimestamp(execution.request.submittedAt, timestampFormat), duration]
+  const when = [formatReceiptDateTime(execution.request.submittedAt, timestampFormat), duration]
     .filter(Boolean)
     .join(" · ");
   return (
