@@ -13,7 +13,8 @@ const MARK = "\uFDD0";
 const FILL = "\uFDD1";
 const FIRST_INDEX = 0xe000;
 const MAX_FORMULAS = 0xf8ff - FIRST_INDEX + 1;
-const ENCODED_PLACEHOLDER = /%EF%B7%90((?:%[0-9A-F]{2}){3})(?:%EF%B7%91)*/gi;
+const ENCODED_PLACEHOLDER = /%EF%B7%90((?:%[0-9A-F]{2}){3})((?:%EF%B7%91)*)/gi;
+const ENCODED_FILL_LENGTH = "%EF%B7%91".length;
 
 // Formulas in these stay their authored source.
 const MATH_FREE = new Set(["code", "pre", "script", "style", "textarea", "title"]);
@@ -40,8 +41,8 @@ interface PlacedFormula {
 }
 
 // Before a formula on its own line: only container markers (quotes, list bullets, indentation).
-const LINE_PREFIX = /(?:^|\n)(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*$/;
-const LINE_SUFFIX = /^[ \t]*(?:\n|$)/;
+const LINE_PREFIX = /(?:^|[\n\r])(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*$/;
+const LINE_SUFFIX = /^[ \t]*(?:\r?\n|\r|$)/;
 
 /**
  * A display formula on its own line(s) goes to Words as a one-line ATX heading, so the block stays
@@ -122,7 +123,7 @@ export function scientWordsMath(): ScientWordsMath {
 
   const authoredAttribute = (value: string): string =>
     authored(
-      value.replace(ENCODED_PLACEHOLDER, (written, index: string) => {
+      value.replace(ENCODED_PLACEHOLDER, (written, index: string, fill: string) => {
         let decoded: string;
         try {
           decoded = decodeURIComponent(index);
@@ -131,7 +132,10 @@ export function scientWordsMath(): ScientWordsMath {
           return written;
         }
         const formula = placed[decoded.charCodeAt(0) - FIRST_INDEX];
-        return formula ? encodeURI(formula.source) : written;
+        // Only a whole placeholder this render wrote: the author's escapes stay as written.
+        return formula && fill.length / ENCODED_FILL_LENGTH === formula.width - 2
+          ? encodeURI(formula.source)
+          : written;
       }),
     );
 

@@ -116,6 +116,9 @@ describe("Scient math on Words", () => {
     const indented = toHtml(chatHast("```math\nx\n```\n    code line"));
     expect(indented).toMatch(/<pre[^>]*><code[^>]*>code line/);
     expect(toHtml(chatHast("> $$\n> y\n> $$\n> ---"))).toContain("<hr>");
+    const crlf = toHtml(chatHast("$$\r\nx\r\n$$\r\n---\r\nafter"));
+    expect(crlf).toContain("<hr>");
+    expect(crlf).not.toContain("<h2");
   });
 
   it("keeps a heading the author wrote", () => {
@@ -131,6 +134,10 @@ describe("Scient math on Words", () => {
     const html = toHtml(chatHast("[a](https://x.dev/%EF%B7%90%FF%FF%FF) and $x$"));
     expect(html).toContain("%EF%B7%90%FF%FF%FF");
     expect(formulas(chatHast("[a](https://x.dev/%EF%B7%90%FF%FF%FF) and $x$"))).toHaveLength(1);
+    // A valid escape the author wrote is not a placeholder this render made.
+    expect(toHtml(chatHast("[plain](https://x.dev/%EF%B7%90%EE%80%80) and $x$"))).toContain(
+      'href="https://x.dev/%EF%B7%90%EE%80%80"',
+    );
   });
 
   it("restores a formula's source wherever it cannot be math", () => {
