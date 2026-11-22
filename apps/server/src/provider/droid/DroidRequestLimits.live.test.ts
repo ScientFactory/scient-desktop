@@ -16,6 +16,7 @@ import { beforeAll } from "vite-plus/test";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { droidRequestFailureDetail } from "../acp/DroidAcpSupport.ts";
+import { awaitDroidHomeIdleOnClose } from "./DroidLiveHome.testkit.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
@@ -46,6 +47,9 @@ const startDroid = Effect.fn("startDroid")(function* (input: {
   const tmp = NodePath.join(root, "tmp");
   const cwd = NodePath.join(root, "work");
   for (const directory of [home, tmp, cwd]) NodeFS.mkdirSync(directory, { recursive: true });
+  // Droid's exit courier outlives it: the caller's stub, listening already, stays up until
+  // HOME is idle, and Droid, started below, shuts down first.
+  yield* awaitDroidHomeIdleOnClose(home);
   const instanceId = ProviderInstanceId.make("droid_request_limit");
   const connections: ReadonlyArray<ResolvedModelConnection> = [
     {

@@ -23,6 +23,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
+import { awaitDroidHomeIdleOnClose } from "./DroidLiveHome.testkit.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
@@ -121,6 +122,8 @@ it.live.skipIf(!binary)(
       yield* Effect.promise(
         () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
       );
+      // Droid's exit courier outlives it; the stub stays up until HOME is idle.
+      yield* awaitDroidHomeIdleOnClose(home);
       const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
       const environment = Object.entries({
         HOME: home,
