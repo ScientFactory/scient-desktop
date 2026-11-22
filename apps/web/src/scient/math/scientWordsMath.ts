@@ -35,6 +35,26 @@ const BLOCK_PARENTS = new Set([
 interface PlacedFormula {
   readonly node: ScientMathNode;
   readonly source: string;
+  /** Characters from the placeholder's mark to its end: the source's length, less a block's `# `. */
+  readonly width: number;
+}
+
+// Before a formula on its own line: only container markers (quotes, list bullets, indentation).
+const LINE_PREFIX = /(?:^|\n)(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*$/;
+const LINE_SUFFIX = /^[ \t]*(?:\n|$)/;
+
+/**
+ * A display formula on its own line(s) goes to Words as a one-line ATX heading, so the block stays
+ * a block: as a bare placeholder line it would read as paragraph text, and a following `---` or
+ * indented line would turn it into a setext heading or join it.
+ */
+function standsAsBlock(markdown: string, node: ScientMathNode): boolean {
+  return (
+    node.kind !== "inline" &&
+    node.end - node.start >= 4 &&
+    LINE_PREFIX.test(markdown.slice(0, node.start)) &&
+    LINE_SUFFIX.test(markdown.slice(node.end))
+  );
 }
 
 export interface ScientWordsMath {
@@ -62,10 +82,12 @@ export function scientWordsMath(): ScientWordsMath {
     for (const node of scientMathNodes(markdown)) {
       const source = markdown.slice(node.start, node.end);
       if (placed.length >= MAX_FORMULAS || source.length < 2 || source.includes(MARK)) continue;
-      prepared += `${markdown.slice(from, node.start)}${MARK}${String.fromCharCode(
+      const block = standsAsBlock(markdown, node);
+      const width = block ? source.length - 2 : source.length;
+      prepared += `${markdown.slice(from, node.start)}${block ? "# " : ""}${MARK}${String.fromCharCode(
         FIRST_INDEX + placed.length,
-      )}${FILL.repeat(source.length - 2)}`;
-      placed.push({ node, source });
+      )}${FILL.repeat(width - 2)}`;
+      placed.push({ node, source, width });
       from = node.end;
     }
     return from === 0 ? markdown : prepared + markdown.slice(from);
@@ -74,6 +96,18 @@ export function scientWordsMath(): ScientWordsMath {
   const formulaAt = (value: string, at: number): PlacedFormula | undefined =>
     placed[value.charCodeAt(at + 1) - FIRST_INDEX];
 
+  /** The formula a heading holds when it is exactly one block formula's placeholder. */
+  const headingFormula = (heading: Element): PlacedFormula | undefined => {
+    const [only, ...rest] = heading.children;
+    if (rest.length > 0 || only?.type !== "text") return undefined;
+    const value = only.value.trim();
+    if (!value.startsWith(MARK)) return undefined;
+    const formula = formulaAt(value, 0);
+    return formula && formula.width !== formula.source.length && value.length === formula.width
+      ? formula
+      : undefined;
+  };
+
   const authored = (value: string): string => {
     let result = "";
     let from = 0;
@@ -81,7 +115,7 @@ export function scientWordsMath(): ScientWordsMath {
       const formula = formulaAt(value, at);
       if (!formula) break;
       result += value.slice(from, at) + formula.source;
-      from = at + formula.source.length;
+      from = at + formula.width;
     }
     return result + value.slice(from);
   };
@@ -89,7 +123,14 @@ export function scientWordsMath(): ScientWordsMath {
   const authoredAttribute = (value: string): string =>
     authored(
       value.replace(ENCODED_PLACEHOLDER, (written, index: string) => {
-        const formula = placed[decodeURIComponent(index).charCodeAt(0) - FIRST_INDEX];
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(index);
+        } catch {
+          // Escapes that only look like a placeholder (invalid UTF-8) are the author's.
+          return written;
+        }
+        const formula = placed[decoded.charCodeAt(0) - FIRST_INDEX];
         return formula ? encodeURI(formula.source) : written;
       }),
     );
@@ -139,7 +180,7 @@ export function scientWordsMath(): ScientWordsMath {
         if (!formula) break;
         if (at > from) parts.push(text(value.slice(from, at)));
         parts.push(mathAllowed ? mathElement(formula, parentTag) : text(formula.source));
-        from = at + formula.source.length;
+        from = at + formula.width;
       }
       if (from < value.length) parts.push(text(value.slice(from)));
       return parts;
@@ -158,6 +199,14 @@ export function scientWordsMath(): ScientWordsMath {
           continue;
         }
         if (child.type !== "element" || displays.has(child)) continue;
+        // A block formula's heading (`standsAsBlock`) becomes the formula itself.
+        const blockFormula = child.tagName === "h1" ? headingFormula(child) : undefined;
+        if (blockFormula) {
+          children[index] = mathAllowed
+            ? mathElement(blockFormula, "div")
+            : text(blockFormula.source);
+          continue;
+        }
         if (placed.length > 0) {
           for (const [key, value] of Object.entries(child.properties)) {
             if (typeof value === "string" && /\uFDD0|%EF%B7%90/i.test(value)) {

@@ -104,6 +104,35 @@ describe("Scient math on Words", () => {
     expect(formulas(tree).map((formula) => formula.kind)).toEqual(["inline", "inline"]);
   });
 
+  it("keeps the block after a display formula a block", () => {
+    for (const formula of ["$$\nx^2\n$$", "```math\nx^2\n```", "\\[x^2\\]"]) {
+      const tree = chatHast(`${formula}\n---\nafter`);
+      expect(formulas(tree)).toEqual([expect.objectContaining({ kind: "display", tex: "x^2" })]);
+      const html = toHtml(tree);
+      expect(html).toContain("<hr>");
+      expect(html).not.toContain("<h1");
+      expect(html).not.toContain("<h2");
+    }
+    const indented = toHtml(chatHast("```math\nx\n```\n    code line"));
+    expect(indented).toMatch(/<pre[^>]*><code[^>]*>code line/);
+    expect(toHtml(chatHast("> $$\n> y\n> $$\n> ---"))).toContain("<hr>");
+  });
+
+  it("keeps a heading the author wrote", () => {
+    const html = toHtml(chatHast("# Title $x$\n\n$$\ny\n$$"));
+    expect(html).toMatch(/<h1[^>]*>Title /);
+    expect(formulas(chatHast("# Title $x$\n\n$$\ny\n$$")).map((f) => f.kind)).toEqual([
+      "inline",
+      "display",
+    ]);
+  });
+
+  it("leaves link escapes that only look like a placeholder as written", () => {
+    const html = toHtml(chatHast("[a](https://x.dev/%EF%B7%90%FF%FF%FF) and $x$"));
+    expect(html).toContain("%EF%B7%90%FF%FF%FF");
+    expect(formulas(chatHast("[a](https://x.dev/%EF%B7%90%FF%FF%FF) and $x$"))).toHaveLength(1);
+  });
+
   it("restores a formula's source wherever it cannot be math", () => {
     const html = toHtml(chatHast("![a $x$ b](img.png) and [see](https://x.dev/$y$)"));
     expect(html).toContain('alt="a $x$ b"');
