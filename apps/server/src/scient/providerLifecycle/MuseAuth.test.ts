@@ -75,12 +75,13 @@ const harness = Effect.fnUntraced(function* (
       assert.isTrue(ChildProcess.isStandardCommand(command));
       if (!ChildProcess.isStandardCommand(command))
         return yield* Effect.die("Expected a standard native command.");
-      yield* Deferred.succeed(spawned, command);
       const stdin = command.options.stdin;
       if (Stream.isStream(stdin)) {
         const bytes = yield* stdin.pipe(Stream.runCollect);
         input = bytes.map((chunk) => new TextDecoder().decode(chunk)).join("");
       }
+      // Announced once stdin is read, so a test that awaits the spawn sees its input.
+      yield* Deferred.succeed(spawned, command);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           closed = true;

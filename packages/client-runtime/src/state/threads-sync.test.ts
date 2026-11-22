@@ -2508,7 +2508,11 @@ describe("EnvironmentThreads", () => {
             }
           : { cached: BASE_PROJECTION, completionMarker: true },
       );
-      if (source === "socket") yield* Queue.offer(harness.inputs, snapshot(tombstone, 8));
+      if (source === "socket") {
+        // A resumed thread applies its catch-up at the completion marker.
+        yield* Queue.offer(harness.inputs, snapshot(tombstone, 8));
+        yield* Queue.offer(harness.inputs, { kind: "synchronized" });
+      }
       yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
       yield* Queue.offer(harness.inputs, { kind: "synchronized" });
       yield* Effect.yieldNow;

@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -222,6 +223,13 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
       Layer.provideMerge(ModelManifest.layerTest),
       Layer.provideMerge(ProviderLatestVersions.layer),
       Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+      // A login shell that prints nothing, so refreshes never take PATH from the developer's profile.
+      Layer.provideMerge(
+        Layer.effect(
+          HostProcess.Environment,
+          Effect.sync(() => ({ ...process.env, SHELL: "/usr/bin/true" })),
+        ),
+      ),
       Layer.provideMerge(NodeServices.layer),
     ),
   );
