@@ -231,6 +231,8 @@ export const endChromeSignIn = Effect.fn("DesktopAccounts.endChromeSignIn")(func
   attemptId?: string,
 ) {
   const platform = yield* HostProcess.Platform;
+  // A caller that names no attempt can only end a sign-in that was started without one.
+  if (attemptId === undefined && copying?.attemptId !== undefined) return false;
   if (attemptId !== undefined && copying?.attemptId !== attemptId) {
     if (keep || endedAttempts.has(attemptId)) return false;
     remember(cancelledEarly, attemptId);

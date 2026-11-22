@@ -323,6 +323,8 @@ it.effect("cancels an attempt before it starts, and never another attempt", () =
     const copying = yield* run("work", target, "attempt-mine").pipe(Effect.forkChild);
     yield* Effect.promise(() => gate.asked.promise);
     expect(yield* endChromeSignIn(false, "attempt-other")).toBe(true);
+    // Nor does a Cancel that names no attempt.
+    expect(yield* endChromeSignIn(false)).toBe(false);
     gate.release.resolve();
     expect((yield* Fiber.join(copying)).result).toMatchObject({ outcome: "copied" });
     expect(target.written).toHaveLength(3);
