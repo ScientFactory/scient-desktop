@@ -63,7 +63,11 @@ const darwinTable: ProcessTable = {
   state: async (pid, home, signal) => {
     const read = await ps(["eww", "-o", "stat=,command=", "-p", String(pid)], signal).then(
       ({ stdout }) => stdout.trim(),
-      () => "",
+      (cause: unknown) => {
+        // An interrupted read proves nothing; `ps` failing otherwise means no such process.
+        if (signal.aborted) throw cause;
+        return "";
+      },
     );
     const match = /^(\S+)\s+([\s\S]*)$/.exec(read);
     if (match === null) return "gone";
@@ -88,8 +92,9 @@ const readStat = async (pid: number) => {
 
 /** Linux: environments NUL-separated in /proc. Another user's process, unreadable, isn't ours. */
 const linuxTable: ProcessTable = {
-  list: async () =>
-    (
+  list: async (signal) => {
+    signal.throwIfAborted();
+    return (
       await Promise.all(
         (await NodeFSP.readdir("/proc"))
           .filter((entry) => /^\d+$/.test(entry))
@@ -101,8 +106,10 @@ const linuxTable: ProcessTable = {
             ),
           ),
       )
-    ).flat(),
-  state: async (pid, home) => {
+    ).flat();
+  },
+  state: async (pid, home, signal) => {
+    signal.throwIfAborted();
     try {
       if ((await readStat(pid)).zombie) return "zombie";
       const environment = await NodeFSP.readFile(`/proc/${pid}/environ`, "utf8");
@@ -128,6 +135,7 @@ export async function scanHome(
   executable: string,
   signal: AbortSignal,
 ): Promise<Scan> {
+  signal.throwIfAborted();
   const users: Array<number> = [];
   let uncertain = false;
   for (const { pid, name } of await table.list(signal)) {
@@ -167,14 +175,17 @@ export interface IdleOptions {
   readonly executable?: string;
   readonly waitForExits?: (pids: ReadonlyArray<number>, signal: AbortSignal) => Promise<void>;
   readonly kill?: (pid: number) => void;
-  /** The bound on the last scan and the kill at the deadline. */
+  /** The bound on everything after the deadline: confirming, killing, confirming again. */
   readonly grace?: () => AbortSignal;
 }
+
+const isClean = (scan: Scan) => scan.users.length === 0 && !scan.uncertain;
 
 /**
  * Returns once no Droid process uses `home`, waiting for each one found to exit. Idle takes two
  * clean scans in a row: a helper started while one scan lists, by a process exiting meanwhile,
- * still runs at the next. At the deadline what still runs is killed and waited for, then it throws.
+ * still runs at the next. A scan the deadline interrupts never counts. After the deadline, what
+ * still runs is killed and the HOME confirmed idle the same way, then it throws.
  */
 export async function waitUntilHomeIdle(
   home: string,
@@ -182,40 +193,48 @@ export async function waitUntilHomeIdle(
   options: IdleOptions,
 ): Promise<void> {
   checkHome(home);
+  const { table } = options;
   const executable = options.executable ?? "droid";
   const waitForExits = options.waitForExits ?? exitsOf;
   const kill = options.kill ?? killProcess;
   const grace = options.grace ?? (() => AbortSignal.timeout(KILL_GRACE_MS));
   let cleanScans = 0;
-  while (!deadline.aborted) {
-    // A scan the deadline cuts short is redone below, with its own bound.
-    const scan = await scanHome(options.table, home, executable, deadline).catch(
-      (cause: unknown) => {
-        if (deadline.aborted) return undefined;
-        throw cause;
-      },
-    );
-    if (scan === undefined) break;
-    if (scan.users.length === 0 && !scan.uncertain) {
-      cleanScans += 1;
-      if (cleanScans === 2) return;
-      continue;
+  try {
+    while (cleanScans < 2) {
+      const scan = await scanHome(table, home, executable, deadline);
+      cleanScans = isClean(scan) ? cleanScans + 1 : 0;
+      if (scan.users.length > 0) await waitForExits(scan.users, deadline);
     }
-    cleanScans = 0;
-    if (scan.users.length === 0) continue;
-    await waitForExits(scan.users, deadline).catch((cause: unknown) => {
-      if (!deadline.aborted) throw cause;
-    });
+    return;
+  } catch (cause) {
+    if (!deadline.aborted) throw cause;
   }
-  const last = await scanHome(options.table, home, executable, grace());
-  if (last.users.length === 0 && !last.uncertain) return;
-  for (const pid of last.users) kill(pid);
-  if (last.users.length > 0) await waitForExits(last.users, grace()).catch(() => undefined);
-  throw new Error(
-    `Droid processes still used the test's HOME after ${IDLE_DEADLINE_MS / 1000} s and were killed: ${
-      last.users.join(", ") || "none found, but one couldn't be read"
-    }`,
-  );
+  const after = grace();
+  const killed = new Set<number>();
+  cleanScans = 0;
+  try {
+    while (cleanScans < 2) {
+      const scan = await scanHome(table, home, executable, after);
+      cleanScans = isClean(scan) ? cleanScans + 1 : 0;
+      for (const pid of scan.users) {
+        // Read again just before the kill: the PID is still this HOME's Droid process.
+        if ((await table.state(pid, home, after)) !== "ours") continue;
+        kill(pid);
+        killed.add(pid);
+      }
+      if (scan.users.length > 0) await waitForExits(scan.users, after);
+    }
+  } catch {
+    throw new Error(
+      `Droid processes still used the test's HOME after ${IDLE_DEADLINE_MS / 1000} s, and it couldn't be confirmed idle${
+        killed.size > 0 ? ` after killing ${[...killed].join(", ")}` : ""
+      }`,
+    );
+  }
+  if (killed.size > 0)
+    throw new Error(
+      `Droid processes still used the test's HOME after ${IDLE_DEADLINE_MS / 1000} s and were killed: ${[...killed].join(", ")}`,
+    );
 }
 
 /**

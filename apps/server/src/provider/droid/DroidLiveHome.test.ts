@@ -76,14 +76,14 @@ describe("a scan of the processes using a Droid live test's HOME", () => {
     expect(waited).toEqual([[10], [11]]);
   });
 
-  it("at the deadline kills what still runs and waits for it before failing", async () => {
+  it("at the deadline kills what still runs and confirms the HOME idle before failing", async () => {
     const deadline = new AbortController();
     deadline.abort();
     const killed: Array<number> = [];
     const waited: Array<ReadonlyArray<number>> = [];
     await expect(
       waitUntilHomeIdle(HOME, deadline.signal, {
-        table: scripted([{ 10: "ours" }]).table,
+        table: scripted([{ 10: "ours" }, {}]).table,
         kill: (pid) => void killed.push(pid),
         waitForExits: async (pids) => void waited.push(pids),
         grace: () => never,
@@ -91,6 +91,33 @@ describe("a scan of the processes using a Droid live test's HOME", () => {
     ).rejects.toThrow(/were killed: 10$/);
     expect(killed).toEqual([10]);
     expect(waited).toEqual([[10]]);
+  });
+
+  it("never counts a scan the deadline interrupted as clean", async () => {
+    const deadline = new AbortController();
+    let reads = 0;
+    const killed: Array<number> = [];
+    // The first read is cut short by the deadline; the process was ours all along.
+    const table: ProcessTable = {
+      list: async () => [{ pid: 10, name: "droid" }],
+      state: async () => {
+        reads += 1;
+        if (reads === 1) {
+          deadline.abort();
+          throw new Error("interrupted");
+        }
+        return reads <= 3 ? "ours" : "gone";
+      },
+    };
+    await expect(
+      waitUntilHomeIdle(HOME, deadline.signal, {
+        table,
+        kill: (pid) => void killed.push(pid),
+        waitForExits: async () => undefined,
+        grace: () => never,
+      }),
+    ).rejects.toThrow(/were killed: 10$/);
+    expect(killed).toEqual([10]);
   });
 
   it("refuses a HOME that a space-separated environment can't show exactly", () => {
@@ -122,6 +149,12 @@ function startWriter(home: string, marker: string, handOffMs: number) {
 }
 
 describe.skipIf(platform === "win32")("a Droid live test's HOME on this computer", () => {
+  it("reads a process as interrupted, not gone, when its read is cut short", async () => {
+    const stopped = new AbortController();
+    stopped.abort();
+    await expect(processTable(platform).state(process.pid, HOME, stopped.signal)).rejects.toThrow();
+  });
+
   it.each([
     { handOff: "at once", ms: 0 },
     { handOff: "only after a first wait has begun", ms: 1000 },
