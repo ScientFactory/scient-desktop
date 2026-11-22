@@ -3,6 +3,7 @@ import {
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   sessionGrantsScope,
   type AuthSessionState,
@@ -80,5 +81,29 @@ describe("Linked results client authorization", () => {
       expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(false);
       expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
     }
+  });
+});
+
+describe("Plugin sign-in client authorization", () => {
+  it("takes the provider management grant, as an MCP sign-in does", () => {
+    const operator: AuthSessionState = {
+      authenticated: true,
+      scopes: [AuthOrchestrationOperateScope],
+      permissions: [AuthOrchestrationOperateScope],
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "synthetic",
+      },
+    };
+    const manager = {
+      ...operator,
+      scopes: [AuthProvidersManageScope],
+      permissions: [AuthProvidersManageScope],
+    };
+    const scopes = clientRpcRequiredScopes(WS_METHODS.pluginSignInOpen, {});
+    expect(scopes.every((scope) => sessionGrantsScope(operator, scope))).toBe(false);
+    expect(scopes.every((scope) => sessionGrantsScope(manager, scope))).toBe(true);
   });
 });

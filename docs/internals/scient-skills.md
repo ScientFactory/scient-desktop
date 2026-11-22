@@ -492,9 +492,11 @@ metadata; Droid uses its official SDK inventory; Grok uses `grok inspect
 --json`; Cursor reads its documented personal compatibility roots and
 provider-managed built-ins; managed Antigravity reads its loose and plugin
 skill roots; and legacy Antigravity asks `agy /skills` for the exact native
-catalog, including provider built-ins. Managed Antigravity projects only plugin
-manifests and skill directories into its isolated profile, leaving plugin MCP
-servers, hooks, rules, agents, and credentials outside the runtime.
+catalog, including provider built-ins. Plugins that `agy plugin disable` turned
+off stay hidden. The managed agy CLI loads the user's plugins itself; a paired
+ACP runtime gets only plugin manifests and skill directories projected into its
+isolated profile, leaving plugin MCP servers, hooks, rules, agents, and
+credentials outside the runtime.
 
 External inventory does not import provider skills into Scient's own catalog,
 rewrite their source, or execute them. Personal, provider-bundled, plugin,

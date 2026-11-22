@@ -1,20 +1,27 @@
+import { RegistryContext } from "@effect/atom-react";
+import type { ServerProvider, ServerProviderPlugin } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useContext, useRef, useState, type ReactNode } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ScientAgentAccounts } from "../providerConnection/ScientAgentAccounts";
 import {
   type AccountService,
+  type AccountServiceRoute,
   accountServiceAudience,
   accountServiceRoutes,
   NOT_SIGNED_IN_REASON,
   nextAccountServiceStep,
 } from "./accountServices";
+import { useProviderPluginActions } from "./extensionActions";
+import { ActionFeedback } from "./ExtensionItems";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
-import { actOnProviderPlugin } from "./extensionsState";
+import { actOnProviderPlugin, extensionsProviderStoreEntry } from "./extensionsState";
+import { needsAntigravityConnectionSignIn, StoreInstall } from "./ProviderStorePages";
 import { openAuthorizationPage } from "./openAuthorizationPage";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
@@ -77,6 +84,8 @@ const ROUTE_STATE_TEXT = {
   off: msg("Off in Codex"),
   checking: msg("Checking…"),
   update: msg("Update needed"),
+  add: msg("Not added"),
+  added: msg("Added"),
 };
 
 /** What a person can do for one agent: connect on the provider's page, or sign the agent in. */
@@ -119,6 +128,125 @@ function RouteAction({
   );
 }
 
+function TurnOnInAntigravity({
+  provider,
+  plugin,
+  label,
+}: {
+  readonly provider: ServerProvider;
+  readonly plugin: ServerProviderPlugin;
+  readonly label: string;
+}) {
+  const gt = useGT();
+  const actions = useProviderPluginActions(provider, label, plugin, undefined);
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-1">
+      <span className="text-xs text-muted-foreground">
+        <T>Off in Antigravity</T>
+      </span>
+      <Button
+        variant="ghost-primary"
+        size="sm"
+        disabled={actions.locked}
+        onClick={() => void actions.setEnabled(true)}
+      >
+        {actions.busy ? gt("Turning on…") : gt("Turn on")}
+      </Button>
+      <ActionFeedback feedback={actions.feedback} />
+    </span>
+  );
+}
+
+/**
+ * An Antigravity agent's row for a service its marketplace has as a plugin. Shown only once the
+ * store answers and can add plugins; being added claims nothing about the plugin's own sign-in.
+ */
+function AntigravityServiceRow({
+  route,
+  provider,
+}: {
+  readonly route: AccountServiceRoute & { readonly storeEntryId: string };
+  readonly provider: ServerProvider;
+}) {
+  const gt = useGT();
+  const { environmentId } = useExtensionsEnvironment();
+  const registry = useContext(RegistryContext);
+  const atom = extensionsProviderStoreEntry({
+    environmentId,
+    input: { instanceId: route.instanceId, entryId: route.storeEntryId },
+  });
+  const entry = useEnvironmentQuery(atom);
+  // The store also knows copies installed before agy recorded origins, by their manifest; those
+  // keep their own id, so find them by name and act on that copy.
+  const plugin =
+    provider.plugins?.find((item) => item.id === route.storeEntryId) ??
+    (entry.data?.installed
+      ? provider.plugins?.find((item) => item.name === entry.data?.name)
+      : undefined);
+  if (entry.error || entry.data?.storeUnavailable) return null;
+  const state =
+    entry.data === null || entry.data.installationStateKnown === false
+      ? "checking"
+      : route.state === "add" && plugin !== undefined
+        ? plugin.enabled
+          ? "added"
+          : "off"
+        : route.state;
+  return (
+    <CardRow>
+      <ProviderInstanceIcon
+        driverKind={route.driver}
+        displayName={route.label}
+        acpRegistryIconUrl={provider.iconUrl}
+        iconClassName="size-6"
+        indicatorBackground="var(--card)"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{route.label}</span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {state === "added"
+            ? entry.data && needsAntigravityConnectionSignIn(entry.data)
+              ? gt("Added · its connection signs in only in Antigravity’s own plugin manager")
+              : gt("Added · signs in the first time a chat uses it")
+            : state === "add" && entry.data?.disabledReason
+              ? entry.data.disabledReason
+              : gt("Through its Antigravity Marketplace plugin")}
+        </span>
+      </span>
+      {state === "checking" ? (
+        <span className="shrink-0 text-xs text-muted-foreground">
+          <T>Checking…</T>
+        </span>
+      ) : state === "off" ? (
+        plugin?.canSetEnabled ? (
+          <TurnOnInAntigravity provider={provider} plugin={plugin} label={route.label} />
+        ) : (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            <T>Off in Antigravity</T>
+          </span>
+        )
+      ) : state === "added" ? null : entry.data?.disabledReason ? (
+        // The line above says why it can't be added; offer where to act, never a dead button.
+        <Button
+          variant="ghost-muted"
+          size="sm"
+          render={<Link to="/settings/extensions/installed" />}
+        >
+          <T>Open Installed</T>
+        </Button>
+      ) : (
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          <StoreInstall
+            provider={provider}
+            entry={entry.data!}
+            refresh={() => registry.refresh(atom)}
+          />
+        </span>
+      )}
+    </CardRow>
+  );
+}
+
 /** Each agent's place for a service, with its action, as on Gmail's page and plugin pages. */
 export function ServiceAgents({ service }: { readonly service: AccountService }) {
   const gt = useGT();
@@ -146,6 +274,14 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
     <div className="min-w-0 divide-y divide-border overflow-hidden rounded-xl border bg-card">
       {routes.map((route) => {
         const provider = providers.find((entry) => entry.instanceId === route.instanceId);
+        if (route.family === "antigravity")
+          return provider && route.storeEntryId ? (
+            <AntigravityServiceRow
+              key={route.instanceId}
+              route={{ ...route, storeEntryId: route.storeEntryId }}
+              provider={provider}
+            />
+          ) : null;
         // Scient Agent signs in to ChatGPT right here; the agent runs the sign-in.
         const inline = route.driver === "scient" && provider?.connection?.accounts;
         return (

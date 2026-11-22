@@ -259,6 +259,11 @@ vi.mock("../../state/query", async () => {
       if (atom.kind === "skill-document")
         return { data: { instructions: "Skill instructions" }, error: null };
       if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
+      if (atom.kind === "store")
+        return {
+          data: state.storePages[String(atom.input?.instanceId)] ?? { entries: [], total: 0 },
+          error: null,
+        };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
       if (atom.kind === "entry") {
@@ -548,7 +553,7 @@ import {
   ProviderPluginDetailPage,
   ServerDetailPage,
 } from "./ExtensionDetailPages";
-import { ProviderStoreDetailPage } from "./ProviderStorePages";
+import { ProviderStoreDetailPage, ProviderStorePage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
 import { AccountServiceDetailPage } from "./AccountServicePages";
 import { forgetListPage } from "./ExtensionsPage";
@@ -2472,6 +2477,336 @@ describe("Detail pages", () => {
     // The header names the agent once; About does not repeat it.
     expect(fixture.header().textContent).toContain("Codex");
     expect(fixture.aboutValue("Managed by")).toBeUndefined();
+  });
+});
+
+describe("Antigravity Marketplace", () => {
+  const antigravity = ProviderInstanceId.make("antigravity");
+  const storeEntry = (
+    name: string,
+    patch: Partial<ProviderStoreEntry> = {},
+  ): ProviderStoreEntry => ({
+    id: `${name}@antigravity-plugins-official`,
+    name,
+    displayName: name.charAt(0).toUpperCase() + name.slice(1),
+    marketplace: "antigravity-plugins-official",
+    description: `${name} tools`,
+    kind: "antigravity",
+    installed: false,
+    includes: [],
+    apps: [],
+    publisherType: "google",
+    publisher: "Google",
+    ...patch,
+  });
+  const canva = storeEntry("canva", {
+    id: "canva@antigravity-plugins-partners",
+    marketplace: "antigravity-plugins-partners",
+    publisherType: "third-party",
+    publisher: "Canva",
+  });
+  const withAntigravity = (patch: Partial<ServerProvider> = {}) => {
+    state.providersByEnvironment.local!.push(
+      provider(antigravity, "antigravity", { displayName: "Antigravity", ...patch }),
+    );
+  };
+
+  it("lists a category's Antigravity entries in their own store section", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = { entries: [storeEntry("chemistry")], total: 1 };
+    await fixture.render(<CategoryPage category="chemistry" />);
+    const section = fixture.section("From Antigravity’s store");
+    expect(fixture.rowNames(section)).toEqual(["Chemistry"]);
+    expect(buttonIn(fixture.row("Chemistry"), "Add")).not.toBeNull();
+    // Most used lists Scient's picks only.
+    await fixture.reset();
+    await fixture.render(<CategoryPage category="most-used" />);
+    expect(fixture.container.querySelector('[aria-label="From Antigravity’s store"]')).toBeNull();
+  });
+
+  it("offers a curated item's Antigravity Marketplace entry instead of repeating it", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    const pick = entry("scient.curated/canva", {
+      title: "Canva Connector",
+      categories: ["figures"],
+      agentStores: { antigravity: "canva@antigravity-plugins-partners" },
+    });
+    state.discoverPages[JSON.stringify({ scope: "curated", category: "figures" })] = {
+      entries: [pick],
+      fetchedAt: "2026-10-21T00:00:00.000Z",
+    };
+    state.storePages[antigravity] = { entries: [canva, storeEntry("chemistry")], total: 2 };
+    await fixture.render(<CategoryPage category="figures" />);
+    expect(fixture.rowNames(fixture.section("From Antigravity’s store"))).toEqual(["Chemistry"]);
+    await fixture.reset();
+    state.entries = { "scient.curated/canva": pick };
+    await fixture.render(<ServerDetailPage name="scient.curated/canva" />);
+    expect(
+      linkIn(fixture.container, "Also in the Antigravity Marketplace")?.getAttribute("href"),
+    ).toBe(
+      hrefOf("/settings/extensions/item/store/$instanceId/$entryId", {
+        instanceId: "antigravity",
+        entryId: "canva@antigravity-plugins-partners",
+      }),
+    );
+  });
+
+  it("lists its own section and asks before adding a partner plugin from a list", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = { entries: [storeEntry("chemistry"), canva], total: 2 };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<CategoryPage category="files" />);
+    const section = fixture.section("From Antigravity’s store");
+    expect(fixture.rowNames(section)).toEqual(["Chemistry", "Canva"]);
+    expect(section.textContent).toContain("Antigravity only");
+
+    state.confirm.mockResolvedValueOnce(false);
+    await userEvent.click(buttonIn(fixture.row("Canva"), "Add")!);
+    expect(state.confirm).toHaveBeenCalledOnce();
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+    expect(state.commands.providerAct).not.toHaveBeenCalled();
+
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.row("Canva"), "Add")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
+        },
+      }),
+    );
+
+    await userEvent.click(buttonIn(fixture.row("Chemistry"), "Add")!);
+    await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledTimes(2));
+    // Google's own plugins need no third-party notice.
+    expect(state.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a partner plugin's notice and catalog on its page and adds after the notice", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storeEntry = canva;
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(
+      <ProviderStoreDetailPage
+        instanceId="antigravity"
+        entryId="canva@antigravity-plugins-partners"
+      />,
+    );
+    expect(fixture.container.textContent).toContain("Canva makes this plugin, not Google.");
+    expect(fixture.aboutValue("Catalog")).toBe("Partner plugins from other developers");
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.container, "Add to Antigravity")!);
+    await vi.waitFor(() => expect(state.commands.providerAct).toHaveBeenCalledOnce());
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+  });
+
+  it("gives Gmail's page an Antigravity row for each plugin state", async () => {
+    await using fixture = setup();
+    const gmail = storeEntry("gmail", { displayName: "Gmail" });
+    const added = (enabled: boolean) => ({
+      id: gmail.id,
+      name: "gmail",
+      source: "local" as const,
+      enabled,
+      canUninstall: true,
+      canSetEnabled: true,
+    });
+    const show = async (patch: Partial<ServerProvider>, entry = gmail) => {
+      await fixture.reset();
+      state.providersByEnvironment = {
+        local: [provider(antigravity, "antigravity", { displayName: "Antigravity", ...patch })],
+      };
+      state.storeEntry = entry;
+      await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+      await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+      return fixture.section("Your agents");
+    };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+
+    let agents = await show({ plugins: [] });
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull());
+    await userEvent.click(buttonIn(agents, "Add to Antigravity")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "gmail@antigravity-plugins-official" },
+        },
+      }),
+    );
+    expect(state.confirm).not.toHaveBeenCalled();
+
+    agents = await show({ plugins: [added(true)] });
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain("Added · signs in the first time a chat uses it"),
+    );
+    expect(agents.textContent).not.toContain("Connected");
+
+    // A plugin whose MCP server agy signs in only in its own plugin manager says so.
+    agents = await show(
+      { plugins: [added(true)] },
+      { ...gmail, installed: true, includes: ["Skills", "MCP servers"] },
+    );
+    await vi.waitFor(() =>
+      expect(agents.textContent).toContain(
+        "Added · its connection signs in only in Antigravity’s own plugin manager",
+      ),
+    );
+
+    agents = await show({ plugins: [added(false)] });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
+    await userEvent.click(buttonIn(agents, "Turn on")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenLastCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "set-enabled", pluginId: gmail.id, enabled: true },
+        },
+      }),
+    );
+
+    // An older copy the store recognised by its manifest keeps its own id; Turn on acts on it.
+    agents = await show(
+      { plugins: [{ ...added(false), id: "antigravity:gmail" }] },
+      { ...gmail, installed: true },
+    );
+    await vi.waitFor(() => expect(agents.textContent).toContain("Off in Antigravity"));
+    await userEvent.click(buttonIn(agents, "Turn on")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenLastCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "set-enabled", pluginId: "antigravity:gmail", enabled: true },
+        },
+      }),
+    );
+
+    // A different plugin of the same name: the reason and where to act, never a dead Add.
+    const clash = "Antigravity already has a different plugin named gmail.";
+    agents = await show({ plugins: [] }, { ...gmail, disabledReason: clash });
+    await vi.waitFor(() => expect(agents.textContent).toContain(clash));
+    expect(buttonIn(agents, "Add to Antigravity")).toBeNull();
+    expect(linkIn(agents, "Open Installed")?.getAttribute("href")).toBe(
+      "/settings/extensions/installed",
+    );
+
+    agents = await show({ plugins: [] }, { ...gmail, installationStateKnown: false });
+    await vi.waitFor(() => expect(agents.textContent).toContain("Checking…"));
+
+    // An Antigravity that cannot add plugins (not the agy CLI) gets no row.
+    agents = await show({ plugins: [] }, { ...gmail, storeUnavailable: true });
+    expect(agents.textContent).not.toContain("Antigravity");
+  });
+
+  it("leaves Gmail off the Discover shelf, which its own page offers, but keeps it in the store", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    state.storePages[antigravity] = {
+      entries: [storeEntry("gmail", { displayName: "Gmail" }), storeEntry("chemistry")],
+      total: 2,
+    };
+    await fixture.render(<DiscoverPage />);
+    // Every store shelf's grid; Gmail's own row elsewhere on Discover is its service page.
+    const shelves = () =>
+      [...fixture.container.querySelectorAll('[aria-label="Plugins"]')].flatMap((grid) =>
+        fixture.rowNames(grid),
+      );
+    await vi.waitFor(() => expect(shelves()).toContain("Chemistry"));
+    expect(shelves()).not.toContain("Gmail");
+    await fixture.reset();
+    await fixture.render(<ProviderStorePage instanceId="antigravity" />);
+    await vi.waitFor(() =>
+      expect(fixture.rowNames(fixture.section("Plugins"))).toEqual(["Gmail", "Chemistry"]),
+    );
+  });
+
+  it("shows the partner notice before adding a partner service's plugin from its page", async () => {
+    await using fixture = setup();
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          auth: { status: "authenticated", type: "chatgpt" },
+          plugins: [],
+          mcpServers: [
+            {
+              name: "Canva",
+              status: "connected",
+              scope: "chatgpt",
+              connectUrl: "https://chatgpt.com/apps/canva/connector_canva",
+            },
+          ],
+        }),
+        provider(antigravity, "antigravity", { displayName: "Antigravity", plugins: [] }),
+      ],
+    };
+    state.storeEntry = canva;
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<AccountServiceDetailPage serviceId="canva" />);
+    await vi.waitFor(() =>
+      expect(buttonIn(fixture.section("Your agents"), "Add to Antigravity")).not.toBeNull(),
+    );
+    // ChatGPT's row for the same service is unchanged.
+    expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account");
+    state.confirm.mockResolvedValueOnce(true);
+    await userEvent.click(buttonIn(fixture.section("Your agents"), "Add to Antigravity")!);
+    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
+        },
+      }),
+    );
+  });
+
+  it("removes an added plugin from the user's Antigravity after saying what that affects", async () => {
+    await using fixture = setup();
+    withAntigravity({
+      plugins: [
+        {
+          id: "gmail@antigravity-plugins-official",
+          name: "gmail",
+          displayName: "Gmail",
+          marketplace: "antigravity-plugins-official",
+          source: "local",
+          enabled: true,
+          canUninstall: true,
+          canSetEnabled: true,
+        },
+      ],
+    });
+    state.storeEntry = storeEntry("gmail", { installed: true });
+    state.confirm.mockResolvedValueOnce(true);
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(
+      <ProviderStoreDetailPage
+        instanceId="antigravity"
+        entryId="gmail@antigravity-plugins-official"
+      />,
+    );
+    expect(fixture.container.textContent).not.toContain("makes this plugin");
+    await userEvent.click(buttonIn(fixture.container, "Remove from Antigravity")!);
+    expect(state.confirm.mock.calls[0]![0]).toContain("including the Antigravity app");
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "local",
+        input: {
+          instanceId: antigravity,
+          action: { type: "uninstall", pluginId: "gmail@antigravity-plugins-official" },
+        },
+      }),
+    );
   });
 });
 

@@ -63,6 +63,9 @@ export {
   OrchestrationV2ProviderRuntimePolicy,
   OrchestrationV2SubagentPresentation,
 } from "./scient/orchestrationV2Schemas.ts";
+// SCIENT-FORK:START — a notice can offer an Antigravity plugin sign-in.
+import { OrchestrationV2PluginSignIn } from "./scient/pluginSignIn.ts";
+// SCIENT-FORK:END
 import {
   makeMessageForkItems,
   makeTurnItemBaseFields,
@@ -2162,6 +2165,9 @@ export const OrchestrationV2TurnItem = Schema.Union([
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
     mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
+    // SCIENT-FORK:START — an Antigravity plugin sign-in the notice offers.
+    pluginSignIn: Schema.optional(OrchestrationV2PluginSignIn),
+    // SCIENT-FORK:END
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -3090,6 +3096,9 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
     mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
+    // SCIENT-FORK:START — an Antigravity plugin sign-in the notice offers.
+    pluginSignIn: Schema.optional(OrchestrationV2PluginSignIn),
+    // SCIENT-FORK:END
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

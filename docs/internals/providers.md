@@ -275,7 +275,17 @@ instances. The open driver and instance identifiers require no database migratio
 WebSocket and provider-instance scopes. Instances share an explicit download operation and the
 completed runtime. Client disconnects and instance rebuilds do not cancel installation.
 
-The fixed [release table][antigravity-release] supplies the bundled floor. Scient's qualified
+On Scient's ACP targets the managed default is the agy CLI that Scient's catalog lists under the
+`antigravity` key, from 1.5.12 on: it serves ACP as `agy acp` and loads full plugins. The
+catalog's URL policy and T3's CLI release parser both apply. The paired release below is the
+floor where no qualified CLI is listed (no catalog check yet, musl Linux). The CLI supersedes
+every paired release, so a paired install is offered it as an update and an installed CLI is
+never offered a paired release. A paired Google sign-in is not converted: both runtimes use the
+same Google OAuth client, but the paired grant lacks scopes the CLI requests (`openid`,
+`userinfo.profile`, `cclog`, `experimentsandconfigs`), so the user signs in once after the
+switch.
+
+The fixed [release table][antigravity-release] supplies the paired bundled floor. Scient's qualified
 catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
 still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
 The catalog's semver is distinct from the agent's native build version. When the bundled
@@ -300,7 +310,8 @@ the same verified archive updates its receipt without replacing or downloading t
 
 Resolution order is explicit `binaryPath`, active managed release, then the instance's `PATH`.
 An invalid explicit path fails without fallback. Manual installations are never changed by the
-installer. Every launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's sibling.
+installer. Every paired launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's
+sibling.
 
 ### Google profiles and sign-in
 
@@ -312,11 +323,14 @@ the official macOS keychain entry being shared across instances. Profile directo
 `0700` on POSIX. This is file storage, not an encrypted keychain. Windows uses the host profile's
 filesystem permissions.
 
-The private profile links the user's documented loose and provider-managed skill roots. Global
-plugin skills receive a skill-only projection containing each plugin manifest and skill directory;
-plugin MCP servers, hooks, rules, agents, and credentials remain outside the profile. This keeps
-native skill loading available without expanding a provider session's authority as a side effect of
-skill discovery.
+The private profile links the user's documented loose and provider-managed skill roots. The agy
+CLI loads plugins natively from the OS user's `~/.gemini/config/plugins` whatever `GEMINI_HOME`
+says, and `agy plugin enable|disable` keeps their switches in `~/.gemini/config/config.json`;
+installed plugins are therefore shared with the user's own Antigravity. For a paired runtime,
+which loads no plugins of its own, global plugin skills receive a skill-only projection
+containing each enabled plugin's manifest and skill directory; plugin MCP servers, hooks, rules,
+agents, and credentials remain outside the profile. A CLI launch skips the projection and removes
+only a `config/plugins` link that points at one of Scient's projected generations.
 
 The launch environment removes API-key and cloud-billing variables, disables inherited
 environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A tested Node or

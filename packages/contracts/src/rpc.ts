@@ -697,6 +697,9 @@ import {
   WsVoiceDictateWithChatGptRpc,
 } from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+import { SCIENT_PLUGIN_SIGN_IN_WS_METHODS, WsPluginSignInOpenRpc } from "./scient/pluginSignIn.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient editor flush RPCs.
 import {
   SCIENT_EDITOR_FLUSH_WS_METHODS,
@@ -789,6 +792,9 @@ export const WS_METHODS = {
   // SCIENT-FORK:START — Scient Agent voice methods: live calls and ChatGPT dictation.
   ...SCIENT_LIVE_VOICE_WS_METHODS,
   ...SCIENT_CHATGPT_DICTATION_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+  ...SCIENT_PLUGIN_SIGN_IN_WS_METHODS,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
@@ -3022,6 +3028,9 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsLiveVoiceCallRpc,
   WsLiveVoiceMuteRpc,
   WsVoiceDictateWithChatGptRpc,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+  WsPluginSignInOpenRpc,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush RPCs.
   WsEditorsFlushConnectRpc,

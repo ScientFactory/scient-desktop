@@ -415,6 +415,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "supabase",
+    agentStores: { antigravity: "supabase@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Supabase",
     tagline: "Postgres projects, tables and SQL",
@@ -501,6 +502,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // open: 200 "Context7" 4.4.3
     id: "context7",
+    agentStores: { antigravity: "context7@antigravity-plugins-partners" },
     accountRequired: false,
     displayName: "Context7",
     tagline: "Up-to-date library documentation",
@@ -515,6 +517,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "sentry",
+    agentStores: { antigravity: "sentry@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Sentry",
     tagline: "Errors, issues and performance data",
@@ -529,6 +532,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "vercel",
+    agentStores: { antigravity: "vercel-plugin@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Vercel",
     tagline: "Projects, deployments and logs",
@@ -543,6 +547,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth, dynamic client registration (verified 2026-11-14)
     id: "cloudflare",
+    agentStores: { antigravity: "cloudflare@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Cloudflare",
     tagline: "Workers, DNS, storage and the rest of your account",
@@ -634,7 +639,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "notion",
     accountRequired: true,
-    agentStores: { codex: "notion" },
+    agentStores: { codex: "notion", antigravity: "notion@antigravity-plugins-partners" },
     displayName: "Notion",
     tagline: "Pages, databases and lab notes",
     description:
@@ -648,6 +653,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "atlassian",
+    agentStores: { antigravity: "atlassian-twg-cli@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Atlassian",
     tagline: "Confluence pages and Jira issues",
@@ -677,7 +683,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "linear",
     accountRequired: true,
-    agentStores: { codex: "linear" },
+    agentStores: { codex: "linear", antigravity: "linear@antigravity-plugins-partners" },
     displayName: "Linear",
     tagline: "Issues, projects and cycles",
     description:
@@ -691,6 +697,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "monday",
+    agentStores: { antigravity: "monday@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "monday.com",
     tagline: "Boards, items and updates",
@@ -705,6 +712,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "clickup",
+    agentStores: { antigravity: "clickup@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "ClickUp",
     tagline: "Tasks, docs and workspaces",
@@ -732,6 +740,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "granola",
+    agentStores: { antigravity: "granola@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Granola",
     tagline: "Your meeting notes",
@@ -774,6 +783,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "canva",
+    agentStores: { antigravity: "canva@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Canva",
     tagline: "Create and edit Canva designs",
@@ -1245,6 +1255,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://help.dropbox.com/integrations/connect-dropbox-mcp-server.
     id: "dropbox",
+    agentStores: { antigravity: "dropbox@antigravity-plugins-partners" },
     displayName: "Dropbox",
     tagline: "Search, read and organise Dropbox files",
     description:

@@ -1789,10 +1789,12 @@ generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
 replacement qualification, not merely an available Google archive. T3 now installs Google's
-native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
-floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
-native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
-qualification first.
+native CLI and dropped its pinned ACP release. Scient installs the CLI too, but from its own
+catalog's `antigravity` key (1.5.12 and later, through T3's CLI install path), and keeps the
+paired release as the floor where no qualified CLI is listed
+(`scient/providerLifecycle/antigravityAcpCatalog.ts`); T3's own CLI channel runs only where no
+catalog is supplied. `startRelease` treats the CLI as newer than any paired release, and
+`prepareAntigravityProfile` takes `nativePlugins` so a CLI launch skips Scient's projection.
 T3 also removed harness support and rates Antigravity below 1.5 broken; Scient's manifest keeps
 1.4.5 supported, and the driver, prompt and permission seams keep the harness path (its own
 `yolo`/`auto_edit` modes, video linking, runtime-policy approvals when no native Auto is
@@ -2606,6 +2608,23 @@ stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only 
 predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
 T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
 equal change, use its version and delete the blocks, modules and tests.
+
+## MCP sign-in from a chat notice
+
+T3's #39921 signs an agent's MCP server in from its notice and finishes only with a pasted callback
+address. Scient makes `ProviderMcpSignInCompleteInput.callbackUrl` optional: without it, Codex's
+`complete` waits up to five minutes for `mcpServer/oauthLogin/completed`, Claude's succeeds only
+when the server is already connected, and `McpSignInAction` starts that wait when it opens the
+page. `McpSignIn` refreshes the provider instance after a sign-in so Extensions updates. All edits
+carry SCIENT-FORK markers; tests are `CodexAdapterV2.mcpSignIn.scient.test.ts`,
+`McpSignIn.scient.test.ts` and `McpSignInAction.scient.browser.test.tsx`. The same change suits T3
+and can be offered upstream; when T3 finishes local sign-ins itself, take its version and delete
+the blocks and tests.
+
+Antigravity plugin sign-in reuses that notice slot with a Scient `pluginSignIn` field on
+`system_notice`, Scient's `scient.pluginSignIn.open` RPC, the ACP flavor hooks `scientToolNotice`
+and `scientPluginSignIn`, and `ProviderAdapterV2SessionRuntime.scientPluginSignIn`; see the Antigravity
+section of `docs/internals/scient-extensions.md`.
 
 ## Security policy
 

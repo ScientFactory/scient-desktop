@@ -4,9 +4,12 @@ import {
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
+  // SCIENT-FORK: plugin sign-in failures are safe to show.
+  PluginSignInError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -55,6 +58,10 @@ import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuth
 // SCIENT-FORK:START Scient ACP application bridge
 import { scientAntigravityBridge } from "./ScientAcpApplicationBridge.ts";
 // SCIENT-FORK:END Scient ACP application bridge
+// SCIENT-FORK:START — plugin sign-in challenges from tool results.
+import { makeAntigravityPluginSignIns } from "../../scient/antigravity/pluginSignIn.ts";
+import { verifyPluginSignIn } from "../../scient/antigravity/pluginAuthManifest.ts";
+// SCIENT-FORK:END
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -110,6 +117,10 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  // SCIENT-FORK:START — where `agy` installs plugins; their manifests vouch for sign-ins.
+  /** Defaults to `~/.gemini/config/plugins`; without plugins no sign-in notice is offered. */
+  readonly pluginsDirectory?: string;
+  // SCIENT-FORK:END
 }
 
 /**
@@ -152,7 +163,7 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  const { profileDirectory } = options;
+  const { profileDirectory, pluginsDirectory } = options;
   // SCIENT-FORK:START — daemon commands tracked as background work. A later update can carry only
   // the tool ID and status, so a tracked daemon is known by its ID until it ends.
   const daemonToolCallIds = new Set<string>();
@@ -165,11 +176,21 @@ export function makeAntigravityAcpAdapterFlavor(
   // managed 1.4.5 harness offers none: it runs Auto as `default`, answered by Scient's policy.
   const nativeAutoSessionIds = new Set<string>();
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — sign-in challenges a plugin's tool result printed, by agent process.
+  const pluginSignIns = makeAntigravityPluginSignIns();
+  // SCIENT-FORK:END
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
+      // SCIENT-FORK:START — a challenge's loopback listener lives in this process.
+      const generation = pluginSignIns.openGeneration();
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => pluginSignIns.closeGeneration(generation)),
+      );
+      // SCIENT-FORK:END
       const platform = yield* HostProcess.Platform;
       const runtime = yield* options
         .withProcess(
@@ -203,6 +224,15 @@ export function makeAntigravityAcpAdapterFlavor(
       // Served reads are reported from the read handler, so they take turns with agent updates.
       const updates = yield* Semaphore.make(1);
       let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
+      // SCIENT-FORK:START — text held while it could begin a sign-in link goes out at prompt end.
+      const releaseHeldText = Effect.suspend(() =>
+        projectUpdate === undefined
+          ? Effect.void
+          : updates.withPermit(
+              Effect.forEach(pluginSignIns.flush(generation), projectUpdate, { discard: true }),
+            ),
+      ).pipe(Effect.ignore);
+      // SCIENT-FORK:END
       return {
         ...runtime,
         handleReadTextFile: (handler) =>
@@ -227,11 +257,41 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(runtime.prompt(payload, promptOptions)),
+            // SCIENT-FORK: see releaseHeldText.
+            Effect.ensuring(releaseHeldText),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
-            updates.withPermit(handler(reads.repair(notification))),
+            updates.withPermit(
+              // SCIENT-FORK:START — challenges are kept and scrubbed before anything projects them.
+              Effect.gen(function* () {
+                const { notifications, candidate } = pluginSignIns.observe({
+                  generation,
+                  notification: reads.repair(notification),
+                });
+                // Only the installed plugin's own CLI and OAuth client earn a sign-in notice.
+                const verified =
+                  candidate === undefined || pluginsDirectory === undefined
+                    ? undefined
+                    : yield* verifyPluginSignIn({ pluginsDirectory, candidate }).pipe(
+                        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+                        Effect.provideService(Path.Path, options.path),
+                      );
+                if (candidate !== undefined && verified !== undefined) {
+                  pluginSignIns.admit(candidate, {
+                    attemptId: yield* options.random.uuidV4(),
+                    displayName: verified.displayName,
+                    programs: verified.programs,
+                    now: yield* Clock.currentTimeMillis,
+                  });
+                }
+                yield* Effect.forEach(notifications, handler, { discard: true });
+              }),
+              // SCIENT-FORK:END
+            ),
           );
         },
         start: () =>
@@ -367,6 +427,25 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
+    // SCIENT-FORK:START — plugin sign-in notices and the pages they open.
+    scientToolNotice: (sessionId, toolCallId, owner) =>
+      pluginSignIns.takeToolNotice(sessionId, toolCallId, owner),
+    scientPluginSignIn: {
+      open: Effect.fn("AntigravityAdapterV2.pluginSignIn.open")(function* (input) {
+        const redeemed = pluginSignIns.redeem({
+          attemptId: input.attemptId,
+          owner: input.owner,
+          nativeSessionId: input.nativeSessionId ?? undefined,
+          now: yield* Clock.currentTimeMillis,
+        });
+        if ("url" in redeemed) return { authorizationUrl: redeemed.url };
+        return yield* new PluginSignInError({
+          reason: "expired",
+          detail: "This sign-in has ended. Ask the agent to try again.",
+        });
+      }),
+    },
+    // SCIENT-FORK:END
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,
@@ -406,9 +485,14 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
   };
+  // SCIENT-FORK:START — the agy CLI loads plugins from the OS user's home, not GEMINI_HOME.
+  const pluginsDirectory =
+    options.pluginsDirectory ??
+    services.path.join(yield* HostProcess.HomeDirectory, ".gemini", "config", "plugins");
+  // SCIENT-FORK:END
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
+    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services, pluginsDirectory }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined

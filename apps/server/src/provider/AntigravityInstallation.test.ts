@@ -353,6 +353,56 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     }),
   );
 
+  // SCIENT-FORK: Scient's catalog moves a paired install to the agy CLI, never back.
+  it.effect(
+    "switches a paired install to the agy CLI while its running session keeps its copy",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const digest = yield* Digest.Digest;
+        const paired = { ...(yield* releaseAsset()), registryVersion: "1.5.2" };
+        const first = yield* makeHarness({ asset: paired });
+        yield* first.installation.startRelease(paired);
+        expect((yield* terminalState(first.installation)).phase).toBe("succeeded");
+        yield* Deferred.await(first.stagingReleased);
+
+        const second = yield* makeHarness({
+          baseDir: first.baseDir,
+          asset: paired,
+          archive: nativeCliArchive,
+        });
+        const scope = yield* Scope.make();
+        const session = yield* second.installation.acquire().pipe(Scope.provide(scope));
+        expect(session.harnessPath).not.toBeNull();
+        const cli = {
+          version: "1.5.14",
+          url: "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-1/linux-x64/cli_linux_x64.tar.gz",
+          sha512: Hex.encode(
+            yield* digest.digest(Digest.sha512, nativeCliArchive).pipe(Effect.orDie),
+          ),
+          executable: { name: hostPlatform === "win32" ? "agy.exe" : "antigravity" },
+          format: hostPlatform === "win32" ? ("executable" as const) : ("tar.gz" as const),
+        };
+        yield* second.installation.startRelease(cli);
+        expect(yield* terminalState(second.installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.14",
+        });
+        yield* Deferred.await(second.stagingReleased);
+        expect(yield* second.installation.resolve()).toMatchObject({
+          harnessPath: null,
+          version: "1.5.14",
+          source: "managed",
+        });
+        expect(yield* fs.exists(session.executablePath)).toBe(true);
+        yield* Scope.close(scope, Exit.void);
+
+        const refused = yield* second.installation.startRelease(paired).pipe(Effect.flip);
+        expect(refused.message).toContain("newer Antigravity runtime is already installed");
+        expect((yield* second.installation.resolve()).harnessPath).toBeNull();
+      }),
+  );
+
   it.effect("does not join a different immutable artifact with the same version label", () =>
     Effect.gen(function* () {
       const entered = yield* Deferred.make<void>();

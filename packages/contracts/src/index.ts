@@ -189,6 +189,9 @@ export * from "./scient/editorFlush.ts";
 export * from "./scient/liveVoice.ts";
 export * from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in contracts (new file, no upstream edits).
+export * from "./scient/pluginSignIn.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:END

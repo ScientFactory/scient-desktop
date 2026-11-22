@@ -345,6 +345,9 @@ import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcH
 import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
 import { makeChatGptDictationRpcHandlers } from "./scient/voice/ChatGptDictationRpcHandlers.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+import { makePluginSignInRpcHandlers } from "./scient/antigravity/PluginSignInRpcHandlers.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
 import { makeScientConnectRpcHandlers } from "./scient/connect/ScientConnectRpcHandlers.ts";
 // SCIENT-FORK:END
@@ -2269,6 +2272,13 @@ export const layerWsRpc = (
           providerInstances,
         }),
         ...makeChatGptDictationRpcHandlers({ observeRpcEffect, providerInstances }),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — Antigravity plugin sign-in from its chat notice.
+        ...makePluginSignInRpcHandlers({
+          observeRpcEffect,
+          threadManagement,
+          providerSessions: providerSessionsV2,
+        }),
         // SCIENT-FORK:END
         // SCIENT-FORK:START — thread rooms.
         [WS_METHODS.threadRoomInvite]: (input) =>

@@ -12,6 +12,7 @@ import {
   type ExtensionAudience,
   type ExtensionDeliverySkipReason,
   type ProviderInstanceId,
+  type ProviderStoreEntry,
   type ScientPluginSummary,
   type ServerProvider,
   type ServerProviderMcpServer,
@@ -460,10 +461,13 @@ export function providerExtensionAudience(
   };
 }
 
-/** Who a store's plugin is for: Claude's stores serve Claude and Scient Agent, Codex's serve Codex. */
+/**
+ * Who a store's plugin is for: Claude's stores serve Claude and Scient Agent, Codex's serve Codex,
+ * and the Antigravity Marketplace serves Antigravity.
+ */
 export function providerStoreAudience(
   provider: Pick<ServerProvider, "driver" | "instanceId">,
-  kind: "shared" | "codex",
+  kind: ProviderStoreEntry["kind"],
 ): ExtensionAudience {
   return kind === "shared"
     ? { layer: "shared", ownerInstanceId: provider.instanceId }
@@ -471,8 +475,11 @@ export function providerStoreAudience(
         layer: "agent",
         driver: provider.driver,
         instanceId: provider.instanceId,
-        label: "Codex",
-        reason: msg("Uses Codex’s own ChatGPT account"),
+        label: kind === "codex" ? "Codex" : "Antigravity",
+        reason:
+          kind === "codex"
+            ? msg("Uses Codex’s own ChatGPT account")
+            : msg("Installed through Antigravity’s own plugin manager"),
       };
 }
 

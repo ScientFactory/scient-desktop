@@ -53,6 +53,10 @@ export * from "./scientTextSnapshots.ts";
 import type { ScientLiveVoiceRuntime } from "./scientLiveVoice.ts";
 export * from "./scientLiveVoice.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity plugin sign-in lives in a Scient module.
+import type { ScientPluginSignInRuntime } from "./scientPluginSignIn.ts";
+export * from "./scientPluginSignIn.ts";
+// SCIENT-FORK:END
 
 export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
@@ -737,7 +741,9 @@ export interface ProviderAdapterV2McpSignIn {
   readonly complete: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;
-    readonly callbackUrl: string;
+    // SCIENT-FORK:START — undefined waits, bounded, for the agent's own report that it finished.
+    readonly callbackUrl: string | undefined;
+    // SCIENT-FORK:END
   }) => Effect.Effect<void, ProviderMcpSignInError | ProviderAdapterV2Error>;
 }
 
@@ -929,6 +935,9 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   readonly mcpApps?: ProviderAdapterV2McpApps;
   // SCIENT-FORK:START — a spoken conversation with the running session; absent means none.
   readonly liveVoice?: ScientLiveVoiceRuntime;
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — opens a plugin sign-in the session's notice offered; absent means none.
+  readonly scientPluginSignIn?: ScientPluginSignInRuntime;
   // SCIENT-FORK:END
   /** Absent when the agent has no way to sign an MCP server in. */
   readonly mcpSignIn?: ProviderAdapterV2McpSignIn;

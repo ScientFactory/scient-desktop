@@ -313,6 +313,10 @@ export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 /** The query exited before the turn attached, so the prompt was never offered. */
 export const CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL =
   "Claude provider query ended before the turn could start.";
+// SCIENT-FORK: how long a chat MCP sign-in watches for the browser to finish on Claude's page.
+const CLAUDE_MCP_SIGN_IN_BROWSER_WAIT_MS = 5 * 60_000;
+const CLAUDE_MCP_SIGN_IN_POLL = "2 seconds";
+
 const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
 interface ClaudeCacheCreation {
@@ -15915,6 +15919,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               // A browser on this machine may already have finished it on Claude's own page.
               if (statuses.find((status) => status.name === server)?.status === "connected") return;
+              // SCIENT-FORK:START — no address: a browser on this machine finishes it on Claude's
+              // own page, which Claude reports only as the server's status, so watch that for a while.
+              if (callbackUrl === undefined) {
+                const connected = liveQuery.query.mcpServerStatus.pipe(
+                  Effect.map(
+                    (current) =>
+                      current.find((status) => status.name === server)?.status === "connected",
+                  ),
+                  Effect.orElseSucceed(() => false),
+                );
+                const deadline =
+                  (yield* Clock.currentTimeMillis) + CLAUDE_MCP_SIGN_IN_BROWSER_WAIT_MS;
+                while ((yield* Clock.currentTimeMillis) < deadline) {
+                  yield* Effect.sleep(CLAUDE_MCP_SIGN_IN_POLL);
+                  if (yield* connected) return;
+                }
+                return yield* fail(
+                  "Paste the address your browser went to after you approved to finish the sign-in.",
+                );
+              }
+              // SCIENT-FORK:END
               const pasted = yield* Effect.try({
                 try: () => pastedUrl(callbackUrl).toString(),
                 catch: () =>

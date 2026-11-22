@@ -9,7 +9,7 @@ import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 import CLAUDE_CONNECTORS from "./claudeConnectors.json" with { type: "json" };
-import { providerLabel } from "./extensionsView";
+import { providerAvailable, providerLabel } from "./extensionsView";
 
 /**
  * A service people connect to an agent's own account: a ChatGPT app and a claude.ai connector
@@ -36,6 +36,10 @@ export interface AccountService {
    * Absent, Claude has no route to it and none is offered.
    */
   readonly claude?: { readonly name: string; readonly page: string } | undefined;
+  /** Exact agent-store entries for the same service; Antigravity's is `<plugin>@<catalog>`. */
+  readonly stores?:
+    | { readonly claude?: string; readonly codex?: string; readonly antigravity?: string }
+    | undefined;
 }
 
 const comparable = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -82,36 +86,39 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Gmail",
     tagline: msg("Search, read and draft email"),
     description: msg(
-      "Each agent reaches Gmail through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+      "Each agent reaches Gmail through its own sign-in. Scient never holds your Google sign-in.",
     ),
     categories: ["most-used", "communication"],
     websiteUrl: "https://mail.google.com",
     chatgptAppId: "connector_2128aebfecb84f64a069897515042a44",
     claude: claudeConnectorFor("Gmail"),
+    stores: { antigravity: "gmail@antigravity-plugins-official" },
   },
   {
     id: "google-calendar",
     name: "Google Calendar",
     tagline: msg("Check availability and manage events"),
     description: msg(
-      "Each agent reaches Google Calendar through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+      "Each agent reaches Google Calendar through its own sign-in. Scient never holds your Google sign-in.",
     ),
     categories: ["most-used", "communication"],
     websiteUrl: "https://calendar.google.com",
     chatgptAppId: "connector_947e0d954944416db111db556030eea6",
     claude: claudeConnectorFor("Google Calendar"),
+    stores: { antigravity: "gcalendar@antigravity-plugins-official" },
   },
   {
     id: "google-drive",
     name: "Google Drive",
     tagline: msg("Find and read Docs, Sheets and files"),
     description: msg(
-      "Each agent reaches Google Drive through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
+      "Each agent reaches Google Drive through its own sign-in. Scient never holds your Google sign-in.",
     ),
     categories: ["most-used", "files"],
     websiteUrl: "https://drive.google.com",
     chatgptAppId: "connector_5f3c8c41a1e54ad7a76272c89e2554fa",
     claude: claudeConnectorFor("Google Drive"),
+    stores: { antigravity: "gdrive@antigravity-plugins-official" },
   },
 ];
 
@@ -140,6 +147,29 @@ const slug = (name: string) =>
 /** The ChatGPT app id at the end of a `chatgpt.com/apps/<slug>/<id>` page. */
 const appIdOf = (url: string | undefined) => url?.match(/\/apps\/[^/]+\/([A-Za-z0-9_-]+)/)?.[1];
 
+/** ChatGPT apps whose service is exactly an Antigravity Marketplace plugin, by app name. */
+const ANTIGRAVITY_PLUGINS_BY_APP: Readonly<Record<string, string>> = {
+  googledocs: "gdocs@antigravity-plugins-official",
+  googlesheets: "gsheets@antigravity-plugins-official",
+  googleslides: "gslides@antigravity-plugins-official",
+  dropbox: "dropbox@antigravity-plugins-partners",
+  notion: "notion@antigravity-plugins-partners",
+  linear: "linear@antigravity-plugins-partners",
+  figma: "figma@antigravity-plugins-partners",
+  canva: "canva@antigravity-plugins-partners",
+  atlassian: "atlassian-twg-cli@antigravity-plugins-partners",
+  monday: "monday@antigravity-plugins-partners",
+  mondaycom: "monday@antigravity-plugins-partners",
+  clickup: "clickup@antigravity-plugins-partners",
+  zapier: "zapier@antigravity-plugins-partners",
+  stripe: "stripe@antigravity-plugins-partners",
+  intercom: "intercom@antigravity-plugins-partners",
+  trello: "trello@antigravity-plugins-partners",
+  granola: "granola@antigravity-plugins-partners",
+  docusign: "docusign@antigravity-plugins-partners",
+  pandadoc: "pandadoc@antigravity-plugins-partners",
+};
+
 /**
  * Any other ChatGPT app is a service too: Codex and Scient Agent reach it through ChatGPT, and
  * Claude through a claude.ai connector of the same name, if it has one.
@@ -157,22 +187,28 @@ export function accountServiceForApp(app: {
   const id = app.id ?? appIdOf(app.installUrl);
   if (!id) return undefined;
   const claude = claudeConnectorFor(app.name);
+  const antigravity = ANTIGRAVITY_PLUGINS_BY_APP[comparable(app.name)];
   return {
     id: slug(app.name),
     name: app.name,
     tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "",
-    description: claude
-      ? msg(
-          "Each agent reaches {name} through its own ChatGPT or Claude account. Scient never holds that sign-in.",
-          { name: app.name },
-        )
-      : msg(
-          "Codex and Scient Agent reach {name} through your ChatGPT account. Scient never holds that sign-in.",
-          { name: app.name },
-        ),
+    // Another agent's own route besides ChatGPT's: every agent has its own sign-in.
+    description:
+      claude || antigravity
+        ? msg(
+            "Each agent reaches {name} through its own sign-in. Scient never holds that sign-in.",
+            {
+              name: app.name,
+            },
+          )
+        : msg(
+            "Codex and Scient Agent reach {name} through your ChatGPT account. Scient never holds that sign-in.",
+            { name: app.name },
+          ),
     categories: [],
     chatgptAppId: id,
     claude,
+    ...(antigravity ? { stores: { antigravity } } : {}),
   };
 }
 
@@ -239,13 +275,16 @@ export function installedAccountServices(
       ) ||
       accountServiceRoutes(service, providers).some(
         (route) =>
-          (route.state === "connected" || route.state === "off") && chosen(route.instanceId),
+          route.family !== "antigravity" &&
+          (route.state === "connected" || route.state === "off") &&
+          chosen(route.instanceId),
       ),
   );
 }
 
 /** A Codex store entry that is only one of these services' apps, which Scient lists itself. */
 export function isAccountServiceStoreEntry(entry: {
+  readonly id?: string | undefined;
   readonly name: string;
   readonly displayName: string;
   readonly apps: ReadonlyArray<{ readonly id?: string | undefined; readonly name: string }>;
@@ -255,6 +294,7 @@ export function isAccountServiceStoreEntry(entry: {
     (service) =>
       names.includes(service.name.toLowerCase()) ||
       names.includes(service.id) ||
+      (entry.id !== undefined && service.stores?.antigravity === entry.id) ||
       entry.apps.some((app) => app.id === service.chatgptAppId),
   );
 }
@@ -264,13 +304,27 @@ export interface AccountServiceRoute {
   readonly instanceId: ServerProvider["instanceId"];
   readonly driver: ServerProvider["driver"];
   readonly label: string;
-  /** ChatGPT apps reach Codex and Scient Agent; claude.ai connectors reach Claude. */
-  readonly family: "chatgpt" | "claude";
+  /**
+   * ChatGPT apps reach Codex and Scient Agent; claude.ai connectors reach Claude; an Antigravity
+   * Marketplace plugin reaches Antigravity.
+   */
+  readonly family: "chatgpt" | "claude" | "antigravity";
   /**
    * `off`: the agent has it but the person turned it off there. `checking`: the agent's
-   * inventory is not read yet, so nothing is claimed.
+   * inventory is not read yet, so nothing is claimed. Store plugins are `add` until installed,
+   * then `added`, never `connected`: their sign-in happens in a chat.
    */
-  readonly state: "connected" | "connect" | "sign-in" | "off" | "checking" | "update";
+  readonly state:
+    | "connected"
+    | "connect"
+    | "sign-in"
+    | "off"
+    | "checking"
+    | "update"
+    | "add"
+    | "added";
+  /** The store entry a store-plugin route installs. */
+  readonly storeEntryId?: string | undefined;
   /** Why the agent does not have it yet. */
   readonly reason?: string;
   /** The page that connects it, or manages it once connected. */
@@ -446,6 +500,26 @@ function accountServiceRoutesFromInventory(
             },
       ];
     }
+    const antigravityEntry = service.stores?.antigravity;
+    if (provider.driver === "antigravity" && antigravityEntry && providerAvailable(provider)) {
+      const plugin = provider.plugins?.find((item) => item.id === antigravityEntry);
+      return [
+        {
+          ...base,
+          family: "antigravity",
+          storeEntryId: antigravityEntry,
+          page: `/settings/extensions/item/store/${provider.instanceId}/${antigravityEntry}`,
+          state:
+            provider.plugins === undefined
+              ? "checking"
+              : plugin === undefined
+                ? "add"
+                : plugin.enabled
+                  ? "added"
+                  : "off",
+        },
+      ];
+    }
     // Claude only for a service claude.ai has, with Anthropic's own page for it.
     if (provider.driver === "claudeAgent" && service.claude) {
       const claude = { ...base, family: "claude" as const, page: service.claude.page };
@@ -483,7 +557,7 @@ function accountServiceRoutesFromInventory(
  */
 export function nextAccountServiceStep(
   routes: ReadonlyArray<AccountServiceRoute>,
-): { readonly page: string; readonly family: "chatgpt" | "claude" } | undefined {
+): { readonly page: string; readonly family: AccountServiceRoute["family"] } | undefined {
   const pending = routes.filter((route) => route.state === "connect");
   const next = pending.find((route) => route.family === "chatgpt") ?? pending[0];
   return next ? { page: next.page, family: next.family } : undefined;

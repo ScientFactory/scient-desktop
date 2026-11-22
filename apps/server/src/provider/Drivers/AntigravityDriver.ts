@@ -88,6 +88,9 @@ import {
 } from "./ScientAntigravityDriver.ts";
 export { usesLegacyAntigravityBackend } from "./ScientAntigravityDriver.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Antigravity Marketplace plugins through the instance's agy CLI.
+import { makeAntigravityInstancePlugins } from "../../scient/extensions/AntigravityProviderStore.ts";
+// SCIENT-FORK:END
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 import {
   LegacyAntigravityDriver,
@@ -284,6 +287,7 @@ export const AntigravityDriver: ScientProviderDriver<
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
+        nativePlugins: executable.harnessPath === null, // SCIENT-FORK: the agy CLI loads plugins.
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -707,6 +711,20 @@ export const AntigravityDriver: ScientProviderDriver<
     });
     // SCIENT-FORK:END
 
+    // SCIENT-FORK:START — Antigravity Marketplace plugins through the instance's agy CLI.
+    const plugins = yield* makeAntigravityInstancePlugins({
+      installation,
+      binaryPath: settings.binaryPath,
+      environment: processEnvironment,
+      stateDir: host.paths.stateDir,
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    // SCIENT-FORK:END
+
     // SCIENT-FORK:START — a read started before a runtime install must not publish its older
     // list after the post-install read, so catalog reads take turns.
     const refreshGate = yield* Semaphore.make(1);
@@ -795,6 +813,10 @@ export const AntigravityDriver: ScientProviderDriver<
       auth: authFlow.controller,
       connectionActions,
       managedRuntimeActions,
+      // SCIENT-FORK:START — Antigravity Marketplace plugins through the instance's agy CLI.
+      pluginActions: plugins.actions,
+      nativeInventoryChanges: plugins.reports,
+      // SCIENT-FORK:END
       // SCIENT-FORK: catalog reads take turns (see refreshGate).
       refreshModels: () => refreshGate.withPermits(1)(refreshModels()),
     } satisfies ScientProviderInstance;

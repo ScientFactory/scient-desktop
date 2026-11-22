@@ -1028,6 +1028,9 @@ function ServerDetail({
   const messages = useMessages();
   const { catalog, providers, environmentId } = useExtensionsEnvironment();
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
+  const antigravity = providers.find(
+    (provider) => provider.driver === "antigravity" && provider.enabled,
+  );
   const actions = useAddEntry(entry);
   const startChat = useConnectorAgentChat(environmentId);
   const name = entryName(entry);
@@ -1142,16 +1145,33 @@ function ServerDetail({
           [gt("Source"), entrySourceLabel(entry, messages)],
           fact(
             gt("Also available"),
-            entry.agentStores?.codex && codex ? (
-              <Link
-                to="/settings/extensions/item/store/$instanceId/$entryId"
-                params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
-                className={cn(GHOST_LINK_CLASS, "text-foreground")}
-              >
-                <T>
-                  Also in <Var>{codex.displayName ?? "Codex"}</Var>’s store
-                </T>
-              </Link>
+            (entry.agentStores?.codex && codex) ||
+              (entry.agentStores?.antigravity && antigravity) ? (
+              <span className="grid gap-1">
+                {entry.agentStores?.codex && codex ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>
+                      Also in <Var>{codex.displayName ?? "Codex"}</Var>’s store
+                    </T>
+                  </Link>
+                ) : null}
+                {entry.agentStores?.antigravity && antigravity ? (
+                  <Link
+                    to="/settings/extensions/item/store/$instanceId/$entryId"
+                    params={{
+                      instanceId: antigravity.instanceId,
+                      entryId: entry.agentStores.antigravity,
+                    }}
+                    className={cn(GHOST_LINK_CLASS, "text-foreground")}
+                  >
+                    <T>Also in the Antigravity Marketplace</T>
+                  </Link>
+                ) : null}
+              </span>
             ) : null,
           ),
         ]}

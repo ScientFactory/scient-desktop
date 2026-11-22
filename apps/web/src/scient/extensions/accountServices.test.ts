@@ -236,4 +236,62 @@ describe("account services", () => {
       false,
     );
   });
+
+  it("routes Antigravity through its marketplace plugin, never as connected", () => {
+    const entryId = "gmail@antigravity-plugins-official";
+    const antigravity = (plugins: ServerProvider["plugins"]) =>
+      provider("antigravity", plugins === undefined ? {} : { plugins });
+    const plugin = (enabled: boolean) => ({
+      id: entryId,
+      name: "gmail",
+      source: "local" as const,
+      enabled,
+    });
+    const state = (plugins: ServerProvider["plugins"]) =>
+      accountServiceRoutes(gmail, [antigravity(plugins)]).map((route) => [
+        route.family,
+        route.state,
+      ]);
+    expect(state(undefined)).toEqual([["antigravity", "checking"]]);
+    expect(state([])).toEqual([["antigravity", "add"]]);
+    expect(state([plugin(true)])).toEqual([["antigravity", "added"]]);
+    expect(state([plugin(false)])).toEqual([["antigravity", "off"]]);
+    // A same-name plugin from another source is not the marketplace entry.
+    expect(state([{ ...plugin(true), id: "antigravity:gmail" }])).toEqual([["antigravity", "add"]]);
+    const routes = accountServiceRoutes(gmail, [antigravity([plugin(true)])]);
+    expect(accountServiceAudience(routes)).toEqual({
+      layer: "account",
+      connected: [],
+      pending: [],
+    });
+    expect(nextAccountServiceStep(routes)).toBeUndefined();
+    expect(installedAccountServices([antigravity([plugin(false)])], null)).toEqual([]);
+    // A service without an Antigravity plugin gets no Antigravity row.
+    expect(
+      accountServiceRoutes(accountServiceForApp({ name: "Pets", id: "connector_pets" })!, [
+        antigravity([]),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("names exact Antigravity plugins for services and hides only those store duplicates", () => {
+    expect(gmail.stores?.antigravity).toBe("gmail@antigravity-plugins-official");
+    expect(accountServiceForApp({ name: "Canva", id: "connector_canva" })?.stores).toEqual({
+      antigravity: "canva@antigravity-plugins-partners",
+    });
+    const entry = (id: string, name: string, displayName: string) => ({
+      id,
+      name,
+      displayName,
+      apps: [],
+    });
+    expect(
+      isAccountServiceStoreEntry(
+        entry("gdrive@antigravity-plugins-official", "gdrive", "Drive files"),
+      ),
+    ).toBe(true);
+    expect(
+      isAccountServiceStoreEntry(entry("canva@antigravity-plugins-partners", "canva", "Canva")),
+    ).toBe(false);
+  });
 });

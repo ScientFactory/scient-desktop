@@ -113,6 +113,8 @@ async function readLocalPluginMcpContents(root: string) {
     ".omp-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     "plugin.json",
+    // Antigravity plugins declare their servers here, as `mcpServers`.
+    "mcp_config.json",
   ]) {
     const text = await readContainedPluginText(root, file).catch((error: unknown) => {
       if (

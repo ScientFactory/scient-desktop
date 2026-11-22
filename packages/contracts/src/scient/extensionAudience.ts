@@ -37,6 +37,8 @@ export type ExtensionAudience = typeof ExtensionAudience.Type;
 
 export const ExtensionAgentStores = Schema.Struct({
   codex: Schema.optional(TrimmedNonEmptyString),
+  /** The Antigravity Marketplace entry id, `<plugin>@<catalog>`. */
+  antigravity: Schema.optional(TrimmedNonEmptyString),
 });
 
 export function supportsScientClaudePlugins(version: string | null | undefined): boolean {

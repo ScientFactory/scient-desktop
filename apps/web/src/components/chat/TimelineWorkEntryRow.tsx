@@ -43,6 +43,9 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
 import { McpSignInAction } from "./McpSignInAction";
+// SCIENT-FORK:START — Antigravity plugin sign-in from its notice.
+import { PluginSignInAction } from "~/scient/antigravity/PluginSignInAction";
+// SCIENT-FORK:END
 import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, CircleAlertIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
@@ -467,7 +470,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         server={payload.mcpSignIn.server}
         noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
       />
-    ) : null;
+    ) : // SCIENT-FORK:START — an Antigravity plugin sign-in takes the same slot.
+    payload?.type === "system_notice" &&
+      payload.pluginSignIn !== undefined &&
+      payload.providerThreadId !== null ? (
+      <PluginSignInAction
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadId={payload.threadId}
+        providerThreadId={payload.providerThreadId}
+        pluginSignIn={payload.pluginSignIn}
+      />
+    ) : // SCIENT-FORK:END
+    null;
   const skill =
     payload?.type === "dynamic_tool"
       ? claudeSkillInvocation(payload.toolName, payload.input)
