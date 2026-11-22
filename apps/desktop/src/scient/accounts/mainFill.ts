@@ -128,14 +128,41 @@ export function jarStore(session: Electron.Session, send: CdpSend): CookieStore 
 }
 
 /**
+ * A store whose first write asks `proceed` first. Refused, it writes nothing from then on, so a
+ * copy that is stopped before its first write leaves the jar as it was.
+ */
+export function gatedStore(store: CookieStore, proceed: () => boolean) {
+  let gate: "open" | "committed" | "stopped" = "open";
+  const mayWrite = () => {
+    if (gate === "open") gate = proceed() ? "committed" : "stopped";
+    return gate === "committed";
+  };
+  return {
+    store: {
+      readUnit: store.readUnit,
+      set: (cookies) => (mayWrite() ? store.set(cookies) : Promise.resolve()),
+      remove: (cookies) => (mayWrite() ? store.remove(cookies) : Promise.resolve()),
+    } satisfies CookieStore,
+    mayWrite,
+    stopped: () => gate === "stopped",
+  };
+}
+
+/** A copy into Main stopped before its first write: Main is as it was. */
+class CopyStopped extends Schema.TaggedError<CopyStopped>()("CopyStopped", {}) {}
+
+/**
  * Copies the source session's units into Main, one transaction each; the source is only read.
- * `record` keeps what each unit it wrote holds, while the Main lock is still held.
+ * `record` keeps what each unit it wrote holds, while the Main lock is still held. `proceed` is
+ * asked right before the first change to Main (a cookie write, or Google's check, which writes);
+ * refused, Main is left untouched and the copy rejects.
  */
 export async function copyIntoMain(
   source: Electron.Session,
   main: Electron.Session,
   input: CopyRules,
   record?: (copies: ReadonlyArray<Omit<MainCopy, "from">>) => Promise<void>,
+  proceed: () => boolean = () => true,
 ): Promise<DesktopFillMainResult> {
   const tracker = mainInsertTracker(main);
   const failed = refusedIn(main);
@@ -143,7 +170,7 @@ export async function copyIntoMain(
   return withCookieDebugger(source, (readSource) =>
     withCookieDebugger(main, async (sendMain) => {
       const { cookies: jar, unsupported } = await readJar(readSource);
-      const store = jarStore(main, sendMain);
+      const { store, mayWrite, stopped } = gatedStore(jarStore(main, sendMain), proceed);
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
       // Units sharing a site are one component, decided once, before anything is written.
       const planned = input.units ? mergeUnits(input.units) : jarUnits(jar, input.join);
@@ -154,6 +181,7 @@ export async function copyIntoMain(
         (await readGoogleSessions(main).catch(() => null))?.every((account) => !account.valid) ??
         false;
       for (const unit of planned) {
+        if (stopped()) break;
         const sites = [...unitSites(unit)];
         const since = unit.flatMap((entry) => {
           const at = input.replaceAllowedSince?.[entry];
@@ -164,7 +192,10 @@ export async function copyIntoMain(
         else if (sites.some((entry) => skipped.has(entry))) outcome = "blocked";
         else {
           const googleDead =
-            input.replaceGoogle === true && sites.includes(GOOGLE_SITE) && (await googleDeadNow());
+            input.replaceGoogle === true &&
+            sites.includes(GOOGLE_SITE) &&
+            mayWrite() &&
+            (await googleDeadNow());
           const foreign = watchForeignInserts(main);
           try {
             outcome = await applyUnit(store, {
@@ -188,6 +219,7 @@ export async function copyIntoMain(
         }
         units.push({ sites: [...unit], outcome });
       }
+      if (stopped()) throw new CopyStopped();
       const nowSeconds = Date.now() / 1000;
       await record?.(
         planned.flatMap((unit, index) => {
@@ -262,7 +294,7 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
   environmentId: string,
   input: CopyRules,
   stage: (scope: string) => Effect.Effect<BrowserImportResult | void, E, R>,
-  /** Asked under Main's lock, right before Main is written; false leaves Main untouched. */
+  /** Asked under Main's lock, right before Main first changes; false leaves Main untouched. */
   proceed: () => boolean = () => true,
 ) {
   const manager = yield* PreviewManager;
@@ -276,8 +308,8 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
   const staging = yield* manager.getBrowserSession(scope, false).pipe(Effect.option);
   if (staging._tag === "None") return null;
   const filled = yield* Effect.promise(() =>
-    underMainLock(environmentId, async () =>
-      proceed() ? copyIntoMain(staging.value, main.value, input) : null,
+    underMainLock(environmentId, () =>
+      copyIntoMain(staging.value, main.value, input, undefined, proceed),
     )
       .catch(() => null)
       .finally(() => staging.value.clearStorageData().catch(() => undefined)),

@@ -203,6 +203,8 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
       () => goAhead(copy),
     ).pipe(Effect.orElseSucceed(() => null));
     if (!filled) return unwritten();
+    // Nothing needed writing, and Cancel came first: nothing was copied.
+    if (copy.cancelled && !copy.writing) return cancelled;
     // Main's Google unit is written only where Main holds no session Google accepts.
     const google = filled.units.some(
       ({ sites, outcome }) => outcome === "copied" && sites.includes(GOOGLE_SITE),
