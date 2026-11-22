@@ -61,18 +61,20 @@ function setup() {
   const chromeSignIn = vi.fn(() => result.promise);
   const endChromeSignIn = vi.fn(async (_keep: boolean) => true);
   state.intoMain.mockImplementation(() => result.promise);
+  const chromeSignInBrowser = vi.fn(async () => ({ name: "Edge", canQuit: true }));
   const bridge = stubGlobal("desktopBridge", {
     getLocalEnvironmentBootstraps: () => [],
     getClientPlatform: () => "win32",
     accounts: {
       chromeSignIn,
-      chromeSignInBrowser: async () => ({ name: "Edge", canQuit: true }),
+      chromeSignInBrowser,
       endChromeSignIn,
     },
   });
   return {
     result,
     chromeSignIn,
+    chromeSignInBrowser,
     endChromeSignIn,
     [Symbol.dispose]: () => bridge[Symbol.dispose](),
   };
@@ -144,6 +146,19 @@ it("shows a Cancel refused after Done as a copy that goes ahead", async () => {
   await expect.element(page.getByRole("button", { name: "Bringing it into Work…" })).toBeDisabled();
   const { observed } = await finish(f, { outcome: "copied", browser: "Edge", sites: ["x.org"] });
   expect(observed).toMatchObject({ variant: "copied" });
+});
+
+it("says the copy goes ahead after a refused Cancel where there is no Done", async () => {
+  using f = setup();
+  // Linux: the person closes the window themselves, so the dialog has no Done.
+  f.chromeSignInBrowser.mockImplementation(async () => ({ name: "Chrome", canQuit: false }));
+  f.endChromeSignIn.mockImplementation(async () => false);
+  await using _screen = await render(<Harness profile={work} />);
+  await page.getByRole("button", { name: "Start" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect.element(page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await expect.element(page.getByText("Bringing it into Work…")).toBeVisible();
+  await finish(f, { outcome: "copied", browser: "Chrome", sites: ["x.org"] });
 });
 
 it("never reports a copy Google refused or couldn't be asked about as a success", async () => {

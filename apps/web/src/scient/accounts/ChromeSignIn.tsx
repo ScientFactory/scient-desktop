@@ -288,6 +288,12 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
           </ul>
         </DialogPanel>
         <DialogFooter>
+          {!open.canQuit && open.phase === "committed" ? (
+            // Without Done (Linux), the copy going ahead needs its own words.
+            <p className="me-auto self-center text-muted-foreground text-sm">
+              {gt("Bringing it into {into}…", { into: open.into })}
+            </p>
+          ) : null}
           <Button
             variant="outline"
             disabled={open.phase === "cancelling" || open.phase === "committed"}
