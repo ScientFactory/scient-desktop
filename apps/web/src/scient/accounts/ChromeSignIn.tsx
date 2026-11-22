@@ -29,6 +29,7 @@ import { noteGoogleCopy } from "./googleCopyObservation";
 import { recordImportedSessions } from "./importedSessions";
 import { chromeSignInIntoMain } from "./mainFill";
 import { m } from "~/i18n/messages";
+import { randomUUID } from "~/lib/utils";
 
 const GOOGLE_SIGN_IN_URL = "https://accounts.google.com/";
 /** A button label, resolved where it is shown. */
@@ -172,13 +173,16 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
      * `committed` once the copy is past that point, when only its result is left to wait for.
      */
     readonly phase: "signing-in" | "finishing" | "cancelling" | "committed";
+    /** Names this sign-in to the desktop, before it has even started there. */
+    readonly attemptId: string;
   } | null>(null);
   const end = (keep: boolean) => {
+    if (!open) return;
     setOpen((current) =>
       current ? { ...current, phase: keep ? "finishing" : "cancelling" } : current,
     );
     void accounts
-      ?.endChromeSignIn?.(keep)
+      ?.endChromeSignIn?.(keep, open.attemptId)
       .then((ended) => {
         // A Cancel refused: the copy was already being written, so it is not cancelled.
         if (!keep && ended === false)
@@ -201,17 +205,19 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
       report(result, profile.name);
       return;
     }
+    const attemptId = randomUUID();
     setOpen({
       browser: browser.name,
       canQuit: browser.canQuit,
       into: profile.name,
       purpose,
       phase: "signing-in",
+      attemptId,
     });
     const result: DesktopChromeSignInResult = await (
       profile.id === DEFAULT_BROWSER_PROFILE_ID
-        ? chromeSignInIntoMain(environmentId, url)
-        : accounts.chromeSignIn({ environmentId, profileId: profile.id, url })
+        ? chromeSignInIntoMain(environmentId, url, attemptId)
+        : accounts.chromeSignIn({ environmentId, profileId: profile.id, url, attemptId })
     ).catch(() => ({ outcome: "failed" }) as const);
     observation.record("accounts.browser_window", windowEvent(result, purpose));
     // Google's cookies went in over no session it accepted: follow how long it accepts them.

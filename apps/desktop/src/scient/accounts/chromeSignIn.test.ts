@@ -22,6 +22,11 @@ const state = vi.hoisted(() => ({
   main: null as DesktopFillMainResult | null,
   /** Whether the window is still there for Done or Cancel to end. */
   windowOpen: true,
+  windows: 0,
+  /** When set, writing cookies waits for it after the hidden page loads, before the first write. */
+  debuggerReady: undefined as
+    | undefined
+    | { loading: PromiseWithResolvers<void>; loaded: PromiseWithResolvers<void> },
 }));
 
 vi.mock("electron", () => ({
@@ -38,13 +43,22 @@ vi.mock("./chromeWindow.ts", () => ({
   canQuitWindow: () => true,
   endSignInWindow: () => state.windowOpen,
   installedChromiumBrowsers: () => [{ name: "Edge", executable: "/synthetic/edge" }],
-  signInInWindow: async () => ({ outcome: "read", ...state.read }),
+  signInInWindow: async () => {
+    state.windows += 1;
+    return { outcome: "read", ...state.read };
+  },
 }));
 vi.mock("./sessionCookies.ts", () => ({
-  withCookieDebugger: (
+  withCookieDebugger: async (
     session: { send: (method: string, params?: object) => Promise<unknown> },
     run: (send: (method: string, params?: object) => Promise<unknown>) => Promise<unknown>,
-  ) => run(session.send),
+  ) => {
+    if (state.debuggerReady) {
+      state.debuggerReady.loading.resolve();
+      await state.debuggerReady.loaded.promise;
+    }
+    return run(session.send);
+  },
 }));
 vi.mock("./mainFill.ts", async (importOriginal) => {
   // A mock factory runs before this file's own imports are bound.
@@ -132,7 +146,7 @@ function profile(
   };
 }
 
-function run(profileId: string, target: ReturnType<typeof profile>) {
+function run(profileId: string, target: ReturnType<typeof profile>, attemptId?: string) {
   const scopes: Array<string | undefined> = [];
   const staging = profile([]);
   const layer = Layer.mergeAll(
@@ -154,6 +168,7 @@ function run(profileId: string, target: ReturnType<typeof profile>) {
     environmentId: EnvironmentId.make(PRIMARY_LOCAL_ENVIRONMENT_ID),
     profileId: BrowserProfileId.make(profileId),
     url: "https://accounts.google.com/",
+    ...(attemptId === undefined ? {} : { attemptId }),
     ...(profileId === "default" ? { main: { mode: "fill-or-replace", skipSites: [] } } : {}),
   }).pipe(
     Effect.provide(layer),
@@ -281,6 +296,53 @@ it.effect("cancels a copy still asking Google after its window closed, writing n
     expect(target.written).toEqual([]);
     // With no sign-in left, Cancel is refused.
     expect(yield* endChromeSignIn(false)).toBe(false);
+    state.windowOpen = true;
+  }),
+);
+
+it.effect("cancels an attempt before it starts, and never another attempt", () =>
+  Effect.gen(function* () {
+    state.read = { units: [["github.com"]], cookies: [cookie(".github.com")] };
+    // Cancel reached the desktop before the sign-in did: it never opens a window.
+    expect(yield* endChromeSignIn(false, "attempt-early")).toBe(true);
+    const windows = state.windows;
+    const early = profile([listed(1)]);
+    expect((yield* run("work", early, "attempt-early")).result).toEqual({
+      outcome: "cancelled",
+      browser: "Edge",
+    });
+    expect(state.windows).toBe(windows);
+    expect(early.written).toEqual([]);
+    // An attempt that already ended can't be cancelled, by Done or Cancel.
+    expect(yield* endChromeSignIn(false, "attempt-early")).toBe(false);
+    // Another dialog's Cancel, naming its own attempt, leaves this copy alone.
+    state.windowOpen = false;
+    const gate = { asked: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+    googleWindow();
+    const target = profile([listed(1)], { signedIn: true, gate });
+    const copying = yield* run("work", target, "attempt-mine").pipe(Effect.forkChild);
+    yield* Effect.promise(() => gate.asked.promise);
+    expect(yield* endChromeSignIn(false, "attempt-other")).toBe(true);
+    gate.release.resolve();
+    expect((yield* Fiber.join(copying)).result).toMatchObject({ outcome: "copied" });
+    expect(target.written).toHaveLength(3);
+    state.windowOpen = true;
+  }),
+);
+
+it.effect("still cancels while the hidden page for writing cookies loads", () =>
+  Effect.gen(function* () {
+    state.read = { units: [["github.com"]], cookies: [cookie(".github.com")] };
+    state.windowOpen = false;
+    state.debuggerReady = { loading: Promise.withResolvers(), loaded: Promise.withResolvers() };
+    const target = profile([listed(1)]);
+    const copying = yield* run("work", target, "attempt-load").pipe(Effect.forkChild);
+    yield* Effect.promise(() => state.debuggerReady!.loading.promise);
+    expect(yield* endChromeSignIn(false, "attempt-load")).toBe(true);
+    state.debuggerReady.loaded.resolve();
+    expect((yield* Fiber.join(copying)).result).toEqual({ outcome: "cancelled", browser: "Edge" });
+    expect(target.written).toEqual([]);
+    state.debuggerReady = undefined;
     state.windowOpen = true;
   }),
 );

@@ -138,6 +138,8 @@ export interface DesktopChromeSignInInput {
   readonly profileId: string;
   /** An https page, or a loopback http one. */
   readonly url: string;
+  /** Names this sign-in for Done and Cancel, so one dialog's Cancel never ends another's. */
+  readonly attemptId?: string;
   /** Required for Main: what the copy may do, as for an import into Main. */
   readonly main?: Pick<
     DesktopFillMainInput,
@@ -284,8 +286,11 @@ export interface DesktopAccountsBridge {
   ) => Promise<{ readonly on: boolean } | null>;
   /** Resolves once the window closed and its sign-in was copied, or with why not. */
   readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
-  /** Done (`keep`) quits the open sign-in window, Cancel stops it. False when none is open. */
-  readonly endChromeSignIn?: (keep: boolean) => Promise<boolean>;
+  /**
+   * Done (`keep`) quits the open sign-in window; Cancel stops it, its copy until the first cookie
+   * write, or the attempt before it starts. False when there is nothing left to end.
+   */
+  readonly endChromeSignIn?: (keep: boolean, attemptId?: string) => Promise<boolean>;
   /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
   readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

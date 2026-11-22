@@ -7,12 +7,14 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopChromeSignInResult,
   type DesktopGoogleCopyCheck,
+  type SessionCookie,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { setCookies } from "@t3tools/shared/scientSessionCookies";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Electron from "electron";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
@@ -39,6 +41,8 @@ export const ChromeSignInInput = Schema.Struct({
     Schema.isMaxLength(2048),
     Schema.isPattern(/^(?:https:\/\/|http:\/\/(?:localhost|127\.0\.0\.1)[:/])/),
   ),
+  /** Names this sign-in for Done and Cancel, so one dialog's Cancel never ends another's. */
+  attemptId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
   /** Required for Main: what the copy into it may do, as for an import into Main. */
   main: Schema.optional(Schema.Struct({ mode, replaceAllowedSince, replaceGoogle, skipSites })),
 });
@@ -72,15 +76,40 @@ const readGoogle = (session: Parameters<typeof readGoogleSessions>[0]) =>
   );
 
 interface Copy {
+  readonly attemptId: string | undefined;
   cancelled: boolean;
   writing: boolean;
 }
 
 /**
  * The sign-in in progress. After its window closes, Cancel still stops the copy until its first
- * write: reading the profile and asking Google first can take a while. Then the result stands.
+ * cookie write: reading the profile and asking Google first can take a while. Then it stands.
  */
 let copying: Copy | undefined;
+
+/** Recent attempts: cancelled before their sign-in reached the desktop, or already ended. */
+const cancelledEarly = new Set<string>();
+const endedAttempts = new Set<string>();
+const remember = (attempts: Set<string>, attemptId: string) => {
+  attempts.add(attemptId);
+  for (const oldest of attempts) {
+    if (attempts.size <= 32) break;
+    attempts.delete(oldest);
+  }
+};
+
+/** Writes the window's cookies through `session`, unless Cancel came first. */
+const writeCookies = async (
+  copy: Copy,
+  session: Electron.Session,
+  cookies: ReadonlyArray<SessionCookie>,
+) =>
+  withCookieDebugger(session, (send) => {
+    // Cancel came first: nothing is written, and the caller reports the copy cancelled.
+    if (copy.cancelled) return Promise.reject(new DesktopAccountsError({}));
+    copy.writing = true;
+    return setCookies(send, cookies);
+  });
 
 /**
  * The person signs in to a site in a window of their own Chromium browser, on a profile folder
@@ -95,13 +124,19 @@ export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* 
   const { platform, found } = yield* browsers;
   const browser = found[0];
   if (!browser) return { outcome: "no-browser" } satisfies DesktopChromeSignInResult;
+  const { attemptId } = input;
+  if (attemptId !== undefined && cancelledEarly.delete(attemptId)) {
+    remember(endedAttempts, attemptId);
+    return { outcome: "cancelled", browser: browser.name } as const;
+  }
   if (copying) return { outcome: "busy", browser: browser.name } as const;
-  const copy: Copy = { cancelled: false, writing: false };
+  const copy: Copy = { attemptId, cancelled: false, writing: false };
   copying = copy;
   return yield* copyFromWindow(input, browser, platform, copy).pipe(
     Effect.ensuring(
       Effect.sync(() => {
         if (copying === copy) copying = undefined;
+        if (attemptId !== undefined) remember(endedAttempts, attemptId);
       }),
     ),
   );
@@ -136,24 +171,26 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
     .pipe(Effect.option);
   if (Option.isNone(session)) return { outcome: "failed", browser: browser.name } as const;
   const askGoogle = readGoogle(session.value);
+  // A copy that stopped before its first cookie write was cancelled, not failed.
+  const unwritten = () =>
+    copy.cancelled && !copy.writing
+      ? cancelled
+      : ({ outcome: "failed", browser: browser.name } as const);
   if (intoMain && input.main) {
-    if (copy.cancelled) return cancelled;
-    copy.writing = true;
     const filled = yield* fillMainStaged(
       environmentId,
       { ...input.main, units: read.units },
       (staging) =>
-        manager
-          .getBrowserSession(staging, false)
-          .pipe(
-            Effect.flatMap((source) =>
-              Effect.promise(() =>
-                withCookieDebugger(source, (send) => setCookies(send, read.cookies)),
-              ),
-            ),
+        manager.getBrowserSession(staging, false).pipe(
+          Effect.flatMap((source) =>
+            Effect.tryPromise({
+              try: () => writeCookies(copy, source, read.cookies),
+              catch: () => new DesktopAccountsError({}),
+            }),
           ),
+        ),
     ).pipe(Effect.orElseSucceed(() => null));
-    if (!filled) return { outcome: "failed", browser: browser.name } as const;
+    if (!filled) return unwritten();
     // Main's Google unit is written only where Main holds no session Google accepts.
     const google = filled.units.some(
       ({ sites, outcome }) => outcome === "copied" && sites.includes(GOOGLE_SITE),
@@ -164,11 +201,9 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
   }
   const copiesGoogle = read.units.some((unit) => unit.includes(GOOGLE_SITE));
   const before = copiesGoogle ? yield* askGoogle : undefined;
-  if (copy.cancelled) return cancelled;
-  copy.writing = true;
   const written = yield* Effect.tryPromise({
     try: async () => {
-      await withCookieDebugger(session.value, (send) => setCookies(send, read.cookies));
+      await writeCookies(copy, session.value, read.cookies);
       await session.value.cookies.flushStore();
     },
     catch: () => new DesktopAccountsError({}),
@@ -176,7 +211,7 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   );
-  if (!written) return { outcome: "failed", browser: browser.name } as const;
+  if (!written) return unwritten();
   return {
     outcome: "copied",
     browser: browser.name,
@@ -187,13 +222,20 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
 });
 
 /**
- * Done or Cancel on the open sign-in window. Cancel also stops a copy that hasn't started writing.
- * False when there is nothing left to end: the dialog then waits for the result.
+ * Done or Cancel on the sign-in `attemptId` names. Cancel also stops a copy not yet written, and a
+ * sign-in that hasn't reached the desktop yet; it never ends another attempt. False when there is
+ * nothing left to end: the dialog then waits for the result.
  */
 export const endChromeSignIn = Effect.fn("DesktopAccounts.endChromeSignIn")(function* (
   keep: boolean,
+  attemptId?: string,
 ) {
   const platform = yield* HostProcess.Platform;
+  if (attemptId !== undefined && copying?.attemptId !== attemptId) {
+    if (keep || endedAttempts.has(attemptId)) return false;
+    remember(cancelledEarly, attemptId);
+    return true;
+  }
   if (endSignInWindow(keep, platform)) return true;
   if (keep || !copying || copying.writing) return false;
   copying.cancelled = true;

@@ -119,7 +119,13 @@ it("still cancels after Done, for a browser that doesn't quit", async () => {
   const cancel = page.getByRole("button", { name: "Cancel" });
   await expect.element(cancel).toBeEnabled();
   await cancel.click();
-  expect(f.endChromeSignIn.mock.calls).toEqual([[true], [false]]);
+  // Both name the same attempt, the one the sign-in was started with.
+  const attemptId = (f.chromeSignIn.mock.calls[0] as unknown as [{ attemptId: string }])[0]
+    .attemptId;
+  expect(f.endChromeSignIn.mock.calls).toEqual([
+    [true, attemptId],
+    [false, attemptId],
+  ]);
   // Cancel is sent once; the dialog stays until the sign-in reports its end.
   await expect.element(cancel).toBeDisabled();
   const { observed } = await finish(f, { outcome: "cancelled", browser: "Edge" });
@@ -217,7 +223,11 @@ it("reports a copy into Main that kept one of Main's own sign-ins as partial", a
   expect(toast?.title).toContain("overleaf.com");
   expect(observed).toMatchObject({ variant: "partial", google: "accepted" });
   expect(f.chromeSignIn).not.toHaveBeenCalled();
-  expect(state.intoMain).toHaveBeenCalledWith(environmentId, "https://accounts.google.com/");
+  expect(state.intoMain).toHaveBeenCalledWith(
+    environmentId,
+    "https://accounts.google.com/",
+    expect.any(String),
+  );
   expect(state.noted).toHaveBeenCalledWith(
     environmentId,
     DEFAULT_BROWSER_PROFILE_ID,
