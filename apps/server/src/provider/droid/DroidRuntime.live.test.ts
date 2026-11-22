@@ -113,7 +113,7 @@ it.effect.skipIf(!binary)(
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       TestClock.withLive,
     ),
-  30_000,
+  60_000,
 );
 
 for (const explicitLimits of [true, false]) {
@@ -332,7 +332,7 @@ for (const explicitLimits of [true, false]) {
         Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         TestClock.withLive,
       ),
-    30_000,
+    60_000,
   );
 }
 
@@ -511,5 +511,5 @@ it.effect.skipIf(!binary)(
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       TestClock.withLive,
     ),
-  30_000,
+  60_000,
 );
