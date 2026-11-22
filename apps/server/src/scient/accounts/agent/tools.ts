@@ -337,10 +337,10 @@ const connectorList = metadata(
     failure: AccountsError,
     dependencies: common.dependencies,
     description:
-      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host = who runs a hosted one and sees what passes through it. query: also connectors Scient can add (its picks and the MCP Registry). Add one that fits with scient_connector_add before making a new one.",
+      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host sees what passes through. query: also ones Scient can add; prefer hosting Official. Gmail, Outlook etc. come through each agent's own account. Add with scient_connector_add before making one.",
     parameters: Schema.Struct({
       query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
-        description: "e.g. gmail.",
+        description: "e.g. slack.",
       }),
     }),
     success: Schema.Struct({
@@ -363,6 +363,7 @@ const connectorList = metadata(
             title: Schema.optional(Schema.String),
             description: Schema.optional(Schema.String),
             host: Schema.optional(Schema.String),
+            hosting: Schema.String,
             addable: Schema.Boolean,
             reason: Schema.optional(Schema.String),
             added: Schema.optional(Schema.String),

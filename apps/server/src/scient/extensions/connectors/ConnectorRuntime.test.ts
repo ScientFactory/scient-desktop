@@ -4025,8 +4025,19 @@ describe("connectors agents run", () => {
       expect(yield* agent(listConnectors({ query: "echo" }))).toEqual({
         connectors: [row],
         found: [
-          { name: echo.name, title: "Echo", addable: false, added: added.connector },
-          { name: docker.name, addable: false, reason: docker.unsupportedReason },
+          {
+            name: echo.name,
+            title: "Echo",
+            hosting: "Not checked by Scient",
+            addable: false,
+            added: added.connector,
+          },
+          {
+            name: docker.name,
+            hosting: "Not checked by Scient",
+            addable: false,
+            reason: docker.unsupportedReason,
+          },
         ],
       });
 

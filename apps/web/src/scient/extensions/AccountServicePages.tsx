@@ -8,16 +8,21 @@ import {
   type AccountService,
   accountServicesFrom,
   accountServiceTagline,
+  isAccountRoute,
 } from "./accountServices";
 import { AboutCard, DetailLayout, DetailHeader, DetailSection } from "./ExtensionDetailPages";
 import { ExtensionRow } from "./ExtensionRow";
 import { ExtensionsPage, MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
-import { ServiceAgents, useAccountService } from "./ServiceAgents";
+import { AddServicePlugin, ServiceAgents, useAccountService } from "./ServiceAgents";
 
 export function AccountServiceItem({ service }: { readonly service: AccountService }) {
   const gt = useGT();
   const messages = useMessages();
-  const { audience, connect } = useAccountService(service);
+  const { audience, connect, step, providers, reread } = useAccountService(service);
+  const stepProvider =
+    step && !isAccountRoute(step)
+      ? providers.find((provider) => provider.instanceId === step.instanceId)
+      : undefined;
   return (
     <ExtensionRow
       target={{ kind: "account", serviceId: service.id }}
@@ -25,7 +30,14 @@ export function AccountServiceItem({ service }: { readonly service: AccountServi
       audience={audience}
       tagline={accountServiceTagline(service, messages) || undefined}
       trailing={
-        connect ? (
+        step && !isAccountRoute(step) && stepProvider ? (
+          <AddServicePlugin
+            service={service}
+            route={step}
+            provider={stepProvider}
+            refresh={reread}
+          />
+        ) : connect ? (
           <Button
             size="icon-sm"
             variant="ghost-muted"
@@ -61,8 +73,9 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
   const gt = useGT();
   const messages = useMessages();
   const { routes, open } = useAccountService(service);
-  const chatgptPage = routes.find((route) => route.family === "chatgpt")?.page;
-  const claudePage = routes.find((route) => route.family === "claude")?.page;
+  const accountRoutes = routes.filter(isAccountRoute);
+  const chatgptPage = accountRoutes.find((route) => route.family === "chatgpt")?.page;
+  const claudePage = accountRoutes.find((route) => route.family === "claude")?.page;
   return (
     <DetailLayout
       back="installed"

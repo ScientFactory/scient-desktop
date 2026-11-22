@@ -22,7 +22,6 @@ export const MOST_USED_SERVER_IDS = [
   "github",
   "slack",
   "notion",
-  "telegram",
   "pubmed",
   "semantic-scholar",
   "exa",
@@ -207,6 +206,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "scite",
+    agentStores: { codex: "scite" },
     accountRequired: true,
     displayName: "scite",
     tagline: "See how papers are cited",
@@ -234,6 +234,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // open: 200 "huggingface.co/mcp" 0.4.31
     id: "hugging-face",
+    agentStores: { codex: "hugging-face" },
     accountRequired: false,
     displayName: "Hugging Face",
     tagline: "Models, datasets, Spaces and papers on the Hub",
@@ -389,6 +390,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "hex",
+    agentStores: { codex: "hex" },
     accountRequired: true,
     displayName: "Hex",
     tagline: "Notebooks and data apps in Hex",
@@ -402,6 +404,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "motherduck",
+    agentStores: { codex: "motherduck" },
     accountRequired: true,
     displayName: "MotherDuck",
     tagline: "Query DuckDB databases in the cloud",
@@ -415,7 +418,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "supabase",
-    agentStores: { antigravity: "supabase@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "supabase@claude-plugins-official",
+      codex: "supabase",
+      antigravity: "supabase@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Supabase",
     tagline: "Postgres projects, tables and SQL",
@@ -430,6 +437,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "neon",
+    agentStores: { claude: "neon@claude-plugins-official", codex: "neon-postgres" },
     accountRequired: true,
     displayName: "Neon",
     tagline: "Serverless Postgres with branching",
@@ -444,6 +452,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "airtable",
+    agentStores: { claude: "airtable@claude-plugins-official", codex: "airtable" },
     accountRequired: true,
     displayName: "Airtable",
     tagline: "Bases, tables and records",
@@ -461,7 +470,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "github",
     accountRequired: true,
-    agentStores: { codex: "github" },
+    agentStores: { claude: "github@claude-plugins-official", codex: "github" },
     displayName: "GitHub",
     tagline: "Repositories, issues and pull requests",
     description:
@@ -488,6 +497,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "gitlab",
+    agentStores: { claude: "gitlab@claude-plugins-official" },
     accountRequired: true,
     displayName: "GitLab",
     tagline: "Projects, issues and merge requests",
@@ -502,7 +512,10 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // open: 200 "Context7" 4.4.3
     id: "context7",
-    agentStores: { antigravity: "context7@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "context7@claude-plugins-official",
+      antigravity: "context7@antigravity-plugins-partners",
+    },
     accountRequired: false,
     displayName: "Context7",
     tagline: "Up-to-date library documentation",
@@ -517,7 +530,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "sentry",
-    agentStores: { antigravity: "sentry@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "sentry@claude-plugins-official",
+      codex: "sentry",
+      antigravity: "sentry@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Sentry",
     tagline: "Errors, issues and performance data",
@@ -532,7 +549,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "vercel",
-    agentStores: { antigravity: "vercel-plugin@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "vercel@claude-plugins-official",
+      codex: "vercel",
+      antigravity: "vercel-plugin@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Vercel",
     tagline: "Projects, deployments and logs",
@@ -547,7 +568,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth, dynamic client registration (verified 2026-11-14)
     id: "cloudflare",
-    agentStores: { antigravity: "cloudflare@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "cloudflare@claude-plugins-official",
+      codex: "cloudflare",
+      antigravity: "cloudflare@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Cloudflare",
     tagline: "Workers, DNS, storage and the rest of your account",
@@ -561,6 +586,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // local: npx @playwright/mcp 0.0.85, no keys (verified 2026-11-14)
     id: "playwright",
+    agentStores: { claude: "playwright@claude-plugins-official" },
     accountRequired: false,
     displayName: "Playwright",
     tagline: "Drive a real browser: open, click, fill and check pages",
@@ -601,7 +627,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
         },
       ],
     },
-    categories: ["most-used", "communication"],
+    categories: ["communication"],
     websiteUrl: "https://github.com/GhostPawJS/telegram",
     icon: CURATED_ICONS["telegram"],
   },
@@ -639,7 +665,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "notion",
     accountRequired: true,
-    agentStores: { codex: "notion", antigravity: "notion@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "notion@claude-plugins-official",
+      codex: "notion",
+      antigravity: "notion@antigravity-plugins-partners",
+    },
     displayName: "Notion",
     tagline: "Pages, databases and lab notes",
     description:
@@ -653,7 +683,10 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "atlassian",
-    agentStores: { antigravity: "atlassian-twg-cli@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "atlassian@claude-plugins-official",
+      antigravity: "atlassian-twg-cli@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Atlassian",
     tagline: "Confluence pages and Jira issues",
@@ -683,7 +716,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // sign-in: 401 OAuth
     id: "linear",
     accountRequired: true,
-    agentStores: { codex: "linear", antigravity: "linear@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "linear@claude-plugins-official",
+      codex: "linear",
+      antigravity: "linear@antigravity-plugins-partners",
+    },
     displayName: "Linear",
     tagline: "Issues, projects and cycles",
     description:
@@ -697,7 +734,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "monday",
-    agentStores: { antigravity: "monday@antigravity-plugins-partners" },
+    agentStores: { codex: "monday-com", antigravity: "monday@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "monday.com",
     tagline: "Boards, items and updates",
@@ -712,7 +749,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "clickup",
-    agentStores: { antigravity: "clickup@antigravity-plugins-partners" },
+    agentStores: { codex: "clickup", antigravity: "clickup@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "ClickUp",
     tagline: "Tasks, docs and workspaces",
@@ -726,6 +763,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "fireflies",
+    agentStores: { codex: "fireflies" },
     accountRequired: true,
     displayName: "Fireflies",
     tagline: "Meeting transcripts and summaries",
@@ -740,7 +778,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "granola",
-    agentStores: { antigravity: "granola@antigravity-plugins-partners" },
+    agentStores: { codex: "granola", antigravity: "granola@antigravity-plugins-partners" },
     accountRequired: true,
     displayName: "Granola",
     tagline: "Your meeting notes",
@@ -770,6 +808,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "biorender",
+    agentStores: { codex: "biorender" },
     accountRequired: true,
     displayName: "BioRender",
     tagline: "Scientific figures and icons",
@@ -783,7 +822,11 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "canva",
-    agentStores: { antigravity: "canva@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "canva@claude-plugins-official",
+      codex: "canva",
+      antigravity: "canva@antigravity-plugins-partners",
+    },
     accountRequired: true,
     displayName: "Canva",
     tagline: "Create and edit Canva designs",
@@ -798,6 +841,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "miro",
+    agentStores: { claude: "miro@claude-plugins-official" },
     accountRequired: true,
     displayName: "Miro",
     tagline: "Boards, diagrams and sticky notes",
@@ -1240,6 +1284,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://developer.box.com/guides/box-mcp/.
     id: "box",
+    agentStores: { claude: "box@claude-plugins-official", codex: "box" },
     displayName: "Box",
     tagline: "Find and work with files in Box",
     description:
@@ -1255,7 +1300,10 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://help.dropbox.com/integrations/connect-dropbox-mcp-server.
     id: "dropbox",
-    agentStores: { antigravity: "dropbox@antigravity-plugins-partners" },
+    agentStores: {
+      claude: "dropbox@claude-plugins-official",
+      antigravity: "dropbox@antigravity-plugins-partners",
+    },
     displayName: "Dropbox",
     tagline: "Search, read and organise Dropbox files",
     description:
@@ -1270,6 +1318,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://docs.slack.dev/ai/slack-mcp-server/.
     id: "slack",
+    agentStores: { claude: "slack@claude-plugins-official", codex: "slack" },
     displayName: "Slack",
     tagline: "Search conversations and collaborate in Slack",
     description:
@@ -1285,6 +1334,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: vendor setup: https://developers.asana.com/docs/using-asanas-mcp-server.
     id: "asana",
+    agentStores: { claude: "asana@claude-plugins-official", codex: "asana" },
     displayName: "Asana",
     tagline: "Projects, tasks and team coordination",
     description:
@@ -1300,6 +1350,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-28: initialize + tools/list (2 tools).
     id: "exa",
+    agentStores: { claude: "exa@claude-plugins-official" },
     displayName: "Exa",
     tagline: "Web research and page search",
     description:
@@ -1334,6 +1385,24 @@ export const curatedServerForUrl = (
   );
 };
 
+/** Who runs a curated server: the service itself, Anthropic for the service, or a third party. */
+const curatedHosting = (server: CuratedServer): string =>
+  server.hosting ??
+  (server.url === undefined
+    ? "Official"
+    : server.url.includes(".caseyjhand.com/")
+      ? "Community"
+      : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
+        ? "Hosted by Anthropic"
+        : "Official");
+
+/**
+ * Whether the Discover home page and its category pages list a server. A community server, run by
+ * neither the service nor Anthropic, is found only by searching.
+ */
+export const listedWhenBrowsing = (server: CuratedServer): boolean =>
+  curatedHosting(server) !== "Community";
+
 /** The Discover entry for a curated server, before installation state. */
 export const curatedDiscoverEntry = (
   server: CuratedServer,
@@ -1344,15 +1413,7 @@ export const curatedDiscoverEntry = (
   ...(server.agentStores ? { agentStores: server.agentStores } : {}),
   ...(server.accountRequired !== undefined ? { accountRequired: server.accountRequired } : {}),
   ...(server.oauthClientRequired ? { oauthClientRequired: true } : {}),
-  hosting:
-    server.hosting ??
-    (server.url === undefined
-      ? "Official"
-      : server.url.includes(".caseyjhand.com/")
-        ? "Community"
-        : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
-          ? "Hosted by Anthropic"
-          : "Official"),
+  hosting: curatedHosting(server),
   ...(server.paidPlan ? { paidPlan: true } : {}),
   ...(server.beta ? { beta: true } : {}),
   ...(server.accessNote ? { accessNote: server.accessNote } : {}),

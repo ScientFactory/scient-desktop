@@ -838,6 +838,10 @@ describe("Discover", () => {
       "Gmail",
       "Google Calendar",
       "Google Drive",
+      "Outlook Email",
+      "Outlook Calendar",
+      "iMessage",
+      "Telegram",
       "Linear",
       "Notion",
       "Local tool",
@@ -1192,7 +1196,7 @@ describe("Discover", () => {
     expect(more(fixture.section("From Codex’s store"))).toHaveLength(1);
   });
 
-  it("keeps picks visible while registry is pending and groups store alternatives", async () => {
+  it("lists picks and store alternatives in a category, without Registry servers", async () => {
     await using fixture = setup();
     const pick = entry("scient.curated/scite", {
       title: "Scite",
@@ -1203,7 +1207,6 @@ describe("Discover", () => {
       entries: [pick],
       fetchedAt: "2026-10-21T00:00:00.000Z",
     };
-    state.discoverOutcomes[JSON.stringify({ scope: "registry", category: "papers" })] = "pending";
     const plugin = (name: string): ProviderStoreEntry => ({
       id: name,
       name,
@@ -1218,10 +1221,11 @@ describe("Discover", () => {
     state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
     state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<CategoryPage category="papers" />);
-    expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
+    // Readwise is Scient's own service in Papers; the store plugins follow it.
+    expect(fixture.rowNames()).toEqual(["Readwise", "Scite", "Zotero"]);
     // The store versions are on the item's own page, not under its row.
     expect(fixture.container.textContent).not.toContain("Also add from");
-    expect(fixture.container.textContent).toContain("Not checked by Scient");
+    expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     // Each store has its own section, which says the agent once; the rows just say Add.
     expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
     expect(fixture.row("Zotero").textContent).not.toContain("Codex only");
@@ -1332,6 +1336,10 @@ describe("Discover", () => {
       "Gmail",
       "Google Calendar",
       "Google Drive",
+      "Outlook Email",
+      "Outlook Calendar",
+      "iMessage",
+      "Telegram",
       "Notion",
     ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
@@ -2525,6 +2533,77 @@ describe("Antigravity Marketplace", () => {
     expect(fixture.container.querySelector('[aria-label="From Antigravity’s store"]')).toBeNull();
   });
 
+  const codexStripe: ProviderStoreEntry = {
+    id: "stripe@openai-curated",
+    name: "stripe",
+    displayName: "Stripe",
+    marketplace: "openai-curated",
+    description: "Payments",
+    website: "https://docs.stripe.com",
+    kind: "codex",
+    installed: false,
+    includes: [],
+    apps: [],
+  };
+  const agyStripe = storeEntry("stripe", {
+    id: "stripe@antigravity-plugins-partners",
+    marketplace: "antigravity-plugins-partners",
+    website: "https://stripe.com",
+    publisherType: "third-party",
+    publisher: "Stripe",
+  });
+
+  it("lists a service several stores have once, in the first store's section", async () => {
+    await using fixture = setup();
+    withAntigravity();
+    const plotter = { ...codexStripe, id: "plotter@openai-curated", name: "plotter" };
+    state.storePages[codex] = {
+      entries: [codexStripe, { ...plotter, displayName: "Plotter", website: "https://a.dev" }],
+      total: 2,
+    };
+    state.storePages[antigravity] = {
+      entries: [
+        agyStripe,
+        storeEntry("chemistry"),
+        storeEntry("plotter", { website: "https://b.io" }),
+      ],
+      total: 3,
+    };
+    await fixture.render(<CategoryPage category="code" />);
+    await vi.waitFor(() =>
+      expect(fixture.rowNames(fixture.section("From Codex’s store"))).toEqual([
+        "Stripe",
+        "Plotter",
+      ]),
+    );
+    // Same name, same site: one row. The same name on another site is another service.
+    expect(fixture.rowNames(fixture.section("From Antigravity’s store"))).toEqual([
+      "Chemistry",
+      "Plotter",
+    ]);
+  });
+
+  it("gives a store plugin's page every agent whose store has the same service", async () => {
+    await using fixture = setup();
+    withAntigravity({ plugins: [] });
+    state.storeEntry = agyStripe;
+    state.storePages[codex] = { entries: [codexStripe], total: 1 };
+    await fixture.render(
+      <ProviderStoreDetailPage instanceId="antigravity" entryId={agyStripe.id} />,
+    );
+    const agents = fixture.section("Your agents");
+    await vi.waitFor(() => expect(buttonIn(agents, "Add to Codex")).not.toBeNull());
+    expect(buttonIn(agents, "Add to Antigravity")).not.toBeNull();
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await userEvent.click(buttonIn(agents, "Add to Codex")!);
+    await vi.waitFor(() =>
+      expect(state.commands.providerAct).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: { instanceId: codex, action: { type: "install", entryId: codexStripe.id } },
+      }),
+    );
+  });
+
   it("offers a curated item's Antigravity Marketplace entry instead of repeating it", async () => {
     await using fixture = setup();
     withAntigravity();
@@ -2715,11 +2794,11 @@ describe("Antigravity Marketplace", () => {
       total: 2,
     };
     await fixture.render(<DiscoverPage />);
-    // Every store shelf's grid; Gmail's own row elsewhere on Discover is its service page.
+    // The Antigravity shelf's grid; Gmail's own row elsewhere on Discover is its service page.
     const shelves = () =>
-      [...fixture.container.querySelectorAll('[aria-label="Plugins"]')].flatMap((grid) =>
-        fixture.rowNames(grid),
-      );
+      [
+        ...fixture.container.querySelectorAll('[aria-label="From the Antigravity Marketplace"]'),
+      ].flatMap((grid) => fixture.rowNames(grid));
     await vi.waitFor(() => expect(shelves()).toContain("Chemistry"));
     expect(shelves()).not.toContain("Gmail");
     await fixture.reset();
@@ -2729,7 +2808,7 @@ describe("Antigravity Marketplace", () => {
     );
   });
 
-  it("shows the partner notice before adding a partner service's plugin from its page", async () => {
+  it("offers no Antigravity row for a partner service whose connection can't sign in from chat", async () => {
     await using fixture = setup();
     state.providersByEnvironment = {
       local: [
@@ -2749,25 +2828,13 @@ describe("Antigravity Marketplace", () => {
       ],
     };
     state.storeEntry = canva;
-    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<AccountServiceDetailPage serviceId="canva" />);
     await vi.waitFor(() =>
-      expect(buttonIn(fixture.section("Your agents"), "Add to Antigravity")).not.toBeNull(),
+      expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account"),
     );
-    // ChatGPT's row for the same service is unchanged.
-    expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account");
-    state.confirm.mockResolvedValueOnce(true);
-    await userEvent.click(buttonIn(fixture.section("Your agents"), "Add to Antigravity")!);
-    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
-    await vi.waitFor(() =>
-      expect(state.commands.providerAct).toHaveBeenCalledWith({
-        environmentId: "local",
-        input: {
-          instanceId: antigravity,
-          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
-        },
-      }),
-    );
+    // Canva's Antigravity plugin connects through an MCP server agy signs in only in its own
+    // plugin manager, so the page offers no route that would not work in Scient's chats.
+    expect(fixture.section("Your agents").textContent).not.toContain("Antigravity");
   });
 
   it("removes an added plugin from the user's Antigravity after saying what that affects", async () => {
