@@ -15359,6 +15359,8 @@
   "91fa2974f21c8095": "Each agent reaches Zoom through its own ChatGPT or Claude account. Scient never holds your Zoom sign-in.",
   "89e41c0feeb46bc7": "Read designs and turn frames into code",
   "725b7b02ee84c221": "Each agent reaches Figma through its own ChatGPT or Claude account. Scient never holds your Figma sign-in.",
+  "16d3a1024606a75a": "Find saved papers and add citations",
+  "8010ccee6f7dc1a7": "Codex and Scient Agent reach Zotero through OpenAI’s Zotero plugin for Codex, which works with the Zotero desktop app on this computer.",
   "3280a0b7315a182b": "Your highlights and the papers saved in Reader",
   "b71d3ccf3334a221": "Each agent reaches Readwise through its own ChatGPT or Claude account. Scient never holds your Readwise sign-in.",
   "c4a5aa37f54aaadc": "Predict structures, screen molecules and design binders",
