@@ -3,12 +3,11 @@ import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import {
   BookOpenTextIcon,
-  CalendarClockIcon,
   ChartNoAxesColumnIcon,
   CloudIcon,
+  createLucideIcon,
   HouseIcon,
   ImportIcon,
-  PlugIcon,
   SettingsIcon,
 } from "lucide-react";
 import { lazy, Suspense, type ReactNode } from "react";
@@ -41,6 +40,17 @@ import { useSidebarUtilityActions } from "./useSidebarUtilityActions";
 import "./sidebarNavRail.css";
 import { registerRailOtherUpdatesSlot } from "./railOtherUpdatesSlot";
 import { readCodeReviewPage } from "../codeReview/codeReviewPage";
+
+const ScheduledTasksRailIcon = createLucideIcon("scheduled-tasks-rail", [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "face" }],
+  ["path", { d: "M12 7v5l-3 3", key: "hands" }],
+]);
+
+const ExtensionsRailIcon = createLucideIcon("extensions-rail", [
+  ["path", { d: "M18 20a10 10 0 1 1 4-8c0 4-3.5 5.5-7.5 2.5", key: "cord" }],
+  ["path", { d: "m7 12 5-5 3 3a3 3 0 0 1 0 4.24l-.76.76a3 3 0 0 1-4.24 0Z", key: "plug" }],
+  ["path", { d: "m6 9 2 2m1-5 2 2", key: "prongs" }],
+]);
 
 // Keeps Clerk out of the sidebar's bundle; Settings loads the same module this way.
 const T3ConnectRailAccount = lazy(() =>
@@ -208,13 +218,13 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
           }}
         />
         <RailItem
-          icon={<CalendarClockIcon />}
+          icon={<ScheduledTasksRailIcon />}
           label={gt("Scheduled tasks")}
           onClick={go("/settings/scheduled-tasks")}
           active={page === "scheduled-tasks"}
         />
         <RailItem
-          icon={<PlugIcon />}
+          icon={<ExtensionsRailIcon />}
           label={gt("Extensions")}
           onClick={go("/settings/extensions")}
           active={page === "extensions"}
