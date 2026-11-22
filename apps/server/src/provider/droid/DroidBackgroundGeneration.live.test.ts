@@ -23,6 +23,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import type { DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
+import { awaitDroidHomeIdleOnClose } from "./DroidLiveHome.testkit.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
@@ -107,6 +108,8 @@ const backgroundGenerationFixture = (
     yield* Effect.promise(
       () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
     );
+    // Droid's exit courier outlives it; the stub stays up until HOME is idle.
+    yield* awaitDroidHomeIdleOnClose(home);
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const instanceId = ProviderInstanceId.make("droid_background");
     const connections: ReadonlyArray<ResolvedModelConnection> = [
