@@ -2184,8 +2184,15 @@ export function useComposerSend(input: ComposerSendInput) {
           (roomSendCtx?.shownPendingApprovalIds.length ?? 0) > 0,
         prompt: promptRef.current,
       })
-    )
-      return postToRoom.post();
+    ) {
+      // An image still compressing would be left out of the post, so it waits as a send to the
+      // agent does; the people stay its destination.
+      const held = holdComposerSend(composerDraftTarget);
+      if (held === null) return postToRoom.post();
+      if ((await held).status === "cancelled") return;
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      return postToRoom.post({ prompt: draft?.prompt ?? "" });
+    }
     // SCIENT-FORK:END
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null

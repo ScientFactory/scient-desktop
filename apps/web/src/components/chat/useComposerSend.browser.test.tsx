@@ -37,6 +37,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import * as imageCompression from "../../lib/imageCompression";
+import * as roomComposer from "../../scient/room/roomComposer";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import { toastManager } from "../ui/toast";
@@ -68,6 +69,7 @@ vi.mock("@tanstack/react-router", { spy: true });
 vi.mock("../../state/session", { spy: true });
 vi.mock("../../scient/threadQueue/submission", { spy: true });
 vi.mock("../../lib/imageCompression", { spy: true });
+vi.mock("../../scient/room/roomComposer", { spy: true });
 vi.mock("../ChatView.logic", { spy: true });
 
 /** Holds the send at its submission identity, its first yield before dispatch. */
@@ -760,6 +762,42 @@ describe("mounted composer send admission owner", () => {
       expect(fixture.command.mock.calls[0]?.[0].input.message.attachments).toHaveLength(1);
     },
   );
+
+  it("a post to the people in a thread waits for a compressing image", async () => {
+    const posted: Array<{ readonly prompt: string | undefined; readonly images: number }> = [];
+    const target = { current: undefined as ComposerSendInput["composerDraftTarget"] | undefined };
+    using _room = vi.spyOn(roomComposer, "useRoomComposerPost").mockReturnValue({
+      applies: () => true,
+      post: async (options) => {
+        const draft = useComposerDraftStore.getState().getComposerDraft(target.current!);
+        posted.push({ prompt: options?.prompt, images: draft?.images.length ?? 0 });
+      },
+    });
+    await using fixture = await setup();
+    target.current = fixture.input.composerDraftTarget;
+    const converted =
+      Promise.withResolvers<
+        Awaited<ReturnType<typeof imageCompression.prepareImageForAttachment>>
+      >();
+    vi.mocked(imageCompression.prepareImageForAttachment).mockImplementationOnce(
+      () => converted.promise,
+    );
+    const image = new File(["image"], "shot.png", { type: "image/png" });
+    let adding!: Promise<boolean>;
+    await act(() => {
+      adding = fixture.intake([image]);
+    });
+    fixture.input.promptRef.current = "look at this";
+    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, "look at this");
+    const sending = fixture.send();
+    await act(async () => {});
+    expect(posted).toEqual([]);
+    converted.resolve({ ok: true, file: image, recompressed: false });
+    await adding;
+    await sending;
+    expect(posted).toEqual([{ prompt: "look at this", images: 1 }]);
+    expect(fixture.command).not.toHaveBeenCalled();
+  });
 
   it("carries captured settings and skills through fanout without releasing its parent's lock", async () => {
     await using fixture = await setup();
