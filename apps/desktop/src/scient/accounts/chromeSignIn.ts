@@ -98,16 +98,26 @@ const remember = (attempts: Set<string>, attemptId: string) => {
   }
 };
 
-/** Writes the window's cookies through `session`, unless Cancel came first. */
+/** Cancel came first: nothing is written, and the caller reports the copy cancelled. */
+const goAhead = (copy: Copy) => {
+  if (copy.cancelled) return false;
+  copy.writing = true;
+  return true;
+};
+
+/**
+ * Writes the window's cookies through `session` unless Cancel came first. A write to the
+ * destination profile (`commits`) is the point of no return; a staging write is not.
+ */
 const writeCookies = async (
   copy: Copy,
   session: Electron.Session,
   cookies: ReadonlyArray<SessionCookie>,
+  commits: boolean,
 ) =>
   withCookieDebugger(session, (send) => {
-    // Cancel came first: nothing is written, and the caller reports the copy cancelled.
-    if (copy.cancelled) return Promise.reject(new DesktopAccountsError({}));
-    copy.writing = true;
+    if (commits ? !goAhead(copy) : copy.cancelled)
+      return Promise.reject(new DesktopAccountsError({}));
     return setCookies(send, cookies);
   });
 
@@ -184,11 +194,13 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
         manager.getBrowserSession(staging, false).pipe(
           Effect.flatMap((source) =>
             Effect.tryPromise({
-              try: () => writeCookies(copy, source, read.cookies),
+              try: () => writeCookies(copy, source, read.cookies, false),
               catch: () => new DesktopAccountsError({}),
             }),
           ),
         ),
+      // Main itself is written only once its lock is held: Cancel holds until then.
+      () => goAhead(copy),
     ).pipe(Effect.orElseSucceed(() => null));
     if (!filled) return unwritten();
     // Main's Google unit is written only where Main holds no session Google accepts.
@@ -203,7 +215,7 @@ const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
   const before = copiesGoogle ? yield* askGoogle : undefined;
   const written = yield* Effect.tryPromise({
     try: async () => {
-      await writeCookies(copy, session.value, read.cookies);
+      await writeCookies(copy, session.value, read.cookies, true);
       await session.value.cookies.flushStore();
     },
     catch: () => new DesktopAccountsError({}),

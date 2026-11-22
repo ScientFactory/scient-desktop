@@ -24,6 +24,10 @@ const state = vi.hoisted(() => ({
   windowOpen: true,
   windows: 0,
   /** When set, writing cookies waits for it after the hidden page loads, before the first write. */
+  /** When set, the copy into Main waits for it after staging, as for Main's lock. */
+  mainLock: undefined as
+    | undefined
+    | { waiting: PromiseWithResolvers<void>; free: PromiseWithResolvers<void> },
   debuggerReady: undefined as
     | undefined
     | { loading: PromiseWithResolvers<void>; loaded: PromiseWithResolvers<void> },
@@ -69,7 +73,20 @@ vi.mock("./mainFill.ts", async (importOriginal) => {
       _environmentId: string,
       _input: unknown,
       stage: (scope: string) => Effect.Effect<unknown>,
-    ) => stage("staging").pipe(Effect.as(state.main)),
+      proceed: () => boolean = () => true,
+    ) =>
+      stage("staging").pipe(
+        // Waiting for Main's lock, when a test holds it.
+        Effect.andThen(() =>
+          Effect.promise(async () => {
+            if (state.mainLock) {
+              state.mainLock.waiting.resolve();
+              await state.mainLock.free.promise;
+            }
+          }),
+        ),
+        Effect.map(() => (proceed() ? state.main : null)),
+      ),
   };
 });
 
@@ -345,6 +362,28 @@ it.effect("still cancels while the hidden page for writing cookies loads", () =>
     expect((yield* Fiber.join(copying)).result).toEqual({ outcome: "cancelled", browser: "Edge" });
     expect(target.written).toEqual([]);
     state.debuggerReady = undefined;
+    state.windowOpen = true;
+  }),
+);
+
+it.effect("cancels a copy into Main while it waits for Main's lock, leaving Main untouched", () =>
+  Effect.gen(function* () {
+    googleWindow();
+    state.windowOpen = false;
+    state.main = { units: [{ sites: ["google.com"], outcome: "copied" }], unsupported: 0 };
+    state.mainLock = { waiting: Promise.withResolvers(), free: Promise.withResolvers() };
+    const held = profile([listed(1)]);
+    const copying = yield* run("default", held, "attempt-main").pipe(Effect.forkChild);
+    yield* Effect.promise(() => state.mainLock!.waiting.promise);
+    // Staged already, but Main not yet written: Cancel still holds.
+    expect(yield* endChromeSignIn(false, "attempt-main")).toBe(true);
+    state.mainLock.free.resolve();
+    const { result, staging } = yield* Fiber.join(copying);
+    expect(result).toEqual({ outcome: "cancelled", browser: "Edge" });
+    expect(staging.written).toHaveLength(3);
+    expect(held.written).toEqual([]);
+    state.mainLock = undefined;
+    state.main = null;
     state.windowOpen = true;
   }),
 );

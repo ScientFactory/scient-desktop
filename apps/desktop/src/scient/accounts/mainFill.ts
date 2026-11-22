@@ -262,6 +262,8 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
   environmentId: string,
   input: CopyRules,
   stage: (scope: string) => Effect.Effect<BrowserImportResult | void, E, R>,
+  /** Asked under Main's lock, right before Main is written; false leaves Main untouched. */
+  proceed: () => boolean = () => true,
 ) {
   const manager = yield* PreviewManager;
   const mainScope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
@@ -274,7 +276,9 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
   const staging = yield* manager.getBrowserSession(scope, false).pipe(Effect.option);
   if (staging._tag === "None") return null;
   const filled = yield* Effect.promise(() =>
-    underMainLock(environmentId, () => copyIntoMain(staging.value, main.value, input))
+    underMainLock(environmentId, async () =>
+      proceed() ? copyIntoMain(staging.value, main.value, input) : null,
+    )
       .catch(() => null)
       .finally(() => staging.value.clearStorageData().catch(() => undefined)),
   );
