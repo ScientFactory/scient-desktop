@@ -8,92 +8,94 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  checkHome,
   processTable,
   scanHome,
   waitUntilHomeIdle,
-  type ListedProcess,
   type ProcessState,
   type ProcessTable,
 } from "./DroidLiveHome.testkit.ts";
 
 const platform = HostProcess.Platform.defaultValue();
-const HOME = "/tmp/scient droid home";
+const HOME = "/tmp/scient-droid-home";
+const never = new AbortController().signal;
 
-/** A table that lists `listed` and answers each read from `states`. */
-const table = (
-  listed: ReadonlyArray<ListedProcess>,
-  states: Readonly<Record<number, ProcessState>> = {},
-): ProcessTable => ({
-  list: async () => listed,
-  state: async (pid) => states[pid] ?? "other",
-});
-const droid = (pid: number, zombie = false): ListedProcess => ({
-  pid,
-  zombie,
-  name: "/opt/droid/droid",
-});
+/**
+ * A table whose listings come from `scans`, one per scan (the last one repeating), each a map from
+ * a Droid PID to what a read of it finds.
+ */
+function scripted(scans: ReadonlyArray<Readonly<Record<number, ProcessState>>>) {
+  let index = -1;
+  const current = () => scans[Math.min(index, scans.length - 1)] ?? {};
+  const table: ProcessTable = {
+    list: async () => {
+      index += 1;
+      return [
+        ...Object.keys(current()).map((pid) => ({ pid: Number(pid), name: "droid" })),
+        { pid: 99, name: "node" },
+      ];
+    },
+    state: async (pid) => (pid === 99 ? "ours" : (current()[pid] ?? "gone")),
+  };
+  return { table, scans: () => index + 1 };
+}
 
 describe("a scan of the processes using a Droid live test's HOME", () => {
   it("finds Droid's processes with that HOME and nothing else", async () => {
-    const scan = await scanHome(
-      table([droid(10), droid(11), { pid: 12, zombie: false, name: "/usr/bin/node" }], {
-        10: "ours",
-        11: "other",
-        12: "ours",
-      }),
-      HOME,
-      "droid",
-      new Set(),
-    );
-    expect(scan).toEqual({ users: [10], changed: false, zombies: new Set() });
+    const { table } = scripted([{ 10: "ours", 11: "other", 12: "gone", 13: "zombie" }]);
+    expect(await scanHome(table, HOME, "droid", never)).toEqual({ users: [10], uncertain: false });
   });
 
-  it("is taken again when a listed Droid process ended or couldn't be read in the meantime", async () => {
-    for (const state of ["gone", "zombie", "starting"] as const) {
-      const scan = await scanHome(table([droid(10)], { 10: state }), HOME, "droid", new Set());
-      expect(scan.changed).toBe(true);
-    }
-    // Listed while its arguments couldn't be read, or gone before it could be named.
-    for (const listed of [
-      { pid: 10, zombie: false, name: "(droid)" },
-      { pid: 10, zombie: false, name: undefined },
-    ]) {
-      expect((await scanHome(table([listed]), HOME, "droid", new Set())).changed).toBe(true);
-    }
+  it("can't rule out a Droid process whose environment couldn't be read yet", async () => {
+    const { table } = scripted([{ 10: "starting" }]);
+    expect(await scanHome(table, HOME, "droid", never)).toEqual({ users: [], uncertain: true });
   });
 
-  it("counts a defunct Droid process once: a later scan knows it died before", async () => {
-    const first = await scanHome(table([droid(10, true)]), HOME, "droid", new Set());
-    expect(first).toEqual({ users: [], changed: true, zombies: new Set([10]) });
-    const second = await scanHome(table([droid(10, true)]), HOME, "droid", first.zombies);
-    expect(second.changed).toBe(false);
+  it("calls HOME idle only after two clean scans in a row", async () => {
+    const quiet = scripted([{}]);
+    await waitUntilHomeIdle(HOME, never, { table: quiet.table });
+    expect(quiet.scans()).toBe(2);
+    // The first scan missed a courier its exiting parent started meanwhile; the second finds it.
+    const handOff = scripted([{}, { 11: "ours" }, {}]);
+    const waited: Array<ReadonlyArray<number>> = [];
+    await waitUntilHomeIdle(HOME, never, {
+      table: handOff.table,
+      waitForExits: async (pids) => void waited.push(pids),
+    });
+    expect(waited).toEqual([[11]]);
+    expect(handOff.scans()).toBe(4);
   });
 
   it("waits for each process found to exit, then looks again for what it left running", async () => {
-    // The courier appears only once the session that started it has exited.
-    const rounds = [table([droid(10)], { 10: "ours" }), table([droid(11)], { 11: "ours" })];
+    const { table } = scripted([{ 10: "ours" }, { 11: "ours" }, {}]);
     const waited: Array<ReadonlyArray<number>> = [];
-    let round = 0;
-    const current = () => rounds[round] ?? table([]);
-    await waitUntilHomeIdle(HOME, new AbortController().signal, {
-      table: { list: () => current().list(), state: (pid, home) => current().state(pid, home) },
-      waitForExits: async (pids) => {
-        waited.push(pids);
-        round += 1;
-      },
+    await waitUntilHomeIdle(HOME, never, {
+      table,
+      waitForExits: async (pids) => void waited.push(pids),
     });
     expect(waited).toEqual([[10], [11]]);
   });
 
-  it("fails at the deadline, naming what still runs", async () => {
+  it("at the deadline kills what still runs and waits for it before failing", async () => {
     const deadline = new AbortController();
     deadline.abort();
+    const killed: Array<number> = [];
+    const waited: Array<ReadonlyArray<number>> = [];
     await expect(
       waitUntilHomeIdle(HOME, deadline.signal, {
-        table: table([droid(10)], { 10: "ours" }),
-        waitForExits: async () => undefined,
+        table: scripted([{ 10: "ours" }]).table,
+        kill: (pid) => void killed.push(pid),
+        waitForExits: async (pids) => void waited.push(pids),
+        grace: () => never,
       }),
-    ).rejects.toThrow(/still use the test's HOME .*: 10$/);
+    ).rejects.toThrow(/were killed: 10$/);
+    expect(killed).toEqual([10]);
+    expect(waited).toEqual([[10]]);
+  });
+
+  it("refuses a HOME that a space-separated environment can't show exactly", () => {
+    for (const home of ["/tmp/a b", "/tmp/a\tb", "/tmp/é"]) expect(() => checkHome(home)).toThrow();
+    expect(() => checkHome(HOME)).not.toThrow();
   });
 });
 
@@ -135,7 +137,7 @@ describe.skipIf(platform === "win32")("a Droid live test's HOME on this computer
           executable: node,
         });
         expect(NodeFS.readFileSync(marker, "utf8")).toBe("done\n");
-        const after = await scanHome(processTable(platform), home, node, new Set());
+        const after = await scanHome(processTable(platform), home, node, never);
         expect(after.users).toEqual([]);
       } finally {
         NodeFS.rmSync(home, { recursive: true, force: true });

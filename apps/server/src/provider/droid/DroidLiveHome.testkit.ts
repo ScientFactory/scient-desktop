@@ -19,51 +19,49 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
  * timeout leaves this much room after its body: the wait runs when the case's scope closes.
  */
 const IDLE_DEADLINE_MS = 20_000;
+/** At the deadline: how long the last scan, and the processes it kills, get. */
+const KILL_GRACE_MS = 5_000;
 
 const OBSERVER = NodePath.join(import.meta.dirname, "DroidLiveHome.await-exit.py");
 
-/** What a read of one process found: `starting` when its arguments couldn't be read yet. */
+/** What a read of one process found: `starting` when its environment couldn't be read yet. */
 export type ProcessState = "gone" | "zombie" | "starting" | "ours" | "other";
 
 export interface ListedProcess {
   readonly pid: number;
-  readonly zombie: boolean;
-  /** The executable as listed; undefined when the process was gone before it could be named. */
-  readonly name: string | undefined;
+  /** The kernel's short name for the process, kept while it is defunct. */
+  readonly name: string;
 }
 
 export interface ProcessTable {
-  readonly list: () => Promise<ReadonlyArray<ListedProcess>>;
+  readonly list: (signal: AbortSignal) => Promise<ReadonlyArray<ListedProcess>>;
   /** Whether the process's environment sets HOME to `home`, read after the listing. */
-  readonly state: (pid: number, home: string) => Promise<ProcessState>;
+  readonly state: (pid: number, home: string, signal: AbortSignal) => Promise<ProcessState>;
 }
 
 export interface Scan {
   readonly users: ReadonlyArray<number>;
-  /**
-   * A listed process ended, or couldn't be read, during the scan. It may have started a helper
-   * after the listing, so the scan proves nothing and is taken again.
-   */
-  readonly changed: boolean;
-  /** Defunct processes seen, so a later scan can tell one that died meanwhile from an old one. */
-  readonly zombies: ReadonlySet<number>;
+  /** A Droid process whose environment couldn't be read yet: it may be one of ours starting. */
+  readonly uncertain: boolean;
 }
 
-const ps = (args: ReadonlyArray<string>) =>
-  execFile("ps", args, { maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: "C" } });
+const ps = (args: ReadonlyArray<string>, signal: AbortSignal) =>
+  execFile("ps", args, {
+    maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, LC_ALL: "C" },
+    signal,
+  });
 
-/** macOS: `ps eww` appends a same-user process's environment to its command line. */
+/** macOS: `ucomm` is the kernel's name; `ps eww` appends a same-user process's environment. */
 const darwinTable: ProcessTable = {
-  list: async () =>
-    (await ps(["-A", "-o", "pid=,stat=,comm="])).stdout.split("\n").flatMap((line) => {
-      const match = /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
-      return match === null
-        ? []
-        : [{ pid: Number(match[1]), zombie: match[2]!.includes("Z"), name: match[3]! }];
+  list: async (signal) =>
+    (await ps(["-A", "-o", "pid=,ucomm="], signal)).stdout.split("\n").flatMap((line) => {
+      const match = /^\s*(\d+)\s+(.+?)\s*$/.exec(line);
+      return match === null ? [] : [{ pid: Number(match[1]), name: match[2]! }];
     }),
   // One process per read: an environment value with a newline would split a combined listing.
-  state: async (pid, home) => {
-    const read = await ps(["eww", "-o", "stat=,command=", "-p", String(pid)]).then(
+  state: async (pid, home, signal) => {
+    const read = await ps(["eww", "-o", "stat=,command=", "-p", String(pid)], signal).then(
       ({ stdout }) => stdout.trim(),
       () => "",
     );
@@ -72,42 +70,45 @@ const darwinTable: ProcessTable = {
     if (match[1]!.includes("Z")) return "zombie";
     // `ps` shows "(name)" while a process's arguments can't be read: starting, or ending.
     if (/^\(.*\)$/.test(match[2]!.trim())) return "starting";
-    // A whole entry: a HOME with a space in it, or another spelling of it, is not this one.
+    // Entries are space-separated, and HOME has no whitespace (see `checkHome`): a whole entry.
     return ` ${match[2]!} `.includes(` HOME=${home} `) ? "ours" : "other";
   },
 };
 
 const errorCode = (cause: unknown) => (cause as NodeJS.ErrnoException).code;
 
-/** The state letter and name in /proc/<pid>/stat; the name is parenthesised and may hold spaces. */
-const parseStat = (stat: string) => ({
-  name: stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")")),
-  zombie: stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z"),
-});
+/** Linux: the name and state in /proc/<pid>/stat (the name parenthesised, maybe with spaces). */
+const readStat = async (pid: number) => {
+  const stat = await NodeFSP.readFile(`/proc/${pid}/stat`, "utf8");
+  return {
+    name: stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")")),
+    zombie: stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z"),
+  };
+};
 
-/** Linux: names and states from /proc/<pid>/stat, environments NUL-separated in /proc. */
+/** Linux: environments NUL-separated in /proc. Another user's process, unreadable, isn't ours. */
 const linuxTable: ProcessTable = {
   list: async () =>
-    Promise.all(
-      (await NodeFSP.readdir("/proc"))
-        .filter((entry) => /^\d+$/.test(entry))
-        .map(async (entry) => {
-          const pid = Number(entry);
-          try {
-            return { pid, ...parseStat(await NodeFSP.readFile(`/proc/${entry}/stat`, "utf8")) };
-          } catch {
-            return { pid, zombie: false, name: undefined };
-          }
-        }),
-    ),
+    (
+      await Promise.all(
+        (await NodeFSP.readdir("/proc"))
+          .filter((entry) => /^\d+$/.test(entry))
+          .map((entry) =>
+            // Gone, or hidden from this user: the confirming scan covers what a gone one started.
+            readStat(Number(entry)).then(
+              ({ name }) => [{ pid: Number(entry), name }],
+              () => [],
+            ),
+          ),
+      )
+    ).flat(),
   state: async (pid, home) => {
     try {
-      if (parseStat(await NodeFSP.readFile(`/proc/${pid}/stat`, "utf8")).zombie) return "zombie";
+      if ((await readStat(pid)).zombie) return "zombie";
       const environment = await NodeFSP.readFile(`/proc/${pid}/environ`, "utf8");
       if (environment === "") return "starting";
       return environment.split("\0").includes(`HOME=${home}`) ? "ours" : "other";
     } catch (cause) {
-      // Another user's process isn't ours.
       return errorCode(cause) === "EACCES" ? "other" : "gone";
     }
   },
@@ -116,90 +117,105 @@ const linuxTable: ProcessTable = {
 export const processTable = (platform: NodeJS.Platform): ProcessTable =>
   platform === "darwin" ? darwinTable : linuxTable;
 
-/**
- * The processes of `executable` whose environment sets HOME to `home`. A listed process that died,
- * vanished or couldn't be read before it was looked at makes the scan `changed`; a defunct one
- * already seen as defunct by the previous scan does not, since its children were listed then.
- */
+/** The kernel keeps 16 characters of a name on macOS, 15 on Linux. */
+const namesExecutable = (name: string, executable: string) =>
+  name.length >= 15 ? executable.startsWith(name) : name === executable;
+
+/** The processes of `executable` whose environment sets HOME to `home`, read after one listing. */
 export async function scanHome(
   table: ProcessTable,
   home: string,
   executable: string,
-  previousZombies: ReadonlySet<number>,
+  signal: AbortSignal,
 ): Promise<Scan> {
-  // Linux keeps 15 characters of a name; macOS lists the executable's path.
-  const isExecutable = (name: string) =>
-    NodePath.basename(name) === executable ||
-    name === executable.slice(0, 15) ||
-    name === `(${executable})`;
   const users: Array<number> = [];
-  const zombies = new Set<number>();
-  let changed = false;
-  for (const { pid, zombie, name } of await table.list()) {
-    if (pid === process.pid) continue;
-    if (name === undefined) {
-      changed = true;
-      continue;
-    }
-    if (!isExecutable(name)) continue;
-    if (zombie) {
-      zombies.add(pid);
-      if (!previousZombies.has(pid)) changed = true;
-      continue;
-    }
-    if (name === `(${executable})`) {
-      changed = true;
-      continue;
-    }
-    const state = await table.state(pid, home);
+  let uncertain = false;
+  for (const { pid, name } of await table.list(signal)) {
+    if (pid === process.pid || !namesExecutable(name, executable)) continue;
+    const state = await table.state(pid, home, signal);
     if (state === "ours") users.push(pid);
-    else if (state !== "other") {
-      changed = true;
-      if (state === "zombie") zombies.add(pid);
-    }
+    else if (state === "starting") uncertain = true;
   }
-  return { users, changed, zombies };
+  return { users, uncertain };
 }
 
+/**
+ * HOME is matched as one entry of `ps eww`'s space-separated environment, which shows only
+ * printable ASCII as itself: a HOME with whitespace or anything else could match another's.
+ */
+export const checkHome = (home: string) => {
+  if (!/^[\x21-\x7e]+$/.test(home))
+    throw new Error(`A Droid live test's HOME must be printable ASCII without spaces: ${home}`);
+};
+
 /** Returns once the kernel reports that every given process has exited (kqueue, pidfd). */
-const exitsOf = (pids: ReadonlyArray<number>, deadline: AbortSignal) =>
-  execFile("python3", ["-I", "-S", OBSERVER, ...pids.map(String)], { signal: deadline }).then(
+const exitsOf = (pids: ReadonlyArray<number>, signal: AbortSignal) =>
+  execFile("python3", ["-I", "-S", OBSERVER, ...pids.map(String)], { signal }).then(
     () => undefined,
   );
 
+const killProcess = (pid: number) => {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+};
+
+export interface IdleOptions {
+  readonly table: ProcessTable;
+  readonly executable?: string;
+  readonly waitForExits?: (pids: ReadonlyArray<number>, signal: AbortSignal) => Promise<void>;
+  readonly kill?: (pid: number) => void;
+  /** The bound on the last scan and the kill at the deadline. */
+  readonly grace?: () => AbortSignal;
+}
+
 /**
- * Returns once no process of `executable` uses `home`: each round waits for every process found
- * to exit, then scans again for ones they started meanwhile; a scan that changed under it is
- * simply taken again. At the deadline it throws, naming what still runs.
+ * Returns once no Droid process uses `home`, waiting for each one found to exit. Idle takes two
+ * clean scans in a row: a helper started while one scan lists, by a process exiting meanwhile,
+ * still runs at the next. At the deadline what still runs is killed and waited for, then it throws.
  */
 export async function waitUntilHomeIdle(
   home: string,
   deadline: AbortSignal,
-  options: {
-    readonly table: ProcessTable;
-    readonly executable?: string;
-    readonly waitForExits?: (pids: ReadonlyArray<number>, deadline: AbortSignal) => Promise<void>;
-  },
+  options: IdleOptions,
 ): Promise<void> {
+  checkHome(home);
   const executable = options.executable ?? "droid";
   const waitForExits = options.waitForExits ?? exitsOf;
-  let zombies: ReadonlySet<number> = new Set();
-  for (;;) {
-    const scan = await scanHome(options.table, home, executable, zombies);
-    zombies = scan.zombies;
-    if (scan.users.length === 0 && !scan.changed) return;
-    if (deadline.aborted)
-      throw new Error(
-        `Droid processes still use the test's HOME after ${IDLE_DEADLINE_MS / 1000} s: ${
-          scan.users.join(", ") || "the process list kept changing"
-        }`,
-      );
+  const kill = options.kill ?? killProcess;
+  const grace = options.grace ?? (() => AbortSignal.timeout(KILL_GRACE_MS));
+  let cleanScans = 0;
+  while (!deadline.aborted) {
+    // A scan the deadline cuts short is redone below, with its own bound.
+    const scan = await scanHome(options.table, home, executable, deadline).catch(
+      (cause: unknown) => {
+        if (deadline.aborted) return undefined;
+        throw cause;
+      },
+    );
+    if (scan === undefined) break;
+    if (scan.users.length === 0 && !scan.uncertain) {
+      cleanScans += 1;
+      if (cleanScans === 2) return;
+      continue;
+    }
+    cleanScans = 0;
     if (scan.users.length === 0) continue;
     await waitForExits(scan.users, deadline).catch((cause: unknown) => {
-      // A deadline ends the wait; the next round reports what is still running.
       if (!deadline.aborted) throw cause;
     });
   }
+  const last = await scanHome(options.table, home, executable, grace());
+  if (last.users.length === 0 && !last.uncertain) return;
+  for (const pid of last.users) kill(pid);
+  if (last.users.length > 0) await waitForExits(last.users, grace()).catch(() => undefined);
+  throw new Error(
+    `Droid processes still used the test's HOME after ${IDLE_DEADLINE_MS / 1000} s and were killed: ${
+      last.users.join(", ") || "none found, but one couldn't be read"
+    }`,
+  );
 }
 
 /**
@@ -213,6 +229,7 @@ export const awaitDroidHomeIdleOnClose = Effect.fn("DroidLiveHome.awaitIdleOnClo
 ) {
   const platform = yield* HostProcess.Platform;
   if (platform === "win32") return;
+  checkHome(home);
   const table = processTable(platform);
   yield* Effect.addFinalizer(() =>
     Effect.promise(() => waitUntilHomeIdle(home, AbortSignal.timeout(IDLE_DEADLINE_MS), { table })),
