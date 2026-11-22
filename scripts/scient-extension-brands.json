@@ -2346,20 +2346,18 @@
     "names": ["monday", "monday-com", "monday-crm", "monday.com"],
     "website": "https://monday.com",
     "source": {
-      "kind": "app-store",
-      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/80/26/8b/80268ba8-c521-23e9-b23a-90f39a76aa53/AppIcon-Monday-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
-      "appId": 1290128888,
-      "sellerName": "monday.com Ltd.",
-      "appName": "monday.com - AI Work Platform",
-      "lookupUrl": "https://itunes.apple.com/lookup?id=1290128888",
-      "mode": "tile",
+      "kind": "chatgpt-app",
+      "url": "repo:scripts/brand-icon-sources/monday.png",
+      "appId": "connector_690aabb71bf481918b8d5b614ed3fd4c",
+      "brandSource": "monday.com's ChatGPT app logo (logoUrl in Codex's app directory cache), 256 px, centred on a white tile",
       "licenseNote": "App icons identify their services; trademarks remain with their owners.",
-      "rendering": "tile",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
-      "sourceFormat": "jpeg",
-      "outputBytes": 3326,
-      "glassEdge": true
+      "mode": "mark",
+      "background": "#ffffff",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 2732
     }
   },
   {
