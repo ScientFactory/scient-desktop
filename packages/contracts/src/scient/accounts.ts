@@ -1363,7 +1363,14 @@ export const AccountSignInSeenInput = Schema.Struct({
 export type AccountSignInSeenInput = typeof AccountSignInSeenInput.Type;
 
 /** Every browser sign-in, or one. */
-export const AccountsCheckInput = Schema.Struct({ accountId: Schema.optional(AccountId) });
+export const AccountsCheckInput = Schema.Struct({
+  accountId: Schema.optional(AccountId),
+  /**
+   * Opening a university's menu (with `accountId`): only reads the site, never signs in, and skips
+   * one looked at in the last two minutes. An older server ignores it and runs a full check.
+   */
+  glance: Schema.optional(Schema.Boolean),
+});
 export type AccountsCheckInput = typeof AccountsCheckInput.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });

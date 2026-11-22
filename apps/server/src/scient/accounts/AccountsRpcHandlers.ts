@@ -546,11 +546,14 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
           Effect.provideService(Path.Path, path),
         );
   return {
-    // A check can find sessions back, so papers waiting on the user go on.
+    // A check can find sessions back, so papers waiting on the user go on. A glance leaves them:
+    // a paper that goes on may sign in elsewhere, and a glance never signs in.
     check: (input: AccountsCheckInput) =>
       run((environmentId) =>
         checkAccounts(input, environmentId).pipe(
-          Effect.tap(() => continueWaitingPapers(environmentId)),
+          Effect.tap(({ checked }) =>
+            checked > 0 && !input.glance ? continueWaitingPapers(environmentId) : Effect.void,
+          ),
         ),
       ),
     paperForSource: (input: AccountPaperForSourceInput) =>

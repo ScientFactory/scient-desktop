@@ -189,13 +189,16 @@ export function UniversityPicker({
   );
 }
 
-/** Long enough that opening the card again soon doesn't ask again. */
-const RECHECK_AFTER_MS = 2 * 60 * 1000;
+/** The server skips a university it saw recently; an older server ignores the glance and checks. */
+const GLANCE_AGAIN_MS = 2 * 60 * 1000;
+/** When this window last asked about each university, so an older server is asked at most as often. */
+const glancedAt = new Map<AccountId, number>();
 
 /**
  * The university slot beside the Sources title. Connected: the crest, answering whether Scient
- * can get papers through it now (opening it asks again), with Sign in when one is needed. None
- * connected: a quiet Connect your university that opens the picker where it stands.
+ * can get papers through it now, with Sign in when one is needed. Opening it takes a glance, which
+ * shows what was last seen until the answer changes. None connected: a quiet Connect your
+ * university that opens the picker where it stands.
  */
 export function UniversityCrest({
   environmentId,
@@ -208,22 +211,18 @@ export function UniversityCrest({
   const startSignIn = useStableCallback(useSignIn(environmentId));
   const check = useAccountCommand(accountsState.check, environmentId);
   const navigate = useNavigate();
-  const [checking, setChecking] = useState<ReadonlySet<AccountId>>(new Set());
   const [signingIn, setSigningIn] = useState<ReadonlySet<AccountId>>(new Set());
   const universities = universitiesOf(data?.accounts ?? []);
   const askAgain = useStableCallback((open: boolean) => {
     if (!open || !canWrite) return;
-    for (const account of universities) {
-      const last = account.signIn ? Date.parse(account.signIn.at) : 0;
-      if (checking.has(account.accountId) || Date.now() - last < RECHECK_AFTER_MS) continue;
-      setChecking((current) => new Set(current).add(account.accountId));
-      void check({ accountId: account.accountId }).finally(() =>
-        setChecking((current) => {
-          const next = new Set(current);
-          next.delete(account.accountId);
-          return next;
-        }),
-      );
+    const now = Date.now();
+    for (const { accountId } of universities) {
+      if (now - (glancedAt.get(accountId) ?? 0) < GLANCE_AGAIN_MS) continue;
+      glancedAt.set(accountId, now);
+      // A request that failed, or was turned away by a running check, is asked again next open.
+      void check({ accountId, glance: true }).then((result) => {
+        if (!result.ok || result.value.alreadyRunning) glancedAt.delete(accountId);
+      });
     }
   });
   const [connecting, setConnecting] = useState(false);
@@ -303,9 +302,7 @@ export function UniversityCrest({
             ? gt("Signed in")
             : underWay
               ? gt("Signing in…")
-              : checking.has(account.accountId)
-                ? gt("Checking…")
-                : gt("Sign in needed");
+              : gt("Sign in needed");
           return (
             <div key={account.accountId}>
               <div className="px-2 py-1.5">
