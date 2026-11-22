@@ -1190,17 +1190,17 @@
     "names": ["dropbox"],
     "website": "https://www.dropbox.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/dropbox.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 128,
-      "sourceHeight": 128,
-      "sourceFormat": "svg",
-      "outputBytes": 5442
+      "kind": "chatgpt-app",
+      "url": "repo:scripts/brand-icon-sources/dropbox.png",
+      "appId": "asdk_app_69b31dc2110c8191b8b47dc98fe5a052",
+      "brandSource": "Dropbox's ChatGPT app logo (logoUrl in Codex's app directory cache), 256 px",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "tile",
+      "rendering": "tile",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 4422
     }
   },
   {
@@ -1368,20 +1368,18 @@
     "names": ["figma"],
     "website": "https://www.figma.com",
     "source": {
-      "kind": "app-store",
-      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/12/06/ed/1206ed39-909c-c0d9-e567-dee2a4d7a842/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
-      "appId": 1152747299,
-      "sellerName": "Figma, Inc.",
-      "appName": "Figma",
-      "lookupUrl": "https://itunes.apple.com/lookup?id=1152747299",
-      "mode": "tile",
+      "kind": "chatgpt-app",
+      "url": "repo:scripts/brand-icon-sources/figma.png",
+      "appId": "connector_68df038e0ba48191908c8434991bbac2",
+      "brandSource": "Figma's ChatGPT app logo (logoUrl in Codex's app directory cache), 256 px",
       "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "tile",
+      "background": "#ffffff",
       "rendering": "tile",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
-      "sourceFormat": "jpeg",
-      "outputBytes": 2920,
-      "glassEdge": true
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 2530
     }
   },
   {
@@ -2009,6 +2007,24 @@
     }
   },
   {
+    "key": "latex",
+    "names": ["LaTeX"],
+    "website": "https://www.latex-project.org",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/latex.png",
+      "brandSource": "The LaTeX logo from OpenAI's bundled LaTeX plugin (assets/latex.png), centred on a white tile",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "png",
+      "outputBytes": 2906
+    }
+  },
+  {
     "key": "leadfeeder",
     "names": ["leadfeeder"],
     "website": "https://www.leadfeeder.com",
@@ -2036,6 +2052,24 @@
       "sourceHeight": 256,
       "sourceFormat": "png",
       "outputBytes": 1324
+    }
+  },
+  {
+    "key": "life-science-research",
+    "names": ["Life Science Research"],
+    "website": "https://openai.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/life-science-research.png",
+      "brandSource": "The app icon of OpenAI's curated Life Science Research plugin (assets/app-icon.png), centred on a white tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "rendering": "mark",
+      "sourceWidth": 1024,
+      "sourceHeight": 1024,
+      "sourceFormat": "png",
+      "outputBytes": 1674
     }
   },
   {
@@ -2439,6 +2473,24 @@
       "sourceHeight": 296,
       "sourceFormat": "svg",
       "outputBytes": 2722
+    }
+  },
+  {
+    "key": "ngs-analysis",
+    "names": ["NGS Analysis", "Life Sciences NGS Analysis"],
+    "website": "https://openai.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/ngs-analysis.png",
+      "brandSource": "The app icon of OpenAI's curated Life Sciences NGS Analysis plugin (assets/app-icon.png), centred on a white tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "rendering": "mark",
+      "sourceWidth": 360,
+      "sourceHeight": 360,
+      "sourceFormat": "png",
+      "outputBytes": 5094
     }
   },
   {
