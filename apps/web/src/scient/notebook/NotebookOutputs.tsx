@@ -1,6 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
 import type { EnvironmentId, NotebookCellView, ScopedThreadRef } from "@t3tools/contracts";
-import type { Root, RootContent } from "mdast";
 import { useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
@@ -18,6 +17,7 @@ import {
   type ScientImageAction,
 } from "~/scient/images/ScientImageActionMenu";
 import { useStore } from "zustand";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import type { NotebookController } from "./notebookController";
 
 type NotebookOutput = Readonly<Record<string, unknown>>;
@@ -44,21 +44,7 @@ export interface NotebookPlace {
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
 
 /** Notebook Markdown never loads URLs or turns links into app actions. */
-function inertMarkdown() {
-  const clean = (nodes: RootContent[]): RootContent[] =>
-    nodes.flatMap((node): RootContent[] => {
-      if (node.type === "html" || node.type === "definition") return [];
-      if (node.type === "image" || node.type === "imageReference")
-        return [{ type: "text", value: node.alt ?? "" }];
-      if (node.type === "link" || node.type === "linkReference") return clean(node.children);
-      if ("children" in node) node.children = clean(node.children) as typeof node.children;
-      return [node];
-    });
-  return (tree: Root) => {
-    tree.children = clean(tree.children) as Root["children"];
-  };
-}
-export const NOTEBOOK_MARKDOWN_PLUGINS = [inertMarkdown];
+export const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
 
 /** A saved MIME bundle in the shape Compute's renderers read, so notebooks and Results match. */
 function richDisplays(data: Readonly<Record<string, unknown>>): ReadonlyArray<ComputeRichDisplay> {

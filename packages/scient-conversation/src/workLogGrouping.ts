@@ -52,7 +52,7 @@ export interface TurnFold {
 }
 
 // SCIENT-FORK:START — conversation documents share chat's line-break policy.
-export { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+export { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 // SCIENT-FORK:END
 
 function computeElapsedMs(startIso: string, endIso: string): number | null {

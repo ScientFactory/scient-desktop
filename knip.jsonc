@@ -260,6 +260,12 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/shared": {
+      "includeEntryExports": true,
+      // T3 exports these letter classes for its chat direction pass; Scient's rehypeScientBidi
+      // replaces that pass, so they stay exported as T3 ships them for upstream changes to merge.
+      "ignoreIssues": { "src/textDirection.ts": ["exports"] },
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],

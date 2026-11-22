@@ -1,6 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { Element as HastElement } from "hast";
 import { use, type Context, type JSX, type ReactNode } from "react";
-import type { ExtraProps } from "react-markdown";
 
 import { resolveProtocolRelativeMediaUrl } from "~/components/media/mediaContent";
 
@@ -110,7 +110,7 @@ export function scientWorkspaceImageCard(input: {
 export function ScientMarkdownSource({
   node: _node,
   ...props
-}: JSX.IntrinsicElements["source"] & ExtraProps) {
+}: JSX.IntrinsicElements["source"] & { node?: HastElement | undefined }) {
   const remote =
     hasRemoteSrcSet(props.srcSet) ||
     (typeof props.src === "string" && remoteImageAddress(props.src) !== null);

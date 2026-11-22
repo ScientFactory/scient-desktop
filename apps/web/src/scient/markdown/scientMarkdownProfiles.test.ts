@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Audit the actual ChatMarkdown pipeline mount.
+// @effect-diagnostics nodeBuiltinImport:off -- Audit the actual chat math grammar mount.
 import * as NodeFS from "node:fs";
 import remarkBreaks from "remark-breaks";
 import { describe, expect, it } from "vite-plus/test";
@@ -7,25 +7,28 @@ import {
   SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS,
   scientMarkdownRemarkPlugins,
 } from "./scientMarkdownProfiles";
+import type { Element, Root } from "hast";
+import { wordsHast } from "~/markdown/wordsHast";
 import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS as SHARED_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_SANITIZE_SCHEMA,
-} from "@t3tools/shared/markdownPipeline";
-import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
 } from "./scientMarkdownPipeline";
 
-const chatMarkdown = NodeFS.readFileSync(
-  new URL("../../components/ChatMarkdown.tsx", import.meta.url),
+const chatMathGrammar = NodeFS.readFileSync(
+  new URL("../math/scientMathRanges.ts", import.meta.url),
   "utf8",
 );
 
+function images(tree: Root | Element): Element[] {
+  return tree.children.flatMap((child) =>
+    child.type !== "element" ? [] : child.tagName === "img" ? [child] : images(child),
+  );
+}
+
 describe("Scient Markdown profiles", () => {
   it("shares the actual chat grammar and order through its canonical pipeline owner", () => {
-    // The import boundary: chat takes its plugins from the canonical pipeline owner.
-    expect(chatMarkdown).toContain('} from "../scient/markdown/scientMarkdownPipeline";');
+    // The import boundary: chat's math grammar takes its plugins from the canonical pipeline owner.
+    expect(chatMathGrammar).toContain('} from "../markdown/scientMarkdownPipeline";');
     for (const plugins of [
       CHAT_MARKDOWN_REMARK_PLUGINS,
       CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -41,20 +44,22 @@ describe("Scient Markdown profiles", () => {
     }
   });
 
-  it("replaces the shared sanitizer in place and keeps every other shared rehype step", () => {
-    const isSharedSanitizer = (plugin: unknown) =>
-      Array.isArray(plugin) && plugin[1] === CHAT_MARKDOWN_SANITIZE_SCHEMA;
-    expect(SHARED_REHYPE_PLUGINS.filter(isSharedSanitizer)).toHaveLength(1);
-    expect(CHAT_MARKDOWN_REHYPE_PLUGINS.some(isSharedSanitizer)).toBe(false);
-    // The shared sanitizer becomes Scient's image-card pass plus Scient's sanitizer.
-    expect(CHAT_MARKDOWN_REHYPE_PLUGINS).toHaveLength(SHARED_REHYPE_PLUGINS.length + 1);
-    const sharedIndex = SHARED_REHYPE_PLUGINS.findIndex(isSharedSanitizer);
-    expect(CHAT_MARKDOWN_REHYPE_PLUGINS.slice(0, sharedIndex)).toEqual(
-      SHARED_REHYPE_PLUGINS.slice(0, sharedIndex),
-    );
-    expect(CHAT_MARKDOWN_REHYPE_PLUGINS.slice(sharedIndex + 2)).toEqual(
-      SHARED_REHYPE_PLUGINS.slice(sharedIndex + 1),
-    );
+  it("marks standalone figures for image cards after chat's own sanitizer", () => {
+    const cards = (markdown: string) =>
+      images(
+        wordsHast(markdown, {
+          math: false,
+          breaks: false,
+          escapeHtml: false,
+          insights: false,
+          extensions: {},
+          scient: { math: true, contentDirection: "ltr" },
+        }),
+      ).map((image) => image.properties.dataScientImageCard);
+    expect(cards("![Figure](figure.png)")).toEqual([true]);
+    expect(cards("See ![Figure](figure.png) inline")).toEqual([false]);
+    expect(cards('<img src="figure.png" width="20">')).toEqual([false]);
+    expect(cards("| a |\n| - |\n| ![Figure](figure.png) |")).toEqual([false]);
   });
 
   it("keeps single line breaks only in the chat profile, as chat does", () => {

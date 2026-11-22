@@ -1476,8 +1476,16 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   turnTokenUsage: Schema.optional(TurnTokenUsage),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
+  /** True when the provider dropped this turn's request before persisting it to native history. */
+  promptDropped: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
+
+export function isDeliveredProviderTurn(
+  turn: Pick<OrchestrationV2ProviderTurn, "promptDropped">,
+): boolean {
+  return turn.promptDropped !== true;
+}
 
 export const OrchestrationV2FrozenForkSource = Schema.Struct({
   sourceThreadId: ThreadId,
@@ -1490,6 +1498,7 @@ export const OrchestrationV2FrozenForkSource = Schema.Struct({
   claudeBoundaryEvidence: Schema.optional(Schema.Array(OrchestrationV2ClaudeForkBoundaryEvidence)),
 });
 export type OrchestrationV2FrozenForkSource = typeof OrchestrationV2FrozenForkSource.Type;
+
 /** Codex goals can span multiple native turns within one attempt. */
 export function latestProviderTurnForAttempt<
   Turn extends Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "ordinal">,

@@ -219,11 +219,8 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       readSnapshot: () => ({ value: context.prompt, cursor: 0, expandedCursor: 0, contextIds: [] }),
       resetCursorState: vi.fn(),
       addTerminalContext: noop,
-      getSendContext: () => ({
-        ...context,
-        pendingAttachments:
-          context.pendingAttachments || countPreparingComposerImages(composerTargetKey(target)) > 0,
-      }),
+      // Like the composer, a compressing image does not block: the send waits for it.
+      getSendContext: () => context,
       validateProviderInput: () => true,
       setMultipleModelSelections: noop,
     };
@@ -715,10 +712,13 @@ describe("mounted composer send admission owner", () => {
     });
     const targetKey = composerTargetKey(fixture.input.composerDraftTarget);
     expect(countPreparingComposerImages(targetKey)).toBe(1);
-    await fixture.send();
+    // The send waits for the image; removing its tile cancels the held send.
+    const sending = fixture.send();
     expect(fixture.command).not.toHaveBeenCalled();
     const imageId = fixture.preparingImages[0]!.id;
     await act(() => fixture.removeImage(imageId));
+    await sending;
+    expect(fixture.command).not.toHaveBeenCalled();
     converted.reject(new Error("decode failed"));
     await adding;
     expect(countPreparingComposerImages(targetKey)).toBe(0);
@@ -730,6 +730,37 @@ describe("mounted composer send admission owner", () => {
       expect.stringContaining("could not be read"),
     );
   });
+  it.each(["stays", "leaves"] as const)(
+    "a send made while an image compresses waits and sends it when the user %s",
+    async (route) => {
+      await using fixture = await setup();
+      const converted =
+        Promise.withResolvers<
+          Awaited<ReturnType<typeof imageCompression.prepareImageForAttachment>>
+        >();
+      vi.mocked(imageCompression.prepareImageForAttachment).mockImplementationOnce(
+        () => converted.promise,
+      );
+      const image = new File(["image"], "shot.png", { type: "image/png" });
+      let adding!: Promise<boolean>;
+      await act(() => {
+        adding = fixture.intake([image]);
+      });
+      const targetKey = composerTargetKey(fixture.input.composerDraftTarget);
+      expect(countPreparingComposerImages(targetKey)).toBe(1);
+      const sending = fixture.send();
+      // The send holds until the compressed image joins the draft.
+      await act(async () => {});
+      expect(fixture.command).not.toHaveBeenCalled();
+      if (route === "leaves") fixture.route.current = "another-route";
+      converted.resolve({ ok: true, file: image, recompressed: false });
+      await adding;
+      await sending;
+      expect(fixture.command).toHaveBeenCalledTimes(1);
+      expect(fixture.command.mock.calls[0]?.[0].input.message.attachments).toHaveLength(1);
+    },
+  );
+
   it("carries captured settings and skills through fanout without releasing its parent's lock", async () => {
     await using fixture = await setup();
     using _toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-fanout-toast");

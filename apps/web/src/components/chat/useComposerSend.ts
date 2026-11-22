@@ -19,7 +19,6 @@ import {
   acknowledgeQueueSubmission,
   composerSubmissionMatchesDraft,
 } from "../../scient/threadQueue/submission";
-import { composerTargetKey } from "../../composerDraftStore";
 import { CommandId } from "@t3tools/contracts";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { isStandaloneForkSlashCommand } from "../../composer-logic";
@@ -107,6 +106,7 @@ import {
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -147,6 +147,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
@@ -533,7 +534,9 @@ export function useComposerSend(input: ComposerSendInput) {
     detachedOverride?: DetachedSendOverride,
   ) => {
     e?.preventDefault();
-    const promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
+    // What the user pressed send on; uploads below can take a while, and a redirect must not
+    // decline approvals for a draft that changed meanwhile.
+    let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
     // The composer and its prompt belong to whichever thread is on screen.
     const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
     const pendingApprovalIdsAtSend = pendingApprovalsRef.current.map(
@@ -551,6 +554,7 @@ export function useComposerSend(input: ComposerSendInput) {
       !directAnnotation &&
       directPrompt === null &&
       !draftHasNonPromptContent(composerDraftTarget) &&
+      countPreparingComposerImages(composerTargetKey(composerDraftTarget)) === 0 &&
       isUsageLimitsCommand(promptAtSend)
     ) {
       if (openUsageLimits()) {
@@ -565,7 +569,8 @@ export function useComposerSend(input: ComposerSendInput) {
 
     // Capture before queue recovery yields: submitting releases the typing hold,
     // but a revealed question must not replace this draft's attachment snapshot.
-    const sendCtx = detachedOverride
+    // Read before any wait; the composer on screen may belong to another thread after it.
+    let sendCtx = detachedOverride
       ? detachedOverride.sendContext
       : composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
@@ -635,6 +640,34 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
       );
       return;
+    }
+    // SCIENT-FORK:START — a direct prompt sends only its own text, so it never waits for the
+    // draft's images; a send that waited may finish after its thread left the screen.
+    const heldForImages =
+      directAnnotation || directPrompt !== null ? null : holdComposerSend(composerDraftTarget);
+    let releasedFromImageHold = false;
+    // SCIENT-FORK:END
+    if (heldForImages) {
+      if ((await heldForImages).status === "cancelled") return;
+      // SCIENT-FORK: the held send was pressed on its thread; leaving afterwards does not cancel it.
+      releasedFromImageHold = true;
+      const draftAfterHold = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (!draftAfterHold) return;
+      // A dictation sent after leaving the thread carries its transcript outside the draft.
+      promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
+      if (sendCtx) {
+        sendCtx = {
+          ...sendCtx,
+          prompt: promptAtSend,
+          images: draftAfterHold.images,
+          files: draftAfterHold.files,
+          terminalContexts: draftAfterHold.terminalContexts,
+          previewAnnotations: draftAfterHold.previewAnnotations,
+          reviewComments: draftAfterHold.reviewComments,
+          threadContexts: draftAfterHold.threadContexts,
+          environmentContexts: draftAfterHold.environmentContexts,
+        };
+      }
     }
     const startDraftAttachmentUploads = (
       attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
@@ -831,8 +864,9 @@ export function useComposerSend(input: ComposerSendInput) {
     let draftClearedForSend = false;
     const isCurrentDraft = () =>
       draftClearedForSend ||
-      // A detached dictation send left its thread on purpose; only its draft must be unchanged.
-      ((detachedOverride !== undefined || isCurrentRouteThread()) &&
+      // A detached dictation send left its thread on purpose, and a send held for its images may
+      // finish after the thread left the screen; only their draft must be unchanged.
+      ((detachedOverride !== undefined || releasedFromImageHold || isCurrentRouteThread()) &&
         (directPrompt !== null ||
           composerSubmissionMatchesDraft(
             draftSnapshotForSend,
@@ -1448,6 +1482,7 @@ export function useComposerSend(input: ComposerSendInput) {
               : "foreground";
           // SCIENT-FORK:END
           if (
+            isCurrentRouteThread() &&
             shouldDockDraftHeroForSubmission({
               isDraftHeroState,
               activeThreadKey,
@@ -1525,7 +1560,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
           if (sendQueuesBehindSetup) {
             setSetupQueueSendThreadKey(activeThreadKey);
-          } else {
+          } else if (isCurrentRouteThread()) {
             beginLocalDispatch({
               preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
               submissionIntent: resolvedSubmissionIntent,
@@ -2077,7 +2112,7 @@ export function useComposerSend(input: ComposerSendInput) {
             setDockedDraftHeroThreadKey((currentThreadKey) =>
               currentThreadKey === activeThreadKey ? null : currentThreadKey,
             );
-            if (!sendQueuesBehindSetup) resetLocalDispatch();
+            if (!sendQueuesBehindSetup && isCurrentRouteThread()) resetLocalDispatch();
           }
           if (turnStartSucceeded && submissionId && !sendQueuesBehindSetup) resetLocalDispatch();
         });

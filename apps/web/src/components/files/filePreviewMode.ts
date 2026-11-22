@@ -5,7 +5,7 @@ import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLang
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { isHostPath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";

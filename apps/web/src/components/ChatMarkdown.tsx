@@ -18,7 +18,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
+import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskEdits";
 import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
@@ -26,19 +26,7 @@ import {
   AuthOrchestrationOperateScope,
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
-// SCIENT-FORK:START — scientific refinements extend the shared markdown pipeline.
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
-} from "../scient/markdown/scientMarkdownPipeline";
-// SCIENT-FORK:END
-import {
-  chatMarkdownImageSource,
-  decodeMarkdownLinkEscapes,
-  remarkAssistantInsights,
-} from "@t3tools/shared/markdownPipeline";
+import { chatMarkdownImageSource } from "@t3tools/shared/markdownHast";
 import { useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -106,14 +94,6 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  Components,
-  ExtraProps as ReactMarkdownExtraProps,
-  Options as ReactMarkdownOptions,
-} from "react-markdown";
-import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
-import type { PluggableList } from "unified";
-import { defaultUrlTransform } from "react-markdown";
 // SCIENT-FORK:START — quotes from Markdown files render as citation chips too.
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 // SCIENT-FORK:END
@@ -128,10 +108,11 @@ import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 // chat/useStreamingBlockEntrance.ts).
 import { useStreamingBlockEntrance } from "./chat/useStreamingBlockEntrance";
 // SCIENT-FORK:END
+import { artifactTemplateFromHastProperties } from "@t3tools/shared/codexArtifactTemplates";
 import {
-  artifactTemplateFromHastProperties,
+  decodeMarkdownLinkEscapes,
   renderCodexInlineDirectivesAsMarkdown,
-} from "@t3tools/shared/codexMarkdownDirectives";
+} from "../markdown/markdownText";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
@@ -149,7 +130,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipProvider, SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
@@ -236,7 +217,6 @@ import {
 import { type ContentDirection, type FixedContentDirection } from "../scient/bidi/contentDirection";
 import { chatCodeBoxDirection } from "../scient/bidi/chatCodeBoxDirection";
 import { useChatContentDirection } from "../scient/bidi/useChatContentDirection";
-import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import {
   preloadScientRichFenceRuntime,
@@ -254,12 +234,8 @@ import {
   resolveInlineWorkspaceImage,
 } from "../scient/images/inlineWorkspaceImage";
 import { isScientMathCodeClassName } from "../scient/math/remarkScientMath";
-import {
-  authoredMathNodeSource,
-  ScientAuthoredMathTextContext,
-  scientMathMarkdownText,
-  scientMathRemarkPluginsForMessage,
-} from "../scient/math/scientMathText";
+import { scientMathNodeSource } from "../scient/math/scientWordsMath";
+import { scientWordsOptionsKey } from "../scient/markdown/scientWordsHast";
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { ScientMathFindSurface } from "../scient/math/ScientMathFindSurface";
 import {
@@ -274,6 +250,15 @@ import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { IssueLinkPreview, IssueLinkPreviewFallback } from "./issue/IssueLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import type { MarkdownExtensions, WordsHastOptions } from "../markdown/wordsHast";
+import {
+  type MarkdownIslandOptions,
+  renderHastWithIslands,
+  withProperties,
+} from "./chat/markdownIslands";
+import type { Element as HastElement } from "hast";
+import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
+import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
@@ -289,8 +274,7 @@ import {
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
-import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
-import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
+import { handleMarkdownFragmentClick } from "./chat/markdownFragments";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
   extractCodeBlock,
@@ -342,8 +326,8 @@ interface ChatMarkdownProps {
   // SCIENT-FORK:END
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
-  /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
-  extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  /** Keep one object per configuration (a module constant): it keys the shared parse cache. */
+  extensions?: MarkdownExtensions | undefined;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
@@ -369,7 +353,7 @@ export interface ChatMarkdownContextReference {
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const NO_EXTENSIONS: MarkdownExtensions = {};
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -513,41 +497,29 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
     : rewrittenHref;
 }
 
-// Heading ids are added after sanitizing, which would prefix them a second time.
-const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_REHYPE_PLUGINS,
-  rehypeHeadingIds,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+/** A component per element, with the hast node it renders, as react-markdown typed them. */
+type MarkdownComponents = {
+  [Tag in keyof React.JSX.IntrinsicElements]?: React.ComponentType<
+    React.JSX.IntrinsicElements[Tag] & { node?: HastElement | undefined }
+  >;
+};
 
-// SCIENT-FORK:START — retain safe scientific images without opting into raw HTML.
-const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
-  rehypeHeadingIds,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
-// SCIENT-FORK:END
-
-// SCIENT-FORK:START — one stable list per direction keeps the shared renderer and its cache.
-const directionalRehypeLists = new Map<string, PluggableList>();
-function directionalRehypePlugins(
-  parseRawHtml: boolean,
-  options: Parameters<typeof rehypeScientBidi>[0],
-): PluggableList {
-  const key = `${parseRawHtml}\0${options.direction}\0${options.requestedDirection}`;
-  let plugins = directionalRehypeLists.get(key);
-  if (!plugins) {
-    plugins = [
-      ...(parseRawHtml
-        ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-        : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
-      [rehypeScientBidi, options],
-    ];
-    directionalRehypeLists.set(key, plugins);
-  }
-  return plugins;
+// react-markdown's defaultUrlTransform: relative URLs, and absolute ones with a safe protocol.
+const SAFE_PROTOCOL = /^(?:https?|ircs?|mailto|xmpp)$/i;
+function safeUrl(value: string): string {
+  const colon = value.indexOf(":");
+  const before = (character: string) => {
+    const at = value.indexOf(character);
+    return at !== -1 && colon > at;
+  };
+  return colon === -1 ||
+    before("/") ||
+    before("?") ||
+    before("#") ||
+    SAFE_PROTOCOL.test(value.slice(0, colon))
+    ? value
+    : "";
 }
-// SCIENT-FORK:END
 
 function markdownUrlTransform(href: string) {
   // SCIENT-FORK:START — quotes from Markdown files are citations too.
@@ -557,7 +529,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
-  return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
+  return rewriteMarkdownFileUriHref(href) ?? safeUrl(href);
 }
 
 const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
@@ -600,14 +572,19 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
-function fileLinkSourcesKey(
+interface BlockFileLinkSources {
+  readonly hrefs: ReadonlyArray<string>;
+  readonly spans: ReadonlyArray<string>;
+}
+
+function blockFileLinkSources(
   text: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
   // SCIENT-FORK:START — links resolve against the editable workspace root.
   workspaceRoot: string | null | undefined,
   // SCIENT-FORK:END
-): string {
+): BlockFileLinkSources {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
     .map(decodeMarkdownLinkEscapes)
@@ -616,7 +593,51 @@ function fileLinkSourcesKey(
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd, workspaceRoot),
   );
-  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  return { hrefs, spans };
+}
+
+// Links and code spans never cross blocks: a streamed reply rescans only its open last block.
+const MAX_CACHED_BLOCK_CHARS = 2_000_000;
+const finishedBlockFileLinkSources = new Map<string, BlockFileLinkSources>();
+let cachedBlockChars = 0;
+
+function fileLinkSourcesKey(
+  text: string,
+  cwd: string | undefined,
+  imageBaseDir: string | undefined,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
+  workspaceRoot: string | null | undefined,
+  // SCIENT-FORK:END
+  streamingBlocks: ReadonlyArray<string> | null,
+): string {
+  if (!streamingBlocks) {
+    const { hrefs, spans } = blockFileLinkSources(text, cwd, imageBaseDir, workspaceRoot);
+    return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  }
+  // SCIENT-FORK: the workspace root is part of what a block's links resolve against.
+  const config = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}\u0000${String(workspaceRoot)}\u0000`;
+  const hrefs = new Set<string>();
+  const spans = new Set<string>();
+  const last = streamingBlocks.length - 1;
+  for (const [index, block] of streamingBlocks.entries()) {
+    // The last block still grows; caching each of its prefixes would only fill the cache.
+    const key = config + block;
+    let sources = index === last ? undefined : finishedBlockFileLinkSources.get(key);
+    if (!sources) {
+      sources = blockFileLinkSources(block, cwd, imageBaseDir, workspaceRoot);
+      if (index !== last) {
+        if (cachedBlockChars + key.length > MAX_CACHED_BLOCK_CHARS) {
+          finishedBlockFileLinkSources.clear();
+          cachedBlockChars = 0;
+        }
+        finishedBlockFileLinkSources.set(key, sources);
+        cachedBlockChars += key.length;
+      }
+    }
+    for (const href of sources.hrefs) hrefs.add(href);
+    for (const span of sources.spans) spans.add(span);
+  }
+  return JSON.stringify([[...hrefs], [...spans]]);
 }
 
 function resolveFileLinkSources(
@@ -649,49 +670,47 @@ function resolveFileLinkSources(
   return { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath };
 }
 
-function useChatMarkdownState({
-  // SCIENT-FORK:START — math normalization keeps the authored text for Find.
-  text: textProp,
-  // SCIENT-FORK:END
-  inline = false,
-  cwd,
-  // SCIENT-FORK:START — file links resolve against the editable workspace root.
-  fileLinkWorkspaceRoot,
-  // SCIENT-FORK:END
-  agentDirectories,
-  threadRef,
-  pullRequestPanelRef,
-  environmentId: explicitEnvironmentId,
-  onTaskListChange,
-  isStreaming = false,
-  skills = EMPTY_MARKDOWN_SKILLS,
-  // SCIENT-FORK:START — content direction; `messageId` also scopes the streaming reveal.
-  contentDirection,
-  messageId,
-  directionHint,
-  // SCIENT-FORK:END
-  onUseArtifactTemplate,
-  onRunShellCommand,
-  imageBaseDir,
-  // SCIENT-FORK:START — file previews caption standalone images.
-  imageCaptions = false,
-  // SCIENT-FORK:END
-  workspaceMutationId,
-  onImageExpand,
-  renderContextReference,
-  headingLevelOffset = 0,
-  sourceControlMedia = false,
-  // SCIENT-FORK:START — a broken file link may resolve to the one changed file it names.
-  changedFiles,
-  // SCIENT-FORK:END
-  sourceControlMediaRepository,
-}: ChatMarkdownProps) {
+function useChatMarkdownState(
+  {
+    text,
+    inline = false,
+    cwd,
+    // SCIENT-FORK:START — file links resolve against the editable workspace root.
+    fileLinkWorkspaceRoot,
+    // SCIENT-FORK:END
+    agentDirectories,
+    threadRef,
+    pullRequestPanelRef,
+    environmentId: explicitEnvironmentId,
+    onTaskListChange,
+    isStreaming = false,
+    skills = EMPTY_MARKDOWN_SKILLS,
+    // SCIENT-FORK:START — content direction; `messageId` also scopes the streaming reveal.
+    contentDirection,
+    messageId,
+    directionHint,
+    // SCIENT-FORK:END
+    onUseArtifactTemplate,
+    onRunShellCommand,
+    imageBaseDir,
+    // SCIENT-FORK:START — file previews caption standalone images.
+    imageCaptions = false,
+    // SCIENT-FORK:END
+    workspaceMutationId,
+    onImageExpand,
+    renderContextReference,
+    headingLevelOffset = 0,
+    sourceControlMedia = false,
+    // SCIENT-FORK:START — a broken file link may resolve to the one changed file it names.
+    changedFiles,
+    // SCIENT-FORK:END
+    sourceControlMediaRepository,
+  }: ChatMarkdownProps,
+  streamingBlocks: ReadonlyArray<string> | null,
+) {
   const gt = useGT();
   const messages = useMessages();
-  // SCIENT-FORK:START — length-preserving delimiter normalization keeps offset-based actions correct.
-  // Retain original text so refinement can recover each backslash pair's inline/display intent.
-  const text = scientMathMarkdownText(textProp);
-  // The message direction is held while an auto message streams.
+  // SCIENT-FORK:START — the message direction is held while an auto message streams.
   const { effectiveContentDirection, resolvedContentDirection } = useChatContentDirection({
     text,
     contentDirection,
@@ -906,7 +925,7 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, fileLinkWorkspaceRoot)}`;
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, fileLinkWorkspaceRoot, isStreaming ? (streamingBlocks ?? splitMarkdownBlocks(text) ?? [text]) : null)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir, fileLinkWorkspaceRoot);
   const resolveThreadPullRequest = (
@@ -1264,8 +1283,7 @@ function useChatMarkdownState({
   }))();
   return {
     componentState,
-    // SCIENT-FORK:START — math-normalized text and the message direction.
-    markdownText: text,
+    // SCIENT-FORK:START — the message direction.
     resolvedContentDirection,
     effectiveContentDirection,
     // SCIENT-FORK:END
@@ -1297,7 +1315,7 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   return function MarkdownHeading({
     node: _node,
     ...props
-  }: ComponentProps<typeof Tag> & ReactMarkdownExtraProps) {
+  }: ComponentProps<typeof Tag> & { node?: HastElement | undefined }) {
     const { headingLevelOffset } = use(ChatMarkdownRendererContext);
     return (
       <Tag
@@ -1733,12 +1751,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       if (issuePreviewTarget !== null) {
         return <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />;
       }
-      return (
-        <Tooltip>
-          <TooltipTrigger render={link} />
-          <TooltipPopup side="top">{href}</TooltipPopup>
-        </Tooltip>
-      );
+      return <SharedTooltipTrigger render={link} label={href} />;
     }
 
     const label = nodeToPlainText(children);
@@ -1773,11 +1786,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     // SCIENT-FORK:END
     // SCIENT-FORK:START — retain scientific inline math while Find reveals authored source.
     if (isScientMathCodeClassName(className)) {
-      // Read only by math, so other inline code does not re-render on streamed tokens.
-      const authoredMathText = use(ScientAuthoredMathTextContext);
       const tex = nodeToPlainText(children);
       return (
-        <ScientMathFindSurface sourceText={authoredMathNodeSource(node, authoredMathText, tex)}>
+        <ScientMathFindSurface sourceText={scientMathNodeSource(node, tex)}>
           <ScientInlineMath tex={tex} isStreaming={isStreaming} focusable={!inline} />
         </ScientMathFindSurface>
       );
@@ -2112,11 +2123,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     // SCIENT-FORK:START — retain scientific display math while Find reveals authored source.
     if (isScientMathCodeClassName(codeBlock.className)) {
-      const authoredMathText = use(ScientAuthoredMathTextContext);
       return (
-        <ScientMathFindSurface
-          sourceText={authoredMathNodeSource(node, authoredMathText, codeBlock.code)}
-        >
+        <ScientMathFindSurface sourceText={scientMathNodeSource(node, codeBlock.code)}>
           <ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} focusable={!inline} />
         </ScientMathFindSurface>
       );
@@ -2200,83 +2208,192 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </MarkdownCodeBlock>
     );
   },
-} satisfies Components;
+} satisfies MarkdownComponents;
 
-const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
+const markdownOptions = new WeakMap<MarkdownExtensions, Map<string, WordsHastOptions>>();
 
-// One combined list per pair, so a stable extra list shares a renderer and its parse cache.
-const INSIGHT_REMARK_PLUGINS: PluggableList = [remarkAssistantInsights];
-
-function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
-  if (extra.length === 0) return shared;
-  let byShared = combinedPlugins.get(extra);
-  if (!byShared) combinedPlugins.set(extra, (byShared = new WeakMap()));
-  let combined = byShared.get(shared);
-  if (!combined) byShared.set(shared, (combined = [...shared, ...extra]));
-  return combined;
+/** One options object per configuration, so equal messages share a renderer and its cache. */
+function wordsOptions(
+  extensions: MarkdownExtensions,
+  flags: Omit<WordsHastOptions, "extensions">,
+): WordsHastOptions {
+  let byFlags = markdownOptions.get(extensions);
+  if (!byFlags) markdownOptions.set(extensions, (byFlags = new Map()));
+  const key = `${+flags.math}${+flags.breaks}${+flags.escapeHtml}${+flags.insights}`
+    // SCIENT-FORK:START — Scient's math and the message direction are part of the rendered tree.
+    .concat(scientWordsOptionsKey(flags.scient));
+  // SCIENT-FORK:END
+  let options = byFlags.get(key);
+  if (!options) byFlags.set(key, (options = { ...flags, extensions }));
+  return options;
 }
 
 const markdownRenderers = new WeakMap<
-  PluggableList,
-  WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
+  WordsHastOptions,
+  ReturnType<typeof createMarkdownRenderer>
 >();
 
-function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: PluggableList) {
-  let byRehype = markdownRenderers.get(remarkPlugins);
-  if (!byRehype) markdownRenderers.set(remarkPlugins, (byRehype = new WeakMap()));
-  let renderer = byRehype.get(rehypePlugins);
+function markdownRenderer(markdown: WordsHastOptions) {
+  let renderer = markdownRenderers.get(markdown);
   if (!renderer) {
     renderer = createMarkdownRenderer({
-      remarkPlugins,
-      rehypePlugins,
+      markdown,
       components: CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
-    byRehype.set(rehypePlugins, renderer);
+    markdownRenderers.set(markdown, renderer);
   }
   return renderer;
 }
 
+type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
+
+function hastClassName(node: HastElement): string | undefined {
+  const { className } = node.properties;
+  return Array.isArray(className) ? className.join(" ") : (className as string | undefined);
+}
+
+// Paragraphs and list items turn skill and model mentions in their text into chips, except in
+// code and links, as SkillInlineText does.
+function hastTextHasChip(node: HastElement, skills: ReadonlyArray<ServerProviderSkill>): boolean {
+  return node.children.some((child) =>
+    child.type === "text"
+      ? (skills.length > 0 && !matchInlineSkills(child.value, skills).next().done) ||
+        collectComposerModelMentions(child.value).length > 0
+      : child.type === "element" &&
+        child.tagName !== "code" &&
+        child.tagName !== "a" &&
+        hastTextHasChip(child, skills),
+  );
+}
+
+const HEADING_LEVELS: Record<string, number> = { h1: 1, h2: 2, h3: 3, h4: 4, h5: 5, h6: 6 };
+
+const markdownIslandOptionsByState = new WeakMap<
+  ChatMarkdownComponentState,
+  MarkdownIslandOptions
+>();
+
+/** Which elements need CHAT_MARKDOWN_COMPONENTS, and what the others' components add. */
+function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslandOptions {
+  const cached = markdownIslandOptionsByState.get(state);
+  if (cached) return cached;
+  const {
+    cwd,
+    headingLevelOffset,
+    imageBaseDir,
+    inlineCodeFileLinkMetaByText,
+    onTaskListChange,
+    skills,
+    // SCIENT-FORK:START — file links resolve against the editable workspace root.
+    fileLinkWorkspaceRoot,
+    // SCIENT-FORK:END
+  } = state;
+  const options: MarkdownIslandOptions = {
+    components: CHAT_MARKDOWN_COMPONENTS,
+    variant: String(headingLevelOffset),
+    isIsland: (node) => {
+      switch (node.tagName) {
+        case "a":
+        case "img":
+        case "pre":
+        case "details":
+        case "table":
+          return true;
+        case "blockquote":
+          return GITHUB_ALERT_PRESENTATIONS[String(node.properties.dataAlert ?? "")] !== undefined;
+        case "div":
+          return artifactTemplateFromHastProperties(node.properties) !== null;
+        case "input":
+          return node.properties.type === "checkbox" && onTaskListChange !== undefined;
+        case "code": {
+          // SCIENT-FORK:START — Scient's math typesets in its component.
+          if (isScientMathCodeClassName(hastClassName(node))) return true;
+          // SCIENT-FORK:END
+          if (node.properties.dataInlineCode == null) return false;
+          const codeText = hastPlainTextDeep(node);
+          return (
+            (inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+              // SCIENT-FORK:START — file links resolve against the editable workspace root, and an
+              // exact CSS colour shows its swatch.
+              resolveInlineCodeFileLinkMeta(
+                codeText,
+                cwd,
+                imageBaseDir ?? cwd,
+                fileLinkWorkspaceRoot,
+              )) != null || resolveInlineCssColor(codeText) !== null
+            // SCIENT-FORK:END
+          );
+        }
+        // SCIENT-FORK:START — a <picture> source never fetches a web address (ScientMarkdownSource).
+        case "source":
+          return true;
+        // SCIENT-FORK:END
+        case "p":
+        case "li":
+          return hastTextHasChip(node, skills);
+        default:
+          return false;
+      }
+    },
+    staticElement: (node) => {
+      const level = HEADING_LEVELS[node.tagName];
+      if (level !== undefined) {
+        return headingLevelOffset > 0
+          ? withProperties(node, { ariaLevel: Math.min(level + headingLevelOffset, 6) })
+          : node;
+      }
+      switch (node.tagName) {
+        case "ol": {
+          const itemValues = node.children.flatMap((child) =>
+            child.type === "element" && child.tagName === "li" ? [child.properties.value] : [],
+          );
+          const gutter = orderedListGutterStyle(itemValues, node.properties.start);
+          if (!gutter) return node;
+          const authored = typeof node.properties.style === "string" ? node.properties.style : "";
+          return withProperties(node, {
+            style: `${authored}${authored ? ";" : ""}--list-gutter:${gutter["--list-gutter"]}`,
+          });
+        }
+        case "li":
+          return hastClassName(node)?.includes("task-list-item")
+            ? withProperties(node, { dataListItemOffset: node.position?.start.offset })
+            : node;
+        case "input":
+          return node.properties.type === "checkbox"
+            ? withProperties(node, { readOnly: true })
+            : node;
+        default:
+          return node;
+      }
+    },
+  };
+  markdownIslandOptionsByState.set(state, options);
+  return options;
+}
+
 const MarkdownSource = memo(function MarkdownSource({
   text,
-  // SCIENT-FORK:START — math nodes read the source as authored.
-  authoredText,
-  // SCIENT-FORK:END
-  remarkPlugins,
-  rehypePlugins,
-  shared,
+  markdown,
   cache,
 }: {
   text: string;
-  // SCIENT-FORK:START
-  authoredText: string;
-  // SCIENT-FORK:END
-  remarkPlugins: PluggableList;
-  rehypePlugins: PluggableList;
-  /** The plugins are one of the shared sets. */
-  shared: boolean;
+  markdown: WordsHastOptions;
   /** The text will not change again; streamed text would only fill the cache with prefixes. */
   cache: boolean;
 }) {
-  // Per-instance plugins, such as the incremental parser, set up their state on every render.
-  const render = shared
-    ? markdownRenderer(remarkPlugins, rehypePlugins)
-    : createMarkdownRenderer({
-        remarkPlugins,
-        rehypePlugins,
-        components: CHAT_MARKDOWN_COMPONENTS,
-        urlTransform: markdownUrlTransform,
-      });
-  const element = render(text);
+  const render = markdownRenderer(markdown);
+  const entry = render.parse(text);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
   useEffect(() => {
-    if (shared && cache) render.remember(text, element);
-  }, [render, text, element, shared, cache]);
+    if (cache) render.remember(text, entry);
+  }, [render, text, entry, cache]);
+  const islandState = use(ChatMarkdownRendererContext);
   return (
     <ChatMarkdownTextContext value={text}>
-      {/* SCIENT-FORK:START — it changes per streamed token, so only math reads it. */}
-      <ScientAuthoredMathTextContext value={authoredText}>{element}</ScientAuthoredMathTextContext>
-      {/* SCIENT-FORK:END */}
+      {islandState
+        ? renderHastWithIslands(entry.tree, markdownIslandOptions(islandState))
+        : render.element(entry)}
     </ChatMarkdownTextContext>
   );
 });
@@ -2287,14 +2404,20 @@ function ChatMarkdown({
   inline = false,
   lineBreaks = false,
   parseRawHtml = true,
-  extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  extensions = NO_EXTENSIONS,
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
+  // Streaming re-renders only the last block; offsets for task edits, and extensions that read
+  // the whole message, need the whole text.
+  // SCIENT-FORK: the split outlives the stream, so a web image the reader loaded stays loaded.
+  const streamingBlocks =
+    !inline && extensions === NO_EXTENSIONS && !props.onTaskListChange
+      ? (splitMarkdownBlocks(text) ?? [text])
+      : null;
   const {
     componentState,
-    // SCIENT-FORK:START — math-normalized text and the message direction.
-    markdownText,
+    // SCIENT-FORK:START — the message direction.
     resolvedContentDirection,
     effectiveContentDirection,
     // SCIENT-FORK:END
@@ -2302,51 +2425,28 @@ function ChatMarkdown({
     markdownRef,
     localMediaPreview,
     closeLocalMediaPreview,
-  } = useChatMarkdownState({ text, inline, ...props });
-  const hasInsights = renderInsights && text.includes("★ Insight");
-  // SCIENT-FORK:START — authored math intent reads offsets in the whole message, so a message
-  // that needs it renders whole; every other message takes the shared, cached path.
-  const baseRemarkPlugins = lineBreaks
-    ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
-    : CHAT_MARKDOWN_REMARK_PLUGINS;
-  const sharedRemarkPlugins = withExtraPlugins(
-    hasInsights ? withExtraPlugins(INSIGHT_REMARK_PLUGINS, baseRemarkPlugins) : baseRemarkPlugins,
-    extraRemarkPlugins,
-  );
-  const messageRemarkPlugins = scientMathRemarkPluginsForMessage(sharedRemarkPlugins, text);
-  const wholeMessage = messageRemarkPlugins !== sharedRemarkPlugins || markdownText !== text;
-  // SCIENT-FORK:END
-  // Streaming re-renders only the last block; offsets for task edits need the whole text.
-  // SCIENT-FORK: the split outlives the stream, so a web image the reader loaded stays loaded.
-  const streamingBlocks =
-    !inline && extraRemarkPlugins.length === 0 && !props.onTaskListChange && !wholeMessage
-      ? splitMarkdownBlocks(text)
-      : null;
-  const incrementalParsing =
-    props.isStreaming === true &&
-    !hasInsights &&
-    streamingBlocks === null &&
-    extraRemarkPlugins.length === 0 &&
-    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  } = useChatMarkdownState({ text, inline, ...props }, streamingBlocks);
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  // The incremental parser keeps per-instance state, so its output is not shared.
-  const remarkPlugins = incrementalParsing
-    ? scientMathRemarkPluginsForMessage(
-        [...sharedRemarkPlugins, createIncrementalMarkdownPlugin()],
-        text,
-      )
-    : messageRemarkPlugins;
-  const uncachedPlugins = incrementalParsing || wholeMessage;
-  const blocks = streamingBlocks ?? [markdownText];
-  // SCIENT-FORK:START — the message direction, after the shared pipeline.
-  const rehypePlugins = directionalRehypePlugins(parseRawHtml, {
-    direction: resolvedContentDirection,
-    requestedDirection: effectiveContentDirection,
+  const markdown = wordsOptions(extensions, {
+    // SCIENT-FORK:START — Scient always renders math, with its own grammar and KaTeX (scient/math),
+    // and gives the message its direction (scient/bidi).
+    math: false,
+    // SCIENT-FORK:END
+    breaks: lineBreaks,
+    escapeHtml: !parseRawHtml,
+    insights: renderInsights && text.includes("★ Insight"),
+    // SCIENT-FORK:START
+    scient: {
+      math: true,
+      contentDirection: resolvedContentDirection,
+      requestedContentDirection: effectiveContentDirection,
+    },
+    // SCIENT-FORK:END
   });
-  // SCIENT-FORK:END
+  const blocks = streamingBlocks ?? [text];
 
   return (
     <Root
@@ -2366,21 +2466,18 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        {blocks.map((source, index) => (
-          <MarkdownSource
-            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
-            key={index}
-            text={source}
-            // SCIENT-FORK:START — a split message has no math normalization to undo.
-            authoredText={streamingBlocks ? source : text}
-            // SCIENT-FORK:END
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={rehypePlugins}
-            shared={!uncachedPlugins}
-            // Every block before the last is finished, so its parse can be reused.
-            cache={!props.isStreaming || index < blocks.length - 1}
-          />
-        ))}
+        <SharedTooltipProvider>
+          {blocks.map((source, index) => (
+            <MarkdownSource
+              // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+              key={index}
+              text={source}
+              markdown={markdown}
+              // Every block before the last is finished, so its parse can be reused.
+              cache={!props.isStreaming || index < blocks.length - 1}
+            />
+          ))}
+        </SharedTooltipProvider>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />

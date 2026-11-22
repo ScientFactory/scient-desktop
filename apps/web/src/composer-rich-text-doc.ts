@@ -937,7 +937,8 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = composerMathRanges(remainder, undefined, scientMathRanges);
+  // SCIENT-FORK: the composer shields formulas with chat's scientific grammar.
+  const formulas = composerMathRanges(remainder, scientMathRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1831,7 +1832,7 @@ export function skillChipReplacements(
     });
   });
   const map = serializeEditorDoc(doc);
-  const formulas = composerMathRanges(map.value, undefined, scientMathRanges);
+  const formulas = composerMathRanges(map.value, scientMathRanges);
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {
     const start = end;

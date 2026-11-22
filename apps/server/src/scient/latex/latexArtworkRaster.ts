@@ -85,8 +85,12 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
       onRetirementFailure: Effect.Effect<void>;
     }) {
       const inherited = { ...hostEnvironment, ...input.environment };
-      const info = resolveExecutable("pdfinfo", platform, inherited);
-      const paint = resolveExecutable("pdftoppm", platform, inherited);
+      const info = yield* Effect.promise(async () =>
+        resolveExecutable("pdfinfo", platform, inherited),
+      );
+      const paint = yield* Effect.promise(async () =>
+        resolveExecutable("pdftoppm", platform, inherited),
+      );
       if (!info || !paint) return null;
       const text = yield* run(
         info,

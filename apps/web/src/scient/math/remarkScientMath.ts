@@ -1,14 +1,12 @@
-import type { Options as ReactMarkdownOptions } from "react-markdown";
 import remarkMath from "remark-math";
+import type { Pluggable } from "unified";
 
 /**
  * Parser-level single-dollar math corrupts links, paths, and prices irreparably. Recognize guarded
  * spans during raw-source tokenization, before emphasis splits them, so rejection can unwind
  * without changing surrounding structure.
  */
-export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] satisfies NonNullable<
-  ReactMarkdownOptions["remarkPlugins"]
->[number];
+export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] satisfies Pluggable;
 
 /** TeX longer than this is not typeset; the literal source is shown instead. */
 const MAX_SCIENT_TEX_LENGTH = 1000;

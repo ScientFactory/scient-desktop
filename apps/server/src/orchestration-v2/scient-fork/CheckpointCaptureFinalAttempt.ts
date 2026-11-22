@@ -23,6 +23,7 @@ import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import type * as EventSink from "../EventSink.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProjectionStore from "../ProjectionStore.ts";
+import type * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 
 /** True while the effect worker runs a capture's last attempt. */
 export class CheckpointCaptureFinalAttempt extends Context.Reference<boolean>(
@@ -62,6 +63,8 @@ interface SettlementDependencies {
   readonly eventSink: EventSink.EventSinkV2Shape;
   readonly ids: IdAllocator.IdAllocatorV2["Service"];
   readonly projections: ProjectionStore.ProjectionStoreV2Shape;
+  /** Stop and deletion commit under this lock; settlement rereads the run under it too. */
+  readonly threadCommands: ThreadCommandExecutor.ThreadCommandExecutor["Service"];
   readonly makeCheckpointTurnItem: (input: {
     readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
     readonly run: OrchestrationV2Run;
@@ -214,9 +217,9 @@ export const settleUncapturedRunOnFinalAttempt =
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (!(yield* CheckpointCaptureFinalAttempt)) return yield* Effect.fail(error);
-          const settled = yield* settleWaitingRun(deps, target).pipe(
-            Effect.mapError((cause) => new CheckpointSettlementPendingError({ cause })),
-          );
+          const settled = yield* deps.threadCommands
+            .withLock(target.threadId, settleWaitingRun(deps, target))
+            .pipe(Effect.mapError((cause) => new CheckpointSettlementPendingError({ cause })));
           if (!settled) return yield* Effect.fail(error);
           yield* Effect.logWarning(
             "Completed a run with an unavailable checkpoint after its last capture attempt failed",

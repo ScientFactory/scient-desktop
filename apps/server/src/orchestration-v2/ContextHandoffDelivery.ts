@@ -18,6 +18,15 @@ const encodeSourceOmissions = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Array(OrchestrationConversationImportOmission)),
 );
 
+// A first word with a second slash is a path, not a command.
+const SLASH_COMMAND = /^\s*\/[^\s/]+(?:\s|$)/u;
+
+/** Providers only run a native command that opens the prompt, so its turn defers inline context to the next one. */
+export const isSlashCommandMessage = (message: {
+  readonly role: string;
+  readonly text: string;
+}): boolean => message.role === "user" && SLASH_COMMAND.test(message.text);
+
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
@@ -68,7 +77,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         handoff.delivery.status === "pending",
     );
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
-      return { context: "", delivered: Effect.void, unsent: Effect.void };
+      return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     if (
       input.resolveHistory === undefined &&
@@ -146,15 +155,20 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
             alreadyDeliveredItemIds: input.alreadyDeliveredItemIds,
           });
     if (historyCost(selected.messages, selected.context) > budget) {
-      if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
+      if (input.deferInline)
+        return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
       return yield* new ContextHandoffBudgetError();
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
-    const restore = (handoff: OrchestrationV2ContextHandoff) => {
-      if (handoff.historySource === undefined) return input.persist(handoff);
+    const withoutSourceEntries = (
+      handoff: OrchestrationV2ContextHandoff,
+    ): OrchestrationV2ContextHandoff => {
+      if (handoff.historySource === undefined) return handoff;
       const { entries: _entries, ...source } = handoff.historySource;
-      return input.persist({ ...handoff, historySource: source });
+      return { ...handoff, historySource: source };
     };
+    const restore = (handoff: OrchestrationV2ContextHandoff) =>
+      input.persist(withoutSourceEntries(handoff));
     const persist = (status: "pending" | "injected" | "inline") =>
       Effect.forEach(
         pending,
@@ -208,7 +222,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       });
       if (injected) {
         yield* persist("injected");
-        return { context: "", delivered: Effect.void, unsent: Effect.void };
+        return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
       }
     } else {
       yield* persist("pending");
@@ -216,12 +230,15 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (input.deferInline) {
       // Compaction cannot carry inline transcripts; retain for the next turn if native injection is unsupported.
       yield* Effect.forEach(pending, restore, { discard: true });
-      return { context: "", delivered: Effect.void, unsent: Effect.void };
+      return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
     }
     return {
       context: renderHistory(selected.messages, selected.context),
       delivered: persist("inline"),
       unsent: Effect.forEach(pending, restore, { discard: true }),
+      // SCIENT-FORK:START — a restored handoff keeps its committed source without its entries.
+      inlineHandoffs: pending.map(withoutSourceEntries),
+      // SCIENT-FORK:END
     };
   },
 );
