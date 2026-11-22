@@ -648,12 +648,33 @@ export const ExtensionCategory = Schema.Literals([
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
 /**
- * The categories a client can decode, sent with every Discover request. Servers then name only
- * these: an entry in a newer category is listed under the categories it had before, and a newer
- * section is left out. Clients from before this field send nothing and receive the categories
- * that existed then.
+ * The categories every client decodes: those that existed before `knownCategories`. Servers
+ * assume them for a request without the field; a client can count on a server listing them.
+ * Never extend it.
  */
-const KnownExtensionCategories = Schema.optional(Schema.Array(Schema.String));
+export const EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES: ReadonlyArray<ExtensionCategory> = [
+  "most-used",
+  "papers",
+  "biology",
+  "code",
+  "data",
+  "physics-math",
+  "files",
+  "communication",
+  "projects",
+  "figures",
+  "chemistry",
+  "earth",
+  "social-science",
+];
+
+/**
+ * The categories a client can decode, sent with every Discover and store search request. Servers
+ * then name and filter by only these: an entry in a newer category is listed under the categories
+ * it had before, and a newer section is left out. Clients from before this field send nothing and
+ * are treated as decoding `EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES`.
+ */
+export const KnownExtensionCategories = Schema.optional(Schema.Array(Schema.String));
 
 /**
  * `curated`: Scient's catalog, answered locally without the network.

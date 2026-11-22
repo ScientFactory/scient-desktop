@@ -31,6 +31,7 @@ import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
 import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { makeCodexStoreIcons } from "./CodexStoreIcons.ts";
+import { categoriesForClient } from "./discover/clientCategories.ts";
 
 type Client = CodexClient.CodexAppServerClient["Service"];
 type Plugin = CodexSchema.V2PluginListResponse__PluginSummary;
@@ -462,10 +463,11 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
           };
         const query = (input.query ?? "").trim().toLowerCase();
         const terms = query.split(/\s+/).filter(Boolean);
+        const shown = categoriesForClient(input.knownCategories);
         const matching = current.store.entries.filter(({ plugin }) => {
           if (
             input.category &&
-            !storeCategories(plugin.name, plugin.interface?.category ?? undefined).some(
+            !shown(storeCategories(plugin.name, plugin.interface?.category ?? undefined)).some(
               (category) => category === input.category,
             )
           )

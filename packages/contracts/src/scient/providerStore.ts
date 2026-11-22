@@ -50,6 +50,8 @@ export const ProviderStoreSearchInput = Schema.Struct({
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
   preview: Schema.optional(Schema.Boolean),
   refresh: Schema.optional(Schema.Boolean),
+  /** The categories the client decodes, as Discover's `knownCategories`: `category` filters by those. */
+  knownCategories: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ProviderStoreSearchInput = typeof ProviderStoreSearchInput.Type;
 export const ProviderStoreEntryInput = Schema.Struct({

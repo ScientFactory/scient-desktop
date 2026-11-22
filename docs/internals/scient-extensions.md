@@ -1248,14 +1248,17 @@ starting `scient.curated/` never reach the registry.
 `installedConnectorId` is resolved live on every call, by registry name or by
 canonical connector URL (parsed, trailing path slash ignored).
 
-**Categories an older client cannot decode.** `ExtensionCategory` is a closed list, so a new
-category would break the Discover catalog for clients built before it. Each Discover request
-(catalog, search, entry) carries `knownCategories`, the categories the client decodes, and the
-RPC handlers (`discover/clientCategories.ts`) name only those: an entry in a newer category is
-listed under the categories it had before that category existed (`ai-ml` under `code` and
-`data`, `cloud` under `code`), and a newer section is left out. A request without the field
-comes from a client that predates it and gets the 13 categories that existed then. Adding a
-category means adding its earlier categories there.
+**Categories across versions.** `ExtensionCategory` is a closed list, so a new category would
+break the Discover catalog for clients built before it. Each Discover request (catalog, search,
+entry) and each agent store search carries `knownCategories`, the categories the client decodes.
+The server (`discover/clientCategories.ts`) names and filters by only those: an entry in a newer
+category is listed under the categories it had before that category existed (`ai-ml` under `code`
+and `data`, `cloud` under `code`), a category page lists every entry that names it that way, and
+a newer section is left out. A request without the field comes from a client that predates it
+and is answered with `EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES`. In the other direction, a
+newer client opens a category outside that list only once the machine's catalog has a section
+for it, since an older server rejects a category it does not know. Adding a category means
+adding its earlier categories in `clientCategories.ts`.
 
 **Icons.** Clients never load remote images. Registry icons are not fetched at runtime;
 Codex store logos use the bounded server-side path above. Every curated server ships with a bundled logo:

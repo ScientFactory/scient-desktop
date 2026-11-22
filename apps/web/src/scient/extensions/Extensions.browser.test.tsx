@@ -1354,6 +1354,27 @@ describe("Discover", () => {
     await fixture.render(<CategoryPage category="nonsense" />);
     expect(fixture.container.textContent).toContain("This category does not exist.");
   });
+
+  it("opens a newer category only once the machine's catalog lists it", async () => {
+    await using fixture = setup();
+    // The default catalog has no Cloud section, as from a server that predates it.
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).toContain(
+      "Scient on this machine doesn’t have this category yet. Update it to browse here.",
+    );
+    expect(fixture.container.textContent).not.toContain("Scient’s picks");
+
+    state.catalog = {
+      ...catalog,
+      sections: [
+        ...catalog.sections,
+        { category: "cloud", title: "Cloud, DevOps & security", entries: [], total: 0 },
+      ],
+    };
+    await fixture.render(<CategoryPage category="cloud" />);
+    expect(fixture.container.textContent).not.toContain("doesn’t have this category yet");
+    expect(fixture.section("Scient’s picks")).toBeTruthy();
+  });
 });
 
 describe("Installed", () => {

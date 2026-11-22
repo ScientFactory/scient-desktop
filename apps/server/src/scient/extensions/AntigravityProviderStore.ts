@@ -54,6 +54,7 @@ import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginCont
 import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 import { runProviderPluginCommand } from "./ProviderPluginCommand.ts";
 import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
+import { categoriesForClient } from "./discover/clientCategories.ts";
 
 type Failure = { readonly message: string };
 const fail = (message: string) => Effect.fail({ message } satisfies Failure);
@@ -495,10 +496,11 @@ export const makeAntigravityPluginActions = Effect.fn("makeAntigravityPluginActi
   ) {
     const current = yield* listing(input.refresh === true);
     const terms = (input.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = categoriesForClient(input.knownCategories);
     const matching = current.entries.filter(
       ({ plugin }) =>
         (!input.category ||
-          plugin.scientCategories.some((category) => category === input.category)) &&
+          shown(plugin.scientCategories).some((category) => category === input.category)) &&
         terms.every((term) =>
           [
             plugin.name,

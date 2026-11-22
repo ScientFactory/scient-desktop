@@ -12,7 +12,10 @@ import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 
-/** Sent with every Discover request, so the server names only categories this client decodes. */
+/**
+ * Sent with every Discover and store search request, so the server names and filters by only the
+ * categories this client decodes.
+ */
 const knownCategories = ExtensionCategory.literals;
 
 /**
@@ -118,6 +121,8 @@ export function createExtensionsAtoms<R, E>(
     providerStorePage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:provider-store",
       tag: WS_METHODS.extensionsProviderStoreSearch,
+      execute: (input) =>
+        request(WS_METHODS.extensionsProviderStoreSearch, { ...input, knownCategories }),
       refreshTrigger: changesOf,
       staleTimeMs: 60_000,
       // Kept for a while after leaving a category, so going back shows it at once.

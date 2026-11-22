@@ -29,7 +29,7 @@ import { PluginKeyBindings, pluginKeyAccountsEligibilityKey } from "./PluginKeyB
 import { readPluginKeyTransport } from "./PluginKeyStartup.ts";
 import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
-import { forClientCategories } from "./discover/clientCategories.ts";
+import { forClientCategories, requestKnownCategories } from "./discover/clientCategories.ts";
 import {
   ConnectorRuntime,
   type ConnectorRuntimeShape,
@@ -382,18 +382,26 @@ export const makeExtensionsRpcHandlers = ({
         connectorRuntime.importables(),
         traceAttributes,
       ),
-    [WS_METHODS.extensionsDiscoverSearch]: (input) =>
-      observeRpcEffect(
+    [WS_METHODS.extensionsDiscoverSearch]: (input) => {
+      const knownCategories = requestKnownCategories(input.knownCategories);
+      return observeRpcEffect(
         WS_METHODS.extensionsDiscoverSearch,
-        discover.search(input).pipe(Effect.map(forClientCategories(input.knownCategories).page)),
+        discover
+          .search({ ...input, knownCategories })
+          .pipe(Effect.map(forClientCategories(knownCategories).page)),
         traceAttributes,
-      ),
-    [WS_METHODS.extensionsDiscoverCatalog]: (input) =>
-      observeRpcEffect(
+      );
+    },
+    [WS_METHODS.extensionsDiscoverCatalog]: (input) => {
+      const knownCategories = requestKnownCategories(input.knownCategories);
+      return observeRpcEffect(
         WS_METHODS.extensionsDiscoverCatalog,
-        discover.catalog().pipe(Effect.map(forClientCategories(input.knownCategories).catalog)),
+        discover
+          .catalog({ knownCategories })
+          .pipe(Effect.map(forClientCategories(knownCategories).catalog)),
         traceAttributes,
-      ),
+      );
+    },
     [WS_METHODS.extensionsProviderStoreSearch]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsProviderStoreSearch,
@@ -406,15 +414,17 @@ export const makeExtensionsRpcHandlers = ({
               reason: "unsupported",
               message: "This agent has no available plugin store.",
             });
-          return yield* actions.store.search(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ExtensionsError({
-                  reason: "state-unavailable",
-                  message: cause.message,
-                }),
-            ),
-          );
+          return yield* actions.store
+            .search({ ...input, knownCategories: requestKnownCategories(input.knownCategories) })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ExtensionsError({
+                    reason: "state-unavailable",
+                    message: cause.message,
+                  }),
+              ),
+            );
         }),
         traceAttributes,
       ),
@@ -439,7 +449,11 @@ export const makeExtensionsRpcHandlers = ({
     [WS_METHODS.extensionsDiscoverEntry]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsDiscoverEntry,
-        discover.entry(input).pipe(Effect.map(forClientCategories(input.knownCategories).entry)),
+        discover
+          .entry(input)
+          .pipe(
+            Effect.map(forClientCategories(requestKnownCategories(input.knownCategories)).entry),
+          ),
         traceAttributes,
       ),
     [WS_METHODS.extensionsPluginInstall]: (input) =>

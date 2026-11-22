@@ -21,6 +21,7 @@ import type {
   ConnectorTestResult,
   ConnectorUpdateInput,
   DiscoverCatalog,
+  DiscoverCatalogInput,
   DiscoverEntry,
   DiscoverEntryInput,
   DiscoverPage,
@@ -271,9 +272,12 @@ export class ExtensionDeliveryReceipts extends Context.Service<
 >()("t3/scient/extensions/ExtensionsServices/ExtensionDeliveryReceipts") {}
 
 export interface ExtensionsDiscoverShape {
+  /** `knownCategories` limits names and filters to those; without it every category counts. */
   readonly search: (input: DiscoverSearchInput) => Effect.Effect<DiscoverPage, ExtensionsError>;
   /** Curated home page: non-empty categories in fixed order, each with preview entries. */
-  readonly catalog: () => Effect.Effect<DiscoverCatalog, ExtensionsError>;
+  readonly catalog: (
+    input?: DiscoverCatalogInput,
+  ) => Effect.Effect<DiscoverCatalog, ExtensionsError>;
   /**
    * One entry by name from the complete curated catalog, else the MCP Registry
    * by exact name; `not-found` otherwise.
