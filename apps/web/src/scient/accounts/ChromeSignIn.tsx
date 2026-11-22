@@ -167,14 +167,24 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     readonly canQuit: boolean;
     readonly into: string;
     readonly purpose: WindowEvent["purpose"];
-    /** After Done, Cancel still stops a browser that doesn't quit; after Cancel, nothing does. */
-    readonly phase: "signing-in" | "finishing" | "cancelling";
+    /**
+     * After Done, Cancel still stops a browser that doesn't quit, or a copy not yet written;
+     * `committed` once the copy is past that point, when only its result is left to wait for.
+     */
+    readonly phase: "signing-in" | "finishing" | "cancelling" | "committed";
   } | null>(null);
   const end = (keep: boolean) => {
     setOpen((current) =>
       current ? { ...current, phase: keep ? "finishing" : "cancelling" } : current,
     );
-    void accounts?.endChromeSignIn?.(keep).catch(() => undefined);
+    void accounts
+      ?.endChromeSignIn?.(keep)
+      .then((ended) => {
+        // A Cancel refused: the copy was already being written, so it is not cancelled.
+        if (!keep && ended === false)
+          setOpen((current) => (current ? { ...current, phase: "committed" } : current));
+      })
+      .catch(() => undefined);
   };
   const start = async (
     profile: { readonly id: string; readonly name: string },
@@ -221,7 +231,7 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     <Dialog
       open
       onOpenChange={(next) => {
-        if (!next && open.phase !== "cancelling") end(false);
+        if (!next && open.phase !== "cancelling" && open.phase !== "committed") end(false);
       }}
     >
       <DialogPopup data-accounts-dialog>
@@ -274,14 +284,14 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
         <DialogFooter>
           <Button
             variant="outline"
-            disabled={open.phase === "cancelling"}
+            disabled={open.phase === "cancelling" || open.phase === "committed"}
             onClick={() => end(false)}
           >
             <T>Cancel</T>
           </Button>
           {open.canQuit ? (
             <Button disabled={open.phase !== "signing-in"} onClick={() => end(true)}>
-              {open.phase === "finishing"
+              {open.phase === "finishing" || open.phase === "committed"
                 ? gt("Bringing it into {into}…", { into: open.into })
                 : gt("Done")}
             </Button>

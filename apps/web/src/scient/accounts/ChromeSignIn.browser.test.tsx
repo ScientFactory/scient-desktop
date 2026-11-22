@@ -126,6 +126,20 @@ it("still cancels after Done, for a browser that doesn't quit", async () => {
   expect(observed).toMatchObject({ variant: "cancelled" });
 });
 
+it("shows a Cancel refused after Done as a copy that goes ahead", async () => {
+  using f = setup();
+  // The copy was already being written: the desktop refuses the Cancel.
+  f.endChromeSignIn.mockImplementation(async (keep: boolean) => keep);
+  await using _screen = await render(<Harness profile={work} />);
+  await page.getByRole("button", { name: "Start" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect.element(page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Bringing it into Work…" })).toBeDisabled();
+  const { observed } = await finish(f, { outcome: "copied", browser: "Edge", sites: ["x.org"] });
+  expect(observed).toMatchObject({ variant: "copied" });
+});
+
 it("never reports a copy Google refused or couldn't be asked about as a success", async () => {
   for (const [google, type] of [
     ["rejected", "error"],

@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import { expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
   BrowserProfileId,
@@ -14,11 +15,13 @@ import {
 import type * as Electron from "electron";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
-import { chromeSignIn } from "./chromeSignIn.ts";
+import { chromeSignIn, endChromeSignIn } from "./chromeSignIn.ts";
 
 const state = vi.hoisted(() => ({
   read: { units: [] as string[][], cookies: [] as unknown[] },
   main: null as DesktopFillMainResult | null,
+  /** Whether the window is still there for Done or Cancel to end. */
+  windowOpen: true,
 }));
 
 vi.mock("electron", () => ({
@@ -33,7 +36,7 @@ vi.mock("electron", () => ({
 }));
 vi.mock("./chromeWindow.ts", () => ({
   canQuitWindow: () => true,
-  endSignInWindow: () => true,
+  endSignInWindow: () => state.windowOpen,
   installedChromiumBrowsers: () => [{ name: "Edge", executable: "/synthetic/edge" }],
   signInInWindow: async () => ({ outcome: "read", ...state.read }),
 }));
@@ -89,7 +92,16 @@ const listed = (...valid: number[]) =>
 /** A profile's jar behind a fake debugger, and Google's answers to it in order. */
 function profile(
   answers: ReadonlyArray<Response | Error>,
-  { failWrites = false, signedIn = false } = {},
+  {
+    failWrites = false,
+    signedIn = false,
+    gate,
+  }: {
+    failWrites?: boolean;
+    signedIn?: boolean;
+    /** Google's first answer waits for `release`, once `asked` says it was asked. */
+    gate?: { asked: PromiseWithResolvers<void>; release: PromiseWithResolvers<void> };
+  } = {},
 ) {
   const written: unknown[] = [];
   const asked: string[] = [];
@@ -110,6 +122,10 @@ function profile(
     fetch: async (url: string) => {
       const answer = answers[asked.length] ?? answers.at(-1)!;
       asked.push(url);
+      if (gate && asked.length === 1) {
+        gate.asked.resolve();
+        await gate.release.promise;
+      }
       if (answer instanceof Error) throw answer;
       return answer;
     },
@@ -246,5 +262,25 @@ it.effect("keeps Main's conflicts in the result and asks Google only when Main t
       outcome: "failed",
       browser: "Edge",
     });
+  }),
+);
+
+it.effect("cancels a copy still asking Google after its window closed, writing nothing", () =>
+  Effect.gen(function* () {
+    googleWindow();
+    state.windowOpen = false;
+    const gate = { asked: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+    const target = profile([listed(1)], { signedIn: true, gate });
+    const copying = yield* run("work", target).pipe(Effect.forkChild);
+    yield* Effect.promise(() => gate.asked.promise);
+    expect(yield* endChromeSignIn(false)).toBe(true);
+    // Done has nothing left to end once the window is gone.
+    expect(yield* endChromeSignIn(true)).toBe(false);
+    gate.release.resolve();
+    expect((yield* Fiber.join(copying)).result).toEqual({ outcome: "cancelled", browser: "Edge" });
+    expect(target.written).toEqual([]);
+    // With no sign-in left, Cancel is refused.
+    expect(yield* endChromeSignIn(false)).toBe(false);
+    state.windowOpen = true;
   }),
 );

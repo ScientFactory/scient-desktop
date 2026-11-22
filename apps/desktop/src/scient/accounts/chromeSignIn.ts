@@ -23,6 +23,7 @@ import {
   endSignInWindow,
   installedChromiumBrowsers,
   signInInWindow,
+  type ChromiumBrowser,
 } from "./chromeWindow.ts";
 import { FillMainInput, fillMainStaged } from "./mainFill.ts";
 import { readGoogleSessions } from "./googleSessions.ts";
@@ -70,6 +71,17 @@ const readGoogle = (session: Parameters<typeof readGoogleSessions>[0]) =>
     }),
   );
 
+interface Copy {
+  cancelled: boolean;
+  writing: boolean;
+}
+
+/**
+ * The sign-in in progress. After its window closes, Cancel still stops the copy until its first
+ * write: reading the profile and asking Google first can take a while. Then the result stands.
+ */
+let copying: Copy | undefined;
+
 /**
  * The person signs in to a site in a window of their own Chromium browser, on a profile folder
  * Scient owns; then what they signed in to is copied into a Scient profile.
@@ -77,13 +89,33 @@ const readGoogle = (session: Parameters<typeof readGoogleSessions>[0]) =>
 export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* (
   input: typeof ChromeSignInInput.Type,
 ) {
-  const environmentId = input.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
   const intoMain = input.profileId === DEFAULT_BROWSER_PROFILE_ID;
   if (input.profileId === INCOGNITO_BROWSER_PROFILE_ID || (intoMain && !input.main))
     return { outcome: "failed" } satisfies DesktopChromeSignInResult;
   const { platform, found } = yield* browsers;
   const browser = found[0];
   if (!browser) return { outcome: "no-browser" } satisfies DesktopChromeSignInResult;
+  if (copying) return { outcome: "busy", browser: browser.name } as const;
+  const copy: Copy = { cancelled: false, writing: false };
+  copying = copy;
+  return yield* copyFromWindow(input, browser, platform, copy).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (copying === copy) copying = undefined;
+      }),
+    ),
+  );
+});
+
+const copyFromWindow = Effect.fn("DesktopAccounts.copyFromWindow")(function* (
+  input: typeof ChromeSignInInput.Type,
+  browser: ChromiumBrowser,
+  platform: NodeJS.Platform,
+  copy: Copy,
+) {
+  const environmentId = input.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
+  const intoMain = input.profileId === DEFAULT_BROWSER_PROFILE_ID;
+  const cancelled = { outcome: "cancelled", browser: browser.name } as const;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const read = yield* Effect.promise(() =>
     signInInWindow({
@@ -94,6 +126,7 @@ export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* 
     }),
   );
   if (read.outcome !== "read") return { ...read, browser: browser.name };
+  if (copy.cancelled) return cancelled;
   if (read.units.length === 0) return { outcome: "nothing", browser: browser.name } as const;
   const sites = read.units.flat();
   const manager = yield* PreviewManager;
@@ -104,6 +137,8 @@ export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* 
   if (Option.isNone(session)) return { outcome: "failed", browser: browser.name } as const;
   const askGoogle = readGoogle(session.value);
   if (intoMain && input.main) {
+    if (copy.cancelled) return cancelled;
+    copy.writing = true;
     const filled = yield* fillMainStaged(
       environmentId,
       { ...input.main, units: read.units },
@@ -129,6 +164,8 @@ export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* 
   }
   const copiesGoogle = read.units.some((unit) => unit.includes(GOOGLE_SITE));
   const before = copiesGoogle ? yield* askGoogle : undefined;
+  if (copy.cancelled) return cancelled;
+  copy.writing = true;
   const written = yield* Effect.tryPromise({
     try: async () => {
       await withCookieDebugger(session.value, (send) => setCookies(send, read.cookies));
@@ -149,10 +186,16 @@ export const chromeSignIn = Effect.fn("DesktopAccounts.chromeSignIn")(function* 
   } as const;
 });
 
-/** Done or Cancel on the open sign-in window. */
+/**
+ * Done or Cancel on the open sign-in window. Cancel also stops a copy that hasn't started writing.
+ * False when there is nothing left to end: the dialog then waits for the result.
+ */
 export const endChromeSignIn = Effect.fn("DesktopAccounts.endChromeSignIn")(function* (
   keep: boolean,
 ) {
   const platform = yield* HostProcess.Platform;
-  return endSignInWindow(keep, platform);
+  if (endSignInWindow(keep, platform)) return true;
+  if (keep || !copying || copying.writing) return false;
+  copying.cancelled = true;
+  return true;
 });
