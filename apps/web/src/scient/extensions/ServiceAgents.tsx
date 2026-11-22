@@ -108,13 +108,13 @@ export function AddServicePlugin({
   readonly refresh: () => void;
 }) {
   const gt = useGT();
-  const { lock, install } = useStoreInstall(provider, route.entry, refresh);
+  const { allowed, lock, install } = useStoreInstall(provider, route.entry, refresh);
   return (
     <Button
       size="icon-sm"
       variant="ghost-muted"
       aria-label={gt("Connect {name}", { name: service.name })}
-      disabled={lock.locked}
+      disabled={!allowed || lock.locked}
       onClick={install}
     >
       <PlusIcon aria-hidden />
@@ -133,10 +133,15 @@ function StoreRouteAction({
   readonly refresh: () => void;
 }) {
   const gt = useGT();
-  const { target, lock, install } = useStoreInstall(provider, route.entry, refresh);
+  const { target, allowed, lock, install } = useStoreInstall(provider, route.entry, refresh);
   return (
     <span className="flex shrink-0 flex-col items-end gap-1">
-      <Button variant="ghost-primary" size="sm" disabled={lock.locked} onClick={install}>
+      <Button
+        variant="ghost-primary"
+        size="sm"
+        disabled={!allowed || lock.locked}
+        onClick={install}
+      >
         {lock.busy
           ? gt("Adding…")
           : target.driver === "codex"
@@ -428,14 +433,14 @@ const STORE_KINDS = ["shared", "codex", "antigravity"] as const;
 export function StoreEntryAgents({ entry }: { readonly entry: ProviderStoreEntry }) {
   const gt = useGT();
   const { environmentId, providers } = useExtensionsEnvironment();
-  // One reader per other store, searched for this entry's name.
-  const others = STORE_KINDS.filter((kind) => kind !== entry.kind).flatMap((kind) => {
-    const reader = storeProviders(providers, kind)[0];
-    return reader ? [{ kind, reader }] : [];
-  });
-  const found = useAtomValue(
+  // Every agent reading another store, searched for this entry's name: instances can read
+  // different homes, so one may list a copy another does not.
+  const others = STORE_KINDS.filter((kind) => kind !== entry.kind).flatMap((kind) =>
+    storeProviders(providers, kind).map((reader) => ({ kind, reader })),
+  );
+  const matches = useAtomValue(
     Atom.make((get) =>
-      others.map(({ kind, reader }) => {
+      others.flatMap(({ kind, reader }) => {
         const result = get(
           extensionsProviderStorePage({
             environmentId,
@@ -443,17 +448,22 @@ export function StoreEntryAgents({ entry }: { readonly entry: ProviderStoreEntry
               instanceId: reader.instanceId,
               query: entry.displayName,
               preview: false,
-              limit: 10,
+              // The store's largest page: an exact twin ranks among a name search's first.
+              limit: 50,
             },
           }),
         );
         const twin = (Option.getOrNull(AsyncResult.value(result))?.entries ?? []).find(
           (candidate) => areStoreTwins(candidate, entry),
         );
-        return twin ? ([kind, twin.id] as const) : undefined;
+        return twin ? [[kind, twin.id] as const] : [];
       }),
     ),
-  ).filter((pair) => pair !== undefined);
+  );
+  // One copy per store; the first reader that lists it names it.
+  const found = matches.filter(
+    ([kind], index) => matches.findIndex(([other]) => other === kind) === index,
+  );
   if (found.length === 0) return null;
   const ids: Partial<Record<ProviderStoreEntry["kind"], string>> = Object.fromEntries([
     [entry.kind, entry.id],

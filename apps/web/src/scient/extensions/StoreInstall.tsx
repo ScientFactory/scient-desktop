@@ -11,7 +11,7 @@ import { PrimaryAction } from "./ExtensionDetailPages";
 import { ActionFeedback } from "./ExtensionItems";
 import { MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
 import { actOnProviderPlugin } from "./extensionsState";
-import { providerAvailable } from "./extensionsView";
+import { providerAvailable, storeInstallTarget } from "./extensionsView";
 
 /**
  * The agents reading one store; Claude's marketplaces serve Claude and Scient Agent alike, while
@@ -72,11 +72,7 @@ export function useStoreInstall(
   refresh: () => void,
 ) {
   const { environmentId, providers } = useExtensionsEnvironment();
-  const target =
-    entry.kind === "shared" && provider.driver === "scient"
-      ? (providers.find((item) => providerAvailable(item) && item.driver === "claudeAgent") ??
-        provider)
-      : provider;
+  const target = storeInstallTarget(provider, entry.kind, providers) ?? provider;
   const plugin = target.plugins?.find(
     (plugin) => plugin.id === entry.id || plugin.name === entry.id,
   );

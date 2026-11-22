@@ -2808,7 +2808,7 @@ describe("Antigravity Marketplace", () => {
     );
   });
 
-  it("shows the partner notice before adding a partner service's plugin from its page", async () => {
+  it("offers no Antigravity row for a partner service whose connection can't sign in from chat", async () => {
     await using fixture = setup();
     state.providersByEnvironment = {
       local: [
@@ -2828,25 +2828,13 @@ describe("Antigravity Marketplace", () => {
       ],
     };
     state.storeEntry = canva;
-    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<AccountServiceDetailPage serviceId="canva" />);
     await vi.waitFor(() =>
-      expect(buttonIn(fixture.section("Your agents"), "Add to Antigravity")).not.toBeNull(),
+      expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account"),
     );
-    // ChatGPT's row for the same service is unchanged.
-    expect(fixture.section("Your agents").textContent).toContain("Through its ChatGPT account");
-    state.confirm.mockResolvedValueOnce(true);
-    await userEvent.click(buttonIn(fixture.section("Your agents"), "Add to Antigravity")!);
-    expect(state.confirm.mock.calls[0]![0]).toContain("Canva makes this plugin, not Google.");
-    await vi.waitFor(() =>
-      expect(state.commands.providerAct).toHaveBeenCalledWith({
-        environmentId: "local",
-        input: {
-          instanceId: antigravity,
-          action: { type: "install", entryId: "canva@antigravity-plugins-partners" },
-        },
-      }),
-    );
+    // Canva's Antigravity plugin connects through an MCP server agy signs in only in its own
+    // plugin manager, so the page offers no route that would not work in Scient's chats.
+    expect(fixture.section("Your agents").textContent).not.toContain("Antigravity");
   });
 
   it("removes an added plugin from the user's Antigravity after saying what that affects", async () => {

@@ -396,13 +396,10 @@ function StoreDetail({
   if (!provider || !result.data)
     return <MutedLine>{result.error ?? gt("Loading plugin…")}</MutedLine>;
   const entry = result.data;
+  // The Scient connector for the same service, which every agent gets from one Add.
   const connector = catalog?.sections
     .flatMap((section) => section.entries)
-    .find((item) =>
-      entry.kind === "antigravity"
-        ? item.agentStores?.antigravity === entry.id
-        : item.agentStores?.codex === entry.name,
-    );
+    .find((item) => storeMatches(entry, item));
   return (
     <DetailLayout
       back="discover"

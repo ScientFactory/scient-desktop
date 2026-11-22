@@ -15,6 +15,7 @@ import {
   providerAvailable,
   providerLabel,
   providerStoreAudience,
+  storeInstallTarget,
 } from "./extensionsView";
 
 /**
@@ -275,27 +276,16 @@ const slug = (name: string) =>
 /** The ChatGPT app id at the end of a `chatgpt.com/apps/<slug>/<id>` page. */
 const appIdOf = (url: string | undefined) => url?.match(/\/apps\/[^/]+\/([A-Za-z0-9_-]+)/)?.[1];
 
-/** ChatGPT apps whose service is exactly an Antigravity Marketplace plugin, by app name. */
+/**
+ * ChatGPT apps whose service is exactly one of Google's Antigravity plugins, by app name. Only
+ * these sign in from a Scient chat (through agy's auth.json); partner plugins connect through an
+ * MCP server that agy signs in only in its own interactive plugin manager, so they stay in the
+ * Antigravity store rather than being offered as a working route here.
+ */
 const ANTIGRAVITY_PLUGINS_BY_APP: Readonly<Record<string, string>> = {
   googledocs: "gdocs@antigravity-plugins-official",
   googlesheets: "gsheets@antigravity-plugins-official",
   googleslides: "gslides@antigravity-plugins-official",
-  dropbox: "dropbox@antigravity-plugins-partners",
-  notion: "notion@antigravity-plugins-partners",
-  linear: "linear@antigravity-plugins-partners",
-  figma: "figma@antigravity-plugins-partners",
-  canva: "canva@antigravity-plugins-partners",
-  atlassian: "atlassian-twg-cli@antigravity-plugins-partners",
-  monday: "monday@antigravity-plugins-partners",
-  mondaycom: "monday@antigravity-plugins-partners",
-  clickup: "clickup@antigravity-plugins-partners",
-  zapier: "zapier@antigravity-plugins-partners",
-  stripe: "stripe@antigravity-plugins-partners",
-  intercom: "intercom@antigravity-plugins-partners",
-  trello: "trello@antigravity-plugins-partners",
-  granola: "granola@antigravity-plugins-partners",
-  docusign: "docusign@antigravity-plugins-partners",
-  pandadoc: "pandadoc@antigravity-plugins-partners",
 };
 
 /**
@@ -414,26 +404,38 @@ export function installedAccountServices(
   );
 }
 
+/** Whether a service's page has a route for the agents reading `kind`'s store. */
+function coversStore(service: AccountService, kind: ProviderStoreEntry["kind"]): boolean {
+  return kind === "antigravity"
+    ? service.stores?.antigravity !== undefined
+    : kind === "codex"
+      ? service.chatgptAppId !== undefined || service.stores?.codex !== undefined
+      : service.claude !== undefined || service.stores?.claude !== undefined;
+}
+
 /**
- * A store entry one of these services covers, which Scient lists as the service itself: a Codex
- * entry that is only the service's app, or a plugin the service names as its store route.
+ * A store entry one of these services covers, which Scient lists as the service itself: a
+ * plugin the service names as its store route, or one with its name or app, but only when the
+ * service's page reaches that store's agents some other way. Otherwise the entry stays listed.
  */
 export function isAccountServiceStoreEntry(entry: {
   readonly id: string;
   readonly name: string;
   readonly displayName: string;
+  readonly kind: ProviderStoreEntry["kind"];
   readonly apps: ReadonlyArray<{ readonly id?: string | undefined; readonly name: string }>;
 }): boolean {
   const names = [entry.name, entry.displayName].map((name) => name.toLowerCase());
   return ACCOUNT_SERVICES.some(
     (service) =>
-      names.includes(service.name.toLowerCase()) ||
-      names.includes(service.id) ||
       entry.id === service.stores?.claude ||
       entry.id === service.stores?.codex ||
       entry.id === service.stores?.antigravity ||
-      (service.chatgptAppId !== undefined &&
-        entry.apps.some((app) => app.id === service.chatgptAppId)),
+      (coversStore(service, entry.kind) &&
+        (names.includes(service.name.toLowerCase()) ||
+          names.includes(service.id) ||
+          (service.chatgptAppId !== undefined &&
+            entry.apps.some((app) => app.id === service.chatgptAppId)))),
   );
 }
 
@@ -651,7 +653,19 @@ function accountServiceRoutesFromInventory(
     const fromStore = (family: StorePluginRoute["family"], id: string | undefined) =>
       id === undefined ? [] : [storeRoute(provider, base, family, id, service, resolve)];
     if (provider.driver === "scient") {
-      if (appId === undefined) return fromStore("claude-store", service.stores?.claude);
+      if (appId === undefined) {
+        if (service.stores?.claude) return fromStore("claude-store", service.stores.claude);
+        // A Codex plugin reaches a Scient Agent that loads Codex's plugins from the same home,
+        // installed through that home's Codex; OpenAI's host-coupled ones never do.
+        const codexId = service.stores?.codex;
+        const codex =
+          codexId && provider.usesCodexPlugins && !codexId.endsWith("@openai-bundled")
+            ? storeInstallTarget(provider, "codex", providers)
+            : undefined;
+        return codex && codexId
+          ? [storeRoute(codex, base, "codex-store", codexId, service, resolve)]
+          : [];
+      }
       const chatgpt = {
         ...base,
         family: "chatgpt" as const,

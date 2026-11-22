@@ -478,6 +478,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
             Ref.get(lastGoodCapabilities).pipe(
               Effect.map((account) => ({
                 ...provider,
+                pluginHomes: { claude: configDir },
                 accountAppsAvailable:
                   provider.auth.status === "authenticated" &&
                   account?.apiProvider === "firstParty" &&

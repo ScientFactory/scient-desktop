@@ -66,6 +66,7 @@ import {
   hasChatGptAccount,
   readScientAgentChatGptApps,
   scientAgentCapabilities,
+  type ScientAgentCapabilities,
   SCIENT_AGENT_CHATGPT_APPS_ALL,
   SCIENT_AGENT_CHATGPT_APPS_ENV,
 } from "../../scient/extensions/ScientAgentChatGptApps.ts";
@@ -148,6 +149,10 @@ export const ScientAgentDriver: ScientProviderDriver<
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
+    // The Codex home whose installed plugins the codex-plugins source reads, as Codex resolves it.
+    const codexHome = path.resolve(
+      processEnv.CODEX_HOME?.trim() || path.join(yield* HostProcess.HomeDirectory, ".codex"),
+    );
     // Image generation waits for the provider check to find an account that can make images.
     const writeHostConfig = (imageAccount: boolean) =>
       writeScientAgentHostConfig(root, {
@@ -215,6 +220,10 @@ export const ScientAgentDriver: ScientProviderDriver<
         }),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
         usesCodexPlugins: capabilities.codexPlugins,
+        pluginHomes: {
+          claude: claudeHome,
+          ...(capabilities.codexPlugins ? { codex: codexHome } : {}),
+        },
         // The apps of the agent's own ChatGPT sign-in, which only it holds and only a build
         // that runs them can use.
         accountAppsAvailable: capabilities.runsApps && hasChatGptAccount(accounts),
@@ -282,6 +291,11 @@ export const ScientAgentDriver: ScientProviderDriver<
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
+    // What this build last reported it can do, so one failed runtime-info read changes nothing.
+    const lastCapabilities = yield* Ref.make<
+      | { readonly version: string | null; readonly capabilities: ScientAgentCapabilities }
+      | undefined
+    >(undefined);
     const checkProvider = (cwd?: string) =>
       checkOmpProviderStatus(
         scientAgentTarget,
@@ -324,10 +338,24 @@ export const ScientAgentDriver: ScientProviderDriver<
                 ],
                 { concurrency: "unbounded" },
               ).pipe(
-                Effect.map(([skills, usageLimits, capabilities]) =>
-                  stamp(
-                    { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
-                    capabilities,
+                Effect.flatMap(([skills, usageLimits, read]) =>
+                  // A failed read keeps what this same build last reported.
+                  Ref.modify(lastCapabilities, (last) => {
+                    const known =
+                      read ?? (last?.version === snapshot.version ? last.capabilities : undefined);
+                    return [
+                      known,
+                      known === undefined
+                        ? last
+                        : { version: snapshot.version, capabilities: known },
+                    ];
+                  }).pipe(
+                    Effect.map((capabilities) =>
+                      stamp(
+                        { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
+                        capabilities,
+                      ),
+                    ),
                   ),
                 ),
               )

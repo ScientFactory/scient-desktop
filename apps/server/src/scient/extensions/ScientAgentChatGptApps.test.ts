@@ -160,13 +160,17 @@ describe("scientAgentCapabilities", () => {
   it.effect("reads ChatGPT apps and Codex plugin loading from one runtime-info read", () =>
     Effect.gen(function* () {
       const gate = yield* makeOmpExecutableGate();
-      const read = function* (info: Record<string, unknown>) {
+      const read = function* (info: Record<string, unknown>, disabled: unknown = { value: [] }) {
         const calls: Array<ReadonlyArray<string>> = [];
         using _command = vi
           .spyOn(Commands, "runProviderPluginCommand")
           .mockImplementation((_exe, _env, _cwd, args) => {
             calls.push(args);
-            return Effect.succeed(JSON.stringify({ ...JSON.parse(runtimeInfo), ...info }));
+            return Effect.succeed(
+              args[0] === "config"
+                ? JSON.stringify(disabled)
+                : JSON.stringify({ ...JSON.parse(runtimeInfo), ...info }),
+            );
           });
         const capabilities = yield* scientAgentCapabilities(process.execPath, {}, "/tmp").pipe(
           Effect.provideService(OmpExecutableGate, gate),
@@ -175,7 +179,21 @@ describe("scientAgentCapabilities", () => {
       };
       const both = yield* read({ enableSources: ["claude-plugins", "codex-plugins"] });
       expect(both.capabilities).toEqual({ runsApps: true, codexPlugins: true });
-      expect(both.calls).toEqual([["--runtime-info"]]);
+      expect(both.calls).toEqual([
+        ["--runtime-info"],
+        ["config", "get", "disabledProviders", "--json"],
+      ]);
+      // The person's disabledProviders outranks Scient's enable list.
+      expect(
+        (yield* read(
+          { enableSources: ["claude-plugins", "codex-plugins"] },
+          { value: ["codex-plugins"] },
+        )).capabilities,
+      ).toEqual({ runsApps: true, codexPlugins: false });
+      // An unreadable setting is unknown, so the caller keeps what it last knew.
+      expect(
+        (yield* read({ enableSources: ["codex-plugins"] }, "not json")).capabilities,
+      ).toBeUndefined();
       // An older build names no sources; one too old for Claude's plugins gets none enabled.
       expect((yield* read({})).capabilities).toEqual({ runsApps: true, codexPlugins: false });
       expect(

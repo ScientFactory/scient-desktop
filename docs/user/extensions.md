@@ -259,8 +259,11 @@ do not appear in an existing session.
 
 Scient Agent 0.1.3 or newer uses your Claude Code plugins automatically. It
 reads that server's `CLAUDE_CONFIG_DIR` or default Claude home; it does not
-combine separate Claude profiles. Plugins you turn off in Claude Code stay off,
-and Scient Agent's own disabled-source settings still apply.
+combine separate Claude profiles. Adding a plugin for Scient Agent installs it
+into the Claude profile that reads that same home, or into Scient Agent itself
+when none does, and **Works with** names only the agents reading that home.
+Plugins you turn off in Claude Code stay off, and Scient Agent's own
+disabled-source settings still apply.
 
 ## Codex apps and Claude connectors
 
@@ -276,10 +279,14 @@ first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
 A Scient Agent build that supports it also uses the skills and MCP servers of
-the Codex plugins installed and turned on in Codex (in `~/.codex/config.toml`).
-Codex store plugins and Codex's own plugins in Installed then say **Works with
-Codex and Scient Agent**. OpenAI's bundled plugins, such as Browser, Computer Use
-and Messages, need the Codex app itself and stay **Codex only**.
+the Codex plugins installed and turned on in Codex (in `~/.codex/config.toml`,
+or its `CODEX_HOME`). Codex store plugins and Codex's own plugins in Installed
+then say **Works with Codex and Scient Agent**, when that Codex uses the same
+home. Turning off `codex-plugins` in Scient Agent's disabled sources turns this
+off. A Codex plugin server that limits its tools (`enabled_tools` or
+`disabled_tools`) is not loaded, because Scient Agent could not enforce the
+limit. OpenAI's bundled plugins, such as Browser, Computer Use and Messages, need
+the Codex app itself and stay **Codex only**.
 
 **Services your agents reach through their own accounts or stores** each appear
 once in Discover, whichever way each agent reaches them: Gmail, Google Calendar,
@@ -326,10 +333,14 @@ for your user account on the computer Scient runs on, so the Antigravity app
 there gets it too. Installed lists it with an On/Off switch and **Remove from
 Antigravity**.
 
-Gmail, Google Drive, Google Calendar and other services with a matching
-Antigravity plugin list Antigravity under **Your agents** on their page, with
-**Add to Antigravity** right there. Once added, the row says the plugin signs in
-the first time a chat uses it; Scient does not see that sign-in.
+Gmail, Google Drive, Google Calendar, Google Docs, Sheets and Slides list
+Antigravity under **Your agents** on their page, with **Add to Antigravity**
+right there. Once added, the row says the plugin signs in the first time a chat
+uses it; Scient does not see that sign-in. Partner plugins that connect through
+their own MCP server, such as Notion, Linear, Figma or Canva, stay in the
+Antigravity Marketplace and are not offered on service pages: Antigravity signs
+their connection in only in its own plugin manager, so in Scient's chats they
+bring only their skills.
 
 ## See what a conversation received
 

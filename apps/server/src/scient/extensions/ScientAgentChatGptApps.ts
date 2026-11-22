@@ -114,20 +114,38 @@ const runtimeInfo = Effect.fn("scientAgentRuntimeInfo")(function* (
   };
 });
 
-const NO_CAPABILITIES = { runsApps: false, codexPlugins: false };
+const DisabledSources = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ value: Schema.Array(Schema.String) })),
+);
+
+export interface ScientAgentCapabilities {
+  readonly runsApps: boolean;
+  readonly codexPlugins: boolean;
+}
 
 /**
  * What this executable can do beyond chat, from one runtime-info read: run ChatGPT apps (an
- * older one ignores the request for them) and load Codex's installed plugins.
+ * older one ignores the request for them) and load Codex's installed plugins, unless the
+ * person turned that source off (`disabledProviders`, which outranks Scient's enable list).
+ * `undefined` when it could not be read, so callers keep what they last knew.
  */
 export const scientAgentCapabilities = Effect.fn("scientAgentCapabilities")(
   function* (executable: string, env: NodeJS.ProcessEnv, cwd: string) {
-    const { runsApps, codexPlugins } = yield* runtimeInfo(executable, env, cwd);
-    return { runsApps, codexPlugins };
+    const { resolved, runsApps, codexPlugins } = yield* runtimeInfo(executable, env, cwd);
+    if (!codexPlugins) return { runsApps, codexPlugins: false };
+    const disabled = yield* runProviderPluginCommand(resolved, env, cwd, [
+      "config",
+      "get",
+      "disabledProviders",
+      "--json",
+    ]);
+    const sources = DisabledSources(disabled.trim().split("\n").at(-1) ?? "");
+    if (sources._tag === "None") return undefined;
+    return { runsApps, codexPlugins: !sources.value.value.includes("codex-plugins") };
   },
   Effect.scoped,
-  Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.succeed(NO_CAPABILITIES) }),
-  Effect.orElseSucceed(() => NO_CAPABILITIES),
+  Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.undefined }),
+  Effect.orElseSucceed(() => undefined),
 );
 
 /**

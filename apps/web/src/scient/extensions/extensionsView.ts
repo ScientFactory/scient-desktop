@@ -427,20 +427,87 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
 /** OpenAI's host-coupled Codex plugins, which only Codex can run, all come from this marketplace. */
 const CODEX_HOST_MARKETPLACE = "openai-bundled";
 
+/** The Codex home a Codex instance installs plugins into, or the one a Scient Agent reads. */
+function codexPluginHome(
+  provider: Pick<ServerProvider, "driver" | "runtimePaths" | "pluginHomes">,
+): string | undefined {
+  return provider.driver === "codex"
+    ? provider.runtimePaths?.homePath
+    : provider.pluginHomes?.codex;
+}
+
+/** Two plugin homes are the same unless both are known and differ. */
+const sameHome = (a: string | undefined, b: string | undefined) =>
+  a === undefined || b === undefined || a === b;
+
+/**
+ * The agent that installs a store entry for `provider`: itself, except that Scient Agent takes a
+ * Claude Code plugin through the Claude instance reading the same Claude home (else its own
+ * installer) and a Codex plugin through the Codex instance whose home it reads. `undefined` when
+ * no instance can install it for that agent.
+ */
+export function storeInstallTarget(
+  provider: ServerProvider,
+  kind: ProviderStoreEntry["kind"],
+  providers: ReadonlyArray<ServerProvider>,
+): ServerProvider | undefined {
+  if (provider.driver !== "scient" || kind === "antigravity") return provider;
+  if (kind === "shared") {
+    const home = provider.pluginHomes?.claude;
+    return (
+      providers.find(
+        (item) =>
+          providerAvailable(item) &&
+          item.driver === "claudeAgent" &&
+          (home === undefined || item.pluginHomes?.claude === home),
+      ) ?? provider
+    );
+  }
+  const home = provider.pluginHomes?.codex;
+  return home === undefined
+    ? undefined
+    : providers.find(
+        (item) =>
+          providerAvailable(item) && item.driver === "codex" && codexPluginHome(item) === home,
+      );
+}
+
 /**
  * A Codex plugin that Scient Agents loading Codex's installed plugins (its skills and servers)
- * reach too, when one does; `undefined` leaves it Codex's own.
+ * from the same Codex home reach too, when one does; `undefined` leaves it Codex's own.
  */
 function codexPluginAudience(
-  provider: Pick<ServerProvider, "instanceId">,
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "runtimePaths" | "pluginHomes">,
   /** The plugin's `<name>@<marketplace>` id; absent for the store as a whole. */
   id: string | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): ExtensionAudience | undefined {
+  const home = codexPluginHome(provider);
   return !id?.endsWith(`@${CODEX_HOST_MARKETPLACE}`) &&
-    providers.some((agent) => agent.driver === "scient" && agent.usesCodexPlugins === true)
-    ? { layer: "codex", ownerInstanceId: provider.instanceId }
+    providers.some(
+      (agent) =>
+        agent.driver === "scient" &&
+        agent.usesCodexPlugins === true &&
+        sameHome(agent.pluginHomes?.codex, home),
+    )
+    ? {
+        layer: "codex",
+        ownerInstanceId: provider.instanceId,
+        ...(home ? { pluginHome: home } : {}),
+      }
     : undefined;
+}
+
+/** A Claude Code plugin's audience: the agents reading the Claude home that holds it. */
+function sharedAudience(
+  provider: Pick<ServerProvider, "instanceId" | "pluginHomes">,
+): ExtensionAudience {
+  const home = provider.pluginHomes?.claude;
+  return {
+    layer: "shared",
+    ownerInstanceId: provider.instanceId,
+    ...(home ? { pluginHome: home } : {}),
+  };
 }
 
 export function providerExtensionAudience(
@@ -458,7 +525,7 @@ export function providerExtensionAudience(
         ("id" in entry
           ? Boolean(entry.marketplace)
           : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
-  if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
+  if (shared) return sharedAudience(provider);
   const codex =
     provider.driver === "codex" && "id" in entry
       ? codexPluginAudience(provider, entry.id, providers)
@@ -493,13 +560,13 @@ export function providerExtensionAudience(
  * Antigravity Marketplace serves Antigravity.
  */
 export function providerStoreAudience(
-  provider: Pick<ServerProvider, "driver" | "instanceId">,
+  provider: Pick<ServerProvider, "driver" | "instanceId" | "runtimePaths" | "pluginHomes">,
   kind: ProviderStoreEntry["kind"],
   providers: ReadonlyArray<ServerProvider>,
   /** One entry's plugin id; absent for the store as a whole. */
   entryId?: string,
 ): ExtensionAudience {
-  if (kind === "shared") return { layer: "shared", ownerInstanceId: provider.instanceId };
+  if (kind === "shared") return sharedAudience(provider);
   if (kind === "antigravity")
     return {
       layer: "agent",
@@ -525,16 +592,19 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
       return audience.agents === undefined || audience.agents.includes(provider.instanceId);
     case "shared":
       return (
-        provider.driver === "claudeAgent" ||
         provider.instanceId === audience.ownerInstanceId ||
-        (provider.driver === "scient" &&
-          supportsScientClaudePlugins(provider.version) &&
-          provider.usesClaudePlugins === true)
+        (sameHome(provider.pluginHomes?.claude, audience.pluginHome) &&
+          (provider.driver === "claudeAgent" ||
+            (provider.driver === "scient" &&
+              supportsScientClaudePlugins(provider.version) &&
+              provider.usesClaudePlugins === true)))
       );
     case "codex":
       return (
         provider.instanceId === audience.ownerInstanceId ||
-        (provider.driver === "scient" && provider.usesCodexPlugins === true)
+        (provider.driver === "scient" &&
+          provider.usesCodexPlugins === true &&
+          sameHome(provider.pluginHomes?.codex, audience.pluginHome))
       );
     case "agent":
       return provider.instanceId === audience.instanceId;
@@ -856,6 +926,7 @@ function canonicalUrl(value: string): string {
 /** Whether an agent-store entry is the same service as one of Scient's curated connectors. */
 export function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
   return (
+    curated.agentStores?.claude === entry.id ||
     curated.agentStores?.codex === entry.name ||
     curated.agentStores?.antigravity === entry.id ||
     curated.name === entry.id ||
@@ -876,13 +947,61 @@ function storeTwinKey(entry: Pick<ProviderStoreEntry, "displayName">): string {
   return entry.displayName.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** A website's last two host labels: developers.zoom.us and zoom.us are one site. */
+/** Hosts where every subdomain is somebody else's site. */
+const SHARED_HOSTS = [
+  "github.io",
+  "gitlab.io",
+  "vercel.app",
+  "netlify.app",
+  "pages.dev",
+  "workers.dev",
+  "web.app",
+  "firebaseapp.com",
+  "herokuapp.com",
+  "onrender.com",
+  "fly.dev",
+  "azurewebsites.net",
+  "readthedocs.io",
+  "gitbook.io",
+  "notion.site",
+  "substack.com",
+  "webflow.io",
+  "wixsite.com",
+  "blogspot.com",
+];
+/** Second-level labels country suffixes use: co.uk, com.au, ac.il. */
+const COUNTRY_SECOND_LEVEL: Readonly<Record<string, true>> = {
+  co: true,
+  com: true,
+  org: true,
+  net: true,
+  ac: true,
+  gov: true,
+  edu: true,
+  ne: true,
+  or: true,
+  go: true,
+};
+
+/**
+ * The site a website belongs to: developers.zoom.us and zoom.us are one site; foo.co.uk and
+ * bar.co.uk, or two github.io pages, are not.
+ */
 const siteDomain = (url: string | undefined) => {
+  let host: string;
   try {
-    return url ? new URL(url).hostname.split(".").slice(-2).join(".") : undefined;
+    if (!url) return undefined;
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/u, "");
   } catch {
     return undefined;
   }
+  if (SHARED_HOSTS.some((shared) => host === shared || host.endsWith(`.${shared}`))) return host;
+  const labels = host.split(".");
+  const countrySuffix =
+    labels.length >= 3 &&
+    labels.at(-1)!.length === 2 &&
+    COUNTRY_SECOND_LEVEL[labels.at(-2)!] === true;
+  return labels.slice(countrySuffix ? -3 : -2).join(".");
 };
 
 export function areStoreTwins(

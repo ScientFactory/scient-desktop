@@ -15,7 +15,7 @@ import {
   nextAccountServiceStep,
   storeEntryAudience,
 } from "./accountServices";
-import { audienceLabel } from "./extensionsView";
+import { areStoreTwins, audienceLabel, storeInstallTarget } from "./extensionsView";
 
 const service = (id: string) => ACCOUNT_SERVICES.find((candidate) => candidate.id === id)!;
 const gmail = service("gmail");
@@ -351,23 +351,49 @@ describe("account services", () => {
       undefined,
     );
     expect(
-      isAccountServiceStoreEntry({ id: "gmail@x", name: "gmail", displayName: "Gmail", apps: [] }),
+      isAccountServiceStoreEntry({
+        id: "gmail@x",
+        name: "gmail",
+        displayName: "Gmail",
+        kind: "codex",
+        apps: [],
+      }),
     ).toBe(true);
     expect(
       isAccountServiceStoreEntry({
         id: "linear@openai-curated",
         name: "linear",
         displayName: "Linear",
+        kind: "codex",
         apps: [],
       }),
     ).toBe(false);
     // A plugin a service names as its store route is the service's row, not a shelf's.
-    for (const [id, name, displayName] of [
-      ["imessage@claude-plugins-official", "imessage", "iMessage"],
-      ["telegram@claude-plugins-official", "telegram", "Telegram"],
-      ["messages@openai-bundled", "messages", "Messages"],
+    for (const [id, name, displayName, kind] of [
+      ["imessage@claude-plugins-official", "imessage", "iMessage", "shared"],
+      ["telegram@claude-plugins-official", "telegram", "Telegram", "shared"],
+      ["messages@openai-bundled", "messages", "Messages", "codex"],
     ] as const)
-      expect(isAccountServiceStoreEntry({ id, name, displayName, apps: [] })).toBe(true);
+      expect(isAccountServiceStoreEntry({ id, name, displayName, kind, apps: [] })).toBe(true);
+    // A same-named entry stays listed when the service's page has no route to that store's agent.
+    expect(
+      isAccountServiceStoreEntry({
+        id: "zoom@antigravity-plugins-partners",
+        name: "zoom",
+        displayName: "Zoom",
+        kind: "antigravity",
+        apps: [],
+      }),
+    ).toBe(false);
+    expect(
+      isAccountServiceStoreEntry({
+        id: "telegram@openai-curated",
+        name: "telegram",
+        displayName: "Telegram",
+        kind: "codex",
+        apps: [],
+      }),
+    ).toBe(false);
   });
 
   it("lets Scient Agent reach Codex store plugins it loads, but not OpenAI's bundled ones", () => {
@@ -395,6 +421,62 @@ describe("account services", () => {
       storeEntryAudience(codex, { ...entry("gmail@openai-curated"), apps: [app] }, [codex, loads])
         .layer,
     ).toBe("account");
+  });
+
+  it("installs and claims reach only through the plugin home an agent reads", () => {
+    const claudeAt = (id: string, home: string) => ({
+      ...provider("claudeAgent", { pluginHomes: { claude: home } }),
+      instanceId: ProviderInstanceId.make(id),
+    });
+    const work = claudeAt("claude-work", "/u/.claude-work");
+    const main = claudeAt("claude-main", "/u/.claude");
+    const agent = {
+      ...scient(false),
+      version: "0.1.3",
+      usesClaudePlugins: true,
+      usesCodexPlugins: true,
+      pluginHomes: { claude: "/u/.claude", codex: "/u/.codex" },
+    };
+    // Claude Work comes first, but Scient Agent reads the default Claude home.
+    expect(storeInstallTarget(agent, "shared", [work, main, agent])?.instanceId).toBe(
+      main.instanceId,
+    );
+    // No Claude reads that home: Scient Agent installs it itself.
+    expect(storeInstallTarget(agent, "shared", [work, agent])?.instanceId).toBe(agent.instanceId);
+    const codexAt = (home: string) => ({
+      ...codex,
+      runtimePaths: { homePath: home, shadowHomePath: null },
+    });
+    expect(storeInstallTarget(agent, "codex", [codexAt("/u/.codex"), agent])?.driver).toBe("codex");
+    expect(storeInstallTarget(agent, "codex", [codexAt("/u/other"), agent])).toBeUndefined();
+    const linear = { kind: "codex" as const, id: "linear@openai-curated", apps: [] };
+    expect(
+      audienceLabel(storeEntryAudience(codexAt("/u/other"), linear, [codexAt("/u/other"), agent])),
+    ).toBe("Codex only");
+    // A store-only service: Scient Agent adds Boltz through the Codex reading its Codex home.
+    const noClaudeStore = {
+      ...service("boltz"),
+      stores: { codex: "boltz-api-cli@openai-curated" },
+    };
+    expect(
+      accountServiceRoutes(noClaudeStore, [codexAt("/u/.codex"), agent]).map((route) => [
+        route.driver,
+        route.family,
+      ]),
+    ).toEqual([
+      ["codex", "codex-store"],
+      ["scient", "codex-store"],
+    ]);
+    expect(accountServiceRoutes(noClaudeStore, [codexAt("/u/other"), agent])).toHaveLength(1);
+  });
+
+  it("treats store entries as one service only on the same site", () => {
+    const at = (website: string) => ({ displayName: "Plotter", website });
+    expect(areStoreTwins(at("https://docs.stripe.com"), at("https://stripe.com"))).toBe(true);
+    expect(areStoreTwins(at("https://foo.co.uk"), at("https://bar.co.uk"))).toBe(false);
+    expect(areStoreTwins(at("https://a.github.io"), at("https://b.github.io"))).toBe(false);
+    expect(areStoreTwins(at("https://plotter.dev"), { displayName: "Plotter" })).toBe(true);
+    expect(areStoreTwins(at("https://plotter.dev"), { displayName: "Plotter Pro" })).toBe(false);
   });
 
   it("routes Antigravity through its marketplace plugin, never as connected", () => {
@@ -438,15 +520,18 @@ describe("account services", () => {
     ).toEqual([]);
   });
 
-  it("names exact Antigravity plugins for services and hides only those store duplicates", () => {
+  it("names Google's Antigravity plugins for services, never partner ones, and hides only those", () => {
     expect(gmail.stores?.antigravity).toBe("gmail@antigravity-plugins-official");
-    expect(accountServiceForApp({ name: "Canva", id: "connector_canva" })?.stores).toEqual({
-      antigravity: "canva@antigravity-plugins-partners",
+    expect(accountServiceForApp({ name: "Google Docs", id: "connector_docs" })?.stores).toEqual({
+      antigravity: "gdocs@antigravity-plugins-official",
     });
+    // A partner plugin connects through an MCP server agy can't sign in from a chat.
+    expect(accountServiceForApp({ name: "Canva", id: "connector_canva" })?.stores).toBeUndefined();
     const entry = (id: string, name: string, displayName: string) => ({
       id,
       name,
       displayName,
+      kind: "antigravity" as const,
       apps: [],
     });
     expect(
@@ -456,6 +541,10 @@ describe("account services", () => {
     ).toBe(true);
     expect(
       isAccountServiceStoreEntry(entry("canva@antigravity-plugins-partners", "canva", "Canva")),
+    ).toBe(false);
+    // Figma's page has no Antigravity route, so its Marketplace entry stays in the store.
+    expect(
+      isAccountServiceStoreEntry(entry("figma@antigravity-plugins-partners", "figma", "Figma")),
     ).toBe(false);
   });
 });

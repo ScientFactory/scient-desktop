@@ -931,14 +931,25 @@ The `codex-plugins` source loads the skills and MCP servers of the Codex plugins
 installed and enabled in `~/.codex/config.toml`, except OpenAI's host-coupled
 ones. Each check of an enabled, installed Scient Agent reads `--runtime-info`
 once (`scientAgentCapabilities`): `hostCommands` containing `apps` means it runs
-ChatGPT apps, and `enableSources` containing `codex-plugins` sets the provider's
-`usesCodexPlugins`. While any Scient Agent has it, a Codex plugin's audience is
-the `codex` layer (its Codex instance and those Scient Agents, "Works with Codex
-and Scient Agent"), both in Codex's store and among Codex's installed plugins.
-Plugins from the `openai-bundled` marketplace (by their `<name>@openai-bundled`
-id), where all of OpenAI's host-coupled plugins live, stay Codex only; this
-under-claims bundled plugins that would load. A Codex store entry built on a
-ChatGPT app keeps the app's account audience.
+ChatGPT apps, and `enableSources` containing `codex-plugins`, unless the agent's
+`disabledProviders` names it, sets the provider's `usesCodexPlugins`. A failed
+read keeps what the same build last reported.
+
+Plugins reach an agent only through the home it reads. Claude instances report
+`pluginHomes.claude` (their resolved Claude home); Scient Agent reports
+`pluginHomes.claude` (its `CLAUDE_CONFIG_DIR` or `~/.claude`) and, while it loads
+Codex's plugins, `pluginHomes.codex` (its `CODEX_HOME` or `~/.codex`); Codex
+instances report their home as `runtimePaths.homePath`. A Claude Code plugin's
+`shared` audience and a Codex plugin's `codex` audience carry the owner's
+`pluginHome`, and reach only agents reading the same home (an unknown home on
+either side counts as the same). `storeInstallTarget` sends Scient Agent's Add
+for a Claude Code plugin to the Claude instance reading its home, else to Scient
+Agent's own installer, and for a Codex plugin to the Codex instance whose home it
+reads; with no such Codex, Scient Agent gets no Codex route. Plugins from the
+`openai-bundled` marketplace (by their `<name>@openai-bundled` id), where all of
+OpenAI's host-coupled plugins live, stay Codex only; this under-claims bundled
+plugins that would load. A Codex store entry built on a ChatGPT app keeps the
+app's account audience.
 
 Claude plugins' source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the
 server user's `.claude` directory. It is not a union of every configured Claude
