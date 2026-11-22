@@ -1200,7 +1200,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 4422
+      "outputBytes": 4260
     }
   },
   {
@@ -1379,7 +1379,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2530
+      "outputBytes": 2432
     }
   },
   {
@@ -2021,7 +2021,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2906
+      "outputBytes": 2416
     }
   },
   {
@@ -2357,7 +2357,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2732
+      "outputBytes": 2756
     }
   },
   {
@@ -2488,7 +2488,7 @@
       "sourceWidth": 360,
       "sourceHeight": 360,
       "sourceFormat": "png",
-      "outputBytes": 5094
+      "outputBytes": 5022
     }
   },
   {
@@ -4265,7 +4265,8 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3640
+      "outputBytes": 3704,
+      "trimFrame": true
     }
   },
   {
