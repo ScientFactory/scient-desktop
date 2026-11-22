@@ -44,6 +44,7 @@ import {
   listedWhenBrowsing,
   type CuratedServer,
 } from "./curatedCatalog.ts";
+import { categoriesForClient } from "./clientCategories.ts";
 
 export const MCP_REGISTRY_SERVERS_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const OFFICIAL_META_KEY = "io.modelcontextprotocol.registry/official";
@@ -475,6 +476,12 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const servers = options.servers ?? CURATED_SERVERS;
   // Browsing (the home page and category pages) lists these; search reaches every server.
   const browsable = servers.filter(listedWhenBrowsing);
+  /** The browsable servers under the categories a client lists them in, so browsing agrees. */
+  const browsableFor = (knownCategories: ReadonlyArray<string> | undefined) => {
+    if (knownCategories === undefined) return browsable;
+    const shown = categoriesForClient(knownCategories);
+    return browsable.map((server) => ({ ...server, categories: shown(server.categories) }));
+  };
   // Keyed by query, cursor and limit; Map insertion order drives eviction.
   const cache = new Map<string, CachedPage>();
 
@@ -589,10 +596,11 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   );
 
   const catalog: ExtensionsDiscoverShape["catalog"] = Effect.fn("ExtensionsDiscover.catalog")(
-    function* () {
+    function* (input) {
       const installed = yield* installedConnectors;
+      const listed = browsableFor(input?.knownCategories);
       const previews = CATALOG_CATEGORY_ORDER.flatMap((category) => {
-        const members = serversIn(browsable, category);
+        const members = serversIn(listed, category);
         return members.length === 0
           ? []
           : [
@@ -714,7 +722,9 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       if (input.scope === "curated") {
         // Small and complete: filtered in memory, never paged.
         const curatedMatches = (
-          input.category === undefined ? servers : serversIn(browsable, input.category)
+          input.category === undefined
+            ? servers
+            : serversIn(browsableFor(input.knownCategories), input.category)
         ).filter((server) => matchesQuery(server, terms));
         const installed = yield* installedConnectors;
         return {

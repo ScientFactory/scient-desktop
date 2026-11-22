@@ -1,9 +1,10 @@
-import type {
-  DiscoverEntry,
-  DiscoverSearchInput,
-  ExtensionCategory,
-  ProviderStoreEntry,
-  ServerProvider,
+import {
+  type DiscoverEntry,
+  type DiscoverSearchInput,
+  EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES,
+  type ExtensionCategory,
+  type ProviderStoreEntry,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
 import { isAccountServiceStoreEntry, storeEntryAudience } from "./accountServices";
@@ -833,7 +834,7 @@ function CategoryContents({
 function Category({ category }: { readonly category: string }) {
   const gt = useGT();
   const messages = useMessages();
-  const { catalog } = useExtensionsEnvironment();
+  const { catalog, catalogError } = useExtensionsEnvironment();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
   const section = catalog?.sections.find((candidate) => candidate.category === category);
@@ -851,18 +852,32 @@ function Category({ category }: { readonly category: string }) {
         </MutedLine>
       </>
     );
+  // A category added after `knownCategories` exists only on servers that list it: an older one
+  // would reject it, so its page waits for the catalog and loads nothing when it is missing.
+  const newer = !EXTENSION_CATEGORIES_BEFORE_KNOWN_CATEGORIES.includes(category);
+  const waiting = newer && catalog === null && catalogError === null;
+  const missing = newer && catalog !== null && section === undefined;
   return (
     <>
       <BackLink to="/settings/extensions">{gt("Discover")}</BackLink>
       <ExtensionsSection
         title={title}
         action={
-          <SearchField label={gt("Search this category")} value={search} onChange={setSearch} />
+          missing ? undefined : (
+            <SearchField label={gt("Search this category")} value={search} onChange={setSearch} />
+          )
         }
       >
         {description ? <MutedLine>{description}</MutedLine> : null}
+        {missing ? (
+          <MutedLine>
+            <T>Scient on this machine doesn’t have this category yet. Update it to browse here.</T>
+          </MutedLine>
+        ) : null}
       </ExtensionsSection>
-      <CategoryContents key={`${category}:${query}`} category={category} query={query} />
+      {waiting || missing ? null : (
+        <CategoryContents key={`${category}:${query}`} category={category} query={query} />
+      )}
     </>
   );
 }
