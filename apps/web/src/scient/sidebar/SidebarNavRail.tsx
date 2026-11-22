@@ -2,7 +2,6 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import {
-  BookOpenTextIcon,
   ChartNoAxesColumnIcon,
   CloudIcon,
   createLucideIcon,
@@ -40,6 +39,12 @@ import { useSidebarUtilityActions } from "./useSidebarUtilityActions";
 import "./sidebarNavRail.css";
 import { registerRailOtherUpdatesSlot } from "./railOtherUpdatesSlot";
 import { readCodeReviewPage } from "../codeReview/codeReviewPage";
+
+const LibrarySourceStackIcon = createLucideIcon("library-source-stack", [
+  ["path", { d: "M7.5 3h10A2.5 2.5 0 0 1 20 5.5v11", key: "back-sheet" }],
+  ["path", { d: "M4 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z", key: "front-sheet" }],
+  ["path", { d: "M8 12h4", key: "text" }],
+]);
 
 const ScheduledTasksRailIcon = createLucideIcon("scheduled-tasks-rail", [
   ["circle", { cx: "12", cy: "12", r: "10", key: "face" }],
@@ -210,7 +215,7 @@ export function SidebarNavRail({ collapsed }: { collapsed: boolean }) {
           active={page === "home"}
         />
         <RailItem
-          icon={<BookOpenTextIcon />}
+          icon={<LibrarySourceStackIcon />}
           label={gt("Library")}
           onClick={() => {
             actions.closeMobileSidebar();
