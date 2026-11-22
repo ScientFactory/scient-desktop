@@ -49,7 +49,11 @@ function CardRow({ children }: { readonly children: ReactNode }) {
 export function useAccountService(service: AccountService) {
   const { environmentId, canWrite, providers, providerInventory } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
-  const waiting = useRef(false);
+  // While a sign-in may still finish in the browser, returning to Scient re-reads the agents: it
+  // can take several visits, so the window stays open for a while rather than one return.
+  const waiting = useRef<number | null>(null);
+  // A provider page the browser would not open, offered as a link instead.
+  const [blocked, setBlocked] = useState<string | null>(null);
   // Each agent counts once its own inventory arrives; a slow one never holds the others back.
   const finished = ["ready", "partial", "error"].includes(providerInventory.phase);
   const messages = useMessages();
@@ -69,13 +73,20 @@ export function useAccountService(service: AccountService) {
       });
   };
   useWindowFocusRefresh(() => {
-    if (!waiting.current) return;
-    waiting.current = false;
-    reread();
+    if (waiting.current !== null) reread();
   });
+  const expectReturn = () => {
+    window.clearTimeout(waiting.current ?? undefined);
+    waiting.current = window.setTimeout(() => {
+      waiting.current = null;
+    }, RETURN_WINDOW_MS);
+  };
   const open = (page: string) => {
-    waiting.current = true;
-    void openAuthorizationPage(async () => page);
+    expectReturn();
+    setBlocked(null);
+    void openAuthorizationPage(async () => page).then((opening) =>
+      setBlocked(opening.outcome === "blocked" ? opening.url : null),
+    );
   };
   return {
     routes,
@@ -84,9 +95,8 @@ export function useAccountService(service: AccountService) {
     /** The agents as last read, for an inline sign-in or install. */
     providers: providerInventory.providers.length > 0 ? providerInventory.providers : providers,
     /** A sign-in finishes in the browser; returning re-reads the agents. */
-    expectReturn: () => {
-      waiting.current = true;
-    },
+    expectReturn,
+    blocked,
     reread,
     audience: accountServiceAudience(routes),
     /** Opens the next provider page; a store plugin step installs through `AddServicePlugin`. */
@@ -154,6 +164,9 @@ function StoreRouteAction({
     </span>
   );
 }
+
+/** How long after opening a provider's page returning to Scient re-reads the agents. */
+const RETURN_WINDOW_MS = 10 * 60_000;
 
 const ROUTE_STATE_TEXT = {
   connected: msg("Connected"),
@@ -339,7 +352,7 @@ function AntigravityServiceRow({
 /** Each agent's place for a service, with its action, as on Gmail's page and plugin pages. */
 export function ServiceAgents({ service }: { readonly service: AccountService }) {
   const gt = useGT();
-  const { routes, open, environmentId, providers, expectReturn, reread } =
+  const { routes, open, environmentId, providers, expectReturn, reread, blocked } =
     useAccountService(service);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   if (routes.length === 0)
@@ -364,62 +377,80 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
         ? undefined
         : route.reason;
   return (
-    <div className="min-w-0 divide-y divide-border overflow-hidden rounded-xl border bg-card">
-      {routes.map((route) => {
-        const provider = providers.find((entry) => entry.instanceId === route.instanceId);
-        if (route.family === "antigravity-store")
-          return provider ? (
-            <AntigravityServiceRow key={route.instanceId} route={route} provider={provider} />
-          ) : null;
-        // Scient Agent signs in to ChatGPT right here; the agent runs the sign-in.
-        const inline = route.driver === "scient" && provider?.connection?.accounts;
-        return (
-          <div key={route.instanceId}>
-            <CardRow>
-              <ProviderInstanceIcon
-                driverKind={route.driver}
-                displayName={route.label}
-                acpRegistryIconUrl={provider?.iconUrl}
-                iconClassName="size-6"
-                indicatorBackground="var(--card)"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{route.label}</span>
-                {note(route) ? (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {note(route)}
-                  </span>
-                ) : null}
-              </span>
-              <RouteAction
-                route={route}
-                provider={provider}
-                open={open}
-                reread={reread}
-                onSignIn={
-                  inline
-                    ? () => {
-                        expectReturn();
-                        setSigningIn(signingIn === route.instanceId ? null : route.instanceId);
-                      }
-                    : undefined
-                }
-              />
-            </CardRow>
-            {signingIn === route.instanceId && provider && route.state === "sign-in" ? (
-              <div className="px-4 pb-4">
-                <ScientAgentAccounts
-                  environmentId={environmentId}
+    <div className="grid min-w-0 gap-2">
+      {blocked ? (
+        <MutedLine>
+          <T>
+            Your browser didn’t open the page.{" "}
+            <a href={blocked} target="_blank" rel="noreferrer" className="underline">
+              Open it here
+            </a>
+            .
+          </T>
+        </MutedLine>
+      ) : null}
+      <div className="min-w-0 divide-y divide-border overflow-hidden rounded-xl border bg-card">
+        {routes.map((route) => {
+          const provider = providers.find((entry) => entry.instanceId === route.instanceId);
+          if (route.family === "antigravity-store")
+            return provider ? (
+              <AntigravityServiceRow key={route.instanceId} route={route} provider={provider} />
+            ) : null;
+          // Scient Agent signs in to ChatGPT right here; the agent runs the sign-in.
+          const inline = route.driver === "scient" && provider?.connection?.accounts;
+          return (
+            <div key={route.instanceId}>
+              <CardRow>
+                <ProviderInstanceIcon
+                  driverKind={route.driver}
+                  displayName={route.label}
+                  acpRegistryIconUrl={provider?.iconUrl}
+                  iconClassName="size-6"
+                  indicatorBackground="var(--card)"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{route.label}</span>
+                  {note(route) ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {note(route)}
+                    </span>
+                  ) : null}
+                </span>
+                <RouteAction
+                  route={route}
                   provider={provider}
-                  only={(account) =>
-                    account.id === "openai-codex" || account.sameAccountAs === "openai-codex"
+                  open={open}
+                  reread={reread}
+                  onSignIn={
+                    inline
+                      ? () => {
+                          expectReturn();
+                          setSigningIn(signingIn === route.instanceId ? null : route.instanceId);
+                        }
+                      : undefined
                   }
                 />
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
+              </CardRow>
+              {signingIn === route.instanceId && provider && route.state === "sign-in" ? (
+                <div className="px-4 pb-4">
+                  <ScientAgentAccounts
+                    environmentId={environmentId}
+                    provider={provider}
+                    only={(account) =>
+                      account.id === "openai-codex" || account.sameAccountAs === "openai-codex"
+                    }
+                  />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <div>
+        <Button size="xs" variant="ghost-muted" onClick={reread}>
+          <T>Check again</T>
+        </Button>
+      </div>
     </div>
   );
 }

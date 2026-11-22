@@ -765,6 +765,20 @@ function accountServiceRoutesFromInventory(
       return [{ ...claude, state: "connected" }];
     // Which claude.ai account to use: each Claude instance signs in to its own.
     const account = provider.auth.email;
+    // Signed in on claude.ai, but Claude Code could not reach it: reconnecting there fixes it.
+    if (listed.length > 0 && listed.every((server) => server.status === "failed"))
+      return [
+        {
+          ...claude,
+          state: "connect",
+          reason: resolve(
+            msg("{service} is on claude.ai but failed to connect; reconnect it there"),
+            {
+              service: service.claude.name,
+            },
+          ),
+        },
+      ];
     return [
       {
         ...claude,
