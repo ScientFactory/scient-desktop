@@ -983,9 +983,19 @@ const COUNTRY_SECOND_LEVEL: Readonly<Record<string, true>> = {
   go: true,
 };
 
+/** Hosts of code and packages: a plugin's homepage there says where it lives, not whose it is. */
+const CODE_HOSTS: Readonly<Record<string, true>> = {
+  "github.com": true,
+  "gitlab.com": true,
+  "bitbucket.org": true,
+  "npmjs.com": true,
+  "www.npmjs.com": true,
+  "pypi.org": true,
+};
+
 /**
  * The site a website belongs to: developers.zoom.us and zoom.us are one site; foo.co.uk and
- * bar.co.uk, or two github.io pages, are not.
+ * bar.co.uk, or two github.io pages, are not. A repository page names no site.
  */
 const siteDomain = (url: string | undefined) => {
   let host: string;
@@ -995,6 +1005,7 @@ const siteDomain = (url: string | undefined) => {
   } catch {
     return undefined;
   }
+  if (CODE_HOSTS[host] === true) return undefined;
   if (SHARED_HOSTS.some((shared) => host === shared || host.endsWith(`.${shared}`))) return host;
   const labels = host.split(".");
   const countrySuffix =

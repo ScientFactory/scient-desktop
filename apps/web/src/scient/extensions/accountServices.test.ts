@@ -477,6 +477,10 @@ describe("account services", () => {
     expect(areStoreTwins(at("https://a.github.io"), at("https://b.github.io"))).toBe(false);
     expect(areStoreTwins(at("https://plotter.dev"), { displayName: "Plotter" })).toBe(true);
     expect(areStoreTwins(at("https://plotter.dev"), { displayName: "Plotter Pro" })).toBe(false);
+    // Claude's Stripe plugin points at its GitHub repository, which names no site.
+    expect(
+      areStoreTwins(at("https://github.com/stripe/ai/tree/main"), at("https://stripe.com")),
+    ).toBe(true);
   });
 
   it("routes Antigravity through its marketplace plugin, never as connected", () => {

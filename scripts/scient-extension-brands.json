@@ -3369,6 +3369,23 @@
     }
   },
   {
+    "key": "sharepoint",
+    "names": ["SharePoint", "Microsoft SharePoint"],
+    "website": "https://www.microsoft.com/microsoft-365/sharepoint",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "repo:scripts/brand-icon-sources/sharepoint.png",
+      "brandSource": "Microsoft's SharePoint icon from OpenAI's curated SharePoint plugin (assets/logo.png)",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "mode": "mark",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "png",
+      "outputBytes": 3764
+    }
+  },
+  {
     "key": "shippo",
     "names": ["shippo"],
     "website": "https://docs.goshippo.com",

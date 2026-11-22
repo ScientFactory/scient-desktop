@@ -373,9 +373,14 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
           : route.family === "claude-store"
             ? gt("Through a Claude Code plugin")
             : gt("Through a Codex plugin")
-      : route.state === "add" || (route.state === "connect" && route.family === "chatgpt")
-        ? undefined
-        : route.reason;
+      : route.state === "add" && route.driver === "scient"
+        ? // Scient Agent loads another agent's plugins, so one Add serves both rows.
+          route.family === "claude-store"
+          ? gt("Uses Claude Code’s plugins, so one Add serves both")
+          : gt("Uses Codex’s plugins, so one Add serves both")
+        : route.state === "add" || (route.state === "connect" && route.family === "chatgpt")
+          ? undefined
+          : route.reason;
   return (
     <div className="grid min-w-0 gap-2">
       {blocked ? (
