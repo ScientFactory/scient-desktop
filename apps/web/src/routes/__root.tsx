@@ -294,10 +294,11 @@ function RootRouteBranch() {
 
   // Hosted clients retain upstream connection onboarding. ScientGettingStartedGate
   // owns local assisted setup; a second first-run wizard must not intercept it.
-  // SCIENT-FORK: the release notes provider wraps both shells, so the sidebar card and the
-  // app-level What's new dialog share one state.
+  // SCIENT-FORK:START — the release notes provider wraps both shells, so the sidebar card and
+  // the app-level What's new dialog share one state.
   return (
     <ScientReleaseNotesProvider>
+      {/* SCIENT-FORK:END */}
       <ChatGptWelcomeCoordinator />
       {isWelcome ? (
         <>
@@ -319,8 +320,10 @@ function RootRouteBranch() {
       )}
       {/* Above both shells and the router, so drafts survive navigation, including to /welcome. */}
       <ThemeEditorHost />
+      {/* SCIENT-FORK:START — closes the release notes provider. */}
     </ScientReleaseNotesProvider>
   );
+  // SCIENT-FORK:END
 }
 
 function isTransientSessionError(error: unknown) {

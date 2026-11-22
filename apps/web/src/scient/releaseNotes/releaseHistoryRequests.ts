@@ -10,11 +10,14 @@ export const useReleaseHistoryRequests = create<{
   opener: null,
 }));
 
-/** Asks the release notes window to open on the version list. */
-export function requestReleaseHistory(): void {
+/**
+ * Asks the release notes window to open on the version list. Pass the control that asked:
+ * a click does not focus a button in every browser, so the focused element may be another one.
+ */
+export function requestReleaseHistory(opener?: HTMLElement): void {
   const active = document.activeElement;
   useReleaseHistoryRequests.setState((state) => ({
     requestId: state.requestId + 1,
-    opener: active instanceof HTMLElement ? active : null,
+    opener: opener ?? (active instanceof HTMLElement ? active : null),
   }));
 }

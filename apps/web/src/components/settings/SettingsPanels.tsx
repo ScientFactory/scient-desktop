@@ -2524,7 +2524,11 @@ export function AboutSettingsPanel() {
           title={gt("Release history")}
           description={gt("Read what is new in each Scient version.")}
           control={
-            <Button size="sm" variant="outline" onClick={requestReleaseHistory}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={(event) => requestReleaseHistory(event.currentTarget)}
+            >
               <T>Release history</T>
             </Button>
           }

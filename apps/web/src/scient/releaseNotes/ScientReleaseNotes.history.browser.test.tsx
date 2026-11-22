@@ -67,7 +67,7 @@ it("opens the release history when no sidebar card is mounted", async () => {
     await root.rerender(
       <ScientReleaseNotesProvider>
         <ScientReleaseNotesDialogHost />
-        <button type="button" onClick={requestReleaseHistory}>
+        <button type="button" onClick={(event) => requestReleaseHistory(event.currentTarget)}>
           About
         </button>
       </ScientReleaseNotesProvider>,
@@ -81,7 +81,7 @@ it("opens the release history when no sidebar card is mounted", async () => {
   }
 });
 
-it("gives focus back to the About button when the history closes", async () => {
+it("gives focus back to the About button when the history closes, even if the click did not focus it", async () => {
   const stack = new AsyncDisposableStack();
   const host = document.createElement("div");
   document.body.append(host);
@@ -91,13 +91,21 @@ it("gives focus back to the About button when the history closes", async () => {
     await root.rerender(
       <ScientReleaseNotesProvider>
         <ScientReleaseNotesDialogHost />
-        <button type="button" onClick={requestReleaseHistory}>
+        <button type="button">Other</button>
+        <button type="button" onClick={(event) => requestReleaseHistory(event.currentTarget)}>
           About
         </button>
       </ScientReleaseNotesProvider>,
     );
 
-    await page.getByRole("button", { name: "About", exact: true }).click();
+    // Safari does not focus a clicked button, so another control may still hold focus.
+    const other = page.getByRole("button", { name: "Other", exact: true }).element();
+    const about = page.getByRole("button", { name: "About", exact: true }).element();
+    if (!(other instanceof HTMLButtonElement) || !(about instanceof HTMLButtonElement)) {
+      throw new Error("Expected the test buttons.");
+    }
+    other.focus();
+    about.click();
     const dialog = page.getByRole("dialog");
     await expect.element(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
@@ -120,7 +128,7 @@ it("shows the top of the version list again after a release was opened", async (
     await root.rerender(
       <ScientReleaseNotesProvider>
         <ScientReleaseNotesDialogHost />
-        <button type="button" onClick={requestReleaseHistory}>
+        <button type="button" onClick={(event) => requestReleaseHistory(event.currentTarget)}>
           About
         </button>
       </ScientReleaseNotesProvider>,

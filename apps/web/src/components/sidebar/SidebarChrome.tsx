@@ -60,7 +60,9 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
 import { APP_BASE_NAME } from "../../branding";
+// SCIENT-FORK:START — the What's new card; its dialog is mounted at app level.
 import { ScientReleaseCard } from "../../scient/releaseNotes/ScientReleaseNotes";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Send feedback to Scient.
 import { FeedbackIcon } from "../../scient/feedback/FeedbackCoordinator";
 // SCIENT-FORK:END
@@ -452,7 +454,9 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter({
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">
+        {/* SCIENT-FORK:START — What's new card. */}
         <ScientReleaseCard />
+        {/* SCIENT-FORK:END */}
         <SidebarProviderUpdatePill />
         <SidebarUpdateArchitectureWarning />
       </div>
